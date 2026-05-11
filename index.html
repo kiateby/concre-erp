@@ -1306,6 +1306,12 @@ async function loadAllDataFromDB(){
       }
     }
 
+    // Load inv permisos for tab visibility
+    var invPerms=await DB.from('inv_permisos').select('*');
+    if(!invPerms.error&&invPerms.data){
+      window._invPermisos={};
+      invPerms.data.forEach(function(p){ window._invPermisos[p.uid]=p.nivel; });
+    }
     console.log('✅ All data loaded from Supabase');
     var lo=document.getElementById('load-overlay');
     if(lo) lo.style.display='none';
@@ -1500,14 +1506,18 @@ function switchUserTab(tab, btn){
       if(!invUserMod){
         invUserMod=document.createElement('div');
         invUserMod.id='invUserModule';
-        invUserMod.style.cssText='flex:1;overflow-y:auto;background:var(--bg);';
-        invUserMod.innerHTML='<div id="inv-root" style="padding:20px"></div>';
+        invUserMod.style.cssText='flex:1;overflow-y:auto;background:var(--bg);min-height:0;';
         var appShell=document.getElementById('appShell');
         if(appShell) appShell.appendChild(invUserMod);
       }
+      // Always reset inv-root inside the user module
+      invUserMod.innerHTML='<div id="inv-root" style="padding:20px;min-height:200px"></div>';
       invUserMod.style.display='flex';
       invUserMod.style.flexDirection='column';
-      try{ initInventario(); }catch(e2){ console.error('initInventario error:',e2); }
+      // Small delay to ensure DOM is ready
+      setTimeout(function(){
+        try{ initInventario(); }catch(e2){ console.error('initInventario error:',e2); }
+      }, 50);
     }
   }catch(e){ console.error('switchUserTab error:',e); toast('Error al cambiar pestaña: '+e.message); }
 }
@@ -10903,7 +10913,18 @@ async function loadInvFromDB(){
 
 // ══ INIT ══
 async function initInventario(){
-  var root=document.getElementById('inv-root');
+  // Find inv-root — prioritize the one that's visible
+  var root=null;
+  var candidates=document.querySelectorAll('#inv-root');
+  candidates.forEach(function(el){
+    var par=el.parentElement;
+    while(par){
+      if(par.style&&par.style.display==='none'){ return; }
+      par=par.parentElement;
+    }
+    root=el;
+  });
+  if(!root) root=document.getElementById('inv-root');
   if(!root) return;
   if(!invCanAccess()){
     root.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">No tienes acceso al módulo de inventario.</div>';
@@ -10915,7 +10936,14 @@ async function initInventario(){
 }
 
 function renderInvMain(){
-  var root=document.getElementById('inv-root');
+  var root=null;
+  var candidates=document.querySelectorAll('#inv-root');
+  candidates.forEach(function(el){
+    var par=el.parentElement;
+    while(par){ if(par.style&&par.style.display==='none') return; par=par.parentElement; }
+    root=el;
+  });
+  if(!root) root=document.getElementById('inv-root');
   if(!root) return;
   root.innerHTML=
     '<div id="inv-nav" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap"></div>'+
