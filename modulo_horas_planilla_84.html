@@ -1517,6 +1517,7 @@ function initApp(){
     // Build admin header tabs
     buildAdminTabs();
     showAdminSec('overview'); // Show overview on login
+    setTimeout(applySearchableSelects,400);
     // Inject notification bell for admin
     injectNotifBell();
     // Register service worker for push (no-op if already registered)
@@ -1539,6 +1540,7 @@ function initApp(){
       var ventasBtn=document.querySelector('.htab');
       if(ventasBtn) switchUserTab('ventas', ventasBtn);
     },0);
+    setTimeout(applySearchableSelects, 400);
     registerServiceWorker();
   }
 }
@@ -4143,8 +4145,8 @@ function initAdminFondos(){
   // Populate user selector
   const sel=document.getElementById('af-user-sel');
   if(sel&&sel.options.length===1){
-    getUsers().filter(u=>u.rol==='user').forEach(u=>{
-      const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; sel.appendChild(o);
+    getUsers().filter(u=>u.rol==='user'||u.rol==='admin'||u.rol==='superadmin').forEach(u=>{
+      const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre+(u.rol!=='user'?' ('+u.rol+')':''); sel.appendChild(o);
     });
   }
   // Month selector
@@ -4169,10 +4171,13 @@ function getAdminFondosPeriodData(){
   // For comisiones: only rol=user. For allVentas: also include admins with own sales
   const comisUsers=filterUid==='all'?getUsers().filter(u=>u.rol==='user'):[getUsers().find(u=>u.id===filterUid)].filter(Boolean);
   const adminSellers=filterUid==='all'?getUsers().filter(function(u){
-    if(u.rol!=='admin') return false;
+    if(u.rol!=='admin'&&u.rol!=='superadmin') return false;
     var vd=getVentasData(u.id);
     return Object.values(vd).some(function(mv){return (mv.ventas||[]).length>0;});
-  }):[];
+  }):(function(){
+    var fu=getUsers().find(function(u){return u.id===filterUid;});
+    return (fu&&(fu.rol==='admin'||fu.rol==='superadmin'))?[fu]:[];
+  })();
   const users=comisUsers.concat(adminSellers);
 
   let allGastos=[], allDepositos=[];
@@ -5243,8 +5248,8 @@ function initAdminVentas(){
   renderAdminOwnVentas(); // Admin own sales table
   const sel=document.getElementById('av-user-sel');
   if(sel&&sel.options.length===1){
-    getUsers().filter(u=>u.rol==='user').forEach(u=>{
-      const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; sel.appendChild(o);
+    getUsers().filter(u=>u.rol==='user'||u.rol==='admin'||u.rol==='superadmin').forEach(u=>{
+      const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre+(u.rol!=='user'?' ('+u.rol+')':''); sel.appendChild(o);
     });
   }
   const msel=document.getElementById('av-month-sel');
@@ -5276,10 +5281,13 @@ function getAdminVentasPeriodData(){
   // For comisiones: only rol=user. For allVentas: also include admins with own sales
   const comisUsers=filterUid==='all'?getUsers().filter(u=>u.rol==='user'):[getUsers().find(u=>u.id===filterUid)].filter(Boolean);
   const adminSellers=filterUid==='all'?getUsers().filter(function(u){
-    if(u.rol!=='admin') return false;
+    if(u.rol!=='admin'&&u.rol!=='superadmin') return false;
     var vd=getVentasData(u.id);
     return Object.values(vd).some(function(mv){return (mv.ventas||[]).length>0;});
-  }):[];
+  }):(function(){
+    var fu=getUsers().find(function(u){return u.id===filterUid;});
+    return (fu&&(fu.rol==='admin'||fu.rol==='superadmin'))?[fu]:[];
+  })();
   const users=comisUsers.concat(adminSellers);
 
   let allVentas=[];
@@ -7661,6 +7669,12 @@ function calcAdminVentaPreview(){
   if(el) el.textContent='Subtotal: '+fmt(sub)+(ivaPct?' + IVA '+fmt(sub*ivaPct/100)+' = '+fmt(total):'');
 }
 
+
+function toggleAvfPlazo(){
+  var sel=document.getElementById('avf-tipo-pago');
+  var wrap=document.getElementById('avf-plazo-wrap');
+  if(wrap) wrap.style.display=(sel&&sel.value==='CREDITO')?'block':'none';
+}
 function saveAdminVenta(){
   var fecha=document.getElementById('avf-fecha')?.value;
   var prodId=document.getElementById('avf-prod')?.value;
@@ -7693,7 +7707,7 @@ function saveAdminVenta(){
     ivaAmt:ivaAmt,
     total:sub+ivaAmt,
     tipoPago:(document.getElementById('avf-tipo-pago')?.value||'CONTADO'),
-    plazoCredito:0,
+    plazoCredito:(document.getElementById('avf-tipo-pago')?.value==='CREDITO'?(document.getElementById('avf-plazo')?.value||''):''),
     isUsd:false,usd:0,tcUsed:0,
     tieneInsumos:false,insDesc:'',insMontoNum:0,
     esTercero:false,tercNombre:'',
@@ -7703,7 +7717,7 @@ function saveAdminVenta(){
     notas:(document.getElementById('avf-notas')?.value.trim()||''),
     pagadoAdmin:false,cxcPagado:false,ejecutado:false,
     depositoNum:'',
-    isAdminVenta:true  // flag: no commission
+    isAdminVenta:(SESSION.rol==='superadmin')  // superadmin: no comision; admin: si genera
   };
   var uid=SESSION.id;
   var y=parseInt(fecha.split('-')[0]);
@@ -7722,6 +7736,9 @@ function saveAdminVenta(){
   ['avf-cantidad'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   document.getElementById('avf-preview').textContent='₡0';
   // Reset CRM client button
+  var avfPW=document.getElementById('avf-plazo-wrap'); if(avfPW) avfPW.style.display='none';
+  var avfP=document.getElementById('avf-plazo'); if(avfP) avfP.value='';
+  var avfPS=document.getElementById('avf-tipo-pago'); if(avfPS) avfPS.value='CONTADO';
   var avlbl2=document.getElementById('avf-cliente-label');
   if(avlbl2){
     avlbl2.textContent='🔍 Buscar o crear cliente...';
@@ -10666,6 +10683,63 @@ function executeRestore(){
 })();
 
 
+
+// ══════════════════════════════════════════════════════════════
+//  BÚSQUEDA EN LISTAS DESPLEGABLES
+// ══════════════════════════════════════════════════════════════
+function makeSearchable(sel){
+  if(!sel||sel.dataset.srch||sel.options.length<6) return;
+  sel.dataset.srch='1';
+  var wrap=document.createElement('div');
+  wrap.style.cssText='position:relative;display:inline-block;width:100%';
+  sel.parentNode.insertBefore(wrap,sel);
+  wrap.appendChild(sel);
+  var inp=document.createElement('input');
+  inp.type='text'; inp.placeholder='🔍 Buscar...';
+  inp.className='vf-inp';
+  inp.style.cssText='display:none;width:100%;box-sizing:border-box;margin-bottom:3px;font-size:12px';
+  wrap.insertBefore(inp,sel);
+  sel._allOpts=Array.from(sel.options).map(function(o){return {v:o.value,t:o.text};});
+  sel.addEventListener('mousedown',function(e){
+    if(sel.options.length<6) return;
+    e.preventDefault();
+    inp.style.display='block'; inp.value=''; inp.focus();
+    filterSel('');
+  });
+  function filterSel(q){
+    var q2=q.toLowerCase().trim();
+    while(sel.options.length) sel.remove(0);
+    var scored=(sel._allOpts||[]).map(function(o){
+      var t=o.t.toLowerCase();
+      var score=t===q2?100:t.startsWith(q2)?80:t.includes(q2)?60:0;
+      if(!score&&q2){var m=0,ti=0;for(var qi=0;qi<q2.length;qi++){while(ti<t.length&&t[ti]!==q2[qi])ti++;if(ti<t.length){m++;ti++;}}score=Math.round(m/q2.length*40);}
+      else if(!q2) score=50;
+      return {v:o.v,t:o.t,score:score};
+    });
+    scored.sort(function(a,b){return b.score-a.score;});
+    var show=q2?scored.filter(function(s){return s.score>0;}):scored;
+    if(!show.length) show=scored.slice(0,8);
+    show.forEach(function(s){sel.add(new Option(s.t,s.v));});
+    if(sel.options.length) sel.selectedIndex=0;
+  }
+  function confirm(){
+    var val=sel.value;
+    while(sel.options.length) sel.remove(0);
+    (sel._allOpts||[]).forEach(function(o){var opt=new Option(o.t,o.v);if(o.v===val)opt.selected=true;sel.add(opt);});
+    inp.style.display='none'; inp.value='';
+    sel.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+  inp.addEventListener('input',function(){filterSel(inp.value);});
+  inp.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key==='Tab'){confirm();}else if(e.key==='Escape'){inp.style.display='none';}else if(e.key==='ArrowDown'){sel.focus();}});
+  sel.addEventListener('change',confirm);
+  document.addEventListener('click',function(e){if(!wrap.contains(e.target)){inp.style.display='none';}},{passive:true});
+}
+function applySearchableSelects(){
+  document.querySelectorAll('select').forEach(function(sel){
+    if(sel.id&&!sel.dataset.srch&&sel.options.length>=6) makeSearchable(sel);
+  });
+}
+
 </script>
 
 </head>
@@ -11139,7 +11213,11 @@ function executeRestore(){
                 <div><span class="vf-label">Cantidad / M²</span><input type="number" class="vf-inp" id="avf-cantidad" min="0" step="any" oninput="calcAdminVentaPreview()"></div>
                 <div><span class="vf-label">Precio unitario ₡</span><input type="text" class="vf-inp" id="avf-precio" placeholder="0" oninput="fmtInp(this);calcAdminVentaPreview()"></div>
                 <div><span class="vf-label">IVA</span><select class="vf-sel" id="avf-iva" onchange="calcAdminVentaPreview()"><option value="no">Sin IVA</option><option value="13">13%</option></select></div>
-                <div><span class="vf-label">Pago</span><select class="vf-sel" id="avf-tipo-pago"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
+                <div><span class="vf-label">Pago</span><select class="vf-sel" id="avf-tipo-pago" onchange="toggleAvfPlazo()"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
+              <div id="avf-plazo-wrap" style="display:none;margin-top:6px">
+                <span class="vf-label">Plazo crédito</span>
+                <input type="text" class="vf-inp" id="avf-plazo" placeholder="Ej: 30 días, 60 días...">
+              </div>
               </div>
               <div class="vf-grid-3" style="margin-bottom:10px">
                 
