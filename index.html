@@ -3842,8 +3842,6 @@ function closeSimulation(){
   while(els.length>0){ els[0].parentNode.removeChild(els[0]); }
 }
 
-function runSimulation(){ return {passed:[],failed:[],total:0}; }
-
 
 // ══════════════════════════════════════════════
 //  FONDOS / CAJA CHICA MODULE
@@ -12197,9 +12195,12 @@ async function renderInteligenciaComercial(){
 
   var html='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px">';
   // Header
+  var icCollapsed=window._icCollapsed||false;
   html+='<div style="background:var(--gray-dark);padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">';
+  html+='<div style="display:flex;align-items:center;gap:12px">';
+  html+='<button onclick="window._icCollapsed=!window._icCollapsed;renderInteligenciaComercial()" style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:14px;line-height:1" title="'+(icCollapsed?'Expandir':'Colapsar')+'">'+(icCollapsed?'▼':'▲')+'</button>';
   html+='<div><div style="font-family:var(--cond);font-size:18px;font-weight:900;color:#fff">🔍 Inteligencia Comercial</div>';
-  html+='<div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:2px">Proyectos adjudicados relevantes para CONCRE · '+IC_FUENTES.join(', ')+'</div></div>';
+  html+='<div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:2px">Proyectos adjudicados relevantes para CONCRE · '+IC_FUENTES.join(', ')+'</div></div></div>';
   html+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
 
   // Uso mensual badge
@@ -12216,7 +12217,12 @@ async function renderInteligenciaComercial(){
   }
   html+='</div></div>';
 
-  // Projects table
+  // Projects table — only show if not collapsed
+  if(icCollapsed){
+    html+='</div>'; // close main container
+    container.innerHTML=html;
+    return;
+  }
   if(_icProyectos.length===0){
     html+='<div style="padding:40px;text-align:center;color:var(--text3)">';
     html+='<div style="font-size:32px;margin-bottom:12px">🏗️</div>';
@@ -12530,9 +12536,7 @@ function icExportarExcel(){
               <div class="page-title">Resumen Global</div>
               <div class="page-sub">Vista consolidada de todos los colaboradores</div>
             </div>
-            <button onclick="runSimulation()" style="padding:8px 16px;border-radius:8px;background:#3e3f41;border:1px solid #555;color:#fff;font-family:Barlow,sans-serif;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px" title="Ejecutar simulación interna de pruebas">
-              🧪 Ejecutar simulación interna
-            </button>
+            
           </div>
           <div id="export-reminder-banner" style="display:none;margin-bottom:12px"></div>
           <div id="sa-export-bar" style="display:none;gap:8px;margin-bottom:14px;flex-wrap:wrap">
