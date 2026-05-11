@@ -12333,9 +12333,14 @@ async function icActualizar(){
       +'Responde ÚNICAMENTE con un JSON válido con esta estructura exacta, sin texto adicional ni backticks:\n'
       +'{"proyectos":[{"fuente":"SICOP","nombre_proyecto":"...","institucion":"...","empresa_ejecutora":"...","descripcion":"...","area_estimada":"...","ubicacion":"...","fecha_inicio":"...","monto_contrato":"...","relevancia":"Por qué es relevante para CONCRE","contacto_nombre":"...","contacto_telefono":"...","contacto_correo":"...","contacto_web":"https://...","contacto_facebook":"https://..."}],"resumen":"Texto breve del análisis","fuentes_consultadas":"SICOP, CFIA, MOPT"}';
 
-    var response=await fetch('https://api.anthropic.com/v1/messages',{
+    // Use Supabase Edge Function as CORS proxy for Anthropic API
+    var proxyUrl=SUPABASE_URL+'/functions/v1/anthropic-proxy';
+    var response=await fetch(proxyUrl,{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{
+        'Content-Type':'application/json',
+        'Authorization':'Bearer '+SUPABASE_ANON_KEY
+      },
       body:JSON.stringify({
         model:'claude-sonnet-4-20250514',
         max_tokens:4000,
