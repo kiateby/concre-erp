@@ -89,7 +89,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
   border:none;background:none;font-family:var(--sans);letter-spacing:.2px;
 }
 .htab:hover{color:var(--red);background:rgba(227,24,55,.06)}
-.htab.on{color:var(--red);background:var(--red)}
+.htab.on{color:#fff;background:var(--red)}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
 .upill{
   display:flex;align-items:center;gap:8px;
@@ -1440,12 +1440,15 @@ function buildUserTabs(){
   const tabs=document.getElementById('hdrTabs');
   var perms=SESSION&&SESSION.tabPerms?SESSION.tabPerms:{};
   var allTabs=[
-    {id:'ventas',     label:'📊 Ventas'},
-    {id:'fondos',     label:'📦 Fondos'},
-    {id:'gastos',     label:'🏗 Gastos Proyecto'},
-    {id:'horas',      label:'⏱ Horas y Planilla'},
-    {id:'vacaciones', label:'🌴 Vacaciones'},
+    {id:'ventas',      label:'📊 Ventas'},
+    {id:'fondos',      label:'📦 Fondos'},
+    {id:'gastos',      label:'🏗 Gastos Proyecto'},
+    {id:'horas',       label:'⏱ Horas y Planilla'},
+    {id:'vacaciones',  label:'🌴 Vacaciones'},
+    {id:'inventario',  label:'📦 Inventario'},
   ];
+  var invNivel=window._invPermisos&&window._invPermisos[SESSION.id];
+  if(invNivel!=='completo'&&invNivel!=='restringido') allTabs=allTabs.filter(function(t){return t.id!=='inventario';});
   var visible=allTabs.filter(function(t){ return perms[t.id]!==false; });
   tabs.innerHTML=visible.map(function(t,i){
     var cls='htab'+(i===0?' on':'');
@@ -1490,6 +1493,20 @@ function switchUserTab(tab, btn){
       var gtm=document.getElementById('gastosModule');
       if(gtm){ gtm.style.cssText='display:flex;flex:1'; }
       try{ initGastosModule(); }catch(e2){ console.error('initGastosModule error:',e2); }
+    } else if(tab==='inventario'){
+      // Render inv module in user context — use a container div inside userModule
+      var im=document.getElementById('userModule');
+      if(im){ im.style.cssText='display:flex;flex:1;flex-direction:column;'; }
+      var invRoot=document.getElementById('inv-root-user');
+      if(!invRoot){
+        invRoot=document.createElement('div');
+        invRoot.id='inv-root-user';
+        invRoot.style.cssText='flex:1;padding:20px;overflow-y:auto;background:var(--bg)';
+        if(im) im.appendChild(invRoot);
+      }
+      // Override inv-root to use user container
+      invRoot.innerHTML='<div id="inv-root"></div>';
+      try{ initInventario(); }catch(e2){ console.error('initInventario error:',e2); }
     }
   }catch(e){ console.error('switchUserTab error:',e); toast('Error al cambiar pestaña: '+e.message); }
 }
@@ -9678,11 +9695,12 @@ function openCRMClientPickerForAdminVenta(){
 // ══════════════════════════════════════════════════════════════
 
 var USER_TAB_DEFS = [
-  {id:'ventas',     label:'Ventas'},
-  {id:'fondos',     label:'Fondos'},
-  {id:'gastos',     label:'Gastos Proyecto'},
-  {id:'horas',      label:'Horas y Planilla'},
-  {id:'vacaciones', label:'Vacaciones'},
+  {id:'ventas',      label:'Ventas'},
+  {id:'fondos',      label:'Fondos'},
+  {id:'gastos',      label:'Gastos Proyecto'},
+  {id:'horas',       label:'Horas y Planilla'},
+  {id:'vacaciones',  label:'Vacaciones'},
+  {id:'inventario',  label:'Inventario'},
 ];
 var ADMIN_TAB_DEFS = [
   {id:'overview',       label:'Resumen'},
@@ -11115,7 +11133,7 @@ function renderInvList(type){
       html+='<div onclick="openInvItemDetail(\''+item.id+'\')" style="background:var(--surface);border:1.5px solid '+(bajoMin?'rgba(227,24,55,.4)':'var(--border)')+';border-radius:10px;padding:14px;cursor:pointer;transition:box-shadow .15s" onmouseover="this.style.boxShadow=\'0 2px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.boxShadow=\'none\'">';
       // Foto
       if(item.foto_url){
-        html+='<div style="width:100%;height:100px;background:var(--surface2);border-radius:7px;margin-bottom:10px;overflow:hidden"><img src="'+item.foto_url+'" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>';
+        html+='<div style="width:100%;height:100px;background:var(--surface2);border-radius:7px;margin-bottom:10px;overflow:hidden"><img src="'+item.foto_url+'" style="width:100%;height:100%;object-fit:cover" loading="lazy" onerror="this.style.opacity=0.3"></div>';
       } else {
         html+='<div style="width:100%;height:60px;background:var(--surface2);border-radius:7px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;font-size:24px">'+(type==='inventario'?'📦':'🔧')+'</div>';
       }
@@ -11203,6 +11221,21 @@ async function openInvItemDetail(itemId){
 }
 
 // ══ FIBRA — LOTES ══
+
+async function invUpdateFibraFoto(input, itemId){
+  var file=input.files[0];
+  if(!file) return;
+  toast('⏳ Subiendo foto...');
+  var url=await invUploadFoto(file, itemId);
+  if(url){
+    await DB.from('inv_items').update({foto_url:url,updated_at:new Date().toISOString()}).eq('id',itemId);
+    var idx=window._invItems.findIndex(function(i){return i.id===itemId;});
+    if(idx>=0) window._invItems[idx].foto_url=url;
+    var item=window._invItems.find(function(i){return i.id===itemId;});
+    if(item) renderFibraLotes(item);
+    toast('✅ Foto actualizada');
+  }
+}
 function renderFibraLotes(item){
   var body=document.getElementById('inv-body');
   if(!body) return;
@@ -11211,8 +11244,12 @@ function renderFibraLotes(item){
   var lotesCerrados=lotes.filter(function(l){return l.estado==='cerrado';});
 
   var html='<div style="margin-bottom:12px"><button onclick="renderInvList(\'inventario\')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:13px">← Volver</button></div>';
-  html+='<div style="font-family:var(--cond);font-size:20px;font-weight:900;margin-bottom:4px">'+item.nombre+'</div>';
-  html+='<div style="font-size:12px;color:var(--text3);margin-bottom:16px">Selecciona un lote para registrar movimientos</div>';
+  html+='<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">';
+  html+=(item.foto_url?'<img src="'+item.foto_url+'" style="width:80px;height:80px;object-fit:cover;border-radius:10px;border:1px solid var(--border)" loading="lazy">':'<div style="width:80px;height:80px;background:var(--surface2);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:32px">📦</div>');
+  html+='<div><div style="font-family:var(--cond);font-size:20px;font-weight:900;margin-bottom:4px">'+item.nombre+'</div>';
+  html+='<div style="font-size:12px;color:var(--text3);margin-bottom:8px">Selecciona un lote para registrar movimientos</div>';
+  html+=(invIsAdminSA()?'<label style="display:inline-block;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">📷 Cambiar foto<input type="file" accept="image/*" style="display:none" onchange="invUpdateFibraFoto(this,\''+item.id+'\')"></label>':'');
+  html+='</div></div>';
 
   // Add lote button (admin/SA only)
   if(invIsAdminSA()){
