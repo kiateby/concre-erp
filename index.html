@@ -75,27 +75,27 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 
 /* HEADER */
 .hdr{
-  background:var(--gray-dark);border-bottom:3px solid var(--red);
+  background:#ffffff;border-bottom:3px solid var(--red);
   padding:0 16px;display:flex;align-items:center;gap:10px;height:56px;
   position:sticky;top:0;z-index:200;box-shadow:0 2px 10px rgba(0,0,0,.3);
 }
-.hdr-logo .lc{font-family:var(--cond);font-size:26px;font-weight:900;color:#fff;letter-spacing:-1px}
+.hdr-logo .lc{font-family:var(--cond);font-size:26px;font-weight:900;color:var(--gray-dark);letter-spacing:-1px}
 .hdr-logo .lr{color:var(--red)}
-.hdr-sep{width:1px;height:24px;background:rgba(255,255,255,.18)}
+.hdr-sep{width:1px;height:24px;background:rgba(0,0,0,.12)}
 .hdr-tabs{display:flex;gap:2pxoverflow-x:auto;}
 .htab{
   padding:6px 10px;border-radius:6px;font-size:12px;font-weight:700;
-  color:rgba(255,255,255,.5);cursor:pointer;transition:all .15s;
+  color:var(--gray-dark);cursor:pointer;transition:all .15s;
   border:none;background:none;font-family:var(--sans);letter-spacing:.2px;
 }
-.htab:hover{color:rgba(255,255,255,.85);background:rgba(255,255,255,.08)}
-.htab.on{color:#fff;background:var(--red)}
+.htab:hover{color:var(--red);background:rgba(227,24,55,.06)}
+.htab.on{color:var(--red);background:var(--red)}
 .hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
 .upill{
   display:flex;align-items:center;gap:8px;
-  background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.15);
+  background:var(--surface2);border:1px solid var(--border);
   padding:5px 13px 5px 7px;border-radius:100px;
-  font-size:13px;font-weight:700;color:rgba(255,255,255,.85);
+  font-size:13px;font-weight:700;color:var(--gray-dark);
 }
 .uav{
   width:26px;height:26px;border-radius:50%;
@@ -106,11 +106,11 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .uav.user{background:var(--gray)}
 .logout-btn{
   padding:5px 12px;border-radius:100px;font-size:11px;font-weight:800;
-  cursor:pointer;border:1.5px solid rgba(255,255,255,.2);
-  background:transparent;color:rgba(255,255,255,.6);font-family:var(--sans);
+  cursor:pointer;border:1.5px solid var(--border);
+  background:transparent;color:var(--gray);font-family:var(--sans);
   transition:all .15s;
 }
-.logout-btn:hover{border-color:rgba(255,255,255,.5);color:#fff}
+.logout-btn:hover{border-color:var(--border);color:var(--red)}
 
 /* ════════════════════════════════
    ADMIN PANEL
@@ -1415,6 +1415,7 @@ function buildAdminTabs(){
     {id:'gastos-admin',  label:'🏗 Gastos Proyecto',  extra:'try{initAdminGastos();}catch(e){}'},
     {id:'crm',           label:'👥 CRM Clientes',      extra:'try{initCRM();}catch(e){}'},
     {id:'papelera',      label:'🗑 Papelera',           extra:'try{renderTrashPanel();checkTrashReminder();}catch(e){}'},
+    {id:'inventario',    label:'📦 Inventario',          extra:'try{initInventario();}catch(e){}'},
   ];
   // Filter tabs based on admin permissions (superadmin sees all)
   var allowedBtns=btns.filter(function(b){
@@ -2139,10 +2140,10 @@ function exportGlobalCSV(){
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Barlow',sans-serif;background:#f4f4f4;padding:28px 16px}
 .col{background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.13);max-width:960px;margin:0 auto}
-.ch{background:#3e3f41;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837}
-.lt{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:#fff;letter-spacing:-1px}
+.ch{background:#ffffff;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.lt{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:var(--gray-dark);letter-spacing:-1px}
 .lr{color:#E31837}
-.ei{text-align:right;color:rgba(255,255,255,.65);font-size:12px;line-height:1.7}
+.ei{text-align:right;color:rgba(0,0,0,.65);font-size:12px;line-height:1.7}
 .ct{background:#E31837;padding:10px 24px;display:flex;justify-content:space-between;align-items:center}
 .ct h2{font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:900;color:#fff;text-transform:uppercase}
 .ct .em{font-size:12px;color:rgba(255,255,255,.85);font-weight:600}
@@ -2159,8 +2160,8 @@ td:last-child{border-left:2px solid rgba(26,158,92,.2)}
 </style></head><body>
 <div class="col">
   <div class="ch">
-    <div><div class="lt">CON<span class="lr">C</span>RE</div><div style="color:rgba(255,255,255,.5);font-size:12px;margin-top:2px">Resumen global de planilla</div></div>
-    <div class="ei"><div style="color:#fff;font-weight:700">${EMPRESA.nombre}</div><div>${EMPRESA.cedula}</div><div>${EMPRESA.correo}</div></div>
+    <div><div class="lt">CON<span class="lr">C</span>RE</div><div style="color:var(--text3);font-size:12px;margin-top:2px">Resumen global de planilla</div></div>
+    <div class="ei"><div style="color:var(--gray-dark);font-weight:700">${EMPRESA.nombre}</div><div>${EMPRESA.cedula}</div><div>${EMPRESA.correo}</div></div>
   </div>
   <div class="ct"><h2>Resumen Global — ${mes} ${yr}</h2><span class="em">Emitido: ${emitida}</span></div>
   <div class="cb">
@@ -2490,7 +2491,7 @@ body{font-family:'Barlow',sans-serif;background:#f4f4f4;display:flex;justify-con
 .ch{background:#3e3f41;padding:20px 26px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid ${colorAccent}}
 .lt{font-family:'Barlow Condensed',sans-serif;font-size:30px;font-weight:900;color:#fff;letter-spacing:-1px}
 .lr{color:#E31837}
-.ei{text-align:right;color:rgba(255,255,255,.65);font-size:12px;line-height:1.7}
+.ei{text-align:right;color:rgba(0,0,0,.65);font-size:12px;line-height:1.7}
 .ct{background:${colorAccent};padding:11px 26px;display:flex;justify-content:space-between;align-items:center}
 .ct h2{font-family:'Barlow Condensed',sans-serif;font-size:19px;font-weight:900;color:#fff;text-transform:uppercase}
 .ct .em{font-size:12px;color:rgba(255,255,255,.85);font-weight:600}
@@ -2516,7 +2517,7 @@ body{font-family:'Barlow',sans-serif;background:#f4f4f4;display:flex;justify-con
 <div class="col">
   <div class="ch">
     <div><div class="lt">CON<span class="lr">C</span>RE</div><div style="color:rgba(255,255,255,.5);font-size:12px;margin-top:3px">${subtitulo}</div></div>
-    <div class="ei"><div style="color:#fff;font-weight:700">${EMPRESA.nombre}</div><div>${EMPRESA.cedula}</div><div>${EMPRESA.telefono}</div><div>${EMPRESA.correo}</div></div>
+    <div class="ei"><div style="color:var(--gray-dark);font-weight:700">${EMPRESA.nombre}</div><div>${EMPRESA.cedula}</div><div>${EMPRESA.telefono}</div><div>${EMPRESA.correo}</div></div>
   </div>
   <div class="ct"><h2>${titulo}</h2><span class="em">Emitida: ${emitida}</span></div>
   <div class="cb">
@@ -4450,10 +4451,10 @@ function exportFondosUser(){
 <style>
 *{box-sizing:border-box;margin:0;padding:0}body{font-family:'Barlow',sans-serif;background:#f4f4f4;padding:28px 16px}
 .col{background:#fff;max-width:720px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.13)}
-.ch{background:#3e3f41;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837}
-.lt{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:#fff;letter-spacing:-1px}
+.ch{background:#ffffff;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.lt{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:var(--gray-dark);letter-spacing:-1px}
 .lr{color:#E31837}
-.ei{text-align:right;color:rgba(255,255,255,.65);font-size:12px;line-height:1.7}
+.ei{text-align:right;color:rgba(0,0,0,.65);font-size:12px;line-height:1.7}
 .ct{background:#E31837;padding:10px 24px;display:flex;justify-content:space-between;align-items:center}
 .ct h2{font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:900;color:#fff;text-transform:uppercase}
 .cb{padding:20px 24px}
@@ -4473,7 +4474,7 @@ function exportFondosUser(){
 <div class="col">
   <div class="ch">
     <div><div class="lt">CON<span class="lr">C</span>RE</div><div style="color:rgba(255,255,255,.5);font-size:12px;margin-top:3px">Reporte de fondos y caja chica</div></div>
-    <div class="ei"><div style="color:#fff;font-weight:700">${EMPRESA.nombre}</div><div>${EMPRESA.cedula}</div><div>${EMPRESA.correo}</div></div>
+    <div class="ei"><div style="color:var(--gray-dark);font-weight:700">${EMPRESA.nombre}</div><div>${EMPRESA.cedula}</div><div>${EMPRESA.correo}</div></div>
   </div>
   <div class="ct"><h2>Fondos — ${MES[FD_MONTH]} ${FD_YEAR}</h2><span style="font-size:12px;color:rgba(255,255,255,.85);font-weight:600">Emitido: ${emitida} · ${SESSION.nombre}</span></div>
   <div class="cb">
@@ -6013,9 +6014,9 @@ function exportVentasUser(){
   '<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&family=Barlow+Condensed:wght@700;800;900&display=swap" rel="stylesheet">'+
   '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:\'Barlow\',sans-serif;background:#f4f4f4;padding:24px 16px}'+
   '.col{background:#fff;max-width:780px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.13)}'+
-  '.ch{background:#3e3f41;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837}'+
+  '.ch{background:#ffffff;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837;box-shadow:0 2px 8px rgba(0,0,0,.08)}'+
   '.lt{font-family:\'Barlow Condensed\',sans-serif;font-size:28px;font-weight:900;color:#fff}.lr{color:#E31837}'+
-  '.ei{text-align:right;color:rgba(255,255,255,.65);font-size:12px;line-height:1.7}'+
+  '.ei{text-align:right;color:rgba(0,0,0,.65);font-size:12px;line-height:1.7}'+
   '.ct{background:#E31837;padding:10px 24px;display:flex;justify-content:space-between;align-items:center}'+
   '.ct h2{font-family:\'Barlow Condensed\',sans-serif;font-size:18px;font-weight:900;color:#fff;text-transform:uppercase}'+
   '.cb{padding:18px 24px}.st{font-size:10px;font-weight:800;color:#9a9b9d;text-transform:uppercase;letter-spacing:1.2px;margin:14px 0 8px}'+
@@ -9695,6 +9696,7 @@ var ADMIN_TAB_DEFS = [
   {id:'liquidaciones',  label:'Liquidaciones'},
   {id:'gastos-admin',   label:'Gastos Proyecto'},
   {id:'crm',            label:'CRM Clientes'},
+  {id:'inventario',     label:'Inventario'},
 ];
 
 function getUserTabPerms(uid){
@@ -10775,6 +10777,1059 @@ function applySearchableSelects(){
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+//  MÓDULO DE INVENTARIO — CONCRE ERP
+// ══════════════════════════════════════════════════════════════
+
+
+// ── Comprimir y subir foto a Supabase Storage ──
+async function invUploadFoto(file, itemId){
+  if(!file) return '';
+  // Compress to max 300px, quality 0.6 (lowest reasonable)
+  return new Promise(function(resolve){
+    var reader=new FileReader();
+    reader.onload=function(e){
+      var img=new Image();
+      img.onload=function(){
+        var canvas=document.createElement('canvas');
+        var MAX=300;
+        var w=img.width, h=img.height;
+        if(w>h){ if(w>MAX){h=Math.round(h*MAX/w);w=MAX;} }
+        else { if(h>MAX){w=Math.round(w*MAX/h);h=MAX;} }
+        canvas.width=w; canvas.height=h;
+        canvas.getContext('2d').drawImage(img,0,0,w,h);
+        canvas.toBlob(async function(blob){
+          var filename='inv/'+itemId+'-'+Date.now()+'.jpg';
+          var res=await DB.storage.from('inventario-fotos').upload(filename, blob, {
+            contentType:'image/jpeg', upsert:true
+          });
+          if(res.error){
+            console.error('Upload error:', res.error);
+            toast('Error subiendo foto: '+res.error.message);
+            resolve('');
+          } else {
+            var urlRes=DB.storage.from('inventario-fotos').getPublicUrl(filename);
+            resolve(urlRes.data?.publicUrl||'');
+          }
+        },'image/jpeg',0.6);
+      };
+      img.src=e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// ── Cache ──
+window._invItems    = window._invItems    || [];
+window._invLotes    = window._invLotes    || [];
+window._invMovs     = window._invMovs     || [];
+window._invAlertas  = window._invAlertas  || [];
+window._invPermisos = window._invPermisos || {};
+
+// ── Helpers ──
+function invPad(n,len){ return String(n).padStart(len||3,'0'); }
+function invFmt(n){ return (n||0).toLocaleString('es-CR'); }
+function invDateFmt(ts){
+  if(!ts) return '';
+  var d=new Date(ts);
+  return d.toLocaleDateString('es-CR',{day:'2-digit',month:'2-digit',year:'numeric'})+
+    ' '+d.toLocaleTimeString('es-CR',{hour:'2-digit',minute:'2-digit'});
+}
+function invCanEdit(){ 
+  if(!SESSION) return false;
+  if(SESSION.rol==='superadmin'||SESSION.rol==='admin') return true;
+  var p=window._invPermisos[SESSION.id];
+  return p==='completo';
+}
+function invCanAccess(){
+  if(!SESSION) return false;
+  if(SESSION.rol==='superadmin'||SESSION.rol==='admin') return true;
+  var p=window._invPermisos[SESSION.id];
+  return p==='completo'||p==='restringido';
+}
+function invIsAdminSA(){
+  return SESSION&&(SESSION.rol==='admin'||SESSION.rol==='superadmin');
+}
+
+// ── Next movement number ──
+function invNextMovNum(itemId){
+  var item=window._invItems.find(function(i){return i.id===itemId;});
+  var prefix=(item?item.codigo:itemId).toUpperCase().replace(/\s+/g,'-');
+  var existing=window._invMovs.filter(function(m){return m.item_id===itemId;});
+  var maxNum=0;
+  existing.forEach(function(m){
+    var parts=(m.id||'').split('-');
+    var num=parseInt(parts[parts.length-1])||0;
+    if(num>maxNum) maxNum=num;
+  });
+  return prefix+'-'+invPad(maxNum+1,3);
+}
+
+// ══ DB LOADERS ══
+async function loadInvFromDB(){
+  var r1=await DB.from('inv_items').select('*').order('nombre');
+  var r2=await DB.from('inv_lotes').select('*').order('created_at');
+  var r3=await DB.from('inv_movimientos').select('*').order('created_at',{ascending:false});
+  var r4=await DB.from('inv_alertas').select('*').eq('resuelta',false).order('created_at',{ascending:false});
+  var r5=await DB.from('inv_permisos').select('*');
+  if(!r1.error) window._invItems=r1.data||[];
+  if(!r2.error) window._invLotes=r2.data||[];
+  if(!r3.error) window._invMovs=r3.data||[];
+  if(!r4.error) window._invAlertas=r4.data||[];
+  if(!r5.error){
+    window._invPermisos={};
+    (r5.data||[]).forEach(function(p){ window._invPermisos[p.uid]=p.nivel; });
+  }
+}
+
+// ══ INIT ══
+async function initInventario(){
+  var root=document.getElementById('inv-root');
+  if(!root) return;
+  if(!invCanAccess()){
+    root.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">No tienes acceso al módulo de inventario.</div>';
+    return;
+  }
+  root.innerHTML='<div style="padding:20px;color:var(--text3)">⏳ Cargando inventario...</div>';
+  await loadInvFromDB();
+  renderInvMain();
+}
+
+function renderInvMain(){
+  var root=document.getElementById('inv-root');
+  if(!root) return;
+  root.innerHTML=
+    '<div id="inv-nav" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap"></div>'+
+    '<div id="inv-body"></div>';
+  renderInvNav('dashboard');
+}
+
+function renderInvNav(active){
+  var nav=document.getElementById('inv-nav');
+  if(!nav) return;
+  var tabs=[
+    {id:'dashboard',  label:'📊 Dashboard'},
+    {id:'inventario', label:'📦 Inventarios'},
+    {id:'activos',    label:'🔧 Activos'},
+  ];
+  if(invIsAdminSA()) tabs.push({id:'reportes',label:'📈 Reportes'});
+  if(SESSION&&SESSION.rol==='superadmin') tabs.push({id:'permisos',label:'🔐 Permisos'});
+
+  nav.innerHTML=tabs.map(function(t){
+    var on=t.id===active;
+    return '<button onclick="switchInvTab(\''+t.id+'\')" style="padding:7px 16px;border-radius:8px;border:1.5px solid '+(on?'var(--blue)':'var(--border)')+';background:'+(on?'var(--blue)':'var(--surface)')+';color:'+(on?'#fff':'var(--text)')+';font-weight:'+(on?'800':'500')+';font-size:13px;cursor:pointer">'+t.label+'</button>';
+  }).join('');
+
+  switchInvTab(active);
+}
+
+function switchInvTab(tab){
+  // Update nav active state
+  var nav=document.getElementById('inv-nav');
+  if(nav) nav.querySelectorAll('button').forEach(function(btn){
+    var isActive=btn.textContent.trim().includes(tab==='dashboard'?'Dashboard':tab==='inventario'?'Inventario':tab==='activos'?'Activo':tab==='reportes'?'Reporte':'Permiso');
+    btn.style.background=isActive?'var(--blue)':'var(--surface)';
+    btn.style.color=isActive?'#fff':'var(--text)';
+    btn.style.borderColor=isActive?'var(--blue)':'var(--border)';
+    btn.style.fontWeight=isActive?'800':'500';
+  });
+
+  var body=document.getElementById('inv-body');
+  if(!body) return;
+  if(tab==='dashboard') renderInvDashboard();
+  else if(tab==='inventario') renderInvList('inventario');
+  else if(tab==='activos') renderInvList('activo');
+  else if(tab==='reportes') renderInvReportes();
+  else if(tab==='permisos') renderInvPermisos();
+}
+
+// ══ DASHBOARD ══
+function renderInvDashboard(){
+  var body=document.getElementById('inv-body');
+  if(!body) return;
+  var items=window._invItems;
+  var movs=window._invMovs;
+  var alertas=window._invAlertas;
+  var totalInv=items.filter(function(i){return i.type==='inventario'&&i.activo;}).length;
+  var totalAct=items.filter(function(i){return i.type==='activo'&&i.activo;}).length;
+  var bajoMin=items.filter(function(i){return i.activo&&i.cantidad<=i.cantidad_minima;});
+
+  // Top 5 items by movement this month
+  var now=new Date(); var mesKey=now.getFullYear()+'-'+invPad(now.getMonth()+1,2);
+  var movMes=movs.filter(function(m){return (m.created_at||'').startsWith(mesKey);});
+  var movCount={};
+  movMes.forEach(function(m){ movCount[m.item_id]=(movCount[m.item_id]||0)+1; });
+  var topItems=Object.keys(movCount).map(function(id){
+    var item=items.find(function(i){return i.id===id;})||{nombre:id};
+    return {nombre:item.nombre,count:movCount[id]};
+  }).sort(function(a,b){return b.count-a.count;}).slice(0,6);
+
+  var html='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px">';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;text-align:center"><div style="font-size:28px;font-weight:900;color:var(--blue)">'+totalInv+'</div><div style="font-size:11px;color:var(--text3);margin-top:4px">ÍTEMS INVENTARIO</div></div>';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;text-align:center"><div style="font-size:28px;font-weight:900;color:var(--green)">'+totalAct+'</div><div style="font-size:11px;color:var(--text3);margin-top:4px">ACTIVOS</div></div>';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;text-align:center"><div style="font-size:28px;font-weight:900;color:var(--red)">'+bajoMin.length+'</div><div style="font-size:11px;color:var(--text3);margin-top:4px">BAJO MÍNIMO</div></div>';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;text-align:center"><div style="font-size:28px;font-weight:900;color:var(--gray)">'+movMes.length+'</div><div style="font-size:11px;color:var(--text3);margin-top:4px">MOVIMIENTOS MES</div></div>';
+  html+='</div>';
+
+  // Charts
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">';
+  // Chart 1: Top items by movement
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">';
+  html+='<div style="font-family:var(--cond);font-weight:800;margin-bottom:12px">📊 Más movimientos este mes</div>';
+  if(topItems.length===0){
+    html+='<div style="color:var(--text3);font-size:12px">Sin movimientos este mes</div>';
+  } else {
+    var maxCount=topItems[0].count||1;
+    html+=topItems.map(function(t,i){
+      var colors=['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899'];
+      var pct=Math.round(t.count/maxCount*100);
+      return '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span>'+t.nombre+'</span><span style="font-weight:700">'+t.count+'</span></div><div style="background:var(--surface2);border-radius:4px;height:8px"><div style="width:'+pct+'%;background:'+colors[i%colors.length]+';height:8px;border-radius:4px"></div></div></div>';
+    }).join('');
+  }
+  html+='</div>';
+
+  // Chart 2: Items bajo minimo
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">';
+  html+='<div style="font-family:var(--cond);font-weight:800;margin-bottom:12px">⚠️ Ítems bajo mínimo</div>';
+  if(bajoMin.length===0){
+    html+='<div style="color:var(--green);font-size:12px;font-weight:700">✅ Todo en niveles normales</div>';
+  } else {
+    html+=bajoMin.map(function(item){
+      var pct=item.cantidad_minima>0?Math.round(item.cantidad/item.cantidad_minima*100):0;
+      return '<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span>'+item.nombre+'</span><span style="color:var(--red);font-weight:700">'+invFmt(item.cantidad)+'/'+invFmt(item.cantidad_minima)+'</span></div><div style="background:var(--surface2);border-radius:4px;height:8px"><div style="width:'+Math.min(pct,100)+'%;background:var(--red);height:8px;border-radius:4px"></div></div></div>';
+    }).join('');
+  }
+  html+='</div>';
+  html+='</div>';
+
+  // Alertas table (admin/SA only)
+  if(invIsAdminSA()&&alertas.length>0){
+    html+='<div style="background:rgba(227,24,55,.04);border:1.5px solid rgba(227,24,55,.25);border-radius:10px;padding:16px;margin-bottom:16px">';
+    html+='<div style="font-family:var(--cond);font-weight:800;color:var(--red);margin-bottom:10px">🔴 Alertas activas — ítems bajo mínimo</div>';
+    html+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    html+='<thead><tr style="background:var(--surface2)"><th style="padding:6px 8px;text-align:left">Ítem</th><th style="padding:6px 8px;text-align:right">Cantidad</th><th style="padding:6px 8px;text-align:right">Mínimo</th><th style="padding:6px 8px;text-align:center">Fecha alerta</th>';
+    if(SESSION.rol==='superadmin') html+='<th style="padding:6px 8px"></th>';
+    html+='</tr></thead><tbody>';
+    alertas.forEach(function(a){
+      var item=items.find(function(i){return i.id===a.item_id;})||{nombre:a.item_id};
+      html+='<tr style="border-bottom:1px solid var(--border)">';
+      html+='<td style="padding:6px 8px">'+item.nombre+'</td>';
+      html+='<td style="padding:6px 8px;text-align:right;color:var(--red);font-weight:700">'+invFmt(a.cantidad_al_momento)+'</td>';
+      html+='<td style="padding:6px 8px;text-align:right">'+invFmt(a.cantidad_minima)+'</td>';
+      html+='<td style="padding:6px 8px;text-align:center;color:var(--text3)">'+invDateFmt(a.created_at)+'</td>';
+      if(SESSION.rol==='superadmin') html+='<td style="padding:6px 8px;text-align:center"><button onclick="invResolveAlerta(\''+a.id+'\')" style="background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:11px">Resolver</button></td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+
+  body.innerHTML=html;
+}
+
+async function invResolveAlerta(alertaId){
+  if(!confirm('¿Marcar esta alerta como resuelta?')) return;
+  var res=await DB.from('inv_alertas').update({resuelta:true,resuelta_por:SESSION.id,resuelta_at:new Date().toISOString()}).eq('id',alertaId);
+  if(!res.error){
+    window._invAlertas=window._invAlertas.filter(function(a){return a.id!==alertaId;});
+    renderInvDashboard();
+    toast('✅ Alerta resuelta');
+  }
+}
+
+// ══ LISTA DE ÍTEMS ══
+
+function renderInvSearchResults(type, q){
+  var items=window._invItems.filter(function(i){return i.type===type&&i.activo;});
+  var results=[];
+  if(!q||!q.trim()){
+    renderInvList(type);
+    return;
+  }
+  var q2=q.toLowerCase().trim();
+  var scored=items.map(function(item){
+    var n=item.nombre.toLowerCase();
+    var cod=(item.codigo||'').toLowerCase();
+    var score=0;
+    if(n===q2||cod===q2) score=100;
+    else if(n.startsWith(q2)||cod.startsWith(q2)) score=80;
+    else if(n.includes(q2)||cod.includes(q2)) score=60;
+    else {
+      var matched=0,ti=0;
+      for(var qi=0;qi<q2.length;qi++){while(ti<n.length&&n[ti]!==q2[qi])ti++;if(ti<n.length){matched++;ti++;}}
+      score=q2.length>0?Math.round(matched/q2.length*40):0;
+    }
+    return {item:item,score:score};
+  }).filter(function(s){return s.score>0;}).sort(function(a,b){return b.score-a.score;}).slice(0,5);
+
+  var label=type==='inventario'?'Inventario':'Activo';
+  var body=document.getElementById('inv-body');
+  if(!body) return;
+
+  var html='<div style="margin-bottom:10px;font-size:12px;color:var(--text3)">'+scored.length+' resultado(s) para "'+q+'"</div>';
+  if(scored.length===0){
+    html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:30px;text-align:center;color:var(--text3)">Sin coincidencias</div>';
+  } else {
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">';
+    scored.forEach(function(s){
+      var item=s.item;
+      var bajoMin=item.cantidad<=item.cantidad_minima;
+      html+='<div onclick="openInvItemDetail(\''+item.id+'\')" style="background:var(--surface);border:1.5px solid '+(bajoMin?'rgba(227,24,55,.4)':'var(--blue)')+';border-radius:10px;padding:14px;cursor:pointer">';
+      if(item.foto_url) html+='<div style="width:100%;height:80px;border-radius:7px;margin-bottom:8px;overflow:hidden"><img src="'+item.foto_url+'" style="width:100%;height:100%;object-fit:cover"></div>';
+      else html+='<div style="width:100%;height:50px;background:var(--surface2);border-radius:7px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;font-size:20px">'+(type==='inventario'?'📦':'🔧')+'</div>';
+      html+='<div style="font-weight:800;font-size:13px">'+item.nombre+'</div>';
+      html+='<div style="font-size:10px;color:var(--text3);margin-bottom:6px">'+item.codigo+'</div>';
+      html+='<div style="font-weight:900;color:'+(bajoMin?'var(--red)':'var(--blue)')+'">'+invFmt(item.cantidad)+' '+(item.unidad||'')+'</div>';
+      if(bajoMin) html+='<span style="color:var(--red);font-size:9px;font-weight:800">⚠️ BAJO MÍNIMO</span>';
+      html+='</div>';
+    });
+    html+='</div>';
+  }
+  // Keep the header buttons
+  var header='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">';
+  header+='<div style="font-family:var(--cond);font-size:18px;font-weight:900">'+label+'s</div>';
+  header+='<div style="display:flex;gap:6px;align-items:center">';
+  if(invCanEdit()) header+='<button onclick="openInvItemModal(null,\''+type+'\')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:700">+ Nuevo</button>';
+  header+='<input type="text" id="inv-search-inp" placeholder="🔍 Buscar ítem..." class="liq-inp" style="min-width:160px" value="'+q+'" oninput="renderInvSearchResults(\''+type+'\',this.value)">';
+  header+='<button onclick="renderInvList(\''+type+'\')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 12px;cursor:pointer;font-size:12px">✕</button>';
+  header+='</div></div>';
+  body.innerHTML=header+html;
+}
+function renderInvList(type){
+  var body=document.getElementById('inv-body');
+  if(!body) return;
+  var items=window._invItems.filter(function(i){return i.type===type;});
+  var label=type==='inventario'?'Inventario':'Activo';
+
+  var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">';
+  html+='<div style="font-family:var(--cond);font-size:18px;font-weight:900">'+label+'s</div>';
+  if(invCanEdit()) html+='<button onclick="openInvItemModal(null,\''+type+'\')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:700">+ Nuevo '+label+'</button>';
+  html+='<div style="display:flex;gap:6px;align-items:center"><input type="text" id="inv-search-inp" placeholder="🔍 Buscar ítem..." class="liq-inp" style="min-width:180px" oninput="renderInvSearchResults(\'' + type + '\',this.value)"><button onclick="renderInvSearchResults(\''+type+'\',document.getElementById(\'inv-search-inp\')?.value||\'\'" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:12px">Buscar</button></div>';
+  html+='</div>';
+
+  if(items.length===0){
+    html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:40px;text-align:center;color:var(--text3)">Sin '+label.toLowerCase()+'s registrados aún.</div>';
+  } else {
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">';
+    items.forEach(function(item){
+      var bajoMin=item.cantidad<=item.cantidad_minima;
+      html+='<div onclick="openInvItemDetail(\''+item.id+'\')" style="background:var(--surface);border:1.5px solid '+(bajoMin?'rgba(227,24,55,.4)':'var(--border)')+';border-radius:10px;padding:14px;cursor:pointer;transition:box-shadow .15s" onmouseover="this.style.boxShadow=\'0 2px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.boxShadow=\'none\'">';
+      // Foto
+      if(item.foto_url){
+        html+='<div style="width:100%;height:100px;background:var(--surface2);border-radius:7px;margin-bottom:10px;overflow:hidden"><img src="'+item.foto_url+'" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>';
+      } else {
+        html+='<div style="width:100%;height:60px;background:var(--surface2);border-radius:7px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;font-size:24px">'+(type==='inventario'?'📦':'🔧')+'</div>';
+      }
+      html+='<div style="font-weight:800;font-size:13px;margin-bottom:3px">'+item.nombre+'</div>';
+      html+='<div style="font-size:10px;color:var(--text3);margin-bottom:8px">'+item.codigo+'</div>';
+      html+='<div style="display:flex;justify-content:space-between;align-items:center">';
+      html+='<div style="font-size:18px;font-weight:900;color:'+(bajoMin?'var(--red)':'var(--blue)')+'">'+invFmt(item.cantidad)+'<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:3px">'+(item.unidad||'')+'</span></div>';
+      if(bajoMin) html+='<span style="background:rgba(227,24,55,.1);color:var(--red);font-size:9px;font-weight:800;padding:2px 6px;border-radius:100px">BAJO MÍN</span>';
+      html+='</div>';
+      html+='</div>';
+    });
+    html+='</div>';
+  }
+
+  body.innerHTML=html;
+}
+
+// ══ DETALLE DE ÍTEM ══
+async function openInvItemDetail(itemId){
+  var item=window._invItems.find(function(i){return i.id===itemId;});
+  if(!item) return;
+
+  // If fibra — show lotes
+  if(item.es_fibra){
+    renderFibraLotes(item);
+    return;
+  }
+
+  var movs=window._invMovs.filter(function(m){return m.item_id===itemId;});
+  var body=document.getElementById('inv-body');
+  if(!body) return;
+
+  var bajoMin=item.cantidad<=item.cantidad_minima;
+  var html='<div style="margin-bottom:12px"><button onclick="renderInvList(\''+item.type+'\')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:13px">← Volver</button></div>';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px">';
+  html+='<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">';
+  if(item.foto_url) html+='<img src="'+item.foto_url+'" style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">';
+  html+='<div style="flex:1;min-width:180px">';
+  html+='<div style="font-family:var(--cond);font-size:22px;font-weight:900">'+item.nombre+'</div>';
+  html+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Código: '+item.codigo+'</div>';
+  html+='<div style="font-size:28px;font-weight:900;color:'+(bajoMin?'var(--red)':'var(--blue)')+'">'+invFmt(item.cantidad)+' <span style="font-size:13px;font-weight:400;color:var(--text3)">'+(item.unidad||'')+'</span></div>';
+  if(bajoMin) html+='<span style="background:rgba(227,24,55,.1);color:var(--red);font-size:10px;font-weight:800;padding:3px 8px;border-radius:100px">⚠️ BAJO MÍNIMO ('+invFmt(item.cantidad_minima)+')</span>';
+  html+='</div></div>';
+  if(item.notas) html+='<div style="margin-top:10px;font-size:12px;color:var(--text2);border-top:1px solid var(--border);padding-top:10px">'+item.notas+'</div>';
+  html+='</div>';
+
+  // Action buttons
+  html+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+  html+='<button onclick="openInvMovModal(\''+itemId+'\',\'salida\')" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px;font-weight:700">📤 Salida</button>';
+  if(invCanEdit()||SESSION.rol==='admin'||SESSION.rol==='superadmin'){
+    html+='<button onclick="openInvMovModal(\''+itemId+'\',\'ingreso\')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px;font-weight:700">📥 Ingreso</button>';
+    if(invCanEdit()) html+='<button onclick="openInvMovModal(\''+itemId+'\',\'ajuste\')" style="background:var(--gray);color:#fff;border:none;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px;font-weight:700">⚖️ Ajuste</button>';
+  }
+  if(invCanEdit()) html+='<button onclick="openInvItemModal(\''+itemId+'\',\''+item.type+'\')" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px">✏️ Editar</button>';
+  html+='</div>';
+
+  // History
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">';
+  html+='<div style="padding:12px 16px;font-family:var(--cond);font-weight:800;border-bottom:1px solid var(--border)">Historial de movimientos</div>';
+  if(movs.length===0){
+    html+='<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Sin movimientos registrados</div>';
+  } else {
+    html+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    html+='<thead><tr style="background:var(--surface2)"><th style="padding:8px 12px;text-align:left">Nº Mov.</th><th style="padding:8px 12px;text-align:left">Tipo</th><th style="padding:8px 12px;text-align:left">Categoría</th><th style="padding:8px 12px;text-align:right">Cantidad</th><th style="padding:8px 12px;text-align:right">Stock</th><th style="padding:8px 12px;text-align:left">Usuario</th><th style="padding:8px 12px;text-align:left">Nota</th><th style="padding:8px 12px;text-align:left">Fecha</th></tr></thead>';
+    html+='<tbody>';
+    movs.forEach(function(m){
+      var tipoBg=m.tipo==='ingreso'?'rgba(16,185,129,.1)':m.tipo==='salida'?'rgba(227,24,55,.1)':'rgba(100,100,100,.1)';
+      var tipoColor=m.tipo==='ingreso'?'var(--green)':m.tipo==='salida'?'var(--red)':'var(--gray)';
+      var catLabel=m.categoria==='uso_propio'?'Uso propio':m.categoria==='venta_cliente'?'Venta cliente':m.categoria==='compra'?'Compra':m.categoria==='ajuste'?'Ajuste':'—';
+      html+='<tr style="border-bottom:1px solid var(--border)">';
+      html+='<td style="padding:7px 12px"><span onclick="invShowMovDetail(\''+m.id+'\')" style="color:var(--blue);cursor:pointer;text-decoration:underline;font-weight:700">'+m.id+'</span></td>';
+      html+='<td style="padding:7px 12px"><span style="background:'+tipoBg+';color:'+tipoColor+';padding:2px 6px;border-radius:4px;font-weight:700;font-size:10px">'+m.tipo.toUpperCase()+'</span></td>';
+      html+='<td style="padding:7px 12px;color:var(--text2)">'+catLabel+'</td>';
+      html+='<td style="padding:7px 12px;text-align:right;font-weight:700;color:'+(m.tipo==='ingreso'?'var(--green)':m.tipo==='salida'?'var(--red)':'var(--gray)')+'">'+((m.tipo==='ingreso'||m.tipo==='ajuste')?'+':'-')+invFmt(m.cantidad)+'</td>';
+      html+='<td style="padding:7px 12px;text-align:right">'+invFmt(m.cantidad_despues)+'</td>';
+      html+='<td style="padding:7px 12px">'+m.nombre_responsable+'</td>';
+      html+='<td style="padding:7px 12px;color:var(--text2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+m.nota+'">'+m.nota+'</td>';
+      html+='<td style="padding:7px 12px;color:var(--text3);white-space:nowrap">'+invDateFmt(m.created_at)+'</td>';
+      html+='</tr>';
+    });
+    html+='</tbody></table>';
+  }
+  html+='</div>';
+  body.innerHTML=html;
+}
+
+// ══ FIBRA — LOTES ══
+function renderFibraLotes(item){
+  var body=document.getElementById('inv-body');
+  if(!body) return;
+  var lotes=window._invLotes.filter(function(l){return l.item_id===item.id;});
+  var lotesActivos=lotes.filter(function(l){return l.estado==='activo';});
+  var lotesCerrados=lotes.filter(function(l){return l.estado==='cerrado';});
+
+  var html='<div style="margin-bottom:12px"><button onclick="renderInvList(\'inventario\')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:13px">← Volver</button></div>';
+  html+='<div style="font-family:var(--cond);font-size:20px;font-weight:900;margin-bottom:4px">'+item.nombre+'</div>';
+  html+='<div style="font-size:12px;color:var(--text3);margin-bottom:16px">Selecciona un lote para registrar movimientos</div>';
+
+  // Add lote button (admin/SA only)
+  if(invIsAdminSA()){
+    html+='<div style="margin-bottom:16px"><button onclick="openInvLoteModal(\''+item.id+'\',null)" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:700">+ Nuevo Lote</button></div>';
+  }
+
+  // Lotes activos
+  if(lotesActivos.length===0){
+    html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:30px;text-align:center;color:var(--text3);margin-bottom:16px">Sin lotes activos. Crea un nuevo lote para comenzar.</div>';
+  } else {
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:20px">';
+    lotesActivos.forEach(function(lote){
+      var pct=lote.cantidad_inicial>0?Math.round(lote.cantidad_actual/lote.cantidad_inicial*100):0;
+      html+='<div onclick="openFibraLoteDetail(\''+lote.id+'\')" style="background:var(--surface);border:1.5px solid var(--blue);border-radius:10px;padding:16px;cursor:pointer;transition:box-shadow .15s" onmouseover="this.style.boxShadow=\'0 2px 12px rgba(59,130,246,.15)\'" onmouseout="this.style.boxShadow=\'none\'">';
+      html+='<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">';
+      html+='<div style="font-weight:800;font-size:14px">'+lote.nombre+'</div>';
+      if(invIsAdminSA()) html+='<button onclick="event.stopPropagation();openInvLoteModal(\''+item.id+'\',\''+lote.id+'\')" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:12px" title="Editar nombre">✏️</button>';
+      html+='</div>';
+      html+='<div style="font-size:24px;font-weight:900;color:var(--blue);margin-bottom:4px">'+invFmt(lote.cantidad_actual)+' <span style="font-size:11px;color:var(--text3);font-weight:400">kg</span></div>';
+      html+='<div style="font-size:10px;color:var(--text3);margin-bottom:8px">Inicial: '+invFmt(lote.cantidad_inicial)+' kg</div>';
+      html+='<div style="background:var(--surface2);border-radius:4px;height:6px"><div style="width:'+pct+'%;background:var(--blue);height:6px;border-radius:4px;transition:width .3s"></div></div>';
+      html+='<div style="font-size:10px;color:var(--text3);margin-top:3px">'+pct+'% disponible</div>';
+      html+='</div>';
+    });
+    html+='</div>';
+  }
+
+  // Lotes cerrados
+  if(lotesCerrados.length>0){
+    html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">';
+    html+='<div style="padding:10px 16px;font-size:12px;font-weight:700;color:var(--text3);border-bottom:1px solid var(--border)">LOTES CERRADOS ('+lotesCerrados.length+')</div>';
+    lotesCerrados.forEach(function(lote){
+      html+='<div style="padding:10px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);font-size:12px">';
+      html+='<span style="color:var(--text2)">'+lote.nombre+'</span>';
+      html+='<div style="display:flex;align-items:center;gap:10px">';
+      html+='<span style="color:var(--text3)">'+invFmt(lote.cantidad_actual)+' kg restantes</span>';
+      html+='<span style="background:var(--surface2);color:var(--text3);font-size:9px;font-weight:800;padding:2px 6px;border-radius:100px">CERRADO</span>';
+      if(SESSION&&SESSION.rol==='superadmin') html+='<button onclick="invDeleteLote(\''+lote.id+'\')" style="background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:10px">Borrar</button>';
+      html+='</div></div>';
+    });
+    html+='</div>';
+  }
+
+  body.innerHTML=html;
+}
+
+async function openFibraLoteDetail(loteId){
+  var lote=window._invLotes.find(function(l){return l.id===loteId;});
+  if(!lote) return;
+  var item=window._invItems.find(function(i){return i.id===lote.item_id;});
+  if(!item) return;
+  var movs=window._invMovs.filter(function(m){return m.lote_id===loteId;});
+  var body=document.getElementById('inv-body');
+  if(!body) return;
+
+  var pct=lote.cantidad_inicial>0?Math.round(lote.cantidad_actual/lote.cantidad_inicial*100):0;
+  var html='<div style="margin-bottom:12px;display:flex;gap:8px">';
+  html+='<button onclick="renderFibraLotes(window._invItems.find(function(i){return i.id===\''+item.id+'\'}))" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:13px">← Volver a lotes</button>';
+  html+='</div>';
+
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px">';
+  html+='<div style="font-family:var(--cond);font-size:20px;font-weight:900;margin-bottom:4px">'+lote.nombre+'</div>';
+  html+='<div style="font-size:11px;color:var(--text3);margin-bottom:12px">Lote de '+item.nombre+'</div>';
+  html+='<div style="font-size:32px;font-weight:900;color:var(--blue);margin-bottom:4px">'+invFmt(lote.cantidad_actual)+' <span style="font-size:13px;color:var(--text3);font-weight:400">kg disponibles</span></div>';
+  html+='<div style="background:var(--surface2);border-radius:6px;height:10px;margin:10px 0"><div style="width:'+pct+'%;background:var(--blue);height:10px;border-radius:6px"></div></div>';
+  html+='<div style="font-size:11px;color:var(--text3)">'+pct+'% del lote inicial ('+invFmt(lote.cantidad_inicial)+' kg)</div>';
+  if(lote.estado==='cerrado') html+='<div style="margin-top:8px"><span style="background:var(--surface2);color:var(--text3);font-size:10px;font-weight:800;padding:3px 8px;border-radius:100px">LOTE CERRADO</span></div>';
+  html+='</div>';
+
+  // Botones solo si lote activo
+  if(lote.estado==='activo'){
+    html+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+    html+='<button onclick="openInvMovModal(\''+item.id+'\',\'salida\',\''+loteId+'\')" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px;font-weight:700">📤 Salida</button>';
+    if(invIsAdminSA()){
+      html+='<button onclick="openInvMovModal(\''+item.id+'\',\'ingreso\',\''+loteId+'\')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px;font-weight:700">📥 Ingreso</button>';
+      html+='<button onclick="invCerrarLote(\''+loteId+'\')" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px 18px;cursor:pointer;font-size:13px">🔒 Cerrar lote</button>';
+    }
+    html+='</div>';
+  }
+
+  // Historial del lote
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">';
+  html+='<div style="padding:12px 16px;font-family:var(--cond);font-weight:800;border-bottom:1px solid var(--border)">Historial del lote</div>';
+  if(movs.length===0){
+    html+='<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Sin movimientos en este lote</div>';
+  } else {
+    html+='<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)"><th style="padding:8px 12px;text-align:left">Nº Mov.</th><th style="padding:8px 12px;text-align:left">Tipo</th><th style="padding:8px 12px;text-align:left">Categoría</th><th style="padding:8px 12px;text-align:right">Cantidad</th><th style="padding:8px 12px;text-align:right">Restante</th><th style="padding:8px 12px;text-align:left">Usuario</th><th style="padding:8px 12px;text-align:left">Nota</th><th style="padding:8px 12px;text-align:left">Fecha</th></tr></thead><tbody>';
+    movs.forEach(function(m){
+      var tipoColor=m.tipo==='ingreso'?'var(--green)':m.tipo==='salida'?'var(--red)':'var(--gray)';
+      var catLabel=m.categoria==='uso_propio'?'Uso propio':m.categoria==='venta_cliente'?'Venta cliente':m.categoria==='compra'?'Compra':m.categoria==='ajuste'?'Ajuste':'—';
+      html+='<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 12px"><span onclick="invShowMovDetail(\''+m.id+'\')" style="color:var(--blue);cursor:pointer;text-decoration:underline;font-weight:700">'+m.id+'</span></td><td style="padding:7px 12px;font-weight:700;color:'+tipoColor+'">'+m.tipo.toUpperCase()+'</td><td style="padding:7px 12px;color:var(--text2)">'+catLabel+'</td><td style="padding:7px 12px;text-align:right;font-weight:700;color:'+tipoColor+'">'+((m.tipo==='ingreso')?'+':'-')+invFmt(m.cantidad)+'</td><td style="padding:7px 12px;text-align:right">'+invFmt(m.cantidad_despues)+'</td><td style="padding:7px 12px">'+m.nombre_responsable+'</td><td style="padding:7px 12px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+m.nota+'</td><td style="padding:7px 12px;color:var(--text3);white-space:nowrap">'+invDateFmt(m.created_at)+'</td></tr>';
+    });
+    html+='</tbody></table>';
+  }
+  html+='</div>';
+  body.innerHTML=html;
+}
+
+async function invCerrarLote(loteId){
+  if(!confirm('¿Cerrar este lote? Solo el superadmin podrá reabrirlo o borrarlo.')) return;
+  var res=await DB.from('inv_lotes').update({estado:'cerrado',cerrado_por:SESSION.id,cerrado_at:new Date().toISOString()}).eq('id',loteId);
+  if(!res.error){
+    var idx=window._invLotes.findIndex(function(l){return l.id===loteId;});
+    if(idx>=0){ window._invLotes[idx].estado='cerrado'; window._invLotes[idx].cerrado_por=SESSION.id; }
+    var lote=window._invLotes.find(function(l){return l.id===loteId;});
+    var item=window._invItems.find(function(i){return i.id===(lote&&lote.item_id);});
+    if(item) renderFibraLotes(item);
+    toast('✅ Lote cerrado');
+  }
+}
+
+async function invDeleteLote(loteId){
+  if(!confirm('¿BORRAR este lote permanentemente? Esta acción no se puede deshacer.')) return;
+  var res=await DB.from('inv_lotes').delete().eq('id',loteId);
+  if(!res.error){
+    window._invLotes=window._invLotes.filter(function(l){return l.id!==loteId;});
+    var firstFibra=window._invItems.find(function(i){return i.es_fibra;});
+    if(firstFibra) renderFibraLotes(firstFibra);
+    toast('✅ Lote borrado');
+  }
+}
+
+// ══ MODAL NUEVO/EDITAR ÍTEM ══
+function openInvItemModal(itemId, type){
+  var item=itemId?window._invItems.find(function(i){return i.id===itemId;}):null;
+  var label=type==='inventario'?'Inventario':'Activo';
+  var m=document.getElementById('invItemModal');
+  if(!m){
+    m=document.createElement('div');
+    m.id='invItemModal';
+    m.className='modal-overlay';
+    document.body.appendChild(m);
+  }
+  m.innerHTML='<div class="modal" style="width:480px;max-width:96vw">'
+    +'<div class="modal-hdr"><span class="modal-title">'+(item?'Editar':'Nuevo')+' '+label+'</span><button class="modal-close" onclick="document.getElementById(\'invItemModal\').classList.add(\'hidden\')">✕</button></div>'
+    +'<div class="modal-body">'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Nombre *</span><input type="text" id="iim-nombre" class="liq-inp" value="'+(item?item.nombre:'')+'" placeholder="Nombre del ítem"></div>'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Código *</span><input type="text" id="iim-codigo" class="liq-inp" value="'+(item?item.codigo:'')+'" placeholder="Ej: PROD-001"></div>'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Unidad</span><input type="text" id="iim-unidad" class="liq-inp" value="'+(item?item.unidad||'unidad':'unidad')+'" placeholder="unidad, kg, m2..."></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'
+    +'<div><span class="liq-label">Cantidad actual</span><input type="number" id="iim-cantidad" class="liq-inp" value="'+(item?item.cantidad:0)+'" min="0"></div>'
+    +'<div><span class="liq-label">Cantidad mínima</span><input type="number" id="iim-minimo" class="liq-inp" value="'+(item?item.cantidad_minima:0)+'" min="0"></div>'
+    +'</div>'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Foto</span>'+(item&&item.foto_url?'<img src="'+item.foto_url+'" style="display:block;width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid var(--border);margin-bottom:6px">':'')+'<input type="file" id="iim-foto-file" accept="image/*" style="display:block;width:100%;font-size:12px;margin-bottom:4px"><input type="hidden" id="iim-foto" value="'+(item?item.foto_url||'':'')+'"></div>'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Notas</span><textarea id="iim-notas" class="liq-inp" rows="2" style="resize:vertical">'+(item?item.notas||'':'')+'</textarea></div>'
+    +'</div>'
+    +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invItemModal\').classList.add(\'hidden\')">Cancelar</button><button class="modal-btn save" onclick="saveInvItem(\''+type+'\',\''+itemId+'\')">Guardar</button></div>'
+    +'</div>';
+  m.classList.remove('hidden');
+}
+
+async function saveInvItem(type, itemId){
+  var nombre=(document.getElementById('iim-nombre')?.value||'').trim();
+  var codigo=(document.getElementById('iim-codigo')?.value||'').trim();
+  var unidad=(document.getElementById('iim-unidad')?.value||'unidad').trim();
+  var cantidad=parseFloat(document.getElementById('iim-cantidad')?.value)||0;
+  var minimo=parseFloat(document.getElementById('iim-minimo')?.value)||0;
+  // Handle photo upload
+  var fotoFile=document.getElementById('iim-foto-file')?.files[0];
+  var foto=(document.getElementById('iim-foto')?.value||'').trim();
+  if(fotoFile){
+    var uploadedUrl=await invUploadFoto(fotoFile,id);
+    if(uploadedUrl) foto=uploadedUrl;
+  }
+  var notas=(document.getElementById('iim-notas')?.value||'').trim();
+  if(!nombre||!codigo){ toast('Nombre y código son obligatorios'); return; }
+  var id=itemId||('item-'+Date.now());
+  var row={id:id,type:type,nombre:nombre,codigo:codigo,unidad:unidad,cantidad:cantidad,cantidad_minima:minimo,foto_url:foto,notas:notas,es_fibra:false,activo:true,created_by:SESSION.id,updated_at:new Date().toISOString()};
+  var res=await DB.from('inv_items').upsert(row,{onConflict:'id'});
+  if(res.error){ toast('Error guardando: '+res.error.message); return; }
+  // Update local cache
+  var idx=window._invItems.findIndex(function(i){return i.id===id;});
+  if(idx>=0) window._invItems[idx]=row; else window._invItems.push(row);
+  document.getElementById('invItemModal').classList.add('hidden');
+  renderInvList(type);
+  toast('✅ Ítem guardado');
+  // Check minimum
+  if(cantidad<=minimo) invCheckMinimo(id, cantidad, minimo);
+}
+
+// ══ MODAL LOTE ══
+function openInvLoteModal(itemId, loteId){
+  var lote=loteId?window._invLotes.find(function(l){return l.id===loteId;}):null;
+  var m=document.getElementById('invLoteModal');
+  if(!m){ m=document.createElement('div'); m.id='invLoteModal'; m.className='modal-overlay'; document.body.appendChild(m); }
+  m.innerHTML='<div class="modal" style="width:400px;max-width:96vw">'
+    +'<div class="modal-hdr"><span class="modal-title">'+(lote?'Editar':'Nuevo')+' Lote</span><button class="modal-close" onclick="document.getElementById(\'invLoteModal\').classList.add(\'hidden\')">✕</button></div>'
+    +'<div class="modal-body">'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Nombre del lote *</span><input type="text" id="ilm-nombre" class="liq-inp" value="'+(lote?lote.nombre:'')+'" placeholder="Ej: Lote Enero 2026"></div>'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Cantidad inicial (kg)</span><input type="number" id="ilm-cantidad" class="liq-inp" value="'+(lote?lote.cantidad_inicial:16000)+'" min="0"></div>'
+    +(lote?'<div style="margin-bottom:10px"><span class="liq-label">Cantidad actual (kg)</span><input type="number" id="ilm-actual" class="liq-inp" value="'+lote.cantidad_actual+'" min="0"></div>':'')
+    +(lote?'<div style="margin-bottom:10px"><span class="liq-label">Estado</span><select id="ilm-estado" class="liq-inp"><option value="activo"'+(lote.estado==="activo"?" selected":"")+'>Activo</option><option value="cerrado"'+(lote.estado==="cerrado"?" selected":"")+'>Cerrado</option></select></div>':'')
+    +'</div>'
+    +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invLoteModal\').classList.add(\'hidden\')">Cancelar</button><button class="modal-btn save" onclick="saveInvLote(\''+itemId+'\',\''+loteId+'\')">Guardar</button></div>'
+    +'</div>';
+  m.classList.remove('hidden');
+}
+
+async function saveInvLote(itemId, loteId){
+  var nombre=(document.getElementById('ilm-nombre')?.value||'').trim();
+  if(!nombre){ toast('El nombre del lote es obligatorio'); return; }
+  if(loteId&&loteId!=='null'){
+    var cantIniEdit=parseFloat(document.getElementById('ilm-cantidad')?.value)||0;
+    var cantActEdit=parseFloat(document.getElementById('ilm-actual')?.value)||0;
+    var estadoEdit=document.getElementById('ilm-estado')?.value||'activo';
+    var res=await DB.from('inv_lotes').update({nombre:nombre,cantidad_inicial:cantIniEdit,cantidad_actual:cantActEdit,estado:estadoEdit,updated_at:new Date().toISOString()}).eq('id',loteId);
+    if(!res.error){
+      var idx=window._invLotes.findIndex(function(l){return l.id===loteId;});
+      if(idx>=0){window._invLotes[idx].nombre=nombre;window._invLotes[idx].cantidad_inicial=cantIniEdit;window._invLotes[idx].cantidad_actual=cantActEdit;window._invLotes[idx].estado=estadoEdit;}
+      toast('✅ Lote actualizado');
+    }
+  } else {
+    var cantIni=parseFloat(document.getElementById('ilm-cantidad')?.value)||16000;
+    var newId='lote-'+Date.now();
+    var row={id:newId,item_id:itemId,nombre:nombre,cantidad_inicial:cantIni,cantidad_actual:cantIni,estado:'activo',created_by:SESSION.id};
+    var res2=await DB.from('inv_lotes').insert(row);
+    if(!res2.error){
+      window._invLotes.push(row);
+      // Update item total quantity
+      var totalKg=(window._invLotes.filter(function(l){return l.item_id===itemId&&l.estado==='activo';}).reduce(function(s,l){return s+l.cantidad_actual;},0));
+      await DB.from('inv_items').update({cantidad:totalKg,updated_at:new Date().toISOString()}).eq('id',itemId);
+      var iIdx=window._invItems.findIndex(function(i){return i.id===itemId;});
+      if(iIdx>=0) window._invItems[iIdx].cantidad=totalKg;
+      toast('✅ Lote creado');
+    }
+  }
+  document.getElementById('invLoteModal').classList.add('hidden');
+  var item=window._invItems.find(function(i){return i.id===itemId;});
+  if(item) renderFibraLotes(item);
+}
+
+// ══ MODAL MOVIMIENTO ══
+function openInvMovModal(itemId, tipo, loteId){
+  var item=window._invItems.find(function(i){return i.id===itemId;});
+  if(!item) return;
+  var lote=loteId&&loteId!=='undefined'?window._invLotes.find(function(l){return l.id===loteId;}):null;
+  var m=document.getElementById('invMovModal');
+  if(!m){ m=document.createElement('div'); m.id='invMovModal'; m.className='modal-overlay'; document.body.appendChild(m); }
+
+  var tipoLabel=tipo==='salida'?'Salida':tipo==='ingreso'?'Ingreso':'Ajuste';
+  var tipoColor=tipo==='salida'?'var(--red)':tipo==='ingreso'?'var(--green)':'var(--gray)';
+
+  var catHTML='';
+  if(tipo==='salida'){
+    catHTML='<div style="margin-bottom:10px"><span class="liq-label">Categoría *</span>'
+      +'<select id="imm-cat" class="liq-inp" onchange="invToggleVendedor()">'
+      +'<option value="">-- Seleccionar --</option>'
+      +'<option value="uso_propio">Uso propio de negocio</option>'
+      +'<option value="venta_cliente">Venta cliente</option>'
+      +'</select></div>'
+      +'<div id="imm-vendedor-wrap" style="display:none;margin-bottom:10px"><span class="liq-label">Usuario que realizó la venta *</span>'
+      +'<select id="imm-vendedor" class="liq-inp">'
+      +'<option value="">-- Seleccionar usuario --</option>'
+      +getUsers().map(function(u){return '<option value="'+u.id+'">'+u.nombre+' ('+u.rol+')</option>';}).join('')
+      +'</select></div>';
+  } else if(tipo==='ingreso'){
+    catHTML='<input type="hidden" id="imm-cat" value="compra">';
+  } else {
+    catHTML='<input type="hidden" id="imm-cat" value="ajuste">';
+  }
+
+  var cantidadLabel=tipo==='ajuste'?'Cantidad a ajustar (solo de esta compra)':'Cantidad ('+item.unidad+')';
+
+  m.innerHTML='<div class="modal" style="width:440px;max-width:96vw">'
+    +'<div class="modal-hdr"><span class="modal-title" style="color:'+tipoColor+'">'+tipoLabel+' — '+item.nombre+(lote?' / '+lote.nombre:'')+'</span><button class="modal-close" onclick="document.getElementById(\'invMovModal\').classList.add(\'hidden\')">✕</button></div>'
+    +'<div class="modal-body">'
+    +'<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px">Stock actual: <strong>'+invFmt(lote?lote.cantidad_actual:item.cantidad)+' '+(item.unidad||'')+'</strong></div>'
+    +catHTML
+    +'<div style="margin-bottom:10px"><span class="liq-label">'+cantidadLabel+' *</span><input type="number" id="imm-cantidad" class="liq-inp" '+(tipo==='ajuste'?'step="0.01" placeholder="Positivo (+) o negativo (-)"':'min="0.01" step="0.01" placeholder="0"')+'>\</div>'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Nota / Descripción *</span><textarea id="imm-nota" class="liq-inp" rows="3" placeholder="Describe el motivo del movimiento..."></textarea></div>'
+    +'</div>'
+    +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invMovModal\').classList.add(\'hidden\')">Cancelar</button>'
+    +'<button class="modal-btn save" style="background:'+tipoColor+';border-color:'+tipoColor+'" onclick="saveInvMov(\''+itemId+'\',\''+tipo+'\','+(lote?'\''+lote.id+'\'':'null')+')">Registrar '+tipoLabel+'</button>'
+    +'</div></div>';
+  m.classList.remove('hidden');
+}
+
+function invToggleVendedor(){
+  var cat=document.getElementById('imm-cat')?.value;
+  var wrap=document.getElementById('imm-vendedor-wrap');
+  if(wrap) wrap.style.display=cat==='venta_cliente'?'block':'none';
+}
+
+async function saveInvMov(itemId, tipo, loteId){
+  var cat=document.getElementById('imm-cat')?.value||'';
+  var cantidad=parseFloat(document.getElementById('imm-cantidad')?.value)||0;
+  var nota=(document.getElementById('imm-nota')?.value||'').trim();
+  var vendedorId=document.getElementById('imm-vendedor')?.value||'';
+
+  if(tipo==='salida'&&!cat){ toast('Selecciona una categoría'); return; }
+  if(tipo==='salida'&&cat==='venta_cliente'&&!vendedorId){ toast('Selecciona el usuario que realizó la venta'); return; }
+  if(tipo!=='ajuste'&&(!cantidad||cantidad<=0)){ toast('Ingresa una cantidad válida'); return; }
+  if(tipo==='ajuste'&&cantidad===0){ toast('Ingresa una cantidad diferente a 0'); return; }
+  if(!nota){ toast('La nota es obligatoria'); return; }
+
+  var item=window._invItems.find(function(i){return i.id===itemId;});
+  var lote=loteId&&loteId!=='null'?window._invLotes.find(function(l){return l.id===loteId;}):null;
+  var stockActual=lote?lote.cantidad_actual:item.cantidad;
+
+  if(tipo==='salida'&&cantidad>stockActual){ toast('La cantidad supera el stock disponible ('+invFmt(stockActual)+')'); return; }
+
+  var movId=invNextMovNum(itemId);
+  var cantAntes=stockActual;
+  var cantDespues;
+  if(tipo==='ajuste') cantDespues=stockActual+cantidad; // puede ser negativo
+  else if(tipo==='salida') cantDespues=stockActual-cantidad;
+  else cantDespues=stockActual+cantidad;
+
+  var vendedor=vendedorId?getUsers().find(function(u){return u.id===vendedorId;}):null;
+
+  var movRow={
+    id:movId, item_id:itemId, lote_id:loteId&&loteId!=='null'?loteId:null,
+    tipo:tipo, categoria:cat, cantidad:cantidad,
+    cantidad_antes:cantAntes, cantidad_despues:cantDespues,
+    nota:nota, uid_responsable:SESSION.id, nombre_responsable:SESSION.nombre,
+    uid_vendedor:vendedorId||'', nombre_vendedor:vendedor?vendedor.nombre:'',
+    venta_id:'', created_at:new Date().toISOString()
+  };
+
+  var res=await DB.from('inv_movimientos').insert(movRow);
+  if(res.error){ toast('Error: '+res.error.message); return; }
+  window._invMovs.unshift(movRow);
+
+  // Update stock
+  if(lote){
+    var newLoteQty=cantDespues;
+    await DB.from('inv_lotes').update({cantidad_actual:newLoteQty,updated_at:new Date().toISOString()}).eq('id',lote.id);
+    var lIdx=window._invLotes.findIndex(function(l){return l.id===lote.id;});
+    if(lIdx>=0) window._invLotes[lIdx].cantidad_actual=newLoteQty;
+    // Update item total from all active lotes
+    var totalKg=window._invLotes.filter(function(l){return l.item_id===itemId&&l.estado==='activo';}).reduce(function(s,l){return s+l.cantidad_actual;},0);
+    await DB.from('inv_items').update({cantidad:totalKg,updated_at:new Date().toISOString()}).eq('id',itemId);
+    var iIdx=window._invItems.findIndex(function(i){return i.id===itemId;});
+    if(iIdx>=0) window._invItems[iIdx].cantidad=totalKg;
+  } else {
+    await DB.from('inv_items').update({cantidad:cantDespues,updated_at:new Date().toISOString()}).eq('id',itemId);
+    var iIdx2=window._invItems.findIndex(function(i){return i.id===itemId;});
+    if(iIdx2>=0) window._invItems[iIdx2].cantidad=cantDespues;
+  }
+
+  // Check minimum alert
+  if(cantDespues<=item.cantidad_minima) await invCheckMinimo(itemId, cantDespues, item.cantidad_minima);
+
+  // Generate incomplete venta line if venta_cliente
+  if(tipo==='salida'&&cat==='venta_cliente'&&vendedorId){
+    await invGenerarVentaIncompleta(vendedorId, item, cantidad, movId);
+  }
+
+  document.getElementById('invMovModal').classList.add('hidden');
+  toast('✅ Movimiento registrado — '+movId);
+
+  // Refresh view
+  if(lote){
+    var loteRef=window._invLotes.find(function(l){return l.id===lote.id;});
+    if(loteRef) openFibraLoteDetail(loteRef.id);
+  } else {
+    openInvItemDetail(itemId);
+  }
+}
+
+// ── Check y crear alerta de mínimo ──
+async function invCheckMinimo(itemId, cantidad, minimo){
+  var item=window._invItems.find(function(i){return i.id===itemId;});
+  var alertaId='alerta-'+itemId+'-'+Date.now();
+  var row={id:alertaId,item_id:itemId,cantidad_al_momento:cantidad,cantidad_minima:minimo,resuelta:false,created_at:new Date().toISOString()};
+  await DB.from('inv_alertas').insert(row);
+  window._invAlertas.unshift(row);
+  // Notify admins
+  var admins=getUsers().filter(function(u){return u.rol==='admin'||u.rol==='superadmin';});
+  admins.forEach(function(u){ addNotification(u.id,'⚠️','Alerta inventario: '+(item?item.nombre:itemId)+' llegó a '+invFmt(cantidad)+' (mínimo: '+invFmt(minimo)+')'); });
+  toast('⚠️ Alerta: '+(item?item.nombre:itemId)+' bajo mínimo');
+}
+
+// ── Generar línea de venta incompleta ──
+async function invGenerarVentaIncompleta(vendedorId, item, cantidad, movId){
+  var now=new Date();
+  var y=now.getFullYear(); var m=now.getMonth(); var mk=y+'-'+pad(m+1);
+  var vd=getVentasData(vendedorId);
+  if(!vd[mk]) vd[mk]={ventas:[],tc:525,comisVerif:false};
+  var vid='inv-venta-'+Date.now();
+  var nuevaVenta={
+    id:vid, fecha:now.toISOString().split('T')[0],
+    prodId:'', cantidad:cantidad, precio:0, precioUnit:0,
+    subtotal:0, iva:0, total:0,
+    cliente:'', factura:'', proyecto:'',
+    pago:'CONTADO', plazoCredito:'', comision:0,
+    esTercero:false, isUSD:false, tcUsed:0, depositoNum:'',
+    notas:'Venta desde Inventario — Ítem: '+item.nombre+' | Mov: '+movId,
+    estado:'incompleta', isAdminVenta:false,
+    invMovId:movId, invItemNombre:item.nombre, invCantidad:cantidad
+  };
+  vd[mk].ventas.push(nuevaVenta);
+  setVentasData(vendedorId, vd);
+  toast('📝 Línea de venta incompleta generada para '+getUsers().find(function(u){return u.id===vendedorId;})?.nombre);
+}
+
+// ── Ver detalle de movimiento (desde número de movimiento) ──
+function invShowMovDetail(movId){
+  var mov=window._invMovs.find(function(m){return m.id===movId;});
+  if(!mov){ toast('Movimiento no encontrado'); return; }
+  var item=window._invItems.find(function(i){return i.id===mov.item_id;})||{nombre:mov.item_id};
+  var lote=mov.lote_id?window._invLotes.find(function(l){return l.id===mov.lote_id;}):null;
+  var catLabel=mov.categoria==='uso_propio'?'Uso propio de negocio':mov.categoria==='venta_cliente'?'Venta cliente':mov.categoria==='compra'?'Compra (ingreso)':mov.categoria==='ajuste'?'Ajuste':'—';
+
+  var html='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:480px;margin:0 auto">'
+    +'<div style="font-family:var(--cond);font-size:18px;font-weight:900;margin-bottom:4px">Movimiento '+movId+'</div>'
+    +'<table style="width:100%;font-size:13px;margin-top:12px"><tbody>'
+    +'<tr><td style="padding:5px 0;color:var(--text3);width:140px">Ítem</td><td style="font-weight:700">'+item.nombre+'</td></tr>'
+    +(lote?'<tr><td style="padding:5px 0;color:var(--text3)">Lote</td><td>'+lote.nombre+'</td></tr>':'')
+    +'<tr><td style="padding:5px 0;color:var(--text3)">Tipo</td><td><strong>'+mov.tipo.toUpperCase()+'</strong></td></tr>'
+    +'<tr><td style="padding:5px 0;color:var(--text3)">Categoría</td><td>'+catLabel+'</td></tr>'
+    +'<tr><td style="padding:5px 0;color:var(--text3)">Cantidad</td><td style="font-weight:700">'+invFmt(mov.cantidad)+' '+(item.unidad||'')+'</td></tr>'
+    +'<tr><td style="padding:5px 0;color:var(--text3)">Stock antes</td><td>'+invFmt(mov.cantidad_antes)+'</td></tr>'
+    +'<tr><td style="padding:5px 0;color:var(--text3)">Stock después</td><td>'+invFmt(mov.cantidad_despues)+'</td></tr>'
+    +'<tr><td style="padding:5px 0;color:var(--text3)">Responsable</td><td>'+mov.nombre_responsable+'</td></tr>'
+    +(mov.nombre_vendedor?'<tr><td style="padding:5px 0;color:var(--text3)">Vendedor</td><td>'+mov.nombre_vendedor+'</td></tr>':'')
+    +'<tr><td style="padding:5px 0;color:var(--text3)">Nota</td><td>'+mov.nota+'</td></tr>'
+    +'<tr><td style="padding:5px 0;color:var(--text3)">Fecha</td><td>'+invDateFmt(mov.created_at)+'</td></tr>'
+    +'</tbody></table></div>';
+
+  // Show as modal or inline
+  var m=document.getElementById('invMovDetailModal');
+  if(!m){ m=document.createElement('div'); m.id='invMovDetailModal'; m.className='modal-overlay'; document.body.appendChild(m); }
+  m.innerHTML='<div class="modal" style="width:500px;max-width:96vw">'
+    +'<div class="modal-hdr"><span class="modal-title">Detalle de Movimiento</span><button class="modal-close" onclick="document.getElementById(\'invMovDetailModal\').classList.add(\'hidden\')">✕</button></div>'
+    +'<div class="modal-body">'+html+'</div>'
+    +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invMovDetailModal\').classList.add(\'hidden\')">Cerrar</button></div>'
+    +'</div>';
+  m.classList.remove('hidden');
+}
+
+// ══ REPORTES ══
+function renderInvReportes(){
+  var body=document.getElementById('inv-body');
+  if(!body) return;
+  var movs=window._invMovs;
+  var items=window._invItems;
+
+  // Filter controls
+  var html='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">';
+  html+='<div><span class="liq-label">Ítem</span><select id="rep-item" class="liq-inp" style="min-width:160px"><option value="all">Todos</option>'+items.map(function(i){return '<option value="'+i.id+'">'+i.nombre+'</option>';}).join('')+'</select></div>';
+  html+='<div><span class="liq-label">Usuario</span><select id="rep-user" class="liq-inp" style="min-width:140px"><option value="all">Todos</option>'+getUsers().map(function(u){return '<option value="'+u.id+'">'+u.nombre+'</option>';}).join('')+'</select></div>';
+  html+='<div><span class="liq-label">Desde</span><input type="date" id="rep-desde" class="liq-inp"></div>';
+  html+='<div><span class="liq-label">Hasta</span><input type="date" id="rep-hasta" class="liq-inp"></div>';
+  html+='<button onclick="renderInvReporteBody()" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:700">Filtrar</button>';
+  html+='</div>';
+  html+='<div id="rep-body"></div>';
+  body.innerHTML=html;
+  renderInvReporteBody();
+}
+
+function renderInvReporteBody(){
+  var itemFil=document.getElementById('rep-item')?.value||'all';
+  var userFil=document.getElementById('rep-user')?.value||'all';
+  var desde=document.getElementById('rep-desde')?.value||'';
+  var hasta=document.getElementById('rep-hasta')?.value||'';
+  var movs=window._invMovs.filter(function(m){
+    if(itemFil!=='all'&&m.item_id!==itemFil) return false;
+    if(userFil!=='all'&&m.uid_responsable!==userFil) return false;
+    if(desde&&(m.created_at||'')<desde) return false;
+    if(hasta&&(m.created_at||'').substring(0,10)>hasta) return false;
+    return true;
+  });
+
+  var usoPropio=movs.filter(function(m){return m.categoria==='uso_propio';});
+  var ventaCliente=movs.filter(function(m){return m.categoria==='venta_cliente';});
+  var totalSalidas=movs.filter(function(m){return m.tipo==='salida';}).reduce(function(s,m){return s+m.cantidad;},0);
+  var totalIngresos=movs.filter(function(m){return m.tipo==='ingreso';}).reduce(function(s,m){return s+m.cantidad;},0);
+
+  var rep=document.getElementById('rep-body');
+  if(!rep) return;
+
+  var html='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px">';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--blue)">'+movs.length+'</div><div style="font-size:10px;color:var(--text3)">MOVIMIENTOS</div></div>';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--red)">'+invFmt(totalSalidas)+'</div><div style="font-size:10px;color:var(--text3)">TOTAL SALIDAS</div></div>';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--green)">'+invFmt(totalIngresos)+'</div><div style="font-size:10px;color:var(--text3)">TOTAL INGRESOS</div></div>';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--gray)">'+usoPropio.length+'</div><div style="font-size:10px;color:var(--text3)">USO PROPIO</div></div>';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-size:22px;font-weight:900;color:var(--orange,#F59E0B)">'+ventaCliente.length+'</div><div style="font-size:10px;color:var(--text3)">VENTA CLIENTE</div></div>';
+  html+='</div>';
+
+  // Charts uso propio vs venta cliente
+  var totalSal=usoPropio.length+ventaCliente.length||1;
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">';
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">';
+  html+='<div style="font-family:var(--cond);font-weight:800;margin-bottom:12px">Distribución de salidas</div>';
+  ['uso_propio','venta_cliente'].forEach(function(cat){
+    var count=movs.filter(function(m){return m.categoria===cat;}).length;
+    var pct=Math.round(count/totalSal*100);
+    var color=cat==='uso_propio'?'var(--blue)':'#F59E0B';
+    var label=cat==='uso_propio'?'Uso propio':'Venta cliente';
+    html+='<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>'+label+'</span><span style="font-weight:700">'+count+' ('+pct+'%)</span></div><div style="background:var(--surface2);border-radius:4px;height:10px"><div style="width:'+pct+'%;background:'+color+';height:10px;border-radius:4px"></div></div></div>';
+  });
+  html+='</div>';
+
+  // Top items by salidas
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px">';
+  html+='<div style="font-family:var(--cond);font-weight:800;margin-bottom:12px">Salidas por ítem</div>';
+  var byItem={};
+  movs.filter(function(m){return m.tipo==='salida';}).forEach(function(m){
+    var item=window._invItems.find(function(i){return i.id===m.item_id;})||{nombre:m.item_id};
+    byItem[item.nombre]=(byItem[item.nombre]||0)+m.cantidad;
+  });
+  var sortedItems=Object.keys(byItem).sort(function(a,b){return byItem[b]-byItem[a];}).slice(0,5);
+  var maxQ=sortedItems.length?byItem[sortedItems[0]]:1;
+  if(sortedItems.length===0){
+    html+='<div style="color:var(--text3);font-size:12px">Sin salidas en el período</div>';
+  } else {
+    sortedItems.forEach(function(nombre,i){
+      var colors=['#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6'];
+      var pct=Math.round(byItem[nombre]/maxQ*100);
+      html+='<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px"><span>'+nombre+'</span><span style="font-weight:700">'+invFmt(byItem[nombre])+'</span></div><div style="background:var(--surface2);border-radius:4px;height:8px"><div style="width:'+pct+'%;background:'+colors[i]+';height:8px;border-radius:4px"></div></div></div>';
+    });
+  }
+  html+='</div></div>';
+
+  // Export buttons
+  html+='<div style="display:flex;gap:8px;margin-bottom:12px">';
+  html+='<button onclick="invExportMovs(\'historial\')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:700">⬇ Exportar historial completo</button>';
+  html+='<button onclick="invExportMovs(\'totales\')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:700">⬇ Exportar totales</button>';
+  html+='</div>';
+
+  // Movimientos table
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:auto">';
+  html+='<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:700px">';
+  html+='<thead><tr style="background:var(--surface2)"><th style="padding:8px 10px;text-align:left">Nº Mov.</th><th style="padding:8px 10px;text-align:left">Ítem</th><th style="padding:8px 10px;text-align:left">Tipo</th><th style="padding:8px 10px;text-align:left">Categoría</th><th style="padding:8px 10px;text-align:right">Cantidad</th><th style="padding:8px 10px;text-align:left">Responsable</th><th style="padding:8px 10px;text-align:left">Nota</th><th style="padding:8px 10px;text-align:left">Fecha</th></tr></thead><tbody>';
+  movs.slice(0,100).forEach(function(m){
+    var item=window._invItems.find(function(i){return i.id===m.item_id;})||{nombre:m.item_id};
+    var tipoColor=m.tipo==='ingreso'?'var(--green)':m.tipo==='salida'?'var(--red)':'var(--gray)';
+    var catLabel=m.categoria==='uso_propio'?'Uso propio':m.categoria==='venta_cliente'?'Venta cliente':m.categoria==='compra'?'Compra':m.categoria==='ajuste'?'Ajuste':'—';
+    html+='<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 10px"><span onclick="invShowMovDetail(\''+m.id+'\')" style="color:var(--blue);cursor:pointer;text-decoration:underline">'+m.id+'</span></td><td style="padding:6px 10px">'+item.nombre+'</td><td style="padding:6px 10px;color:'+tipoColor+';font-weight:700">'+m.tipo.toUpperCase()+'</td><td style="padding:6px 10px">'+catLabel+'</td><td style="padding:6px 10px;text-align:right;font-weight:700;color:'+tipoColor+'">'+invFmt(m.cantidad)+'</td><td style="padding:6px 10px">'+m.nombre_responsable+'</td><td style="padding:6px 10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+m.nota+'</td><td style="padding:6px 10px;color:var(--text3);white-space:nowrap">'+invDateFmt(m.created_at)+'</td></tr>';
+  });
+  html+='</tbody></table></div>';
+  if(movs.length>100) html+='<div style="padding:8px;text-align:center;font-size:11px;color:var(--text3)">Mostrando primeros 100 de '+movs.length+' movimientos. Usa exportar para ver todos.</div>';
+
+  rep.innerHTML=html;
+}
+
+function invExportMovs(mode){
+  var movs=window._invMovs;
+  var items=window._invItems;
+  var tsv, filename;
+  if(mode==='totales'){
+    var headers=['Ítem','Tipo','Unidad','Cantidad Disponible','Total Entradas','Total Salidas'];
+    var rows=items.map(function(item){
+      var iMovs=movs.filter(function(m){return m.item_id===item.id;});
+      var entradas=iMovs.filter(function(m){return m.tipo==='ingreso';}).reduce(function(s,m){return s+m.cantidad;},0);
+      var salidas=iMovs.filter(function(m){return m.tipo==='salida';}).reduce(function(s,m){return s+m.cantidad;},0);
+      return [item.nombre,item.type,item.unidad||'',item.cantidad,entradas,salidas];
+    });
+    tsv='sep=\t\r\n'+headers.join('\t')+'\r\n'+rows.map(function(r){return r.join('\t');}).join('\r\n');
+    filename='CONCRE_Inventario_Totales_'+new Date().toISOString().split('T')[0]+'.csv';
+  } else {
+    var headers2=['Nº Movimiento','Ítem','Lote','Tipo','Categoría','Cantidad','Stock Antes','Stock Después','Responsable','Vendedor','Nota','Fecha'];
+    var rows2=movs.map(function(m){
+      var item=items.find(function(i){return i.id===m.item_id;})||{nombre:m.item_id};
+      var lote=m.lote_id?window._invLotes.find(function(l){return l.id===m.lote_id;}):null;
+      var catLabel=m.categoria==='uso_propio'?'Uso propio':m.categoria==='venta_cliente'?'Venta cliente':m.categoria==='compra'?'Compra':m.categoria==='ajuste'?'Ajuste':'';
+      return [m.id,item.nombre,lote?lote.nombre:'',m.tipo,catLabel,m.cantidad,m.cantidad_antes,m.cantidad_despues,m.nombre_responsable,m.nombre_vendedor||'',m.nota,invDateFmt(m.created_at)];
+    });
+    tsv='sep=\t\r\n'+headers2.join('\t')+'\r\n'+rows2.map(function(r){return r.map(function(v){return String(v||'').replace(/\t/g,' ');}).join('\t');}).join('\r\n');
+    filename='CONCRE_Inventario_Historial_'+new Date().toISOString().split('T')[0]+'.csv';
+  }
+  var bom=new Uint8Array([0xFF,0xFE]);
+  var encoded=new Uint16Array(tsv.length);
+  for(var i=0;i<tsv.length;i++) encoded[i]=tsv.charCodeAt(i);
+  var blob=new Blob([bom,encoded],{type:'text/csv;charset=utf-16le'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('✅ Exportado: '+filename);
+}
+
+// ══ PERMISOS ══
+function renderInvPermisos(){
+  var body=document.getElementById('inv-body');
+  if(!body) return;
+  var users=getUsers().filter(function(u){return u.rol==='user';});
+  var admins=getUsers().filter(function(u){return u.rol==='admin';});
+
+  var html='<div style="font-family:var(--cond);font-size:18px;font-weight:900;margin-bottom:14px">Permisos de Inventario</div>';
+  html+='<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--text2)">Los administradores y superadministradores tienen acceso completo por defecto. Aquí puedes otorgar acceso a usuarios regulares.</div>';
+
+  html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">';
+  html+='<div style="padding:10px 16px;font-weight:800;border-bottom:1px solid var(--border)">Usuarios</div>';
+  users.forEach(function(u){
+    var nivel=window._invPermisos[u.id]||'ninguno';
+    html+='<div style="padding:10px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">';
+    html+='<div><div style="font-weight:700">'+u.nombre+'</div><div style="font-size:11px;color:var(--text3)">'+u.username+'</div></div>';
+    html+='<select onchange="saveInvPermiso(\''+u.id+'\',this.value)" style="border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;background:var(--surface)">';
+    ['ninguno','restringido','completo'].forEach(function(n){
+      html+='<option value="'+n+'"'+(nivel===n?' selected':'')+'>'+n.charAt(0).toUpperCase()+n.slice(1)+'</option>';
+    });
+    html+='</select>';
+    html+='</div>';
+  });
+  if(users.length===0) html+='<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Sin usuarios regulares registrados</div>';
+  html+='</div>';
+
+  html+='<div style="margin-top:12px;background:var(--surface2);border-radius:8px;padding:10px 14px;font-size:11px;color:var(--text3)">';
+  html+='<strong>Ninguno:</strong> Sin acceso al módulo. <strong>Restringido:</strong> Solo salidas e ingresos por compra. <strong>Completo:</strong> Acceso total (crear, editar, borrar).';
+  html+='</div>';
+
+  body.innerHTML=html;
+}
+
+async function saveInvPermiso(uid, nivel){
+  var res=await DB.from('inv_permisos').upsert({uid:uid,nivel:nivel,updated_by:SESSION.id,updated_at:new Date().toISOString()},{onConflict:'uid'});
+  if(!res.error){
+    window._invPermisos[uid]=nivel;
+    toast('✅ Permiso actualizado');
+  } else {
+    toast('Error: '+res.error.message);
+  }
+}
+
+
 </script>
 
 </head>
@@ -11825,7 +12880,15 @@ function applySearchableSelects(){
 
       </div><!-- /admin-main -->
     </div><!-- /admin-layout -->
-  </div><!-- /adminPanel -->
+  
+          <!-- ════════════════════════════════
+               INVENTARIO
+          ════════════════════════════════ -->
+          <div id="sec-inventario" class="admin-section">
+            <div id="inv-root"></div>
+          </div>
+
+</div><!-- /adminPanel -->
 
   <!-- USER MODULE -->
   <div id="userModule" style="display:none;flex:1;min-height:calc(100vh - 60px)">
