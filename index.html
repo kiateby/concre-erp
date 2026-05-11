@@ -1478,6 +1478,7 @@ function switchUserTab(tab, btn){
     if(fm) fm.style.display='none';
     if(gm) gm.style.display='none';
     if(vtm) vtm.style.display='none';
+    var invUM=document.getElementById('invUserModule'); if(invUM) invUM.style.display='none';
     if(tab==='horas'){
       if(um) um.style.cssText='display:flex;flex:1';
     } else if(tab==='vacaciones'){
@@ -1494,18 +1495,18 @@ function switchUserTab(tab, btn){
       if(gtm){ gtm.style.cssText='display:flex;flex:1'; }
       try{ initGastosModule(); }catch(e2){ console.error('initGastosModule error:',e2); }
     } else if(tab==='inventario'){
-      // Render inv module in user context — use a container div inside userModule
-      var im=document.getElementById('userModule');
-      if(im){ im.style.cssText='display:flex;flex:1;flex-direction:column;'; }
-      var invRoot=document.getElementById('inv-root-user');
-      if(!invRoot){
-        invRoot=document.createElement('div');
-        invRoot.id='inv-root-user';
-        invRoot.style.cssText='flex:1;padding:20px;overflow-y:auto;background:var(--bg)';
-        if(im) im.appendChild(invRoot);
+      // Show the user inv module (hidden div outside userModule)
+      var invUserMod=document.getElementById('invUserModule');
+      if(!invUserMod){
+        invUserMod=document.createElement('div');
+        invUserMod.id='invUserModule';
+        invUserMod.style.cssText='flex:1;overflow-y:auto;background:var(--bg);';
+        invUserMod.innerHTML='<div id="inv-root" style="padding:20px"></div>';
+        var appShell=document.getElementById('appShell');
+        if(appShell) appShell.appendChild(invUserMod);
       }
-      // Override inv-root to use user container
-      invRoot.innerHTML='<div id="inv-root"></div>';
+      invUserMod.style.display='flex';
+      invUserMod.style.flexDirection='column';
       try{ initInventario(); }catch(e2){ console.error('initInventario error:',e2); }
     }
   }catch(e){ console.error('switchUserTab error:',e); toast('Error al cambiar pestaña: '+e.message); }
