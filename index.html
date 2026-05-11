@@ -106,11 +106,11 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .uav.user{background:var(--gray)}
 .logout-btn{
   padding:5px 12px;border-radius:100px;font-size:11px;font-weight:800;
-  cursor:pointer;border:1.5px solid var(--border);
+  cursor:pointer;border:1.5px solid rgba(255,255,255,.2);
   background:transparent;color:var(--gray);font-family:var(--sans);
   transition:all .15s;
 }
-.logout-btn:hover{border-color:var(--border);color:var(--red)}
+.logout-btn:hover{border-color:rgba(255,255,255,.5);color:#fff}
 
 /* ════════════════════════════════
    ADMIN PANEL
@@ -1235,8 +1235,6 @@ function saveData(uid){
 // ══════════════════════════════════════════════════════════════
 
 async function loadAllDataFromDB(){
-  // Show loading state
-  var loginScreen=document.getElementById('loginScreen');
   // Show loading overlay without destroying loginScreen HTML
   var loadOverlay=document.getElementById('load-overlay');
   if(!loadOverlay){
@@ -1252,37 +1250,19 @@ async function loadAllDataFromDB(){
     var users=await DB.from('usuarios').select('*');
     if(!users.error&&users.data){
       window._usersCache=users.data.map(dbRowToUser);
-      // Refresh SESSION.tabPerms from latest DB data
-      if(SESSION){
-        var freshUser=window._usersCache.find(function(u){return u.id===SESSION.id;});
-        if(freshUser) SESSION.tabPerms=freshUser.tabPerms;
-      }
     }
 
     // Load configs
     var configs=await DB.from('configuracion').select('*');
     if(!configs.error&&configs.data){
       configs.data.forEach(function(row){
-        if(row.clave==='catalogo') window._catalogoCache=row.valor&&row.valor.length?row.valor:null;
-        if(row.clave==='tipos_proyecto') window._tiposProyCache=row.valor&&row.valor.length?row.valor:null;
-        if(row.clave==='liq_cost_types') window._liqCostTypesCache=row.valor&&row.valor.length?row.valor:null;
+        if(row.clave==='catalogo') window._catalogoCache=row.valor;
+        if(row.clave==='tipos_proyecto') window._tiposProyCache=row.valor;
+        if(row.clave==='liq_cost_types') window._liqCostTypesCache=row.valor;
         if(row.clave==='fondos_lim') window._fondosLimCache=row.valor;
       });
     }
 
-    // If catalogo not in Supabase yet, save DEFAULT_CATALOGO
-    if(!window._catalogoCache||!window._catalogoCache.length){
-      window._catalogoCache=DEFAULT_CATALOGO;
-      DB.from('configuracion').upsert({clave:'catalogo',valor:DEFAULT_CATALOGO,updated_at:new Date().toISOString()},{onConflict:'clave'}).then(function(){});
-    }
-    if(!window._tiposProyCache||!window._tiposProyCache.length){
-      window._tiposProyCache=DEFAULT_TIPOS_PROYECTO;
-      DB.from('configuracion').upsert({clave:'tipos_proyecto',valor:DEFAULT_TIPOS_PROYECTO,updated_at:new Date().toISOString()},{onConflict:'clave'}).then(function(){});
-    }
-    if(!window._liqCostTypesCache||!window._liqCostTypesCache.length){
-      window._liqCostTypesCache=DEFAULT_COST_TYPES;
-      DB.from('configuracion').upsert({clave:'liq_cost_types',valor:DEFAULT_COST_TYPES,updated_at:new Date().toISOString()},{onConflict:'clave'}).then(function(){});
-    }
     // Load LiqSubs
     var subs=await DB.from('liq_subcontratistas').select('*');
     if(!subs.error&&subs.data){
@@ -1326,19 +1306,13 @@ async function loadAllDataFromDB(){
       }
     }
 
-    // Load inv permisos for tab visibility
-    var invPerms=await DB.from('inv_permisos').select('*');
-    if(!invPerms.error&&invPerms.data){
-      window._invPermisos={};
-      invPerms.data.forEach(function(p){ window._invPermisos[p.uid]=p.nivel; });
-    }
-    console.log('✅ All data loaded from Supabase');
     var lo=document.getElementById('load-overlay');
     if(lo) lo.style.display='none';
+    console.log('✅ All data loaded from Supabase');
   } catch(e) {
-    console.error('loadAllDataFromDB error:', e);
     var lo2=document.getElementById('load-overlay');
     if(lo2) lo2.style.display='none';
+    console.error('loadAllDataFromDB error:', e);
   }
 }
 
@@ -1396,20 +1370,16 @@ function doLogin(){
 }
 function doLogout(){
   SESSION=null;
-  // Clear all data caches
   window._usersCache=null; window._ventasCache={}; window._horasCache={};
   window._vacCache={}; window._fondosCache={}; window._gastosCache={};
   window._crmClientsCache=null; window._crmLinksCache=null;
   window._trashCache=null; window._liqDataCache={}; window._liqSubsCache=null;
   window._catalogoCache=null; window._tiposProyCache=null;
   window._liqCostTypesCache=null; window._fondosLimCache=null;
-  // Hide overlay if visible
   var lo=document.getElementById('load-overlay');
   if(lo) lo.style.display='none';
-  // Reset admin/app panels
   document.getElementById('appShell').style.display='none';
   if(document.getElementById('adminPanel')) document.getElementById('adminPanel').style.display='none';
-  // Show login screen
   document.getElementById('loginScreen').style.display='flex';
   document.getElementById('loginUser').value='';
   document.getElementById('loginPass').value='';
@@ -1466,14 +1436,12 @@ function buildUserTabs(){
   const tabs=document.getElementById('hdrTabs');
   var perms=SESSION&&SESSION.tabPerms?SESSION.tabPerms:{};
   var allTabs=[
-    {id:'ventas',      label:'📊 Ventas'},
-    {id:'fondos',      label:'📦 Fondos'},
-    {id:'gastos',      label:'🏗 Gastos Proyecto'},
-    {id:'horas',       label:'⏱ Horas y Planilla'},
-    {id:'vacaciones',  label:'🌴 Vacaciones'},
-    {id:'inventario',  label:'📦 Inventario'},
+    {id:'ventas',     label:'📊 Ventas'},
+    {id:'fondos',     label:'📦 Fondos'},
+    {id:'gastos',     label:'🏗 Gastos Proyecto'},
+    {id:'horas',      label:'⏱ Horas y Planilla'},
+    {id:'vacaciones', label:'🌴 Vacaciones'},
   ];
-  // Inventario tab: visible if tabPerms allows it (same as all other tabs)
   var visible=allTabs.filter(function(t){ return perms[t.id]!==false; });
   tabs.innerHTML=visible.map(function(t,i){
     var cls='htab'+(i===0?' on':'');
@@ -1503,7 +1471,6 @@ function switchUserTab(tab, btn){
     if(fm) fm.style.display='none';
     if(gm) gm.style.display='none';
     if(vtm) vtm.style.display='none';
-    var invUM=document.getElementById('invUserModule'); if(invUM) invUM.style.display='none';
     if(tab==='horas'){
       if(um) um.style.cssText='display:flex;flex:1';
     } else if(tab==='vacaciones'){
@@ -1519,24 +1486,6 @@ function switchUserTab(tab, btn){
       var gtm=document.getElementById('gastosModule');
       if(gtm){ gtm.style.cssText='display:flex;flex:1'; }
       try{ initGastosModule(); }catch(e2){ console.error('initGastosModule error:',e2); }
-    } else if(tab==='inventario'){
-      // Show the user inv module (hidden div outside userModule)
-      var invUserMod=document.getElementById('invUserModule');
-      if(!invUserMod){
-        invUserMod=document.createElement('div');
-        invUserMod.id='invUserModule';
-        invUserMod.style.cssText='flex:1;overflow-y:auto;background:var(--bg);min-height:0;';
-        var appShell=document.getElementById('appShell');
-        if(appShell) appShell.appendChild(invUserMod);
-      }
-      // Always reset inv-root inside the user module
-      invUserMod.innerHTML='<div id="inv-root" style="padding:20px;min-height:200px"></div>';
-      invUserMod.style.display='flex';
-      invUserMod.style.flexDirection='column';
-      // Small delay to ensure DOM is ready
-      setTimeout(function(){
-        try{ initInventario(); }catch(e2){ console.error('initInventario error:',e2); }
-      }, 50);
     }
   }catch(e){ console.error('switchUserTab error:',e); toast('Error al cambiar pestaña: '+e.message); }
 }
@@ -1616,7 +1565,7 @@ function initApp(){
       var ventasBtn=document.querySelector('.htab');
       if(ventasBtn) switchUserTab('ventas', ventasBtn);
     },0);
-    setTimeout(applySearchableSelects, 400);
+    setTimeout(applySearchableSelects,600);
     registerServiceWorker();
   }
 }
@@ -1656,7 +1605,6 @@ function populateAdminSelectors(){
 
 // ── OVERVIEW ──
 function buildAdminOverview(){
-  // Load IC section
   if(SESSION&&(SESSION.rol==='admin'||SESSION.rol==='superadmin')){
     renderInteligenciaComercial().catch(function(e){console.error('IC error:',e);});
   }
@@ -1673,7 +1621,7 @@ function buildAdminOverview(){
     let ext=0;
     for(let q=1;q<=2;q++){
       getDays(today.getFullYear(),today.getMonth(),q).forEach(d=>{
-        const r=reg[dkey(d)]||{},j=r.jornada||defJornada(d);
+        const r=reg[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
         if(j!=='libre')ext+=calcExt(r.entrada,r.salida,j).ext;
       });
     }
@@ -1980,7 +1928,7 @@ function renderAdminHorasTable(uid){
   let totExt=0;
   const rows=days.map(date=>{
     const w=date.getDay(),k=dkey(date),f=isFer(date);
-    const r=regU[k]||{},j=r.jornada||defJornada(date),libre=j==='libre';
+    const r=regU[k]||{},j=r.jornada||defJornada(date,r.entrada,r.salida),libre=j==='libre';
     const{ord,ext}=calcExt(r.entrada,r.salida,j);
     totExt+=ext;
     let rc=w===0||w===6?'wknd':'';if(f)rc='hday';if(libre)rc='libre';
@@ -2149,7 +2097,7 @@ function exportGlobalCSV(){
     let ext=0;
     for(let q=1;q<=2;q++){
       getDays(yr,today.getMonth(),q,false).forEach(d=>{
-        const r=reg[dkey(d)]||{},j=r.jornada||defJornada(d);
+        const r=reg[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
         if(j!=='libre') ext+=calcExt(r.entrada,r.salida,j).ext;
       });
     }
@@ -2191,10 +2139,10 @@ function exportGlobalCSV(){
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Barlow',sans-serif;background:#f4f4f4;padding:28px 16px}
 .col{background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.13);max-width:960px;margin:0 auto}
-.ch{background:#ffffff;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.ch{background:#ffffff;padding:18px 24px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837}
 .lt{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:var(--gray-dark);letter-spacing:-1px}
 .lr{color:#E31837}
-.ei{text-align:right;color:rgba(0,0,0,.65);font-size:12px;line-height:1.7}
+.ei{text-align:right;color:var(--text2);font-size:12px;line-height:1.7}
 .ct{background:#E31837;padding:10px 24px;display:flex;justify-content:space-between;align-items:center}
 .ct h2{font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:900;color:#fff;text-transform:uppercase}
 .ct .em{font-size:12px;color:rgba(255,255,255,.85);font-weight:600}
@@ -2279,7 +2227,37 @@ function isFer(d){
   if(SS26.includes(k)&&d.getFullYear()===2026)return'Semana Santa';
   return null;
 }
-function defJornada(d){const w=d.getDay(),f=isFer(d);if(f)return'feriado';if(w===0)return'domingo';if(w===6)return'sabado';return'diurna';}
+function defJornada(d,entrada,salida){
+  const w=d.getDay(),f=isFer(d);
+  if(f) return'feriado';
+  if(w===0) return'domingo';
+  if(w===6) return'sabado';
+  if(entrada){
+    // Normativa CR: Nocturno = 19:00-05:00, Diurno = 05:00-19:00
+    // Mixta si incluye ambos períodos; si nocturnas > 3.5h → nocturna
+    var ei=parseT(entrada);
+    var si=salida?parseT(salida):null;
+    if(si!==null&&si<=ei) si+=24; // cruce de medianoche
+    if(si===null){
+      // Sin salida: clasificar solo por hora de entrada
+      const h=parseInt((entrada||'').split(':')[0])||0;
+      if(h>=19||h<5) return'nocturna';
+      return'diurna';
+    }
+    // Contar horas nocturnas (19:00-05:00 = 19h a 29h en escala lineal)
+    var nocH=0;
+    for(var t=ei;t<si;t+=0.5){
+      var th=t%24; if(th<0)th+=24;
+      if(th>=19||th<5) nocH+=0.5; // nocturno: 7pm a 5am
+    }
+    var total=si-ei;
+    if(nocH===total) return'nocturna'; // 100% nocturna
+    if(nocH===0)     return'diurna';   // 100% diurna
+    if(nocH>3.5)     return'nocturna'; // mixta con >3.5h nocturnas → nocturna
+    return'mixta';                     // mezcla con ≤3.5h nocturnas
+  }
+  return'diurna';
+}
 function jBase(j){return{diurna:8,mixta:7,nocturna:6,sabado:4,domingo:0,feriado:0,libre:0}[j]??8;}
 function parseT(t){if(!t)return null;const[h,m]=t.split(':').map(Number);return h+m/60;}
 function calcExt(e,s,j){
@@ -2410,7 +2388,7 @@ function buildTable(){
 
   document.getElementById('tbody').innerHTML=days.map(date=>{
     const w=date.getDay(),k=dkey(date),f=isFer(date);
-    const r=REG[k]||{},j=r.jornada||defJornada(date),libre=j==='libre';
+    const r=REG[k]||{},j=r.jornada||defJornada(date,r.entrada,r.salida),libre=j==='libre';
     const{ord,ext}=calcExt(r.entrada,r.salida,j);
     const needN=ext>0&&!r.nota,isToday=date.toDateString()===today.toDateString();
     let rc=w===0||w===6?'wknd':'';if(f)rc='hday';if(libre)rc='libre';
@@ -2427,7 +2405,7 @@ function buildTable(){
     const extraTag=isExtra?'<span style="font-size:9px;color:var(--amber);font-weight:800;display:block;letter-spacing:.5px">+EXTRA</span>':'';
     return`<tr class="${rc}"${extraCls}>
       <td><div class="dcell"><div class="dnum ${dc}">${date.getDate()}</div><div><div class="dname">${DIA[w]}</div>${ferT}${extraTag}</div></div></td>
-      <td><select class="jsel" data-k="${k}" onchange="updJ(this)">${JOPS.map(o=>'<option value="'+o+'"'+(j===o?' selected':'')+'>'+JOPL[o]+'</option>').join('')}</select></td>
+      <td><span class="badge user" style="font-size:10px;margin-right:4px">${JOPL[j]}</span><select class="jsel" data-k="${k}" onchange="updJ(this)" style="font-size:10px;border:1px solid var(--border);border-radius:4px;padding:2px 4px;background:var(--surface)" title="Solo puedes marcar Libre"><option value="">Auto</option><option value="libre"${j==='libre'?' selected':''}>Libre</option></select</td>
       <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':buildTimeSelect(k,'entrada',entH,entM,'07','00')}</td>
       <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':buildTimeSelect(k,'salida',salH,salM,'16','00')}</td>
       <td><span class="ev evz" style="font-size:11px">${ord>0?ord.toFixed(1)+'h':'—'}</span></td>
@@ -2440,15 +2418,15 @@ function buildTable(){
   recalcQ();
 }
 
-function updJ(s){const k=s.dataset.k;if(!REG[k])REG[k]={};REG[k].jornada=s.value;if(s.value==='libre'){REG[k].entrada='';REG[k].salida='';}saveData(SESSION.id);buildTable();}
-function updT(i){const k=i.dataset.k,f=i.dataset.f;if(!REG[k])REG[k]={};REG[k][f]=i.value;saveData(SESSION.id);buildTable();}
+function updJ(s){const k=s.dataset.k;if(!REG[k])REG[k]={};if(s.value==='libre'){REG[k].jornada='libre';REG[k].entrada='';REG[k].salida='';}else{delete REG[k].jornada;}saveData(SESSION.id);buildTable();}
+function updT(i){const k=i.dataset.k,f=i.dataset.f;if(!REG[k])REG[k]={};REG[k][f]=i.value;if(REG[k].jornada&&REG[k].jornada!=='libre')delete REG[k].jornada;saveData(SESSION.id);buildTable();recalcQ();}
 function updN(i){const k=i.dataset.k;if(!REG[k])REG[k]={};REG[k].nota=i.value;saveData(SESSION.id);}
 
 function recalcQ(){
   const y=getYr(),days=getDays(y,CM,CQ,EXTRA_DAYS),sal=SESSION.salario||0,vh=sal/(4.5*54)*1.5;
   let totExt=0,diasR=0;
   days.forEach(d=>{
-    const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d);
+    const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
     if(j==='libre')return;
     totExt+=calcExt(r.entrada,r.salida,j).ext;
     if(r.entrada)diasR++;
@@ -2482,7 +2460,7 @@ function recalcQ(){
   // Sidebar month totals
   let extM=0;
   for(let q=1;q<=2;q++)getDays(y,CM,q).forEach(d=>{
-    const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d);
+    const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
     if(j!=='libre')extM+=calcExt(r.entrada,r.salida,j).ext;
   });
   document.getElementById('sbex').textContent=extM.toFixed(1)+' h';
@@ -2542,7 +2520,7 @@ body{font-family:'Barlow',sans-serif;background:#f4f4f4;display:flex;justify-con
 .ch{background:#3e3f41;padding:20px 26px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid ${colorAccent}}
 .lt{font-family:'Barlow Condensed',sans-serif;font-size:30px;font-weight:900;color:#fff;letter-spacing:-1px}
 .lr{color:#E31837}
-.ei{text-align:right;color:rgba(0,0,0,.65);font-size:12px;line-height:1.7}
+.ei{text-align:right;color:var(--text2);font-size:12px;line-height:1.7}
 .ct{background:${colorAccent};padding:11px 26px;display:flex;justify-content:space-between;align-items:center}
 .ct h2{font-family:'Barlow Condensed',sans-serif;font-size:19px;font-weight:900;color:#fff;text-transform:uppercase}
 .ct .em{font-size:12px;color:rgba(255,255,255,.85);font-weight:600}
@@ -2718,7 +2696,7 @@ function exportPlanilla(){
   const y=getYr(),sal=SESSION.salario||0,vh=sal/(4.5*54)*1.5;
   const days=getDays(y,CM,CQ);
   let totExt=0;
-  days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d);if(j!=='libre')totExt+=calcExt(r.entrada,r.salida,j).ext;});
+  days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);if(j!=='libre')totExt+=calcExt(r.entrada,r.salida,j).ext;});
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
   const ccss=DED.ccss_monto||0,rb=DED.rb_monto||0,ex=DED.extra_monto||0;
   const comis=DED[`comis_${y}-${pad(CM+1)}-${CQ}`]||0;
@@ -4223,8 +4201,8 @@ function initAdminFondos(){
   // Populate user selector
   const sel=document.getElementById('af-user-sel');
   if(sel&&sel.options.length===1){
-    getUsers().filter(u=>u.rol==='user'||u.rol==='admin'||u.rol==='superadmin').forEach(u=>{
-      const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre+(u.rol!=='user'?' ('+u.rol+')':''); sel.appendChild(o);
+    getUsers().filter(u=>u.rol==='user').forEach(u=>{
+      const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; sel.appendChild(o);
     });
   }
   // Month selector
@@ -4249,13 +4227,10 @@ function getAdminFondosPeriodData(){
   // For comisiones: only rol=user. For allVentas: also include admins with own sales
   const comisUsers=filterUid==='all'?getUsers().filter(u=>u.rol==='user'):[getUsers().find(u=>u.id===filterUid)].filter(Boolean);
   const adminSellers=filterUid==='all'?getUsers().filter(function(u){
-    if(u.rol!=='admin'&&u.rol!=='superadmin') return false;
+    if(u.rol!=='admin') return false;
     var vd=getVentasData(u.id);
     return Object.values(vd).some(function(mv){return (mv.ventas||[]).length>0;});
-  }):(function(){
-    var fu=getUsers().find(function(u){return u.id===filterUid;});
-    return (fu&&(fu.rol==='admin'||fu.rol==='superadmin'))?[fu]:[];
-  })();
+  }):[];
   const users=comisUsers.concat(adminSellers);
 
   let allGastos=[], allDepositos=[];
@@ -4500,10 +4475,10 @@ function exportFondosUser(){
 <style>
 *{box-sizing:border-box;margin:0;padding:0}body{font-family:'Barlow',sans-serif;background:#f4f4f4;padding:28px 16px}
 .col{background:#fff;max-width:720px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.13)}
-.ch{background:#ffffff;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837;box-shadow:0 2px 8px rgba(0,0,0,.08)}
-.lt{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:var(--gray-dark);letter-spacing:-1px}
+.ch{background:#3e3f41;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837}
+.lt{font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:900;color:#fff;letter-spacing:-1px}
 .lr{color:#E31837}
-.ei{text-align:right;color:rgba(0,0,0,.65);font-size:12px;line-height:1.7}
+.ei{text-align:right;color:var(--text2);font-size:12px;line-height:1.7}
 .ct{background:#E31837;padding:10px 24px;display:flex;justify-content:space-between;align-items:center}
 .ct h2{font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:900;color:#fff;text-transform:uppercase}
 .cb{padding:20px 24px}
@@ -4614,7 +4589,9 @@ let VY = new Date().getFullYear();
 function getCatalogo(){
   return (window._catalogoCache&&window._catalogoCache.length>0?window._catalogoCache:DEFAULT_CATALOGO);
 }
-// getCatalogo defined above with DEFAULT_CATALOGO fallback
+function getCatalogo(){
+  return window._catalogoCache||[];
+}
 function setCatalogo(d){
   window._catalogoCache=d;
   DB.from('configuracion').upsert({clave:'catalogo',valor:d,updated_at:new Date().toISOString()},{onConflict:'clave'})
@@ -5250,13 +5227,7 @@ function renderVentasUser(){
   }
 
   // Build prod select if needed
-  // Ensure catalogo is loaded before building select
-  if(!window._catalogoCache||!window._catalogoCache.length){
-    window._catalogoCache=DEFAULT_CATALOGO;
-  }
   buildProdSelect();
-  // Apply searchable to prod select after it's built
-  setTimeout(function(){ resetSearchable('vf-prod'); makeSearchable(document.getElementById('vf-prod')); },10);
 
   // Ventas table
   const filter=document.getElementById('v-filter-cat')?.value||'all';
@@ -5338,8 +5309,8 @@ function initAdminVentas(){
   renderAdminOwnVentas(); // Admin own sales table
   const sel=document.getElementById('av-user-sel');
   if(sel&&sel.options.length===1){
-    getUsers().filter(u=>u.rol==='user'||u.rol==='admin'||u.rol==='superadmin').forEach(u=>{
-      const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre+(u.rol!=='user'?' ('+u.rol+')':''); sel.appendChild(o);
+    getUsers().filter(u=>u.rol==='user').forEach(u=>{
+      const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; sel.appendChild(o);
     });
   }
   const msel=document.getElementById('av-month-sel');
@@ -5371,13 +5342,10 @@ function getAdminVentasPeriodData(){
   // For comisiones: only rol=user. For allVentas: also include admins with own sales
   const comisUsers=filterUid==='all'?getUsers().filter(u=>u.rol==='user'):[getUsers().find(u=>u.id===filterUid)].filter(Boolean);
   const adminSellers=filterUid==='all'?getUsers().filter(function(u){
-    if(u.rol!=='admin'&&u.rol!=='superadmin') return false;
+    if(u.rol!=='admin') return false;
     var vd=getVentasData(u.id);
     return Object.values(vd).some(function(mv){return (mv.ventas||[]).length>0;});
-  }):(function(){
-    var fu=getUsers().find(function(u){return u.id===filterUid;});
-    return (fu&&(fu.rol==='admin'||fu.rol==='superadmin'))?[fu]:[];
-  })();
+  }):[];
   const users=comisUsers.concat(adminSellers);
 
   let allVentas=[];
@@ -6068,9 +6036,9 @@ function exportVentasUser(){
   '<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;800&family=Barlow+Condensed:wght@700;800;900&display=swap" rel="stylesheet">'+
   '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:\'Barlow\',sans-serif;background:#f4f4f4;padding:24px 16px}'+
   '.col{background:#fff;max-width:780px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.13)}'+
-  '.ch{background:#ffffff;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837;box-shadow:0 2px 8px rgba(0,0,0,.08)}'+
+  '.ch{background:#3e3f41;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #E31837}'+
   '.lt{font-family:\'Barlow Condensed\',sans-serif;font-size:28px;font-weight:900;color:#fff}.lr{color:#E31837}'+
-  '.ei{text-align:right;color:rgba(0,0,0,.65);font-size:12px;line-height:1.7}'+
+  '.ei{text-align:right;color:var(--text2);font-size:12px;line-height:1.7}'+
   '.ct{background:#E31837;padding:10px 24px;display:flex;justify-content:space-between;align-items:center}'+
   '.ct h2{font-family:\'Barlow Condensed\',sans-serif;font-size:18px;font-weight:900;color:#fff;text-transform:uppercase}'+
   '.cb{padding:18px 24px}.st{font-size:10px;font-weight:800;color:#9a9b9d;text-transform:uppercase;letter-spacing:1.2px;margin:14px 0 8px}'+
@@ -6282,7 +6250,6 @@ function updateVenta(){
   var newProdId=document.getElementById('vf-prod').value;
   var newCliente=document.getElementById('vf-cliente').value.trim();
   var newPrecio=parseMon(document.getElementById('vf-precio').value)||0;
-  // Clear 'incompleta' status when the required fields are filled
   var newEstado=(old.estado==='incompleta'&&newProdId&&newCliente&&newPrecio>0)?'activa':(old.estado||'activa');
 
   vd[mk].ventas[idx]={
@@ -7743,17 +7710,9 @@ function toggleAdminVentaForm(){
     // Populate product selector
     var sel=document.getElementById('avf-prod');
     if(sel&&sel.options.length<=1){
-      var cat=getCatalogo();
-      if(!cat||!cat.length) cat=DEFAULT_CATALOGO;
-      var groups={};
-      cat.forEach(function(p){ if(!groups[p.tipo]) groups[p.tipo]=[]; groups[p.tipo].push(p); });
-      var typeLabels={concreto:'Concreto',fibra:'Fibra',sello:'Sello',pulido:'Pulido',equipo:'Equipo',herramienta:'Herramienta',consumible:'Consumible',otros:'Otros'};
-      Object.keys(groups).forEach(function(tipo){
-        var og=document.createElement('optgroup'); og.label=typeLabels[tipo]||tipo;
-        groups[tipo].forEach(function(p){ var o=document.createElement('option');o.value=p.id;o.textContent=p.nombre;og.appendChild(o); });
-        sel.appendChild(og);
+      getCatalogo().forEach(function(p){
+        var o=document.createElement('option');o.value=p.id;o.textContent=p.nombre;sel.appendChild(o);
       });
-      resetSearchable('avf-prod'); makeSearchable(sel);
     }
     // Default date
     var df=document.getElementById('avf-fecha');
@@ -7774,12 +7733,6 @@ function calcAdminVentaPreview(){
   if(el) el.textContent='Subtotal: '+fmt(sub)+(ivaPct?' + IVA '+fmt(sub*ivaPct/100)+' = '+fmt(total):'');
 }
 
-
-function toggleAvfPlazo(){
-  var sel=document.getElementById('avf-tipo-pago');
-  var wrap=document.getElementById('avf-plazo-wrap');
-  if(wrap) wrap.style.display=(sel&&sel.value==='CREDITO')?'block':'none';
-}
 function saveAdminVenta(){
   var fecha=document.getElementById('avf-fecha')?.value;
   var prodId=document.getElementById('avf-prod')?.value;
@@ -7812,7 +7765,7 @@ function saveAdminVenta(){
     ivaAmt:ivaAmt,
     total:sub+ivaAmt,
     tipoPago:(document.getElementById('avf-tipo-pago')?.value||'CONTADO'),
-    plazoCredito:(document.getElementById('avf-tipo-pago')?.value==='CREDITO'?(document.getElementById('avf-plazo')?.value||''):''),
+    plazoCredito:0,
     isUsd:false,usd:0,tcUsed:0,
     tieneInsumos:false,insDesc:'',insMontoNum:0,
     esTercero:false,tercNombre:'',
@@ -7822,7 +7775,7 @@ function saveAdminVenta(){
     notas:(document.getElementById('avf-notas')?.value.trim()||''),
     pagadoAdmin:false,cxcPagado:false,ejecutado:false,
     depositoNum:'',
-    isAdminVenta:(SESSION.rol==='superadmin')  // superadmin: no comision; admin: si genera
+    isAdminVenta:(SESSION.rol==='superadmin')
   };
   var uid=SESSION.id;
   var y=parseInt(fecha.split('-')[0]);
@@ -7841,9 +7794,6 @@ function saveAdminVenta(){
   ['avf-cantidad'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   document.getElementById('avf-preview').textContent='₡0';
   // Reset CRM client button
-  var avfPW=document.getElementById('avf-plazo-wrap'); if(avfPW) avfPW.style.display='none';
-  var avfP=document.getElementById('avf-plazo'); if(avfP) avfP.value='';
-  var avfPS=document.getElementById('avf-tipo-pago'); if(avfPS) avfPS.value='CONTADO';
   var avlbl2=document.getElementById('avf-cliente-label');
   if(avlbl2){
     avlbl2.textContent='🔍 Buscar o crear cliente...';
@@ -9183,7 +9133,6 @@ function editCRMFromDetail(){
 function openCRMClientModal(clienteId){
   _crmContactIdx=0;
   var cl=clienteId?getCRMClients().find(function(c){return c.id===clienteId;}):null;
-  // Build modal completely from scratch to avoid any stale DOM state
   var existing=document.getElementById('crmDynModal');
   if(existing) existing.remove();
   var overlay=document.createElement('div');
@@ -9198,19 +9147,18 @@ function openCRMClientModal(clienteId){
   overlay.innerHTML='<div style="background:var(--surface);border-radius:12px;width:680px;max-width:96vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
     +'<div style="background:var(--gray-dark);padding:16px 20px;border-radius:12px 12px 0 0;display:flex;justify-content:space-between;align-items:center">'
     +'<span style="font-family:var(--cond);font-size:17px;font-weight:800;color:#fff">'+(clienteId?'Editar':'Nuevo')+' cliente</span>'
-    +'<button onclick="document.getElementById(\'crmDynModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer">✕</button>'
+    +'<button id="cdyn-close" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer">✕</button>'
     +'</div>'
     +'<div style="padding:20px">'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">'
-    +'<div><span class="liq-label">Nombre / Razón social *</span><input type="text" id="cdyn-nombre" class="liq-inp" value="'+(cl?cl.nombreEmpresa||'':'')+'" placeholder="Nombre de la empresa o persona"></div>'
+    +'<div><span class="liq-label">Nombre / Razón social *</span><input type="text" id="cdyn-nombre" class="liq-inp" value="'+(cl?cl.nombreEmpresa||'':'')+'" placeholder="Nombre de la empresa"></div>'
     +'<div><span class="liq-label">Tipo de cliente *</span><select id="cdyn-tipo" class="liq-inp"><option value="">-- Seleccionar --</option>'+tipoClienteOpts+'</select></div>'
     +'</div>'
     +'<div id="cdyn-otro-wrap" style="margin-bottom:12px;display:'+(cl&&cl.tipoCliente==='otro'?'block':'none')+'">'
-    +'<span class="liq-label">Especificar tipo</span><input type="text" id="cdyn-tipo-otro" class="liq-inp" value="'+(cl?cl.tipoClienteOtro||'':'')+'">'
-    +'</div>'
+    +'<span class="liq-label">Especificar tipo</span><input type="text" id="cdyn-tipo-otro" class="liq-inp" value="'+(cl?cl.tipoClienteOtro||'':'')+'"></div>'
     +'<div style="display:grid;grid-template-columns:120px 1fr;gap:12px;margin-bottom:12px">'
     +'<div><span class="liq-label">Tipo cédula</span><select id="cdyn-tipo-ced" class="liq-inp"><option value="">--</option>'+tipoCedOpts+'</select></div>'
-    +'<div><span class="liq-label">Cédula / RUC</span><input type="text" id="cdyn-cedula" class="liq-inp" value="'+(cl?cl.cedula||'':'')+'" placeholder="Número de cédula"></div>'
+    +'<div><span class="liq-label">Cédula / RUC</span><input type="text" id="cdyn-cedula" class="liq-inp" value="'+(cl?cl.cedula||'':'')+'"></div>'
     +'</div>'
     +'<div style="margin-bottom:16px"><span class="liq-label">Dirección *</span><input type="text" id="cdyn-dir" class="liq-inp" value="'+(cl?cl.direccion||'':'')+'" placeholder="Dirección completa"></div>'
     +'<div style="font-family:var(--cond);font-weight:800;margin-bottom:8px;font-size:14px">Contactos</div>'
@@ -9219,21 +9167,19 @@ function openCRMClientModal(clienteId){
     +'<button id="cdyn-add-contact" style="background:none;border:1px dashed var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;color:var(--blue);width:100%">+ Agregar contacto</button>'
     +'</div>'
     +'<div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">'
-    +'<button onclick="document.getElementById(\'crmDynModal\').remove()" style="padding:8px 18px;border-radius:8px;border:1px solid var(--border);background:var(--surface);cursor:pointer">Cancelar</button>'
+    +'<button id="cdyn-cancel" style="padding:8px 18px;border-radius:8px;border:1px solid var(--border);background:var(--surface);cursor:pointer">Cancelar</button>'
     +'<button id="cdyn-save-btn" style="padding:8px 18px;border-radius:8px;border:none;background:var(--red);color:#fff;font-weight:700;cursor:pointer">✓ Guardar cliente</button>'
-    +'</div>'
-    +'</div>';
+    +'</div></div>';
   document.body.appendChild(overlay);
-  var saveBtn=overlay.querySelector('#cdyn-save-btn');
-  if(saveBtn) saveBtn.addEventListener('click',function(){ saveCRMDynClient(clienteId||''); });
+  overlay.querySelector('#cdyn-close').addEventListener('click',function(){overlay.remove();});
+  overlay.querySelector('#cdyn-cancel').addEventListener('click',function(){overlay.remove();});
   overlay.querySelector('#cdyn-tipo').addEventListener('change',function(){
     document.getElementById('cdyn-otro-wrap').style.display=this.value==='otro'?'block':'none';
   });
-  overlay.querySelector('#cdyn-add-contact').addEventListener('click', function(){ addCRMDynContact(); });
-  // Add existing contacts
+  overlay.querySelector('#cdyn-add-contact').addEventListener('click',function(){addCRMDynContact();});
+  overlay.querySelector('#cdyn-save-btn').addEventListener('click',function(){saveCRMDynClient(clienteId||'');});
   var contactos=cl?cl.contactos||[]:[];
-  if(contactos.length){ contactos.forEach(function(ct){ addCRMDynContact(ct); }); }
-  else { addCRMDynContact(); }
+  if(contactos.length){contactos.forEach(function(ct){addCRMDynContact(ct);});}else{addCRMDynContact();}
 }
 
 var _cdynIdx=0;
@@ -9241,9 +9187,7 @@ function addCRMDynContact(data){
   data=data||{};
   var list=document.getElementById('cdyn-contacts'); if(!list) return;
   var idx=_cdynIdx++;
-  var rolOpts=CRM_ROL_OPTS.map(function(r){
-    return '<option value="'+r+'"'+(data.rol===r?' selected':'')+'>'+r+'</option>';
-  }).join('');
+  var rolOpts=CRM_ROL_OPTS.map(function(r){return '<option value="'+r+'"'+(data.rol===r?' selected':'')+'>'+r+'</option>';}).join('');
   var div=document.createElement('div');
   div.id='cdyn-ct-'+idx;
   div.style.cssText='background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px;margin-bottom:8px;position:relative';
@@ -9255,9 +9199,7 @@ function addCRMDynContact(data){
     +'<div><span class="liq-label">Email</span><input type="text" class="liq-inp cdyn-ct-email" value="'+(data.email||'')+'" placeholder="correo@ejemplo.com"></div>'
     +'</div>';
   list.appendChild(div);
-  div.querySelector('.cdyn-rm').addEventListener('click',function(){
-    document.getElementById('cdyn-ct-'+this.dataset.idx).remove();
-  });
+  div.querySelector('.cdyn-rm').addEventListener('click',function(){document.getElementById('cdyn-ct-'+this.dataset.idx).remove();});
 }
 
 function saveCRMDynClient(editId){
@@ -9267,10 +9209,8 @@ function saveCRMDynClient(editId){
   var tipoOtro=(document.getElementById('cdyn-tipo-otro')?.value||'').trim();
   var tipoCed=document.getElementById('cdyn-tipo-ced')?.value||'';
   var cedula=(document.getElementById('cdyn-cedula')?.value||'').trim();
-  var errEl=document.getElementById('cdyn-contact-err');
-  if(!nombre||!tipo||!dir){ toast('Completa nombre, tipo de cliente y dirección'); return; }
-  if(tipo==='otro'&&!tipoOtro){ toast('Especifica el tipo de cliente'); return; }
-  // Contacts
+  if(!nombre||!tipo||!dir){toast('Completa nombre, tipo de cliente y dirección');return;}
+  if(tipo==='otro'&&!tipoOtro){toast('Especifica el tipo de cliente');return;}
   var contactos=[];
   var rows=document.getElementById('cdyn-contacts')?.children||[];
   for(var i=0;i<rows.length;i++){
@@ -9280,58 +9220,43 @@ function saveCRMDynClient(editId){
     var ctTel=(row.querySelector('.cdyn-ct-tel')||{}).value||'';
     var ctEmail=(row.querySelector('.cdyn-ct-email')||{}).value||'';
     if(!ctNombre) continue;
-    if(!ctTel&&!ctEmail){ toast('Contacto "'+ctNombre+'" necesita teléfono o email'); return; }
+    if(!ctTel&&!ctEmail){toast('Contacto "'+ctNombre+'" necesita teléfono o email');return;}
     contactos.push({id:'ct'+Date.now()+'_'+i,nombre:ctNombre,rol:ctRol,tel:ctTel,email:ctEmail});
   }
-  if(!contactos.length){ if(errEl) errEl.style.display='block'; toast('Se requiere al menos un contacto'); return; }
-  // Save
+  var errEl=document.getElementById('cdyn-contact-err');
+  if(!contactos.length){if(errEl)errEl.style.display='block';toast('Se requiere al menos un contacto');return;}
   var clients=getCRMClients();
-  var reg={
-    id:editId||('cli'+Date.now()),
-    nombreEmpresa:nombre, cedula:cedula, tipoCedula:tipoCed,
-    tipoCliente:tipo, tipoClienteOtro:tipo==='otro'?tipoOtro:'',
-    direccion:dir, contactos:contactos,
-    updatedAt:new Date().toISOString()
-  };
-  if(editId){
-    var idx2=clients.findIndex(function(c){return c.id===editId;});
-    if(idx2>=0){ reg.created=clients[idx2].created; clients[idx2]=reg; }
-    else clients.push(reg);
-  } else {
-    reg.created=new Date().toISOString();
-    reg.createdBy=SESSION?SESSION.id:'';
-    clients.push(reg);
-  }
+  var reg={id:editId||('cli'+Date.now()),nombreEmpresa:nombre,cedula:cedula,tipoCedula:tipoCed,
+    tipoCliente:tipo,tipoClienteOtro:tipo==='otro'?tipoOtro:'',direccion:dir,contactos:contactos,
+    updatedAt:new Date().toISOString()};
+  if(editId){var idx2=clients.findIndex(function(c){return c.id===editId;});if(idx2>=0){reg.created=clients[idx2].created;clients[idx2]=reg;}else clients.push(reg);}
+  else{reg.created=new Date().toISOString();reg.createdBy=SESSION?SESSION.id:'';clients.push(reg);}
   setCRMClients(clients);
-  document.getElementById('crmDynModal').remove();
-  // Refresh CRM panels if visible
-  try{ renderCRMDirectory(); }catch(e){}
-  try{ renderCRMKPIs(); }catch(e){}
+  var modal=document.getElementById('crmDynModal');if(modal)modal.remove();
+  try{renderCRMDirectory();}catch(e){}
+  try{renderCRMKPIs();}catch(e){}
   toast('✓ Cliente guardado: '+nombre);
-  // Auto-select in venta form if created from there
   if((window._crmAfterSave==='venta'||window._crmAfterSave==='adminVenta')&&!editId){
-    var saveCtx=window._crmAfterSave;
-    window._crmAfterSave=null;
+    var saveCtx=window._crmAfterSave;window._crmAfterSave=null;
     var newCl=getCRMClients().find(function(c){return c.nombreEmpresa===nombre;});
     if(newCl){
       var ct=newCl.contactos[0]||{};
       var displayName=newCl.nombreEmpresa+(ct.nombre?' / '+ct.nombre:'');
       if(saveCtx==='adminVenta'){
         var avlbl=document.getElementById('avf-cliente-label');
-        if(avlbl){ avlbl.textContent='✓ '+displayName; avlbl.style.color='var(--green)'; avlbl.parentElement.style.borderColor='var(--green)'; }
-        var avCid=document.getElementById('avf-crm-client-id'); if(avCid) avCid.value=newCl.id;
+        if(avlbl){avlbl.textContent='✓ '+displayName;avlbl.style.color='var(--green)';avlbl.parentElement.style.borderColor='var(--green)';}
+        var avCid=document.getElementById('avf-crm-client-id');if(avCid)avCid.value=newCl.id;
       } else {
         var lbl=document.getElementById('vf-cliente-label');
-        if(lbl){ lbl.textContent='✓ '+displayName; lbl.style.color='var(--green)'; lbl.parentElement.style.borderColor='var(--green)'; }
-        var cid=document.getElementById('vf-crm-client-id'); if(cid) cid.value=newCl.id;
-        var ctid=document.getElementById('vf-crm-contact-id'); if(ctid) ctid.value=ct.id||'';
+        if(lbl){lbl.textContent='✓ '+displayName;lbl.style.color='var(--text)';lbl.parentElement.style.borderColor='var(--green)';}
+        var cid=document.getElementById('vf-crm-client-id');if(cid)cid.value=newCl.id;
+        var ctid=document.getElementById('vf-crm-contact-id');if(ctid)ctid.value=ct.id||'';
         var badge=document.getElementById('vf-crm-badge');
-        if(badge){ badge.style.display='block'; badge.textContent='✓ Vinculado: '+displayName; }
+        if(badge){badge.style.display='block';badge.textContent='✓ Vinculado: '+displayName;}
       }
     }
   }
 }
-
 function closeCRMClientModal(){
   document.getElementById('crmClientModal').classList.add('hidden');
 }
@@ -9447,8 +9372,7 @@ function saveCRMClient(){
   renderCRMInactiveAlert();
   toast('✓ Cliente guardado: '+nombre);
   // If created from venta form, auto-select the new client
-  if((window._crmAfterSave==='venta'||window._crmAfterSave==='adminVenta')&&!editId){
-    var saveCtx=window._crmAfterSave;
+  if(window._crmAfterSave==='venta'&&!editId){
     window._crmAfterSave=null;
     var newCl=getCRMClients().find(function(c){return c.nombreEmpresa===nombre;});
     if(newCl){
@@ -9456,20 +9380,19 @@ function saveCRMClient(){
       var displayName=newCl.nombreEmpresa+(ct.nombre?' / '+ct.nombre:'');
       var inp=document.getElementById('vf-cliente');
       if(inp) inp.value=newCl.nombreEmpresa;
-      if(saveCtx==='adminVenta'){
-        var avlbl2=document.getElementById('avf-cliente-label');
-        if(avlbl2){ avlbl2.textContent='✓ '+displayName; avlbl2.style.color='var(--green)'; avlbl2.parentElement.style.borderColor='var(--green)'; avlbl2.parentElement.style.background='rgba(26,158,92,.05)'; }
-        var avCid2=document.getElementById('avf-crm-client-id'); if(avCid2) avCid2.value=newCl.id;
-        var avCtid2=document.getElementById('avf-crm-contact-id'); if(avCtid2) avCtid2.value=ct.id||'';
-      } else {
-        var lbl=document.getElementById('vf-cliente-label');
-        if(lbl){ lbl.textContent='✓ '+displayName; lbl.style.color='var(--text)'; lbl.parentElement.style.borderColor='var(--green)'; lbl.parentElement.style.background='rgba(26,158,92,.05)'; }
-        var cid=document.getElementById('vf-crm-client-id'); if(cid) cid.value=newCl.id;
-        var ctid=document.getElementById('vf-crm-contact-id');
-      if(ctid) ctid.value=ct.id||'';
-        var badge=document.getElementById('vf-crm-badge');
-        if(badge){ badge.style.display='block'; badge.textContent='✓ Vinculado: '+displayName; }
+      var lbl=document.getElementById('vf-cliente-label');
+      if(lbl){
+        lbl.textContent='✓ '+displayName;
+        lbl.style.color='var(--text)';
+        lbl.parentElement.style.borderColor='var(--green)';
+        lbl.parentElement.style.background='rgba(26,158,92,.05)';
       }
+      var cid=document.getElementById('vf-crm-client-id');
+      if(cid) cid.value=newCl.id;
+      var ctid=document.getElementById('vf-crm-contact-id');
+      if(ctid) ctid.value=ct.id||'';
+      var badge=document.getElementById('vf-crm-badge');
+      if(badge){ badge.style.display='block'; badge.textContent='✓ Vinculado al CRM: '+displayName; }
     }
   }
 }
@@ -9784,7 +9707,6 @@ function openNewClientFromVenta(){
   var m=document.getElementById('crmPickerModal');
   if(m) m.remove();
   openCRMClientModal();
-  // After saving, detect which form triggered this
   window._crmAfterSave=window._crmPickerContext||'venta';
 }
 
@@ -9912,14 +9834,13 @@ function setUserTabPerms(uid, perms){
 function applyPermsRealtime(uid, perms){
   // Only applies if current SESSION is the affected user
   if(!SESSION||SESSION.id!==uid) return;
-  // Update SESSION.tabPerms so buildUserTabs reads the new perms
-  SESSION.tabPerms=perms;
   // Get current active tab
   var currentTab=window.currentUserTab||'ventas';
   // Rebuild tabs
   buildUserTabs();
   // Check if current tab is still allowed
   if(perms[currentTab]===false){
+    // Find first allowed tab
     var allowed=USER_TAB_DEFS.filter(function(t){return perms[t.id]!==false;});
     if(allowed.length>0) switchUserTab(allowed[0].id, document.querySelector('.htab'));
   }
@@ -10913,184 +10834,9 @@ function executeRestore(){
 })();
 
 
-
 // ══════════════════════════════════════════════════════════════
-//  BÚSQUEDA EN LISTAS DESPLEGABLES
-// ══════════════════════════════════════════════════════════════
-function makeSearchable(sel){
-  if(!sel||sel.dataset.srch) return;
-  sel.dataset.srch='1';
-
-  // Store original options preserving optgroups
-  sel._allOpts=[];
-  Array.from(sel.children).forEach(function(child){
-    if(child.tagName==='OPTGROUP'){
-      var g={label:child.label,opts:[]};
-      Array.from(child.children).forEach(function(opt){
-        g.opts.push({v:opt.value,t:opt.text});
-      });
-      sel._allOpts.push(g);
-    } else if(child.tagName==='OPTION'){
-      sel._allOpts.push({v:child.value,t:child.text,g:null});
-    }
-  });
-
-  // Insert search input before the select
-  var inp=document.createElement('input');
-  inp.type='text';
-  inp.placeholder='🔍 Buscar...';
-  inp.className='vf-inp';
-  inp.style.cssText='width:100%;box-sizing:border-box;margin-bottom:2px;font-size:12px;display:block';
-  sel.parentNode.insertBefore(inp,sel);
-
-  function applyFilter(q){
-    var currentVal=sel.value;
-    q=q.toLowerCase().trim();
-    // Rebuild select options
-    while(sel.options.length) sel.remove(0);
-    if(!q){
-      // No query — restore all options
-      sel._allOpts.forEach(function(item){
-        if(item.opts){
-          var og=document.createElement('optgroup'); og.label=item.label;
-          item.opts.forEach(function(o){ var opt=new Option(o.t,o.v); if(o.v===currentVal) opt.selected=true; og.appendChild(opt); });
-          sel.appendChild(og);
-        } else {
-          var opt=new Option(item.t,item.v); if(item.v===currentVal) opt.selected=true; sel.add(opt);
-        }
-      });
-      return;
-    }
-    // Scoring: score each option by relevance
-    var words=q.split(/\s+/).filter(Boolean);
-    function scoreText(t,g){
-      t=t.toLowerCase(); g=(g||'').toLowerCase();
-      if(t===q) return 100;
-      if(t.startsWith(q)) return 90;
-      // Check word boundaries
-      var tWords=t.split(/\s+/);
-      var wordStartMatch=tWords.some(function(w){ return w.startsWith(q); });
-      if(wordStartMatch) return 80;
-      // All query words present
-      var allMatch=words.every(function(w){ return t.includes(w)||g.includes(w); });
-      if(allMatch) return 60;
-      // Some query words present
-      var someMatch=words.some(function(w){ return t.includes(w)||g.includes(w); });
-      if(someMatch) return 30;
-      return 0;
-    }
-    // Collect all options with scores
-    var allScored=[];
-    sel._allOpts.forEach(function(item){
-      if(item.opts){
-        item.opts.forEach(function(o){
-          var s=scoreText(o.t, item.label);
-          if(s>=30) allScored.push({v:o.v,t:o.t,g:item.label,score:s});
-        });
-      } else {
-        var s=scoreText(item.t,'');
-        if(s>=30) allScored.push({v:item.v,t:item.t,g:null,score:s});
-      }
-    });
-    allScored.sort(function(a,b){ return b.score-a.score; });
-    if(!allScored.length) return; // nothing matches — keep current (don't clear)
-    // Rebuild with groups
-    var gMap={};
-    allScored.forEach(function(o){
-      if(o.g){
-        if(!gMap[o.g]){ gMap[o.g]=document.createElement('optgroup'); gMap[o.g].label=o.g; sel.appendChild(gMap[o.g]); }
-        var opt=new Option(o.t,o.v); if(o.v===currentVal) opt.selected=true; gMap[o.g].appendChild(opt);
-      } else {
-        var opt=new Option(o.t,o.v); if(o.v===currentVal) opt.selected=true; sel.add(opt);
-      }
-    });
-  
-  }
-
-  inp.addEventListener('input',function(){
-    applyFilter(inp.value);
-  });
-
-  // When select changes: clear search, restore full list, keep selected value
-  sel.addEventListener('change',function(){
-    var chosen=sel.value;
-    inp.value='';
-    applyFilter(''); // restores all options
-    // Re-select the chosen value after restoring
-    for(var i=0;i<sel.options.length;i++){
-      if(sel.options[i].value===chosen){ sel.selectedIndex=i; break; }
-    }
-  });
-}
-
-function applySearchableSelects(){
-  // Only apply to selects that benefit from search (products, clients, users, projects)
-  // Skip period/date/filter selects and small selects
-  var SKIP_IDS=['av-period-type','av-month-sel','av-year-sel',
-    'yrSel','fEstado','vf-tipo-pago','avf-tipo-pago','comisUserSel',
-    'liq-sub-sel','liq-period-sel','av-cat-filter','rep-item','rep-user',
-    'ilm-estado','fRol','fComisType',
-    'crm-tipo-cedula','crm-tipo-cliente','imm-cat','imm-vendedor',
-    'av-user-sel','ilm-estado'];
-  document.querySelectorAll('select').forEach(function(sel){
-    if(!sel.id||sel.dataset.srch) return;
-    if(SKIP_IDS.indexOf(sel.id)>=0) return;
-    if(sel.options.length<5) return; // Skip very small selects
-    makeSearchable(sel);
-  });
-}
-
-function resetSearchable(selectId){
-  var sel=document.getElementById(selectId);
-  if(!sel) return;
-  // Remove old search input if exists
-  var prev=sel.previousElementSibling;
-  if(prev&&prev.tagName==='INPUT'&&prev.type==='text'){
-    prev.parentNode.removeChild(prev);
-  }
-  delete sel.dataset.srch;
-  delete sel._allOpts;
-}// ══════════════════════════════════════════════════════════════
 //  MÓDULO DE INVENTARIO — CONCRE ERP
 // ══════════════════════════════════════════════════════════════
-
-
-// ── Comprimir y subir foto a Supabase Storage ──
-async function invUploadFoto(file, itemId){
-  if(!file) return '';
-  // Compress to max 300px, quality 0.6 (lowest reasonable)
-  return new Promise(function(resolve){
-    var reader=new FileReader();
-    reader.onload=function(e){
-      var img=new Image();
-      img.onload=function(){
-        var canvas=document.createElement('canvas');
-        var MAX=300;
-        var w=img.width, h=img.height;
-        if(w>h){ if(w>MAX){h=Math.round(h*MAX/w);w=MAX;} }
-        else { if(h>MAX){w=Math.round(w*MAX/h);h=MAX;} }
-        canvas.width=w; canvas.height=h;
-        canvas.getContext('2d').drawImage(img,0,0,w,h);
-        canvas.toBlob(async function(blob){
-          var filename='inv/'+itemId+'-'+Date.now()+'.jpg';
-          var res=await DB.storage.from('inventario-fotos').upload(filename, blob, {
-            contentType:'image/jpeg', upsert:true
-          });
-          if(res.error){
-            console.error('Upload error:', res.error);
-            toast('Error subiendo foto: '+res.error.message);
-            resolve('');
-          } else {
-            var urlRes=DB.storage.from('inventario-fotos').getPublicUrl(filename);
-            resolve(urlRes.data?.publicUrl||'');
-          }
-        },'image/jpeg',0.6);
-      };
-      img.src=e.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
 
 // ── Cache ──
 window._invItems    = window._invItems    || [];
@@ -11111,19 +10857,14 @@ function invDateFmt(ts){
 function invCanEdit(){ 
   if(!SESSION) return false;
   if(SESSION.rol==='superadmin'||SESSION.rol==='admin') return true;
-  var p=window._invPermisos&&window._invPermisos[SESSION.id];
+  var p=window._invPermisos[SESSION.id];
   return p==='completo';
 }
 function invCanAccess(){
   if(!SESSION) return false;
   if(SESSION.rol==='superadmin'||SESSION.rol==='admin') return true;
-  // For regular users: check tabPerms (set by admin via tab perms checkbox)
-  var tabPerms=SESSION.tabPerms||{};
-  if(tabPerms.inventario===false) return false;
-  // Also check if user has explicit inv_permisos entry
-  var p=window._invPermisos&&window._invPermisos[SESSION.id];
-  // If no explicit inv entry, default to read-only access if tab is granted
-  return p==='completo'||p==='restringido'||p===undefined||p===null;
+  var p=window._invPermisos[SESSION.id];
+  return p==='completo'||p==='restringido';
 }
 function invIsAdminSA(){
   return SESSION&&(SESSION.rol==='admin'||SESSION.rol==='superadmin');
@@ -11162,18 +10903,7 @@ async function loadInvFromDB(){
 
 // ══ INIT ══
 async function initInventario(){
-  // Find inv-root — prioritize the one that's visible
-  var root=null;
-  var candidates=document.querySelectorAll('#inv-root');
-  candidates.forEach(function(el){
-    var par=el.parentElement;
-    while(par){
-      if(par.style&&par.style.display==='none'){ return; }
-      par=par.parentElement;
-    }
-    root=el;
-  });
-  if(!root) root=document.getElementById('inv-root');
+  var root=document.getElementById('inv-root');
   if(!root) return;
   if(!invCanAccess()){
     root.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">No tienes acceso al módulo de inventario.</div>';
@@ -11185,14 +10915,7 @@ async function initInventario(){
 }
 
 function renderInvMain(){
-  var root=null;
-  var candidates=document.querySelectorAll('#inv-root');
-  candidates.forEach(function(el){
-    var par=el.parentElement;
-    while(par){ if(par.style&&par.style.display==='none') return; par=par.parentElement; }
-    root=el;
-  });
-  if(!root) root=document.getElementById('inv-root');
+  var root=document.getElementById('inv-root');
   if(!root) return;
   root.innerHTML=
     '<div id="inv-nav" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap"></div>'+
@@ -11333,63 +11056,6 @@ async function invResolveAlerta(alertaId){
 }
 
 // ══ LISTA DE ÍTEMS ══
-
-function renderInvSearchResults(type, q){
-  var items=window._invItems.filter(function(i){return i.type===type&&i.activo;});
-  var results=[];
-  if(!q||!q.trim()){
-    renderInvList(type);
-    return;
-  }
-  var q2=q.toLowerCase().trim();
-  var scored=items.map(function(item){
-    var n=item.nombre.toLowerCase();
-    var cod=(item.codigo||'').toLowerCase();
-    var score=0;
-    if(n===q2||cod===q2) score=100;
-    else if(n.startsWith(q2)||cod.startsWith(q2)) score=80;
-    else if(n.includes(q2)||cod.includes(q2)) score=60;
-    else {
-      var matched=0,ti=0;
-      for(var qi=0;qi<q2.length;qi++){while(ti<n.length&&n[ti]!==q2[qi])ti++;if(ti<n.length){matched++;ti++;}}
-      score=q2.length>0?Math.round(matched/q2.length*40):0;
-    }
-    return {item:item,score:score};
-  }).filter(function(s){return s.score>0;}).sort(function(a,b){return b.score-a.score;}).slice(0,5);
-
-  var label=type==='inventario'?'Inventario':'Activo';
-  var body=document.getElementById('inv-body');
-  if(!body) return;
-
-  var html='<div style="margin-bottom:10px;font-size:12px;color:var(--text3)">'+scored.length+' resultado(s) para "'+q+'"</div>';
-  if(scored.length===0){
-    html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:30px;text-align:center;color:var(--text3)">Sin coincidencias</div>';
-  } else {
-    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">';
-    scored.forEach(function(s){
-      var item=s.item;
-      var bajoMin=item.cantidad<=item.cantidad_minima;
-      html+='<div onclick="openInvItemDetail(\''+item.id+'\')" style="background:var(--surface);border:1.5px solid '+(bajoMin?'rgba(227,24,55,.4)':'var(--blue)')+';border-radius:10px;padding:14px;cursor:pointer">';
-      if(item.foto_url) html+='<div style="width:100%;height:80px;border-radius:7px;margin-bottom:8px;overflow:hidden"><img src="'+item.foto_url+'" style="width:100%;height:100%;object-fit:cover"></div>';
-      else html+='<div style="width:100%;height:50px;background:var(--surface2);border-radius:7px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;font-size:20px">'+(type==='inventario'?'📦':'🔧')+'</div>';
-      html+='<div style="font-weight:800;font-size:13px">'+item.nombre+'</div>';
-      html+='<div style="font-size:10px;color:var(--text3);margin-bottom:6px">'+item.codigo+'</div>';
-      html+='<div style="font-weight:900;color:'+(bajoMin?'var(--red)':'var(--blue)')+'">'+invFmt(item.cantidad)+' '+(item.unidad||'')+'</div>';
-      if(bajoMin) html+='<span style="color:var(--red);font-size:9px;font-weight:800">⚠️ BAJO MÍNIMO</span>';
-      html+='</div>';
-    });
-    html+='</div>';
-  }
-  // Keep the header buttons
-  var header='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">';
-  header+='<div style="font-family:var(--cond);font-size:18px;font-weight:900">'+label+'s</div>';
-  header+='<div style="display:flex;gap:6px;align-items:center">';
-  if(invCanEdit()) header+='<button onclick="openInvItemModal(null,\''+type+'\')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:12px;font-weight:700">+ Nuevo</button>';
-  header+='<input type="text" id="inv-search-inp" placeholder="🔍 Buscar ítem..." class="liq-inp" style="min-width:160px" value="'+q+'" oninput="renderInvSearchResults(\''+type+'\',this.value)">';
-  header+='<button onclick="renderInvList(\''+type+'\')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 12px;cursor:pointer;font-size:12px">✕</button>';
-  header+='</div></div>';
-  body.innerHTML=header+html;
-}
 function renderInvList(type){
   var body=document.getElementById('inv-body');
   if(!body) return;
@@ -11399,7 +11065,6 @@ function renderInvList(type){
   var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">';
   html+='<div style="font-family:var(--cond);font-size:18px;font-weight:900">'+label+'s</div>';
   if(invCanEdit()) html+='<button onclick="openInvItemModal(null,\''+type+'\')" style="background:var(--blue);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:700">+ Nuevo '+label+'</button>';
-  html+='<div style="display:flex;gap:6px;align-items:center"><input type="text" id="inv-search-inp" placeholder="🔍 Buscar ítem..." class="liq-inp" style="min-width:180px" oninput="renderInvSearchResults(\'' + type + '\',this.value)"><button onclick="renderInvSearchResults(\''+type+'\',document.getElementById(\'inv-search-inp\')?.value||\'\'" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 14px;cursor:pointer;font-size:12px">Buscar</button></div>';
   html+='</div>';
 
   if(items.length===0){
@@ -11411,7 +11076,7 @@ function renderInvList(type){
       html+='<div onclick="openInvItemDetail(\''+item.id+'\')" style="background:var(--surface);border:1.5px solid '+(bajoMin?'rgba(227,24,55,.4)':'var(--border)')+';border-radius:10px;padding:14px;cursor:pointer;transition:box-shadow .15s" onmouseover="this.style.boxShadow=\'0 2px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.boxShadow=\'none\'">';
       // Foto
       if(item.foto_url){
-        html+='<div style="width:100%;height:100px;background:var(--surface2);border-radius:7px;margin-bottom:10px;overflow:hidden"><img src="'+item.foto_url+'" style="width:100%;height:100%;object-fit:cover" loading="lazy" onerror="this.style.opacity=0.3"></div>';
+        html+='<div style="width:100%;height:100px;background:var(--surface2);border-radius:7px;margin-bottom:10px;overflow:hidden"><img src="'+item.foto_url+'" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>';
       } else {
         html+='<div style="width:100%;height:60px;background:var(--surface2);border-radius:7px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;font-size:24px">'+(type==='inventario'?'📦':'🔧')+'</div>';
       }
@@ -11499,21 +11164,6 @@ async function openInvItemDetail(itemId){
 }
 
 // ══ FIBRA — LOTES ══
-
-async function invUpdateFibraFoto(input, itemId){
-  var file=input.files[0];
-  if(!file) return;
-  toast('⏳ Subiendo foto...');
-  var url=await invUploadFoto(file, itemId);
-  if(url){
-    await DB.from('inv_items').update({foto_url:url,updated_at:new Date().toISOString()}).eq('id',itemId);
-    var idx=window._invItems.findIndex(function(i){return i.id===itemId;});
-    if(idx>=0) window._invItems[idx].foto_url=url;
-    var item=window._invItems.find(function(i){return i.id===itemId;});
-    if(item) renderFibraLotes(item);
-    toast('✅ Foto actualizada');
-  }
-}
 function renderFibraLotes(item){
   var body=document.getElementById('inv-body');
   if(!body) return;
@@ -11522,12 +11172,8 @@ function renderFibraLotes(item){
   var lotesCerrados=lotes.filter(function(l){return l.estado==='cerrado';});
 
   var html='<div style="margin-bottom:12px"><button onclick="renderInvList(\'inventario\')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:13px">← Volver</button></div>';
-  html+='<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap">';
-  html+=(item.foto_url?'<img src="'+item.foto_url+'" style="width:80px;height:80px;object-fit:cover;border-radius:10px;border:1px solid var(--border)" loading="lazy">':'<div style="width:80px;height:80px;background:var(--surface2);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:32px">📦</div>');
-  html+='<div><div style="font-family:var(--cond);font-size:20px;font-weight:900;margin-bottom:4px">'+item.nombre+'</div>';
-  html+='<div style="font-size:12px;color:var(--text3);margin-bottom:8px">Selecciona un lote para registrar movimientos</div>';
-  html+=(invIsAdminSA()?'<label style="display:inline-block;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">📷 Cambiar foto<input type="file" accept="image/*" style="display:none" onchange="invUpdateFibraFoto(this,\''+item.id+'\')"></label>':'');
-  html+='</div></div>';
+  html+='<div style="font-family:var(--cond);font-size:20px;font-weight:900;margin-bottom:4px">'+item.nombre+'</div>';
+  html+='<div style="font-size:12px;color:var(--text3);margin-bottom:16px">Selecciona un lote para registrar movimientos</div>';
 
   // Add lote button (admin/SA only)
   if(invIsAdminSA()){
@@ -11671,7 +11317,7 @@ function openInvItemModal(itemId, type){
     +'<div><span class="liq-label">Cantidad actual</span><input type="number" id="iim-cantidad" class="liq-inp" value="'+(item?item.cantidad:0)+'" min="0"></div>'
     +'<div><span class="liq-label">Cantidad mínima</span><input type="number" id="iim-minimo" class="liq-inp" value="'+(item?item.cantidad_minima:0)+'" min="0"></div>'
     +'</div>'
-    +'<div style="margin-bottom:10px"><span class="liq-label">Foto</span>'+(item&&item.foto_url?'<img src="'+item.foto_url+'" style="display:block;width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid var(--border);margin-bottom:6px">':'')+'<input type="file" id="iim-foto-file" accept="image/*" style="display:block;width:100%;font-size:12px;margin-bottom:4px"><input type="hidden" id="iim-foto" value="'+(item?item.foto_url||'':'')+'"></div>'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Foto (URL o subir)</span><input type="text" id="iim-foto" class="liq-inp" value="'+(item?item.foto_url||'':'')+'" placeholder="URL de imagen o deja vacío"></div>'
     +'<div style="margin-bottom:10px"><span class="liq-label">Notas</span><textarea id="iim-notas" class="liq-inp" rows="2" style="resize:vertical">'+(item?item.notas||'':'')+'</textarea></div>'
     +'</div>'
     +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invItemModal\').classList.add(\'hidden\')">Cancelar</button><button class="modal-btn save" onclick="saveInvItem(\''+type+'\',\''+itemId+'\')">Guardar</button></div>'
@@ -11685,13 +11331,7 @@ async function saveInvItem(type, itemId){
   var unidad=(document.getElementById('iim-unidad')?.value||'unidad').trim();
   var cantidad=parseFloat(document.getElementById('iim-cantidad')?.value)||0;
   var minimo=parseFloat(document.getElementById('iim-minimo')?.value)||0;
-  // Handle photo upload
-  var fotoFile=document.getElementById('iim-foto-file')?.files[0];
   var foto=(document.getElementById('iim-foto')?.value||'').trim();
-  if(fotoFile){
-    var uploadedUrl=await invUploadFoto(fotoFile,id);
-    if(uploadedUrl) foto=uploadedUrl;
-  }
   var notas=(document.getElementById('iim-notas')?.value||'').trim();
   if(!nombre||!codigo){ toast('Nombre y código son obligatorios'); return; }
   var id=itemId||('item-'+Date.now());
@@ -11717,9 +11357,7 @@ function openInvLoteModal(itemId, loteId){
     +'<div class="modal-hdr"><span class="modal-title">'+(lote?'Editar':'Nuevo')+' Lote</span><button class="modal-close" onclick="document.getElementById(\'invLoteModal\').classList.add(\'hidden\')">✕</button></div>'
     +'<div class="modal-body">'
     +'<div style="margin-bottom:10px"><span class="liq-label">Nombre del lote *</span><input type="text" id="ilm-nombre" class="liq-inp" value="'+(lote?lote.nombre:'')+'" placeholder="Ej: Lote Enero 2026"></div>'
-    +'<div style="margin-bottom:10px"><span class="liq-label">Cantidad inicial (kg)</span><input type="number" id="ilm-cantidad" class="liq-inp" value="'+(lote?lote.cantidad_inicial:16000)+'" min="0"></div>'
-    +(lote?'<div style="margin-bottom:10px"><span class="liq-label">Cantidad actual (kg)</span><input type="number" id="ilm-actual" class="liq-inp" value="'+lote.cantidad_actual+'" min="0"></div>':'')
-    +(lote?'<div style="margin-bottom:10px"><span class="liq-label">Estado</span><select id="ilm-estado" class="liq-inp"><option value="activo"'+(lote.estado==="activo"?" selected":"")+'>Activo</option><option value="cerrado"'+(lote.estado==="cerrado"?" selected":"")+'>Cerrado</option></select></div>':'')
+    +(!lote?'<div style="margin-bottom:10px"><span class="liq-label">Cantidad inicial (kg)</span><input type="number" id="ilm-cantidad" class="liq-inp" value="16000" min="0"></div>':'')
     +'</div>'
     +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invLoteModal\').classList.add(\'hidden\')">Cancelar</button><button class="modal-btn save" onclick="saveInvLote(\''+itemId+'\',\''+loteId+'\')">Guardar</button></div>'
     +'</div>';
@@ -11730,13 +11368,10 @@ async function saveInvLote(itemId, loteId){
   var nombre=(document.getElementById('ilm-nombre')?.value||'').trim();
   if(!nombre){ toast('El nombre del lote es obligatorio'); return; }
   if(loteId&&loteId!=='null'){
-    var cantIniEdit=parseFloat(document.getElementById('ilm-cantidad')?.value)||0;
-    var cantActEdit=parseFloat(document.getElementById('ilm-actual')?.value)||0;
-    var estadoEdit=document.getElementById('ilm-estado')?.value||'activo';
-    var res=await DB.from('inv_lotes').update({nombre:nombre,cantidad_inicial:cantIniEdit,cantidad_actual:cantActEdit,estado:estadoEdit,updated_at:new Date().toISOString()}).eq('id',loteId);
+    var res=await DB.from('inv_lotes').update({nombre:nombre,updated_at:new Date().toISOString()}).eq('id',loteId);
     if(!res.error){
       var idx=window._invLotes.findIndex(function(l){return l.id===loteId;});
-      if(idx>=0){window._invLotes[idx].nombre=nombre;window._invLotes[idx].cantidad_inicial=cantIniEdit;window._invLotes[idx].cantidad_actual=cantActEdit;window._invLotes[idx].estado=estadoEdit;}
+      if(idx>=0) window._invLotes[idx].nombre=nombre;
       toast('✅ Lote actualizado');
     }
   } else {
@@ -11796,7 +11431,7 @@ function openInvMovModal(itemId, tipo, loteId){
     +'<div class="modal-body">'
     +'<div style="background:var(--surface2);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px">Stock actual: <strong>'+invFmt(lote?lote.cantidad_actual:item.cantidad)+' '+(item.unidad||'')+'</strong></div>'
     +catHTML
-    +'<div style="margin-bottom:10px"><span class="liq-label">'+cantidadLabel+' *</span><input type="number" id="imm-cantidad" class="liq-inp" '+(tipo==='ajuste'?'step="0.01" placeholder="Positivo (+) o negativo (-)"':'min="0.01" step="0.01" placeholder="0"')+'>\</div>'
+    +'<div style="margin-bottom:10px"><span class="liq-label">'+cantidadLabel+' *</span><input type="number" id="imm-cantidad" class="liq-inp" min="0.01" step="0.01" placeholder="0"></div>'
     +'<div style="margin-bottom:10px"><span class="liq-label">Nota / Descripción *</span><textarea id="imm-nota" class="liq-inp" rows="3" placeholder="Describe el motivo del movimiento..."></textarea></div>'
     +'</div>'
     +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invMovModal\').classList.add(\'hidden\')">Cancelar</button>'
@@ -11819,8 +11454,7 @@ async function saveInvMov(itemId, tipo, loteId){
 
   if(tipo==='salida'&&!cat){ toast('Selecciona una categoría'); return; }
   if(tipo==='salida'&&cat==='venta_cliente'&&!vendedorId){ toast('Selecciona el usuario que realizó la venta'); return; }
-  if(tipo!=='ajuste'&&(!cantidad||cantidad<=0)){ toast('Ingresa una cantidad válida'); return; }
-  if(tipo==='ajuste'&&cantidad===0){ toast('Ingresa una cantidad diferente a 0'); return; }
+  if(!cantidad||cantidad<=0){ toast('Ingresa una cantidad válida'); return; }
   if(!nota){ toast('La nota es obligatoria'); return; }
 
   var item=window._invItems.find(function(i){return i.id===itemId;});
@@ -11831,10 +11465,7 @@ async function saveInvMov(itemId, tipo, loteId){
 
   var movId=invNextMovNum(itemId);
   var cantAntes=stockActual;
-  var cantDespues;
-  if(tipo==='ajuste') cantDespues=stockActual+cantidad; // puede ser negativo
-  else if(tipo==='salida') cantDespues=stockActual-cantidad;
-  else cantDespues=stockActual+cantidad;
+  var cantDespues=tipo==='salida'?stockActual-cantidad:stockActual+cantidad;
 
   var vendedor=vendedorId?getUsers().find(function(u){return u.id===vendedorId;}):null;
 
@@ -12195,12 +11826,9 @@ async function renderInteligenciaComercial(){
 
   var html='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px">';
   // Header
-  var icCollapsed=window._icCollapsed||false;
   html+='<div style="background:var(--gray-dark);padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">';
-  html+='<div style="display:flex;align-items:center;gap:12px">';
-  html+='<button onclick="window._icCollapsed=!window._icCollapsed;renderInteligenciaComercial()" style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:14px;line-height:1" title="'+(icCollapsed?'Expandir':'Colapsar')+'">'+(icCollapsed?'▼':'▲')+'</button>';
   html+='<div><div style="font-family:var(--cond);font-size:18px;font-weight:900;color:#fff">🔍 Inteligencia Comercial</div>';
-  html+='<div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:2px">Proyectos adjudicados relevantes para CONCRE · '+IC_FUENTES.join(', ')+'</div></div></div>';
+  html+='<div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:2px">Proyectos adjudicados relevantes para CONCRE · '+IC_FUENTES.join(', ')+'</div></div>';
   html+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
 
   // Uso mensual badge
@@ -12217,12 +11845,7 @@ async function renderInteligenciaComercial(){
   }
   html+='</div></div>';
 
-  // Projects table — only show if not collapsed
-  if(icCollapsed){
-    html+='</div>'; // close main container
-    container.innerHTML=html;
-    return;
-  }
+  // Projects table
   if(_icProyectos.length===0){
     html+='<div style="padding:40px;text-align:center;color:var(--text3)">';
     html+='<div style="font-size:32px;margin-bottom:12px">🏗️</div>';
@@ -12339,14 +11962,10 @@ async function icActualizar(){
       +'Responde ÚNICAMENTE con un JSON válido con esta estructura exacta, sin texto adicional ni backticks:\n'
       +'{"proyectos":[{"fuente":"SICOP","nombre_proyecto":"...","institucion":"...","empresa_ejecutora":"...","descripcion":"...","area_estimada":"...","ubicacion":"...","fecha_inicio":"...","monto_contrato":"...","relevancia":"Por qué es relevante para CONCRE","contacto_nombre":"...","contacto_telefono":"...","contacto_correo":"...","contacto_web":"https://...","contacto_facebook":"https://..."}],"resumen":"Texto breve del análisis","fuentes_consultadas":"SICOP, CFIA, MOPT"}';
 
-    // Use Supabase Edge Function as CORS proxy for Anthropic API
-    var proxyUrl=SUPABASE_URL+'/functions/v1/anthropic-proxy';
+    var proxyUrl='https://hfgpnmayazytnjunjymi.supabase.co/functions/v1/anthropic-proxy';
     var response=await fetch(proxyUrl,{
       method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'Authorization':'Bearer '+SUPABASE_KEY
-      },
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_KEY},
       body:JSON.stringify({
         model:'claude-sonnet-4-5',
         max_tokens:4000,
@@ -12472,6 +12091,69 @@ function icExportarExcel(){
   toast('✅ Exportado');
 }
 
+
+// ── Búsqueda en listas desplegables ──
+function makeSearchable(sel){
+  if(!sel||sel.dataset.srch) return;
+  sel.dataset.srch='1';
+  sel._allOpts=[];
+  Array.from(sel.children).forEach(function(child){
+    if(child.tagName==='OPTGROUP'){
+      Array.from(child.children).forEach(function(opt){sel._allOpts.push({v:opt.value,t:opt.text,g:child.label});});
+    } else if(child.tagName==='OPTION'){sel._allOpts.push({v:child.value,t:child.text,g:null});}
+  });
+  var inp=document.createElement('input');
+  inp.type='text'; inp.placeholder='🔍 Buscar...'; inp.className='vf-inp';
+  inp.style.cssText='width:100%;box-sizing:border-box;margin-bottom:2px;font-size:12px;display:block';
+  sel.parentNode.insertBefore(inp,sel);
+  function applyFilter(q){
+    var cv=sel.value; q=q.toLowerCase().trim();
+    while(sel.options.length) sel.remove(0);
+    var words=q.split(/\s+/).filter(Boolean);
+    function scoreText(t,g){
+      t=t.toLowerCase();g=(g||'').toLowerCase();
+      if(t===q) return 100; if(t.startsWith(q)) return 90;
+      var tWords=t.split(/\s+/);
+      if(tWords.some(function(w){return w.startsWith(q);})) return 80;
+      if(words.length&&words.every(function(w){return t.includes(w)||g.includes(w);})) return 60;
+      if(words.length&&words.some(function(w){return t.includes(w)||g.includes(w);})) return 30;
+      return q?0:50;
+    }
+    var allScored=[];
+    (sel._allOpts||[]).forEach(function(item){
+      if(item.g){var s=scoreText(item.t,item.g);if(s>0||!q)allScored.push({v:item.v,t:item.t,g:item.g,score:s});}
+      else{var s2=scoreText(item.t,'');if(s2>0||!q)allScored.push({v:item.v,t:item.t,g:null,score:s2});}
+    });
+    allScored=allScored.filter(function(s){return !q||s.score>=30;});
+    allScored.sort(function(a,b){return b.score-a.score;});
+    if(!q) allScored=(sel._allOpts||[]).map(function(o){return {v:o.v,t:o.t,g:o.g};});
+    var gMap={};
+    allScored.forEach(function(o){
+      if(o.g){if(!gMap[o.g]){gMap[o.g]=document.createElement('optgroup');gMap[o.g].label=o.g;sel.appendChild(gMap[o.g]);}var opt=new Option(o.t,o.v);if(o.v===cv)opt.selected=true;gMap[o.g].appendChild(opt);}
+      else{var opt=new Option(o.t,o.v);if(o.v===cv)opt.selected=true;sel.add(opt);}
+    });
+  }
+  inp.addEventListener('input',function(){applyFilter(inp.value);});
+  sel.addEventListener('change',function(){var v=sel.value;applyFilter('');inp.value='';for(var i=0;i<sel.options.length;i++){if(sel.options[i].value===v){sel.selectedIndex=i;break;}}});
+  sel.addEventListener('blur',function(){setTimeout(function(){if(inp.value){applyFilter('');inp.value='';}},200);});
+}
+function applySearchableSelects(){
+  var SKIP=['av-period-type','av-month-sel','av-year-sel','yrSel','fEstado','vf-tipo-pago',
+    'avf-tipo-pago','comisUserSel','liq-sub-sel','liq-period-sel','av-cat-filter','rep-item',
+    'rep-user','ilm-estado','fRol','fComisType','crm-tipo-cedula','crm-tipo-cliente',
+    'imm-cat','imm-vendedor','av-user-sel'];
+  document.querySelectorAll('select').forEach(function(sel){
+    if(sel.id&&!sel.dataset.srch&&SKIP.indexOf(sel.id)<0) makeSearchable(sel);
+  });
+}
+function resetSearchable(selectId){
+  var sel=document.getElementById(selectId);
+  if(!sel) return;
+  delete sel.dataset.srch; delete sel._allOpts;
+  var prev=sel.previousElementSibling;
+  if(prev&&prev.tagName==='INPUT'&&prev.type==='text') prev.parentNode.removeChild(prev);
+}
+
 </script>
 
 </head>
@@ -12529,7 +12211,6 @@ function icExportarExcel(){
 
         <!-- OVERVIEW -->
         <div id="sec-overview" class="admin-section on">
-          <!-- Inteligencia Comercial -->
           <div id="ic-section"></div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:10px">
             <div>
@@ -12945,11 +12626,7 @@ function icExportarExcel(){
                 <div><span class="vf-label">Cantidad / M²</span><input type="number" class="vf-inp" id="avf-cantidad" min="0" step="any" oninput="calcAdminVentaPreview()"></div>
                 <div><span class="vf-label">Precio unitario ₡</span><input type="text" class="vf-inp" id="avf-precio" placeholder="0" oninput="fmtInp(this);calcAdminVentaPreview()"></div>
                 <div><span class="vf-label">IVA</span><select class="vf-sel" id="avf-iva" onchange="calcAdminVentaPreview()"><option value="no">Sin IVA</option><option value="13">13%</option></select></div>
-                <div><span class="vf-label">Pago</span><select class="vf-sel" id="avf-tipo-pago" onchange="toggleAvfPlazo()"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
-              <div id="avf-plazo-wrap" style="display:none;margin-top:6px">
-                <span class="vf-label">Plazo crédito</span>
-                <input type="text" class="vf-inp" id="avf-plazo" placeholder="Ej: 30 días, 60 días...">
-              </div>
+                <div><span class="vf-label">Pago</span><select class="vf-sel" id="avf-tipo-pago"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
               </div>
               <div class="vf-grid-3" style="margin-bottom:10px">
                 
@@ -13523,13 +13200,9 @@ function icExportarExcel(){
       </div><!-- /admin-main -->
     </div><!-- /admin-layout -->
   
-          <!-- ════════════════════════════════
-               INVENTARIO
-          ════════════════════════════════ -->
           <div id="sec-inventario" class="admin-section">
             <div id="inv-root"></div>
           </div>
-
 </div><!-- /adminPanel -->
 
   <!-- USER MODULE -->
@@ -14529,7 +14202,7 @@ var BACKUP_EXPORT_LOG_KEY  = 'cc_export_log';
 // ── Track last export ──
 function getLastExportI
 <!-- CRM: CLIENT MODAL -->
-          <div id="crmClientModal" class="modal-overlay hidden" style="z-index:10000">
+          <div id="crmClientModal" class="modal-overlay hidden">
             <div class="modal" style="width:680px;max-width:96vw;max-height:90vh;overflow-y:auto">
               <div class="modal-hdr">
                 <span class="modal-title" id="crm-modal-title">Nuevo cliente</span>
@@ -14720,9 +14393,76 @@ function getLastExportI
 </div>
 
 </body>
-</html>
 
-          
+
+          <!-- CRM: CLIENT MODAL -->
+          <div id="crmClientModal" class="modal-overlay hidden">
+            <div class="modal" style="width:680px;max-width:96vw;max-height:90vh;overflow-y:auto">
+              <div class="modal-hdr">
+                <span class="modal-title" id="crm-modal-title">Nuevo cliente</span>
+                <button class="modal-close" onclick="closeCRMClientModal()">✕</button>
+              </div>
+              <div class="modal-body">
+                <!-- Basic info -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+                  <div class="liq-field" style="grid-column:span 2">
+                    <span class="liq-label">Nombre empresa / Persona física *</span>
+                    <input type="text" class="liq-inp" id="crm-nombre-empresa" placeholder="Nombre completo de la empresa o persona">
+                  </div>
+                  <div class="liq-field">
+                    <span class="liq-label">Cédula</span>
+                    <input type="text" class="liq-inp" id="crm-cedula" placeholder="Opcional">
+                  </div>
+                  <div class="liq-field">
+                    <span class="liq-label">Tipo de cédula</span>
+                    <select class="liq-inp" id="crm-tipo-cedula">
+                      <option value="">— Seleccionar —</option>
+                      <option value="juridica">Jurídica</option>
+                      <option value="personal">Personal (física)</option>
+                    </select>
+                  </div>
+                  <div class="liq-field">
+                    <span class="liq-label">Tipo de cliente *</span>
+                    <select class="liq-inp" id="crm-tipo-cliente" onchange="onCRMTipoChange()">
+                      <option value="">— Seleccionar —</option>
+                      <option value="constructora">Constructora</option>
+                      <option value="ingeniero">Ingeniero independiente</option>
+                      <option value="maestro">Maestro de obras</option>
+                      <option value="usuario_final">Usuario final</option>
+                      <option value="concretera">Concretera</option>
+                      <option value="intermediario">Intermediario/Comisionista</option>
+                      <option value="otro">Otro</option>
+                    </select>
+                  </div>
+                  <div class="liq-field" id="crm-tipo-otro-wrap" style="display:none">
+                    <span class="liq-label">Especificar tipo *</span>
+                    <input type="text" class="liq-inp" id="crm-tipo-otro" placeholder="Describir tipo de cliente">
+                  </div>
+                  <div class="liq-field" style="grid-column:span 2">
+                    <span class="liq-label">Dirección (referencia) *</span>
+                    <input type="text" class="liq-inp" id="crm-direccion" placeholder="Provincia, cantón, referencia general">
+                  </div>
+                </div>
+
+                <!-- Contacts -->
+                <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                    <span style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:.7px">Contactos *</span>
+                    <button onclick="addCRMContactRow()" style="font-size:11px;color:var(--blue);background:none;border:none;cursor:pointer;font-weight:700">+ Agregar contacto</button>
+                  </div>
+                  <div id="crm-contacts-list"></div>
+                  <div id="crm-contact-error" style="font-size:11px;color:var(--red);display:none;margin-top:6px">⚠ Se requiere al menos un contacto con teléfono o email.</div>
+                </div>
+
+                <input type="hidden" id="crm-edit-id">
+              </div>
+              <div class="modal-footer">
+                <button class="modal-btn cancel" onclick="closeCRMClientModal()">Cancelar</button>
+                <button class="modal-btn save" onclick="saveCRMClient()">✓ Guardar cliente</button>
+              </div>
+            </div>
+          </div>
+
           <!-- CRM: CLIENT DETAIL MODAL -->
           <div id="crmDetailModal" class="modal-overlay hidden">
             <div class="modal" style="width:720px;max-width:96vw;max-height:90vh;overflow-y:auto">
@@ -14794,7 +14534,56 @@ function getLastExportI
             </div>
           </div>
 
+<!-- GLOBAL EXPORT MODAL -->
+<div id="globalExportModal" class="modal-overlay hidden">
+  <div class="modal" style="width:580px;max-width:96vw">
+    <div class="modal-hdr">
+      <span class="modal-title">⬇ Exportación Global del Sistema</span>
+      <button class="modal-close" onclick="document.getElementById('globalExportModal').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(37,99,235,.05);border:1px solid rgba(37,99,235,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px">
+        <strong>¿Qué incluye este ZIP?</strong><br>
+        Un archivo CSV por módulo (Ventas, Horas, Vacaciones, Fondos, Gastos, Comisiones) por cada usuario registrado. Los archivos de admin incluyen además: Liquidaciones, CRM, Papelera y Usuarios del sistema.
+      </div>
+      <div style="font-size:11px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:6px">Historial de exportaciones</div>
+      <div id="export-log-body" style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:8px 12px;margin-bottom:14px;max-height:120px;overflow-y:auto"></div>
+      <div id="zip-progress" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px;font-size:12px;font-weight:700;color:var(--blue);margin-bottom:10px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="modal-btn cancel" onclick="document.getElementById('globalExportModal').classList.add('hidden')">Cancelar</button>
+      <button class="modal-btn save" id="btn-generate-zip" onclick="generateGlobalZip()">⬇ Generar ZIP completo</button>
+    </div>
+  </div>
 </div>
+
+<!-- RESTORE MODAL -->
+<div id="restoreModal" class="modal-overlay hidden">
+  <div class="modal" style="width:560px;max-width:96vw">
+    <div class="modal-hdr">
+      <span class="modal-title" style="color:var(--red)">🔴 Restaurar Sistema desde Backup</span>
+      <button class="modal-close" onclick="document.getElementById('restoreModal').classList.add('hidden')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(227,24,55,.06);border:1.5px solid rgba(227,24,55,.3);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px">
+        ⚠️ Esta operación borrará <strong>TODA</strong> la información actual y la reemplazará con la del archivo de backup. Solo úsala si el sistema necesita ser restaurado completamente.
+      </div>
+      <div style="margin-bottom:12px">
+        <span class="liq-label">Seleccionar archivo de backup (.json)</span>
+        <input type="file" id="restore-file-input" accept=".json" onchange="onRestoreFileSelected()"
+          style="display:block;margin-top:6px;font-size:12px;width:100%">
+      </div>
+      <div id="restore-status" style="margin-bottom:10px"></div>
+      <div id="restore-confirm-wrap" style="display:none">
+        <span class="liq-label">Escribe <strong>RESTAURAR</strong> para confirmar</span>
+        <input type="text" id="restore-keyword" class="liq-inp" placeholder="RESTAURAR" style="margin-top:6px;letter-spacing:2px;font-weight:800">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="modal-btn cancel" onclick="document.getElementById('restoreModal').classList.add('hidden')">Cancelar</button>
+      <button class="modal-btn save" style="background:var(--red);border-color:var(--red)" onclick="executeRestore()">🔴 Ejecutar restauración</button>
+    </div>
+  </div>
 </div>
 
 </body>
