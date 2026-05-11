@@ -926,7 +926,9 @@ select{color:var(--text) !important}
   .venta-row td{padding:8px 10px;font-size:12px;vertical-align:middle;border-bottom:1px solid var(--border)}
 .venta-row{transition:background .1s}
   .venta-row:hover{background:var(--surface2)}
-  .venta-row.pagada{background:rgba(26,158,92,.05);border-left:3px solid var(--green)}
+  .venta-row.venta-incompleta{background:rgba(227,24,55,.07)!important;border-left:3px solid var(--red);}
+.venta-row.venta-incompleta td{color:var(--red)!important;}
+.venta-row.pagada{background:rgba(26,158,92,.05);border-left:3px solid var(--green)}
   .venta-row.pendiente-exec{background:rgba(37,99,235,.05);border-left:3px solid var(--blue)}
   .venta-row.tercero{background:rgba(217,119,6,.04);border-left:3px solid var(--amber)}
   .v-thead{background:var(--surface2);border-bottom:1px solid var(--border);font-size:10px;font-weight:800;color:var(--text3);letter-spacing:.8px;text-transform:uppercase}
@@ -1250,19 +1252,37 @@ async function loadAllDataFromDB(){
     var users=await DB.from('usuarios').select('*');
     if(!users.error&&users.data){
       window._usersCache=users.data.map(dbRowToUser);
+      // Refresh SESSION.tabPerms from latest DB data
+      if(SESSION){
+        var freshUser=window._usersCache.find(function(u){return u.id===SESSION.id;});
+        if(freshUser) SESSION.tabPerms=freshUser.tabPerms;
+      }
     }
 
     // Load configs
     var configs=await DB.from('configuracion').select('*');
     if(!configs.error&&configs.data){
       configs.data.forEach(function(row){
-        if(row.clave==='catalogo') window._catalogoCache=row.valor;
-        if(row.clave==='tipos_proyecto') window._tiposProyCache=row.valor;
-        if(row.clave==='liq_cost_types') window._liqCostTypesCache=row.valor;
+        if(row.clave==='catalogo') window._catalogoCache=row.valor&&row.valor.length?row.valor:null;
+        if(row.clave==='tipos_proyecto') window._tiposProyCache=row.valor&&row.valor.length?row.valor:null;
+        if(row.clave==='liq_cost_types') window._liqCostTypesCache=row.valor&&row.valor.length?row.valor:null;
         if(row.clave==='fondos_lim') window._fondosLimCache=row.valor;
       });
     }
 
+    // If catalogo not in Supabase yet, save DEFAULT_CATALOGO
+    if(!window._catalogoCache||!window._catalogoCache.length){
+      window._catalogoCache=DEFAULT_CATALOGO;
+      DB.from('configuracion').upsert({clave:'catalogo',valor:DEFAULT_CATALOGO,updated_at:new Date().toISOString()},{onConflict:'clave'}).then(function(){});
+    }
+    if(!window._tiposProyCache||!window._tiposProyCache.length){
+      window._tiposProyCache=DEFAULT_TIPOS_PROYECTO;
+      DB.from('configuracion').upsert({clave:'tipos_proyecto',valor:DEFAULT_TIPOS_PROYECTO,updated_at:new Date().toISOString()},{onConflict:'clave'}).then(function(){});
+    }
+    if(!window._liqCostTypesCache||!window._liqCostTypesCache.length){
+      window._liqCostTypesCache=DEFAULT_COST_TYPES;
+      DB.from('configuracion').upsert({clave:'liq_cost_types',valor:DEFAULT_COST_TYPES,updated_at:new Date().toISOString()},{onConflict:'clave'}).then(function(){});
+    }
     // Load LiqSubs
     var subs=await DB.from('liq_subcontratistas').select('*');
     if(!subs.error&&subs.data){
@@ -1453,8 +1473,7 @@ function buildUserTabs(){
     {id:'vacaciones',  label:'🌴 Vacaciones'},
     {id:'inventario',  label:'📦 Inventario'},
   ];
-  var invNivel=window._invPermisos&&window._invPermisos[SESSION.id];
-  if(invNivel!=='completo'&&invNivel!=='restringido') allTabs=allTabs.filter(function(t){return t.id!=='inventario';});
+  // Inventario tab: visible if tabPerms allows it (same as all other tabs)
   var visible=allTabs.filter(function(t){ return perms[t.id]!==false; });
   tabs.innerHTML=visible.map(function(t,i){
     var cls='htab'+(i===0?' on':'');
@@ -1574,7 +1593,7 @@ function initApp(){
     // Build admin header tabs
     buildAdminTabs();
     showAdminSec('overview'); // Show overview on login
-    setTimeout(applySearchableSelects,400);
+    setTimeout(applySearchableSelects,600);
     // Inject notification bell for admin
     injectNotifBell();
     // Register service worker for push (no-op if already registered)
@@ -1637,6 +1656,10 @@ function populateAdminSelectors(){
 
 // ── OVERVIEW ──
 function buildAdminOverview(){
+  // Load IC section
+  if(SESSION&&(SESSION.rol==='admin'||SESSION.rol==='superadmin')){
+    renderInteligenciaComercial().catch(function(e){console.error('IC error:',e);});
+  }
   const users=getUsers().filter(u=>u.rol==='user'&&u.estado==='activo');
   const today=new Date();
   const mesesAg=Math.min(today.getMonth()+2,12); // +2: Dec prev year + months Jan-current
@@ -4593,9 +4616,7 @@ let VY = new Date().getFullYear();
 function getCatalogo(){
   return (window._catalogoCache&&window._catalogoCache.length>0?window._catalogoCache:DEFAULT_CATALOGO);
 }
-function getCatalogo(){
-  return window._catalogoCache||[];
-}
+// getCatalogo defined above with DEFAULT_CATALOGO fallback
 function setCatalogo(d){
   window._catalogoCache=d;
   DB.from('configuracion').upsert({clave:'catalogo',valor:d,updated_at:new Date().toISOString()},{onConflict:'clave'})
@@ -4994,7 +5015,7 @@ function _doSaveVenta(){
   // CRM client is required
   const _crmClientCheck=document.getElementById('vf-cliente')?.value.trim();
   if(!_crmClientCheck){
-    toast('Debes seleccionar un cliente desde el CRM');
+    toast('Debes seleccionar un cliente');
     var _lbl=document.getElementById('vf-cliente-label');
     if(_lbl){ _lbl.parentElement.style.borderColor='var(--red)'; _lbl.parentElement.style.background='rgba(227,24,55,.04)'; }
     return;
@@ -5231,7 +5252,13 @@ function renderVentasUser(){
   }
 
   // Build prod select if needed
+  // Ensure catalogo is loaded before building select
+  if(!window._catalogoCache||!window._catalogoCache.length){
+    window._catalogoCache=DEFAULT_CATALOGO;
+  }
   buildProdSelect();
+  // Apply searchable to prod select after it's built
+  setTimeout(function(){ resetSearchable('vf-prod'); makeSearchable(document.getElementById('vf-prod')); },10);
 
   // Ventas table
   const filter=document.getElementById('v-filter-cat')?.value||'all';
@@ -5245,7 +5272,8 @@ function renderVentasUser(){
     const p=catMap[v.prodId]||{nombre:v.prodId,tipo:'otros'};
     const comis=calcComision(v,fibraCosto);
     var rowCls='venta-row';
-    if(v.pagadoAdmin) rowCls+=' pagada';
+    if(v.estado==='incompleta'||(v.invMovId&&(!v.prodId||!v.cliente||!v.precio))) rowCls+=' venta-incompleta';
+    else if(v.pagadoAdmin) rowCls+=' pagada';
     else if(v.tienePendiente&&v.pendCancelado!=='si') rowCls+=' pendiente-exec';
     else if(v.esTercero) rowCls+=' tercero';
     var pagoLabel=v.tipoPago==='CONTADO'
@@ -6253,11 +6281,18 @@ function updateVenta(){
   const pendChk=document.getElementById('vf-pend-chk').checked;
   const plazo=parseInt(document.getElementById('vf-plazo').value)||30;
 
+  var newProdId=document.getElementById('vf-prod').value;
+  var newCliente=document.getElementById('vf-cliente').value.trim();
+  var newPrecio=parseMon(document.getElementById('vf-precio').value)||0;
+  // Clear 'incompleta' status when the required fields are filled
+  var newEstado=(old.estado==='incompleta'&&newProdId&&newCliente&&newPrecio>0)?'activa':(old.estado||'activa');
+
   vd[mk].ventas[idx]={
     ...old,
     fecha,
-    prodId:document.getElementById('vf-prod').value,
-    cliente:document.getElementById('vf-cliente').value.trim(),
+    estado:newEstado,
+    prodId:newProdId,
+    cliente:newCliente,
     factura:document.getElementById('vf-factura').value.trim(),
     cantidad:document.getElementById('vf-cantidad').value,
     precio:parseMon(document.getElementById('vf-precio').value)||0,
@@ -7710,9 +7745,17 @@ function toggleAdminVentaForm(){
     // Populate product selector
     var sel=document.getElementById('avf-prod');
     if(sel&&sel.options.length<=1){
-      getCatalogo().forEach(function(p){
-        var o=document.createElement('option');o.value=p.id;o.textContent=p.nombre;sel.appendChild(o);
+      var cat=getCatalogo();
+      if(!cat||!cat.length) cat=DEFAULT_CATALOGO;
+      var groups={};
+      cat.forEach(function(p){ if(!groups[p.tipo]) groups[p.tipo]=[]; groups[p.tipo].push(p); });
+      var typeLabels={concreto:'Concreto',fibra:'Fibra',sello:'Sello',pulido:'Pulido',equipo:'Equipo',herramienta:'Herramienta',consumible:'Consumible',otros:'Otros'};
+      Object.keys(groups).forEach(function(tipo){
+        var og=document.createElement('optgroup'); og.label=typeLabels[tipo]||tipo;
+        groups[tipo].forEach(function(p){ var o=document.createElement('option');o.value=p.id;o.textContent=p.nombre;og.appendChild(o); });
+        sel.appendChild(og);
       });
+      resetSearchable('avf-prod'); makeSearchable(sel);
     }
     // Default date
     var df=document.getElementById('avf-fecha');
@@ -7749,7 +7792,7 @@ function saveAdminVenta(){
     toast('Completa fecha, producto, cantidad y precio'); return;
   }
   if(!cliente){
-    toast('Debes seleccionar un cliente desde el CRM');
+    toast('Debes seleccionar un cliente');
     var avlbl=document.getElementById('avf-cliente-label');
     if(avlbl){ avlbl.parentElement.style.borderColor='var(--red)'; avlbl.parentElement.style.background='rgba(227,24,55,.04)'; }
     return;
@@ -9141,37 +9184,154 @@ function editCRMFromDetail(){
 // ── Client modal ──
 function openCRMClientModal(clienteId){
   _crmContactIdx=0;
-  document.getElementById('crm-edit-id').value=clienteId||'';
-  document.getElementById('crm-modal-title').textContent=clienteId?'Editar cliente':'Nuevo cliente';
-  // Clear form
-  ['crm-nombre-empresa','crm-cedula','crm-direccion'].forEach(function(id){
-    var el=document.getElementById(id); if(el) el.value='';
+  var cl=clienteId?getCRMClients().find(function(c){return c.id===clienteId;}):null;
+  // Build modal completely from scratch to avoid any stale DOM state
+  var existing=document.getElementById('crmDynModal');
+  if(existing) existing.remove();
+  var overlay=document.createElement('div');
+  overlay.id='crmDynModal';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20000;display:flex;align-items:flex-start;justify-content:center;padding:20px 16px;overflow-y:auto';
+  var tipoClienteOpts=['Constructor','Contratista','Desarrollador','Gobierno','Empresa privada','Persona física','otro'].map(function(t){
+    return '<option value="'+t+'"'+(cl&&cl.tipoCliente===t?' selected':'')+'>'+t+'</option>';
+  }).join('');
+  var tipoCedOpts=[{v:'01',l:'Física'},{v:'02',l:'Jurídica'},{v:'03',l:'DIMEX'},{v:'04',l:'NITE'}].map(function(t){
+    return '<option value="'+t.v+'"'+(cl&&cl.tipoCedula===t.v?' selected':'')+'>'+t.l+'</option>';
+  }).join('');
+  overlay.innerHTML='<div style="background:var(--surface);border-radius:12px;width:680px;max-width:96vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+    +'<div style="background:var(--gray-dark);padding:16px 20px;border-radius:12px 12px 0 0;display:flex;justify-content:space-between;align-items:center">'
+    +'<span style="font-family:var(--cond);font-size:17px;font-weight:800;color:#fff">'+(clienteId?'Editar':'Nuevo')+' cliente</span>'
+    +'<button onclick="document.getElementById(\'crmDynModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:20px;cursor:pointer">✕</button>'
+    +'</div>'
+    +'<div style="padding:20px">'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">'
+    +'<div><span class="liq-label">Nombre / Razón social *</span><input type="text" id="cdyn-nombre" class="liq-inp" value="'+(cl?cl.nombreEmpresa||'':'')+'" placeholder="Nombre de la empresa o persona"></div>'
+    +'<div><span class="liq-label">Tipo de cliente *</span><select id="cdyn-tipo" class="liq-inp"><option value="">-- Seleccionar --</option>'+tipoClienteOpts+'</select></div>'
+    +'</div>'
+    +'<div id="cdyn-otro-wrap" style="margin-bottom:12px;display:'+(cl&&cl.tipoCliente==='otro'?'block':'none')+'">'
+    +'<span class="liq-label">Especificar tipo</span><input type="text" id="cdyn-tipo-otro" class="liq-inp" value="'+(cl?cl.tipoClienteOtro||'':'')+'">'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:120px 1fr;gap:12px;margin-bottom:12px">'
+    +'<div><span class="liq-label">Tipo cédula</span><select id="cdyn-tipo-ced" class="liq-inp"><option value="">--</option>'+tipoCedOpts+'</select></div>'
+    +'<div><span class="liq-label">Cédula / RUC</span><input type="text" id="cdyn-cedula" class="liq-inp" value="'+(cl?cl.cedula||'':'')+'" placeholder="Número de cédula"></div>'
+    +'</div>'
+    +'<div style="margin-bottom:16px"><span class="liq-label">Dirección *</span><input type="text" id="cdyn-dir" class="liq-inp" value="'+(cl?cl.direccion||'':'')+'" placeholder="Dirección completa"></div>'
+    +'<div style="font-family:var(--cond);font-weight:800;margin-bottom:8px;font-size:14px">Contactos</div>'
+    +'<div id="cdyn-contacts" style="margin-bottom:8px"></div>'
+    +'<div id="cdyn-contact-err" style="color:var(--red);font-size:11px;display:none;margin-bottom:8px">⚠ Se requiere al menos un contacto con nombre y teléfono o email</div>'
+    +'<button id="cdyn-add-contact" style="background:none;border:1px dashed var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;color:var(--blue);width:100%">+ Agregar contacto</button>'
+    +'</div>'
+    +'<div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">'
+    +'<button onclick="document.getElementById(\'crmDynModal\').remove()" style="padding:8px 18px;border-radius:8px;border:1px solid var(--border);background:var(--surface);cursor:pointer">Cancelar</button>'
+    +'<button id="cdyn-save-btn" style="padding:8px 18px;border-radius:8px;border:none;background:var(--red);color:#fff;font-weight:700;cursor:pointer">✓ Guardar cliente</button>'
+    +'</div>'
+    +'</div>';
+  document.body.appendChild(overlay);
+  var saveBtn=overlay.querySelector('#cdyn-save-btn');
+  if(saveBtn) saveBtn.addEventListener('click',function(){ saveCRMDynClient(clienteId||''); });
+  overlay.querySelector('#cdyn-tipo').addEventListener('change',function(){
+    document.getElementById('cdyn-otro-wrap').style.display=this.value==='otro'?'block':'none';
   });
-  ['crm-tipo-cedula','crm-tipo-cliente'].forEach(function(id){
-    var el=document.getElementById(id); if(el) el.selectedIndex=0;
-  });
-  document.getElementById('crm-tipo-otro-wrap').style.display='none';
-  document.getElementById('crm-contacts-list').innerHTML='';
-  document.getElementById('crm-contact-error').style.display='none';
+  overlay.querySelector('#cdyn-add-contact').addEventListener('click', function(){ addCRMDynContact(); });
+  // Add existing contacts
+  var contactos=cl?cl.contactos||[]:[];
+  if(contactos.length){ contactos.forEach(function(ct){ addCRMDynContact(ct); }); }
+  else { addCRMDynContact(); }
+}
 
-  if(clienteId){
-    var cl=getCRMClients().find(function(c){return c.id===clienteId;});
-    if(cl){
-      document.getElementById('crm-nombre-empresa').value=cl.nombreEmpresa||'';
-      document.getElementById('crm-cedula').value=cl.cedula||'';
-      document.getElementById('crm-tipo-cedula').value=cl.tipoCedula||'';
-      document.getElementById('crm-tipo-cliente').value=cl.tipoCliente||'';
-      document.getElementById('crm-direccion').value=cl.direccion||'';
-      if(cl.tipoCliente==='otro'){
-        document.getElementById('crm-tipo-otro-wrap').style.display='block';
-        document.getElementById('crm-tipo-otro').value=cl.tipoClienteOtro||'';
-      }
-      (cl.contactos||[]).forEach(function(ct){ addCRMContactRow(ct); });
-    }
-  } else {
-    addCRMContactRow(); // start with one empty contact
+var _cdynIdx=0;
+function addCRMDynContact(data){
+  data=data||{};
+  var list=document.getElementById('cdyn-contacts'); if(!list) return;
+  var idx=_cdynIdx++;
+  var rolOpts=CRM_ROL_OPTS.map(function(r){
+    return '<option value="'+r+'"'+(data.rol===r?' selected':'')+'>'+r+'</option>';
+  }).join('');
+  var div=document.createElement('div');
+  div.id='cdyn-ct-'+idx;
+  div.style.cssText='background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px;margin-bottom:8px;position:relative';
+  div.innerHTML='<button class="cdyn-rm" data-idx="'+idx+'" style="position:absolute;top:6px;right:6px;background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px">✕</button>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div><span class="liq-label">Nombre *</span><input type="text" class="liq-inp cdyn-ct-nombre" value="'+(data.nombre||'')+'" placeholder="Nombre del contacto"></div>'
+    +'<div><span class="liq-label">Rol</span><select class="liq-inp cdyn-ct-rol"><option value="">--</option>'+rolOpts+'</select></div>'
+    +'<div><span class="liq-label">Teléfono</span><input type="text" class="liq-inp cdyn-ct-tel" value="'+(data.tel||'')+'" placeholder="+(506) 8888-8888"></div>'
+    +'<div><span class="liq-label">Email</span><input type="text" class="liq-inp cdyn-ct-email" value="'+(data.email||'')+'" placeholder="correo@ejemplo.com"></div>'
+    +'</div>';
+  list.appendChild(div);
+  div.querySelector('.cdyn-rm').addEventListener('click',function(){
+    document.getElementById('cdyn-ct-'+this.dataset.idx).remove();
+  });
+}
+
+function saveCRMDynClient(editId){
+  var nombre=(document.getElementById('cdyn-nombre')?.value||'').trim();
+  var tipo=document.getElementById('cdyn-tipo')?.value||'';
+  var dir=(document.getElementById('cdyn-dir')?.value||'').trim();
+  var tipoOtro=(document.getElementById('cdyn-tipo-otro')?.value||'').trim();
+  var tipoCed=document.getElementById('cdyn-tipo-ced')?.value||'';
+  var cedula=(document.getElementById('cdyn-cedula')?.value||'').trim();
+  var errEl=document.getElementById('cdyn-contact-err');
+  if(!nombre||!tipo||!dir){ toast('Completa nombre, tipo de cliente y dirección'); return; }
+  if(tipo==='otro'&&!tipoOtro){ toast('Especifica el tipo de cliente'); return; }
+  // Contacts
+  var contactos=[];
+  var rows=document.getElementById('cdyn-contacts')?.children||[];
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i];
+    var ctNombre=(row.querySelector('.cdyn-ct-nombre')||{}).value||'';
+    var ctRol=(row.querySelector('.cdyn-ct-rol')||{}).value||'';
+    var ctTel=(row.querySelector('.cdyn-ct-tel')||{}).value||'';
+    var ctEmail=(row.querySelector('.cdyn-ct-email')||{}).value||'';
+    if(!ctNombre) continue;
+    if(!ctTel&&!ctEmail){ toast('Contacto "'+ctNombre+'" necesita teléfono o email'); return; }
+    contactos.push({id:'ct'+Date.now()+'_'+i,nombre:ctNombre,rol:ctRol,tel:ctTel,email:ctEmail});
   }
-  document.getElementById('crmClientModal').classList.remove('hidden');
+  if(!contactos.length){ if(errEl) errEl.style.display='block'; toast('Se requiere al menos un contacto'); return; }
+  // Save
+  var clients=getCRMClients();
+  var reg={
+    id:editId||('cli'+Date.now()),
+    nombreEmpresa:nombre, cedula:cedula, tipoCedula:tipoCed,
+    tipoCliente:tipo, tipoClienteOtro:tipo==='otro'?tipoOtro:'',
+    direccion:dir, contactos:contactos,
+    updatedAt:new Date().toISOString()
+  };
+  if(editId){
+    var idx2=clients.findIndex(function(c){return c.id===editId;});
+    if(idx2>=0){ reg.created=clients[idx2].created; clients[idx2]=reg; }
+    else clients.push(reg);
+  } else {
+    reg.created=new Date().toISOString();
+    reg.createdBy=SESSION?SESSION.id:'';
+    clients.push(reg);
+  }
+  setCRMClients(clients);
+  document.getElementById('crmDynModal').remove();
+  // Refresh CRM panels if visible
+  try{ renderCRMDirectory(); }catch(e){}
+  try{ renderCRMKPIs(); }catch(e){}
+  toast('✓ Cliente guardado: '+nombre);
+  // Auto-select in venta form if created from there
+  if((window._crmAfterSave==='venta'||window._crmAfterSave==='adminVenta')&&!editId){
+    var saveCtx=window._crmAfterSave;
+    window._crmAfterSave=null;
+    var newCl=getCRMClients().find(function(c){return c.nombreEmpresa===nombre;});
+    if(newCl){
+      var ct=newCl.contactos[0]||{};
+      var displayName=newCl.nombreEmpresa+(ct.nombre?' / '+ct.nombre:'');
+      if(saveCtx==='adminVenta'){
+        var avlbl=document.getElementById('avf-cliente-label');
+        if(avlbl){ avlbl.textContent='✓ '+displayName; avlbl.style.color='var(--green)'; avlbl.parentElement.style.borderColor='var(--green)'; }
+        var avCid=document.getElementById('avf-crm-client-id'); if(avCid) avCid.value=newCl.id;
+      } else {
+        var lbl=document.getElementById('vf-cliente-label');
+        if(lbl){ lbl.textContent='✓ '+displayName; lbl.style.color='var(--green)'; lbl.parentElement.style.borderColor='var(--green)'; }
+        var cid=document.getElementById('vf-crm-client-id'); if(cid) cid.value=newCl.id;
+        var ctid=document.getElementById('vf-crm-contact-id'); if(ctid) ctid.value=ct.id||'';
+        var badge=document.getElementById('vf-crm-badge');
+        if(badge){ badge.style.display='block'; badge.textContent='✓ Vinculado: '+displayName; }
+      }
+    }
+  }
 }
 
 function closeCRMClientModal(){
@@ -9289,7 +9449,8 @@ function saveCRMClient(){
   renderCRMInactiveAlert();
   toast('✓ Cliente guardado: '+nombre);
   // If created from venta form, auto-select the new client
-  if(window._crmAfterSave==='venta'&&!editId){
+  if((window._crmAfterSave==='venta'||window._crmAfterSave==='adminVenta')&&!editId){
+    var saveCtx=window._crmAfterSave;
     window._crmAfterSave=null;
     var newCl=getCRMClients().find(function(c){return c.nombreEmpresa===nombre;});
     if(newCl){
@@ -9297,19 +9458,20 @@ function saveCRMClient(){
       var displayName=newCl.nombreEmpresa+(ct.nombre?' / '+ct.nombre:'');
       var inp=document.getElementById('vf-cliente');
       if(inp) inp.value=newCl.nombreEmpresa;
-      var lbl=document.getElementById('vf-cliente-label');
-      if(lbl){
-        lbl.textContent='✓ '+displayName;
-        lbl.style.color='var(--text)';
-        lbl.parentElement.style.borderColor='var(--green)';
-        lbl.parentElement.style.background='rgba(26,158,92,.05)';
-      }
-      var cid=document.getElementById('vf-crm-client-id');
-      if(cid) cid.value=newCl.id;
-      var ctid=document.getElementById('vf-crm-contact-id');
+      if(saveCtx==='adminVenta'){
+        var avlbl2=document.getElementById('avf-cliente-label');
+        if(avlbl2){ avlbl2.textContent='✓ '+displayName; avlbl2.style.color='var(--green)'; avlbl2.parentElement.style.borderColor='var(--green)'; avlbl2.parentElement.style.background='rgba(26,158,92,.05)'; }
+        var avCid2=document.getElementById('avf-crm-client-id'); if(avCid2) avCid2.value=newCl.id;
+        var avCtid2=document.getElementById('avf-crm-contact-id'); if(avCtid2) avCtid2.value=ct.id||'';
+      } else {
+        var lbl=document.getElementById('vf-cliente-label');
+        if(lbl){ lbl.textContent='✓ '+displayName; lbl.style.color='var(--text)'; lbl.parentElement.style.borderColor='var(--green)'; lbl.parentElement.style.background='rgba(26,158,92,.05)'; }
+        var cid=document.getElementById('vf-crm-client-id'); if(cid) cid.value=newCl.id;
+        var ctid=document.getElementById('vf-crm-contact-id');
       if(ctid) ctid.value=ct.id||'';
-      var badge=document.getElementById('vf-crm-badge');
-      if(badge){ badge.style.display='block'; badge.textContent='✓ Vinculado al CRM: '+displayName; }
+        var badge=document.getElementById('vf-crm-badge');
+        if(badge){ badge.style.display='block'; badge.textContent='✓ Vinculado: '+displayName; }
+      }
     }
   }
 }
@@ -9621,16 +9783,18 @@ function selectCRMClient(clienteId){
 }
 
 function openNewClientFromVenta(){
-  document.getElementById('crmPickerModal').remove();
+  var m=document.getElementById('crmPickerModal');
+  if(m) m.remove();
   openCRMClientModal();
-  // After saving, venta form should know the new client
-  window._crmAfterSave='venta';
+  // After saving, detect which form triggered this
+  window._crmAfterSave=window._crmPickerContext||'venta';
 }
 
 
 
 // ── CRM ↔ Venta form integration ──
 function openCRMClientPickerForVenta(){
+  window._crmPickerContext='venta';
   openCRMClientPicker(function(data){
     // Set hidden input value (used in venta object)
     var inp=document.getElementById('vf-cliente');
@@ -9683,6 +9847,7 @@ function checkCRMInactiveNotif(){
 
 
 function openCRMClientPickerForAdminVenta(){
+  window._crmPickerContext='adminVenta';
   openCRMClientPicker(function(data){
     var inp=document.getElementById('avf-cliente');
     if(inp) inp.value=data.nombreEmpresa;
@@ -9749,13 +9914,14 @@ function setUserTabPerms(uid, perms){
 function applyPermsRealtime(uid, perms){
   // Only applies if current SESSION is the affected user
   if(!SESSION||SESSION.id!==uid) return;
+  // Update SESSION.tabPerms so buildUserTabs reads the new perms
+  SESSION.tabPerms=perms;
   // Get current active tab
   var currentTab=window.currentUserTab||'ventas';
   // Rebuild tabs
   buildUserTabs();
   // Check if current tab is still allowed
   if(perms[currentTab]===false){
-    // Find first allowed tab
     var allowed=USER_TAB_DEFS.filter(function(t){return perms[t.id]!==false;});
     if(allowed.length>0) switchUserTab(allowed[0].id, document.querySelector('.htab'));
   }
@@ -10754,59 +10920,139 @@ function executeRestore(){
 //  BÚSQUEDA EN LISTAS DESPLEGABLES
 // ══════════════════════════════════════════════════════════════
 function makeSearchable(sel){
-  if(!sel||sel.dataset.srch||sel.options.length<6) return;
+  if(!sel||sel.dataset.srch) return;
   sel.dataset.srch='1';
-  var wrap=document.createElement('div');
-  wrap.style.cssText='position:relative;display:inline-block;width:100%';
-  sel.parentNode.insertBefore(wrap,sel);
-  wrap.appendChild(sel);
-  var inp=document.createElement('input');
-  inp.type='text'; inp.placeholder='🔍 Buscar...';
-  inp.className='vf-inp';
-  inp.style.cssText='display:none;width:100%;box-sizing:border-box;margin-bottom:3px;font-size:12px';
-  wrap.insertBefore(inp,sel);
-  sel._allOpts=Array.from(sel.options).map(function(o){return {v:o.value,t:o.text};});
-  sel.addEventListener('mousedown',function(e){
-    if(sel.options.length<6) return;
-    e.preventDefault();
-    inp.style.display='block'; inp.value=''; inp.focus();
-    filterSel('');
+
+  // Store original options preserving optgroups
+  sel._allOpts=[];
+  Array.from(sel.children).forEach(function(child){
+    if(child.tagName==='OPTGROUP'){
+      var g={label:child.label,opts:[]};
+      Array.from(child.children).forEach(function(opt){
+        g.opts.push({v:opt.value,t:opt.text});
+      });
+      sel._allOpts.push(g);
+    } else if(child.tagName==='OPTION'){
+      sel._allOpts.push({v:child.value,t:child.text,g:null});
+    }
   });
-  function filterSel(q){
-    var q2=q.toLowerCase().trim();
+
+  // Insert search input before the select
+  var inp=document.createElement('input');
+  inp.type='text';
+  inp.placeholder='🔍 Buscar...';
+  inp.className='vf-inp';
+  inp.style.cssText='width:100%;box-sizing:border-box;margin-bottom:2px;font-size:12px;display:block';
+  sel.parentNode.insertBefore(inp,sel);
+
+  function applyFilter(q){
+    var currentVal=sel.value;
+    q=q.toLowerCase().trim();
+    // Rebuild select options
     while(sel.options.length) sel.remove(0);
-    var scored=(sel._allOpts||[]).map(function(o){
-      var t=o.t.toLowerCase();
-      var score=t===q2?100:t.startsWith(q2)?80:t.includes(q2)?60:0;
-      if(!score&&q2){var m=0,ti=0;for(var qi=0;qi<q2.length;qi++){while(ti<t.length&&t[ti]!==q2[qi])ti++;if(ti<t.length){m++;ti++;}}score=Math.round(m/q2.length*40);}
-      else if(!q2) score=50;
-      return {v:o.v,t:o.t,score:score};
+    if(!q){
+      // No query — restore all options
+      sel._allOpts.forEach(function(item){
+        if(item.opts){
+          var og=document.createElement('optgroup'); og.label=item.label;
+          item.opts.forEach(function(o){ var opt=new Option(o.t,o.v); if(o.v===currentVal) opt.selected=true; og.appendChild(opt); });
+          sel.appendChild(og);
+        } else {
+          var opt=new Option(item.t,item.v); if(item.v===currentVal) opt.selected=true; sel.add(opt);
+        }
+      });
+      return;
+    }
+    // Scoring: score each option by relevance
+    var words=q.split(/\s+/).filter(Boolean);
+    function scoreText(t,g){
+      t=t.toLowerCase(); g=(g||'').toLowerCase();
+      if(t===q) return 100;
+      if(t.startsWith(q)) return 90;
+      // Check word boundaries
+      var tWords=t.split(/\s+/);
+      var wordStartMatch=tWords.some(function(w){ return w.startsWith(q); });
+      if(wordStartMatch) return 80;
+      // All query words present
+      var allMatch=words.every(function(w){ return t.includes(w)||g.includes(w); });
+      if(allMatch) return 60;
+      // Some query words present
+      var someMatch=words.some(function(w){ return t.includes(w)||g.includes(w); });
+      if(someMatch) return 30;
+      return 0;
+    }
+    // Collect all options with scores
+    var allScored=[];
+    sel._allOpts.forEach(function(item){
+      if(item.opts){
+        item.opts.forEach(function(o){
+          var s=scoreText(o.t, item.label);
+          if(s>=30) allScored.push({v:o.v,t:o.t,g:item.label,score:s});
+        });
+      } else {
+        var s=scoreText(item.t,'');
+        if(s>=30) allScored.push({v:item.v,t:item.t,g:null,score:s});
+      }
     });
-    scored.sort(function(a,b){return b.score-a.score;});
-    var show=q2?scored.filter(function(s){return s.score>0;}):scored;
-    if(!show.length) show=scored.slice(0,8);
-    show.forEach(function(s){sel.add(new Option(s.t,s.v));});
-    if(sel.options.length) sel.selectedIndex=0;
+    allScored.sort(function(a,b){ return b.score-a.score; });
+    if(!allScored.length) return; // nothing matches — keep current (don't clear)
+    // Rebuild with groups
+    var gMap={};
+    allScored.forEach(function(o){
+      if(o.g){
+        if(!gMap[o.g]){ gMap[o.g]=document.createElement('optgroup'); gMap[o.g].label=o.g; sel.appendChild(gMap[o.g]); }
+        var opt=new Option(o.t,o.v); if(o.v===currentVal) opt.selected=true; gMap[o.g].appendChild(opt);
+      } else {
+        var opt=new Option(o.t,o.v); if(o.v===currentVal) opt.selected=true; sel.add(opt);
+      }
+    });
+  
   }
-  function confirm(){
-    var val=sel.value;
-    while(sel.options.length) sel.remove(0);
-    (sel._allOpts||[]).forEach(function(o){var opt=new Option(o.t,o.v);if(o.v===val)opt.selected=true;sel.add(opt);});
-    inp.style.display='none'; inp.value='';
-    sel.dispatchEvent(new Event('change',{bubbles:true}));
-  }
-  inp.addEventListener('input',function(){filterSel(inp.value);});
-  inp.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key==='Tab'){confirm();}else if(e.key==='Escape'){inp.style.display='none';}else if(e.key==='ArrowDown'){sel.focus();}});
-  sel.addEventListener('change',confirm);
-  document.addEventListener('click',function(e){if(!wrap.contains(e.target)){inp.style.display='none';}},{passive:true});
-}
-function applySearchableSelects(){
-  document.querySelectorAll('select').forEach(function(sel){
-    if(sel.id&&!sel.dataset.srch&&sel.options.length>=6) makeSearchable(sel);
+
+  inp.addEventListener('input',function(){
+    applyFilter(inp.value);
+  });
+
+  // When select changes: clear search, restore full list, keep selected value
+  sel.addEventListener('change',function(){
+    var chosen=sel.value;
+    inp.value='';
+    applyFilter(''); // restores all options
+    // Re-select the chosen value after restoring
+    for(var i=0;i<sel.options.length;i++){
+      if(sel.options[i].value===chosen){ sel.selectedIndex=i; break; }
+    }
   });
 }
 
-// ══════════════════════════════════════════════════════════════
+function applySearchableSelects(){
+  // Only apply to selects that benefit from search (products, clients, users, projects)
+  // Skip period/date/filter selects and small selects
+  var SKIP_IDS=['av-period-type','av-month-sel','av-year-sel',
+    'yrSel','fEstado','vf-tipo-pago','avf-tipo-pago','comisUserSel',
+    'liq-sub-sel','liq-period-sel','av-cat-filter','rep-item','rep-user',
+    'ilm-estado','fRol','fComisType',
+    'crm-tipo-cedula','crm-tipo-cliente','imm-cat','imm-vendedor',
+    'av-user-sel','ilm-estado'];
+  document.querySelectorAll('select').forEach(function(sel){
+    if(!sel.id||sel.dataset.srch) return;
+    if(SKIP_IDS.indexOf(sel.id)>=0) return;
+    if(sel.options.length<5) return; // Skip very small selects
+    makeSearchable(sel);
+  });
+}
+
+function resetSearchable(selectId){
+  var sel=document.getElementById(selectId);
+  if(!sel) return;
+  // Remove old search input if exists
+  var prev=sel.previousElementSibling;
+  if(prev&&prev.tagName==='INPUT'&&prev.type==='text'){
+    prev.parentNode.removeChild(prev);
+  }
+  delete sel.dataset.srch;
+  delete sel._allOpts;
+}// ══════════════════════════════════════════════════════════════
 //  MÓDULO DE INVENTARIO — CONCRE ERP
 // ══════════════════════════════════════════════════════════════
 
@@ -10867,14 +11113,19 @@ function invDateFmt(ts){
 function invCanEdit(){ 
   if(!SESSION) return false;
   if(SESSION.rol==='superadmin'||SESSION.rol==='admin') return true;
-  var p=window._invPermisos[SESSION.id];
+  var p=window._invPermisos&&window._invPermisos[SESSION.id];
   return p==='completo';
 }
 function invCanAccess(){
   if(!SESSION) return false;
   if(SESSION.rol==='superadmin'||SESSION.rol==='admin') return true;
-  var p=window._invPermisos[SESSION.id];
-  return p==='completo'||p==='restringido';
+  // For regular users: check tabPerms (set by admin via tab perms checkbox)
+  var tabPerms=SESSION.tabPerms||{};
+  if(tabPerms.inventario===false) return false;
+  // Also check if user has explicit inv_permisos entry
+  var p=window._invPermisos&&window._invPermisos[SESSION.id];
+  // If no explicit inv entry, default to read-only access if tab is granted
+  return p==='completo'||p==='restringido'||p===undefined||p===null;
 }
 function invIsAdminSA(){
   return SESSION&&(SESSION.rol==='admin'||SESSION.rol==='superadmin');
@@ -11896,6 +12147,320 @@ async function saveInvPermiso(uid, nivel){
 }
 
 
+// ══════════════════════════════════════════════════════════════
+//  MÓDULO DE INTELIGENCIA COMERCIAL — CONCRE ERP
+// ══════════════════════════════════════════════════════════════
+
+var _icProyectos = [];
+var _icActualizaciones = [];
+var _icUsoMensual = null;
+
+// ── Claves de palabras relevantes para CONCRE ──
+var IC_KEYWORDS = [
+  'concreto','losa','piso','pulido','lujado','adoquin','adoquín',
+  'nave industrial','fibra polipropileno','fibra de polipropileno',
+  'concreto estampado','concreto expuesto','piso industrial',
+  'colocacion de concreto','colocación de concreto',
+  'construccion de piso','construcción de piso',
+  'pavimento','loza','losas','pisos','pulimento','sellado de piso',
+  'piso de concreto','planta industrial','bodega','galpón','galpon'
+];
+
+// ── Fuentes a consultar ──
+var IC_FUENTES = ['SICOP','CFIA','MOPT','CONAVI','INVU','Municipalidades'];
+
+// ── Mes key actual ──
+function icMesKey(){
+  var d=new Date();
+  return d.getFullYear()+'-'+(d.getMonth()+1<10?'0':'')+(d.getMonth()+1);
+}
+
+// ══ LOADERS ══
+async function loadICFromDB(){
+  var r1=await DB.from('ic_proyectos').select('*').eq('estado','activo').order('updated_at',{ascending:false});
+  var r2=await DB.from('ic_actualizaciones').select('*').order('created_at',{ascending:false}).limit(20);
+  var r3=await DB.from('ic_uso_mensual').select('*').eq('mes_key',icMesKey()).single();
+  if(!r1.error) _icProyectos=r1.data||[];
+  if(!r2.error) _icActualizaciones=r2.data||[];
+  _icUsoMensual=(!r3.error&&r3.data)?r3.data:{mes_key:icMesKey(),actualizaciones_usadas:0,limite:4};
+}
+
+// ══ RENDER SECCIÓN IC EN RESUMEN ══
+async function renderInteligenciaComercial(){
+  var container=document.getElementById('ic-section');
+  if(!container) return;
+  await loadICFromDB();
+  var usadas=_icUsoMensual.actualizaciones_usadas||0;
+  var limite=_icUsoMensual.limite||4;
+  var restantes=limite-usadas;
+  var canUpdate=restantes>0&&SESSION&&SESSION.rol==='superadmin';
+
+  var html='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:20px">';
+  // Header
+  html+='<div style="background:var(--gray-dark);padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">';
+  html+='<div><div style="font-family:var(--cond);font-size:18px;font-weight:900;color:#fff">🔍 Inteligencia Comercial</div>';
+  html+='<div style="font-size:11px;color:rgba(255,255,255,.6);margin-top:2px">Proyectos adjudicados relevantes para CONCRE · '+IC_FUENTES.join(', ')+'</div></div>';
+  html+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
+
+  // Uso mensual badge
+  html+='<div style="background:rgba(255,255,255,.1);border-radius:8px;padding:5px 12px;font-size:11px;color:'+(restantes>0?'rgba(255,255,255,.8)':'rgba(227,24,55,.9)')+'">';
+  html+=(restantes>0?'✅ '+restantes+' actualización'+(restantes>1?'es':'')+' restante'+(restantes>1?'s':''):'🔒 Límite mensual alcanzado')+'</div>';
+
+  // Export button
+  if(_icProyectos.length>0){
+    html+='<button onclick="icExportarExcel()" style="background:rgba(16,185,129,.2);border:1px solid rgba(16,185,129,.4);color:#fff;border-radius:8px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:700">⬇ Excel</button>';
+  }
+  // Update button (superadmin only)
+  if(SESSION&&SESSION.rol==='superadmin'){
+    html+='<button onclick="icActualizar()" '+(canUpdate?'':'disabled')+' style="background:'+(canUpdate?'var(--red)':'rgba(100,100,100,.3)')+';border:none;color:#fff;border-radius:8px;padding:7px 16px;cursor:'+(canUpdate?'pointer':'not-allowed')+';font-size:13px;font-weight:700">'+(canUpdate?'🔄 Actualizar ahora':'Sin actualizaciones')+'</button>';
+  }
+  html+='</div></div>';
+
+  // Projects table
+  if(_icProyectos.length===0){
+    html+='<div style="padding:40px;text-align:center;color:var(--text3)">';
+    html+='<div style="font-size:32px;margin-bottom:12px">🏗️</div>';
+    html+='<div style="font-weight:700;margin-bottom:6px">Sin proyectos detectados aún</div>';
+    html+='<div style="font-size:12px">Presiona "Actualizar ahora" para buscar proyectos adjudicados relevantes para CONCRE</div>';
+    html+='</div>';
+  } else {
+    html+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px;min-width:900px">';
+    html+='<thead><tr style="background:var(--surface2)">';
+    ['Fuente','Proyecto','Empresa ejecutora','Institución','Monto','Ubicación','Inicio','Área','Contacto','Relevancia'].forEach(function(h){
+      html+='<th style="padding:8px 10px;text-align:left;font-weight:800;white-space:nowrap;border-bottom:1px solid var(--border)">'+h+'</th>';
+    });
+    if(SESSION&&SESSION.rol==='superadmin') html+='<th style="padding:8px 10px;border-bottom:1px solid var(--border)"></th>';
+    html+='</tr></thead><tbody>';
+
+    _icProyectos.forEach(function(p){
+      // Contact cell
+      var contactHtml='';
+      if(p.contacto_nombre) contactHtml+='<div style="font-weight:700">'+p.contacto_nombre+'</div>';
+      if(p.contacto_telefono) contactHtml+='<div>📞 '+p.contacto_telefono+'</div>';
+      if(p.contacto_correo) contactHtml+='<div>✉ '+p.contacto_correo+'</div>';
+      if(p.contacto_web) contactHtml+='<div><a href="'+p.contacto_web+'" target="_blank" style="color:var(--blue)">🌐 Web</a></div>';
+      if(p.contacto_facebook) contactHtml+='<div><a href="'+p.contacto_facebook+'" target="_blank" style="color:var(--blue)">📘 Facebook</a></div>';
+      if(!contactHtml) contactHtml='<span style="color:var(--text3);font-size:10px">No encontrado</span>';
+
+      html+='<tr style="border-bottom:1px solid var(--border)" onmouseover="this.style.background=\'var(--surface2)\'" onmouseout="this.style.background=\'\'">';
+      html+='<td style="padding:8px 10px"><span style="background:var(--surface2);padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700">'+p.fuente+'</span></td>';
+      html+='<td style="padding:8px 10px;max-width:200px"><div style="font-weight:700">'+p.nombre_proyecto+'</div><div style="font-size:10px;color:var(--text3);margin-top:2px">'+p.descripcion+'</div></td>';
+      html+='<td style="padding:8px 10px;font-weight:700;color:var(--blue)">'+p.empresa_ejecutora+'</td>';
+      html+='<td style="padding:8px 10px;color:var(--text2)">'+p.institucion+'</td>';
+      html+='<td style="padding:8px 10px;font-weight:700;white-space:nowrap">'+p.monto_contrato+'</td>';
+      html+='<td style="padding:8px 10px;color:var(--text2)">'+p.ubicacion+'</td>';
+      html+='<td style="padding:8px 10px;white-space:nowrap;color:var(--text2)">'+p.fecha_inicio+'</td>';
+      html+='<td style="padding:8px 10px;white-space:nowrap">'+p.area_estimada+'</td>';
+      html+='<td style="padding:8px 10px;font-size:11px;min-width:140px">'+contactHtml+'</td>';
+      html+='<td style="padding:8px 10px;max-width:160px"><span style="background:rgba(59,130,246,.08);color:var(--blue);padding:2px 6px;border-radius:4px;font-size:10px">'+p.relevancia+'</span></td>';
+      if(SESSION&&SESSION.rol==='superadmin'){
+        html+='<td style="padding:8px 10px"><button onclick="icArchivarProyecto(\''+p.id+'\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:10px;color:var(--text3)">Archivar</button></td>';
+      }
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+
+  // Historial de actualizaciones
+  if(_icActualizaciones.length>0&&SESSION&&SESSION.rol==='superadmin'){
+    html+='<div style="border-top:1px solid var(--border);padding:12px 16px">';
+    html+='<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:8px">HISTORIAL DE ACTUALIZACIONES</div>';
+    html+='<div style="display:flex;flex-direction:column;gap:4px">';
+    _icActualizaciones.slice(0,5).forEach(function(a){
+      html+='<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;padding:5px 8px;background:var(--surface2);border-radius:6px">';
+      html+='<span>'+invDateFmt(a.created_at)+' — '+a.nombre_ejecutor+'</span>';
+      html+='<span style="color:var(--text3)">'+a.proyectos_encontrados+' proyectos · '+a.fuentes_consultadas+'</span>';
+      html+='<button onclick="icBorrarActualizacion(\''+a.id+'\')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:10px">✕ Borrar</button>';
+      html+='</div>';
+    });
+    html+='</div></div>';
+  }
+
+  html+='</div>';
+  container.innerHTML=html;
+}
+
+// ══ ACTUALIZAR — LLAMADA A CLAUDE API ══
+async function icActualizar(){
+  if(!SESSION||SESSION.rol!=='superadmin'){ toast('Solo superadmin puede actualizar'); return; }
+
+  var usadas=_icUsoMensual.actualizaciones_usadas||0;
+  var limite=_icUsoMensual.limite||4;
+  if(usadas>=limite){ toast('Límite mensual alcanzado. Disponible el próximo mes.'); return; }
+
+  if(!confirm('¿Buscar proyectos adjudicados relevantes ahora? Esto usará 1 de tus '+(limite-usadas)+' actualizaciones disponibles este mes.')) return;
+
+  // Show loading state
+  var container=document.getElementById('ic-section');
+  if(container){
+    container.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px;text-align:center">'
+      +'<div style="font-size:32px;margin-bottom:16px">🔍</div>'
+      +'<div style="font-family:var(--cond);font-size:18px;font-weight:800;margin-bottom:8px">Consultando fuentes...</div>'
+      +'<div style="font-size:12px;color:var(--text3);margin-bottom:16px">La IA está analizando SICOP, CFIA, MOPT, CONAVI, INVU y municipalidades</div>'
+      +'<div style="width:60%;margin:0 auto;background:var(--surface2);border-radius:4px;height:4px"><div id="ic-progress" style="width:0%;background:var(--blue);height:4px;border-radius:4px;transition:width 0.5s"></div></div>'
+      +'<div id="ic-status" style="font-size:11px;color:var(--text3);margin-top:12px">Iniciando...</div>'
+      +'</div>';
+  }
+
+  // Animate progress
+  var progress=0;
+  var statusMsgs=['Consultando SICOP...','Consultando CFIA...','Consultando MOPT y CONAVI...','Consultando municipalidades...','La IA analiza y filtra proyectos...','Buscando contactos de empresas...','Guardando resultados...'];
+  var statusIdx=0;
+  var progressInterval=setInterval(function(){
+    progress=Math.min(progress+3, 90);
+    var bar=document.getElementById('ic-progress');
+    var status=document.getElementById('ic-status');
+    if(bar) bar.style.width=progress+'%';
+    if(status&&statusIdx<statusMsgs.length&&progress%(13)===0){
+      status.textContent=statusMsgs[statusIdx++]||'Procesando...';
+    }
+  },400);
+
+  try {
+    // Build the prompt for Claude
+    var proyectosExistentes=_icProyectos.map(function(p){ return p.nombre_proyecto+' — '+p.empresa_ejecutora; }).join('\n');
+    var prompt='Eres un asistente de inteligencia comercial para CONCRE, empresa costarricense especializada en: colocación de pisos de concreto, lujados, pulidos, adoquines, losas, naves industriales, concreto estampado, concreto expuesto, pisos industriales, fibra de polipropileno.\n\n'
+      +'CONCRE trabaja principalmente como subcontratista en proyectos de construcción.\n\n'
+      +'Tu tarea: buscar en las siguientes fuentes públicas de Costa Rica proyectos de construcción ADJUDICADOS (ya con empresa ejecutora asignada) que sean relevantes para CONCRE:\n'
+      +'- SICOP (https://www.sicop.go.cr) — licitaciones adjudicadas\n'
+      +'- CFIA (https://www.cfia.or.cr) — permisos de construcción\n'
+      +'- MOPT (https://www.mopt.go.cr) — contratos adjudicados\n'
+      +'- CONAVI (https://www.conavi.go.cr) — proyectos viales con pisos\n'
+      +'- INVU (https://www.invu.go.cr) — proyectos habitacionales y comerciales\n'
+      +'- Municipalidades principales de Costa Rica\n\n'
+      +'Para CADA proyecto encontrado, busca también en fuentes confiables (sitio web de la empresa, LinkedIn, Registro Nacional CR, CCSS, Google) los contactos de la empresa ejecutora.\n\n'
+      +'Proyectos ya registrados (no duplicar si no hay cambios):\n'+(proyectosExistentes||'(ninguno aún)')+'\n\n'
+      +'Responde ÚNICAMENTE con un JSON válido con esta estructura exacta, sin texto adicional ni backticks:\n'
+      +'{"proyectos":[{"fuente":"SICOP","nombre_proyecto":"...","institucion":"...","empresa_ejecutora":"...","descripcion":"...","area_estimada":"...","ubicacion":"...","fecha_inicio":"...","monto_contrato":"...","relevancia":"Por qué es relevante para CONCRE","contacto_nombre":"...","contacto_telefono":"...","contacto_correo":"...","contacto_web":"https://...","contacto_facebook":"https://..."}],"resumen":"Texto breve del análisis","fuentes_consultadas":"SICOP, CFIA, MOPT"}';
+
+    var response=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:4000,
+        tools:[{type:'web_search_20250305',name:'web_search'}],
+        messages:[{role:'user',content:prompt}]
+      })
+    });
+
+    clearInterval(progressInterval);
+    var data=await response.json();
+
+    if(data.error){ throw new Error(data.error.message||'Error de API'); }
+
+    // Extract text from response (may have tool_use blocks)
+    var fullText=( data.content||[]).filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('');
+
+    // Parse JSON
+    var clean=fullText.replace(/```json|```/g,'').trim();
+    // Find JSON object
+    var jsonStart=clean.indexOf('{');
+    var jsonEnd=clean.lastIndexOf('}')+1;
+    if(jsonStart<0) throw new Error('No se recibió JSON válido');
+    var parsed=JSON.parse(clean.slice(jsonStart,jsonEnd));
+    var proyectos=parsed.proyectos||[];
+    var resumen=parsed.resumen||'';
+    var fuentesConsultadas=parsed.fuentes_consultadas||IC_FUENTES.join(', ');
+
+    // Save to Supabase
+    var updatedCount=0; var newCount=0;
+    var actId='ic-act-'+Date.now();
+
+    for(var i=0;i<proyectos.length;i++){
+      var p=proyectos[i];
+      if(!p.nombre_proyecto||!p.empresa_ejecutora) continue;
+      // Check if already exists
+      var existing=_icProyectos.find(function(ex){
+        return ex.nombre_proyecto.toLowerCase()===p.nombre_proyecto.toLowerCase()&&
+               ex.empresa_ejecutora.toLowerCase()===p.empresa_ejecutora.toLowerCase();
+      });
+      var pid=existing?existing.id:'ic-'+Date.now()+'-'+i;
+      var row={
+        id:pid, fuente:p.fuente||'SICOP',
+        nombre_proyecto:p.nombre_proyecto, institucion:p.institucion||'',
+        empresa_ejecutora:p.empresa_ejecutora, descripcion:p.descripcion||'',
+        area_estimada:p.area_estimada||'', ubicacion:p.ubicacion||'',
+        fecha_inicio:p.fecha_inicio||'', monto_contrato:p.monto_contrato||'',
+        relevancia:p.relevancia||'', contacto_nombre:p.contacto_nombre||'',
+        contacto_telefono:p.contacto_telefono||'', contacto_correo:p.contacto_correo||'',
+        contacto_web:p.contacto_web||'', contacto_facebook:p.contacto_facebook||'',
+        estado:'activo', actualizacion_id:actId, updated_at:new Date().toISOString()
+      };
+      if(!existing) row.created_at=new Date().toISOString();
+      await DB.from('ic_proyectos').upsert(row,{onConflict:'id'});
+      if(existing) updatedCount++; else newCount++;
+    }
+
+    // Save actualizacion record
+    var actRow={
+      id:actId, ejecutado_por:SESSION.id, nombre_ejecutor:SESSION.nombre,
+      proyectos_encontrados:newCount, proyectos_actualizados:updatedCount,
+      fuentes_consultadas:fuentesConsultadas, resumen_ia:resumen,
+      created_at:new Date().toISOString()
+    };
+    await DB.from('ic_actualizaciones').insert(actRow);
+
+    // Update monthly usage
+    var newUsadas=usadas+1;
+    await DB.from('ic_uso_mensual').upsert({
+      mes_key:icMesKey(), actualizaciones_usadas:newUsadas, limite:4,
+      updated_at:new Date().toISOString()
+    },{onConflict:'mes_key'});
+
+    toast('✅ '+newCount+' proyectos nuevos · '+updatedCount+' actualizados');
+    await renderInteligenciaComercial();
+
+  } catch(err){
+    clearInterval(progressInterval);
+    console.error('IC Error:', err);
+    toast('❌ Error: '+err.message);
+    await renderInteligenciaComercial();
+  }
+}
+
+// ══ ARCHIVAR PROYECTO ══
+async function icArchivarProyecto(id){
+  if(!confirm('¿Archivar este proyecto? Quedará en historial pero no aparecerá en la tabla principal.')) return;
+  await DB.from('ic_proyectos').update({estado:'archivado',updated_at:new Date().toISOString()}).eq('id',id);
+  _icProyectos=_icProyectos.filter(function(p){return p.id!==id;});
+  renderInteligenciaComercial();
+  toast('✅ Proyecto archivado');
+}
+
+// ══ BORRAR ACTUALIZACIÓN ══
+async function icBorrarActualizacion(id){
+  if(!confirm('¿Borrar este registro del historial de actualizaciones?')) return;
+  await DB.from('ic_actualizaciones').delete().eq('id',id);
+  _icActualizaciones=_icActualizaciones.filter(function(a){return a.id!==id;});
+  renderInteligenciaComercial();
+  toast('✅ Registro borrado');
+}
+
+// ══ EXPORTAR A EXCEL ══
+function icExportarExcel(){
+  if(!_icProyectos.length){ toast('Sin proyectos para exportar'); return; }
+  var headers=['Fuente','Proyecto','Empresa ejecutora','Institución','Monto','Ubicación','Fecha inicio','Área estimada','Relevancia','Contacto nombre','Teléfono','Correo','Web','Facebook'];
+  var rows=_icProyectos.map(function(p){
+    return [p.fuente,p.nombre_proyecto,p.empresa_ejecutora,p.institucion,
+      p.monto_contrato,p.ubicacion,p.fecha_inicio,p.area_estimada,p.relevancia,
+      p.contacto_nombre,p.contacto_telefono,p.contacto_correo,p.contacto_web,p.contacto_facebook];
+  });
+  var tsv='sep=\t\r\n'+headers.join('\t')+'\r\n'+rows.map(function(r){
+    return r.map(function(v){return String(v||'').replace(/\t/g,' ');}).join('\t');
+  }).join('\r\n');
+  var bom=new Uint8Array([0xFF,0xFE]);
+  var encoded=new Uint16Array(tsv.length);
+  for(var i=0;i<tsv.length;i++) encoded[i]=tsv.charCodeAt(i);
+  var blob=new Blob([bom,encoded],{type:'text/csv;charset=utf-16le'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url;
+  a.download='CONCRE_InteligenciaComercial_'+new Date().toISOString().split('T')[0]+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('✅ Exportado');
+}
+
 </script>
 
 </head>
@@ -11953,6 +12518,8 @@ async function saveInvPermiso(uid, nivel){
 
         <!-- OVERVIEW -->
         <div id="sec-overview" class="admin-section on">
+          <!-- Inteligencia Comercial -->
+          <div id="ic-section"></div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:10px">
             <div>
               <div class="page-title">Resumen Global</div>
@@ -13953,7 +14520,7 @@ var BACKUP_EXPORT_LOG_KEY  = 'cc_export_log';
 // ── Track last export ──
 function getLastExportI
 <!-- CRM: CLIENT MODAL -->
-          <div id="crmClientModal" class="modal-overlay hidden">
+          <div id="crmClientModal" class="modal-overlay hidden" style="z-index:10000">
             <div class="modal" style="width:680px;max-width:96vw;max-height:90vh;overflow-y:auto">
               <div class="modal-hdr">
                 <span class="modal-title" id="crm-modal-title">Nuevo cliente</span>
@@ -14146,74 +14713,7 @@ function getLastExportI
 </body>
 </html>
 
-          <!-- CRM: CLIENT MODAL -->
-          <div id="crmClientModal" class="modal-overlay hidden">
-            <div class="modal" style="width:680px;max-width:96vw;max-height:90vh;overflow-y:auto">
-              <div class="modal-hdr">
-                <span class="modal-title" id="crm-modal-title">Nuevo cliente</span>
-                <button class="modal-close" onclick="closeCRMClientModal()">✕</button>
-              </div>
-              <div class="modal-body">
-                <!-- Basic info -->
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
-                  <div class="liq-field" style="grid-column:span 2">
-                    <span class="liq-label">Nombre empresa / Persona física *</span>
-                    <input type="text" class="liq-inp" id="crm-nombre-empresa" placeholder="Nombre completo de la empresa o persona">
-                  </div>
-                  <div class="liq-field">
-                    <span class="liq-label">Cédula</span>
-                    <input type="text" class="liq-inp" id="crm-cedula" placeholder="Opcional">
-                  </div>
-                  <div class="liq-field">
-                    <span class="liq-label">Tipo de cédula</span>
-                    <select class="liq-inp" id="crm-tipo-cedula">
-                      <option value="">— Seleccionar —</option>
-                      <option value="juridica">Jurídica</option>
-                      <option value="personal">Personal (física)</option>
-                    </select>
-                  </div>
-                  <div class="liq-field">
-                    <span class="liq-label">Tipo de cliente *</span>
-                    <select class="liq-inp" id="crm-tipo-cliente" onchange="onCRMTipoChange()">
-                      <option value="">— Seleccionar —</option>
-                      <option value="constructora">Constructora</option>
-                      <option value="ingeniero">Ingeniero independiente</option>
-                      <option value="maestro">Maestro de obras</option>
-                      <option value="usuario_final">Usuario final</option>
-                      <option value="concretera">Concretera</option>
-                      <option value="intermediario">Intermediario/Comisionista</option>
-                      <option value="otro">Otro</option>
-                    </select>
-                  </div>
-                  <div class="liq-field" id="crm-tipo-otro-wrap" style="display:none">
-                    <span class="liq-label">Especificar tipo *</span>
-                    <input type="text" class="liq-inp" id="crm-tipo-otro" placeholder="Describir tipo de cliente">
-                  </div>
-                  <div class="liq-field" style="grid-column:span 2">
-                    <span class="liq-label">Dirección (referencia) *</span>
-                    <input type="text" class="liq-inp" id="crm-direccion" placeholder="Provincia, cantón, referencia general">
-                  </div>
-                </div>
-
-                <!-- Contacts -->
-                <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">
-                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-                    <span style="font-size:11px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:.7px">Contactos *</span>
-                    <button onclick="addCRMContactRow()" style="font-size:11px;color:var(--blue);background:none;border:none;cursor:pointer;font-weight:700">+ Agregar contacto</button>
-                  </div>
-                  <div id="crm-contacts-list"></div>
-                  <div id="crm-contact-error" style="font-size:11px;color:var(--red);display:none;margin-top:6px">⚠ Se requiere al menos un contacto con teléfono o email.</div>
-                </div>
-
-                <input type="hidden" id="crm-edit-id">
-              </div>
-              <div class="modal-footer">
-                <button class="modal-btn cancel" onclick="closeCRMClientModal()">Cancelar</button>
-                <button class="modal-btn save" onclick="saveCRMClient()">✓ Guardar cliente</button>
-              </div>
-            </div>
-          </div>
-
+          
           <!-- CRM: CLIENT DETAIL MODAL -->
           <div id="crmDetailModal" class="modal-overlay hidden">
             <div class="modal" style="width:720px;max-width:96vw;max-height:90vh;overflow-y:auto">
@@ -14285,56 +14785,7 @@ function getLastExportI
             </div>
           </div>
 
-<!-- GLOBAL EXPORT MODAL -->
-<div id="globalExportModal" class="modal-overlay hidden">
-  <div class="modal" style="width:580px;max-width:96vw">
-    <div class="modal-hdr">
-      <span class="modal-title">⬇ Exportación Global del Sistema</span>
-      <button class="modal-close" onclick="document.getElementById('globalExportModal').classList.add('hidden')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div style="background:rgba(37,99,235,.05);border:1px solid rgba(37,99,235,.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px">
-        <strong>¿Qué incluye este ZIP?</strong><br>
-        Un archivo CSV por módulo (Ventas, Horas, Vacaciones, Fondos, Gastos, Comisiones) por cada usuario registrado. Los archivos de admin incluyen además: Liquidaciones, CRM, Papelera y Usuarios del sistema.
-      </div>
-      <div style="font-size:11px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:6px">Historial de exportaciones</div>
-      <div id="export-log-body" style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:8px 12px;margin-bottom:14px;max-height:120px;overflow-y:auto"></div>
-      <div id="zip-progress" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:10px 14px;font-size:12px;font-weight:700;color:var(--blue);margin-bottom:10px"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="modal-btn cancel" onclick="document.getElementById('globalExportModal').classList.add('hidden')">Cancelar</button>
-      <button class="modal-btn save" id="btn-generate-zip" onclick="generateGlobalZip()">⬇ Generar ZIP completo</button>
-    </div>
-  </div>
 </div>
-
-<!-- RESTORE MODAL -->
-<div id="restoreModal" class="modal-overlay hidden">
-  <div class="modal" style="width:560px;max-width:96vw">
-    <div class="modal-hdr">
-      <span class="modal-title" style="color:var(--red)">🔴 Restaurar Sistema desde Backup</span>
-      <button class="modal-close" onclick="document.getElementById('restoreModal').classList.add('hidden')">✕</button>
-    </div>
-    <div class="modal-body">
-      <div style="background:rgba(227,24,55,.06);border:1.5px solid rgba(227,24,55,.3);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px">
-        ⚠️ Esta operación borrará <strong>TODA</strong> la información actual y la reemplazará con la del archivo de backup. Solo úsala si el sistema necesita ser restaurado completamente.
-      </div>
-      <div style="margin-bottom:12px">
-        <span class="liq-label">Seleccionar archivo de backup (.json)</span>
-        <input type="file" id="restore-file-input" accept=".json" onchange="onRestoreFileSelected()"
-          style="display:block;margin-top:6px;font-size:12px;width:100%">
-      </div>
-      <div id="restore-status" style="margin-bottom:10px"></div>
-      <div id="restore-confirm-wrap" style="display:none">
-        <span class="liq-label">Escribe <strong>RESTAURAR</strong> para confirmar</span>
-        <input type="text" id="restore-keyword" class="liq-inp" placeholder="RESTAURAR" style="margin-top:6px;letter-spacing:2px;font-weight:800">
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="modal-btn cancel" onclick="document.getElementById('restoreModal').classList.add('hidden')">Cancelar</button>
-      <button class="modal-btn save" style="background:var(--red);border-color:var(--red)" onclick="executeRestore()">🔴 Ejecutar restauración</button>
-    </div>
-  </div>
 </div>
 
 </body>
