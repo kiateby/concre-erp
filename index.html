@@ -1678,7 +1678,7 @@ function buildUsersTable(){
       <div class="user-avatar-sm ${u.rol}">${u.nombre.slice(0,2).toUpperCase()}</div>
       <div><div class="uname-main">${u.nombre}</div><div class="uname-sub">${u.username} · ${u.email||'—'}</div></div>
     </div></td>
-    <td><span class="badge ${u.rol}">${u.rol==='admin'?'Administrador':'Usuario'}</span></td>
+    <td><span class="badge ${u.rol}">${u.rol==='superadmin'?'Super Admin':u.rol==='admin'?'Administrador':'Usuario'}</span></td>
     <td style="font-family:var(--cond);font-weight:700">${u.salario>0?fmt(u.salario):'—'}</td>
     <td><span class="badge ${u.comisType==='mensual'?'mensual':'anual'}">${u.comisType==='mensual'?'Mensual':'Dic. (acum.)'}</span></td>
     <td><span class="badge ${u.estado==='activo'?'mensual':'anual'}">${u.estado}</span></td>
@@ -1694,9 +1694,17 @@ function openUserModal(idx=null){
   editingUserIdx=idx;
   const users=getUsers();
   document.getElementById('modalTitle').textContent=idx===null?'Nuevo usuario':'Editar usuario';
-  // Mostrar opción superadmin solo si quien edita es superadmin
-  const saOpt=document.querySelector('#fRol option[value="superadmin"]');
-  if(saOpt) saOpt.style.display=(SESSION&&SESSION.rol==='superadmin')?'':'none';
+  // Agregar opción superadmin dinámicamente ANTES de asignar el valor
+  var fRolSel=document.getElementById('fRol');
+  if(fRolSel){
+    var existingSaOpt=fRolSel.querySelector('option[value="superadmin"]');
+    if(existingSaOpt) existingSaOpt.remove();
+    if(SESSION&&SESSION.rol==='superadmin'){
+      var saOpt=document.createElement('option');
+      saOpt.value='superadmin'; saOpt.textContent='Super Administrador';
+      fRolSel.appendChild(saOpt);
+    }
+  }
   if(idx===null){
     ['fNombre','fUser','fPass','fSalario','fEmail','fPuesto'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('fRol').value='user';
@@ -1707,7 +1715,7 @@ function openUserModal(idx=null){
     document.getElementById('fNombre').value=u.nombre;
     document.getElementById('fUser').value=u.username;
     document.getElementById('fPass').value='';
-    document.getElementById('fRol').value=u.rol;
+    document.getElementById('fRol').value=u.rol; // ahora la opción superadmin ya existe
     document.getElementById('fSalario').value=u.salario>0?u.salario.toLocaleString('es-CR'):'';
     document.getElementById('fEmail').value=u.email||'';
     document.getElementById('fPuesto').value=u.puesto||'';
@@ -18209,7 +18217,6 @@ window.initCalcCONCRE = initCalcCONCRE;
           <select class="form-select" id="fRol">
             <option value="user">Usuario</option>
             <option value="admin">Administrador</option>
-            <option value="superadmin">Super Administrador</option>
           </select>
         </div>
       </div>
