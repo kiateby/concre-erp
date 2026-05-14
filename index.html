@@ -1694,6 +1694,9 @@ function openUserModal(idx=null){
   editingUserIdx=idx;
   const users=getUsers();
   document.getElementById('modalTitle').textContent=idx===null?'Nuevo usuario':'Editar usuario';
+  // Mostrar opción superadmin solo si quien edita es superadmin
+  const saOpt=document.querySelector('#fRol option[value="superadmin"]');
+  if(saOpt) saOpt.style.display=(SESSION&&SESSION.rol==='superadmin')?'':'none';
   if(idx===null){
     ['fNombre','fUser','fPass','fSalario','fEmail','fPuesto'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('fRol').value='user';
@@ -1748,21 +1751,30 @@ function saveUser(){
   const nombre=document.getElementById('fNombre').value.trim();
   const username=document.getElementById('fUser').value.trim().toLowerCase();
   const pass=document.getElementById('fPass').value;
-  const rol=document.getElementById('fRol').value;
+  let rol=document.getElementById('fRol').value;
   const salario=parseMon(document.getElementById('fSalario').value)||0;
   const email=document.getElementById('fEmail').value.trim();
   const puesto=document.getElementById('fPuesto').value.trim();
   const comisType=document.getElementById('fComisType').value;
   const estado=document.getElementById('fEstado').value;
   if(!nombre||!username){alert('Nombre y usuario son requeridos');return;}
+  // Solo superadmin puede asignar rol superadmin
+  if(rol==='superadmin'&&SESSION.rol!=='superadmin'){
+    alert('Solo un superadmin puede asignar el rol de superadmin');
+    rol='admin'; // revertir
+    return;
+  }
   const users=getUsers();
   if(editingUserIdx===null){
-    // empty password allowed
     const exists=users.find(u=>u.username===username);
     if(exists){alert('Ya existe un usuario con ese nombre de usuario');return;}
     users.push({id:username,username,password:pass,nombre,rol,salario,email,puesto,comisType,estado});
   } else {
     const u=users[editingUserIdx];
+    // Proteger: si el usuario editado era superadmin y quien edita no es superadmin, no cambiar rol
+    if(u.rol==='superadmin'&&SESSION.rol!=='superadmin'){
+      alert('Solo un superadmin puede modificar el rol de otro superadmin');return;
+    }
     u.nombre=nombre;u.username=username;u.rol=rol;u.salario=salario;
     u.email=email;u.puesto=puesto;u.comisType=comisType;u.estado=estado;
     if(pass&&pass.length>=6)u.password=pass;
@@ -18197,6 +18209,7 @@ window.initCalcCONCRE = initCalcCONCRE;
           <select class="form-select" id="fRol">
             <option value="user">Usuario</option>
             <option value="admin">Administrador</option>
+            <option value="superadmin">Super Administrador</option>
           </select>
         </div>
       </div>
