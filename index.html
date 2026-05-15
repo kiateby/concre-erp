@@ -14954,6 +14954,8 @@ const saveM=()=>saveJ(SK.margins,MARGINS);
 
 // ── PRECIOS (persistentes, solo editables en Config) ──────────────────────
 const DEF_PRICES={
+  salario_encargado:25000,  // ₡/día encargado (default para nuevo personal)
+  salario_operario:18000,   // ₡/día operario (default para nuevo personal)
   var3:2500,var4:4000,var5:6000,var6:13000,var8:24000,
   vara_madera:1100,        // ₡/vara madera
   var2:1150,               // ₡/varilla #2 6m (canastas)
@@ -15024,19 +15026,19 @@ function newProj(){
       fm_incluir:true,fm_tipo:'madera',fm_precio_vara_local:null,// null = usar PRICES.vara_madera
       fm_precio_perlin_ml_local:null,fm_precio_angular_ml_local:null,fm_mo_fab_ml_local:null,
       fm_reusos:1,
-      fm_personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000}],
+      fm_personal:[{rol:'encargado',salario:PRICES.salario_encargado||25000},{rol:'operario',salario:PRICES.salario_operario||18000}],
       epox_activo:false,epox_prof_cm:null,// null = mitad largo dovela
       mat:{grasa:true,tubo_pvc:true,tapones:true,pegamento:true,pintura:true},
       mat_precios:{grasa_ud:500,tubo_pvc_34:17000,tapon_34:400,pegamento_pvc:10000,pintura_gal:21000},
-      personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000},{rol:'operario',salario:18000}],
-      can_elab_personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000}],
+      personal:[{rol:'encargado',salario:PRICES.salario_encargado||25000},{rol:'operario',salario:PRICES.salario_operario||18000},{rol:'operario',salario:PRICES.salario_operario||18000}],
+      can_elab_personal:[{rol:'encargado',salario:PRICES.salario_encargado||25000},{rol:'operario',salario:PRICES.salario_operario||18000}],
       can_inst_activo:true,
-      can_inst_personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000}],
+      can_inst_personal:[{rol:'encargado',salario:PRICES.salario_encargado||25000},{rol:'operario',salario:PRICES.salario_operario||18000}],
     },
     formaleta:{
       tipo:'madera',metros_lineales:100,reusos:1,espesor_cm:15,
       fm_precio_perlin_ml_local:null,fm_precio_angular_ml_local:null,fm_mo_fab_ml_local:null,
-      inst_personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000}],
+      inst_personal:[{rol:'encargado',salario:PRICES.salario_encargado||25000},{rol:'operario',salario:PRICES.salario_operario||18000}],
     },
     tierras:{
       escenario:1,
@@ -15045,7 +15047,7 @@ function newProj(){
       area_m2:500,espesor_m:0.15,
       equipos:{backjoe:true,aplanadora:true,niveladora:false,pala:false,bobcat:false,tanqueta:true},
       tanqueta_viajes:5,lastre:true,lastre_m3:50,botada:false,botada_viajes:10,
-      personal:[{rol:'encargado',salario:25000}],jornada_hr:8,
+      personal:[{rol:'encargado',salario:PRICES.salario_encargado||25000}],jornada_hr:8,
     },
   };
 }
@@ -15287,18 +15289,18 @@ function personalRows(arr,onRebuild){
       wrap.appendChild(row);
     });
     const add=document.createElement('button'); add.className='cc-btn cc-btn-gray'; add.style.marginTop='6px'; add.textContent='+ Operario';
-    add.onclick=()=>{arr.push({rol:'operario',salario:arr.find(p=>p.rol==='operario')?.salario||18000}); rebuild(); renderContent();};
+    add.onclick=()=>{arr.push({rol:'operario',salario:PRICES.salario_operario||18000}); rebuild(); renderContent();};
     wrap.appendChild(add);
   };
   rebuild(); return wrap;
 }
 function matCheckRows(D){
   const matOpts=[
-    ['grasa','Grasa para dovelas','grasa_ud',500,'₡/ud'],
-    ['tubo_pvc','Tubo PVC 3/4"','tubo_pvc_34',17000,'₡/tubo 6m'],
-    ['tapones','Tapones PVC 3/4"','tapon_34',400,'₡/ud'],
-    ['pegamento','Pegamento PVC 1/8','pegamento_pvc',10000,'₡/caja'],
-    ['pintura','Pintura para dovelas','pintura_gal',21000,'₡/galón'],
+    ['grasa','Grasa para dovelas','grasa_ud',0,'₡/dovela'],
+    ['tubo_pvc','Tubo PVC 3/4"','tubo_pvc_34',0,'₡/dovela'],
+    ['tapones','Tapones PVC 3/4"','tapon_34',0,'₡/dovela'],
+    ['pegamento','Pegamento PVC 1/8','pegamento_pvc',0,'₡/dovela'],
+    ['pintura','Pintura para dovelas','pintura_gal',0,'₡/dovela'],
   ];
   const wrap=document.createElement('div');
   matOpts.forEach(([key,lbl,pk,def,unit])=>{
@@ -15484,14 +15486,14 @@ function calcDovelas(D){
   const mo_dia_dov=(D.tipo==='canastas'?[]:D.personal).reduce((s,p)=>s+p.salario,0);
   const mo_dov=mo_dia_dov*dias_dov*MARGINS.mo;
 
-  // Materiales opcionales (solo con check)
+  // Materiales opcionales (precio por dovela, sin margen adicional — usuario ya incluye margen)
   const mat_items=[];
   if(D.tipo!=='canastas'&&D.mat&&D.mat_precios){
-    if(D.mat.grasa!==false)    {const c=Math.ceil(n_dovelas*0.003)*(D.mat_precios.grasa_ud||500);      mat_items.push({lbl:'Grasa',qty:Math.ceil(n_dovelas*0.003),unit:'ud',costo:c});}
-    if(D.mat.tubo_pvc!==false) {const c=Math.ceil(ml/6)*(D.mat_precios.tubo_pvc_34||17000);            mat_items.push({lbl:'Tubo PVC 3/4"',qty:Math.ceil(ml/6),unit:'tubos 6m',costo:c});}
-    if(D.mat.tapones!==false)  {const c=n_dovelas*(D.mat_precios.tapon_34||400);                        mat_items.push({lbl:'Tapones PVC 3/4"',qty:n_dovelas,unit:'ud',costo:c});}
-    if(D.mat.pegamento!==false){const c=Math.ceil(n_dovelas*0.0015)*(D.mat_precios.pegamento_pvc||10000);mat_items.push({lbl:'Pegamento PVC',qty:Math.ceil(n_dovelas*0.0015),unit:'cajas',costo:c});}
-    if(D.mat.pintura!==false)  {const c=Math.ceil(n_dovelas*0.003)*(D.mat_precios.pintura_gal||21000);  mat_items.push({lbl:'Pintura',qty:Math.ceil(n_dovelas*0.003),unit:'galones',costo:c});}
+    if(D.mat.grasa!==false)    {const c=n_dovelas*(D.mat_precios.grasa_ud||0);      mat_items.push({lbl:'Grasa',qty:n_dovelas,unit:'dovelas',costo:c});}
+    if(D.mat.tubo_pvc!==false) {const c=n_dovelas*(D.mat_precios.tubo_pvc_34||0);   mat_items.push({lbl:'Tubo PVC 3/4"',qty:n_dovelas,unit:'dovelas',costo:c});}
+    if(D.mat.tapones!==false)  {const c=n_dovelas*(D.mat_precios.tapon_34||0);       mat_items.push({lbl:'Tapones PVC 3/4"',qty:n_dovelas,unit:'dovelas',costo:c});}
+    if(D.mat.pegamento!==false){const c=n_dovelas*(D.mat_precios.pegamento_pvc||0);  mat_items.push({lbl:'Pegamento PVC',qty:n_dovelas,unit:'dovelas',costo:c});}
+    if(D.mat.pintura!==false)  {const c=n_dovelas*(D.mat_precios.pintura_gal||0);    mat_items.push({lbl:'Pintura',qty:n_dovelas,unit:'dovelas',costo:c});}
   }
   const costo_mat_opc=mat_items.reduce((s,m)=>s+m.costo,0);
 
@@ -15564,7 +15566,7 @@ function calcDovelas(D){
     }
   }
 
-  const mat_total=(costo_varillas+costo_mat_opc)*MARGINS.mat;
+  const mat_total=costo_varillas*MARGINS.mat+costo_mat_opc; // mat_opc: sin margen (ya incluido por usuario)
   const dias_total=dias_dov+dias_fm;
   const total=mat_total+mo_dov+costo_fm+mo_fm+costo_epox+costo_can_mat+mo_can_elab+mo_can_inst;
   const costo_ml=ml>0?total/ml:0;
@@ -15576,15 +15578,15 @@ function calcDovelas(D){
     ...(n_kits>0?[{lbl:'Epóxico kit 2 gal',qty:n_kits,unit:'kits',costo:costo_epox}]:[]),
   ];
 
-  return buildResult('Dovelas',
+  return buildResult('Dovelas','res_dovelas',
     [[fmtC(total),'Costo total proyecto'],[fmtC(costo_ml),'Costo por metro lineal'],[fmtC(costo_dov),'Costo por dovela'],
      [n_dovelas+' ud','Total dovelas'],[n_varillas+' var.','Varillas a comprar'],[dias_total+' días','Días ejecución total'],
      ...(dias_fm>0?[[dias_fm+' días','Días formaleta']]:[]),
     ],
     [
       [`${ml}m ÷ ${dist}cm sep. = ${n_dovelas} dovelas; ${n_varillas} varillas ${D.diametro} × ₡${fmtN(precio_var)}`,fmtC(costo_varillas)],
-      ...(costo_mat_opc>0?[[`Materiales adicionales (${mat_items.map(m=>m.lbl).join(', ')})`,fmtC(costo_mat_opc)]]:[]),
-      [`Mat. subtotal × ${MARGINS.mat}×`,fmtC(mat_total)],
+      ...(costo_mat_opc>0?[[`Materiales por dovela (${mat_items.map(m=>m.lbl).join(', ')}) — sin margen adicional`,fmtC(costo_mat_opc)]]:[]),
+      [`Varillas subtotal × ${MARGINS.mat}×`,fmtC(mat_total)],
       [`MO dovelas: ${dias_dov} días (${ml}ml÷${rend}ml/día) × ₡${fmtN(mo_dia_dov)}/día × ${MARGINS.mo}×`,fmtC(mo_dov)],
       ...(costo_fm>0?[[`Formaleta materiales × ${MARGINS.mat}×`,fmtC(costo_fm)]]:[]),
       ...(mo_fm>0?[[`MO formaleta: ${dias_fm} días (${ml}ml÷${RENDERS.fml_inst_ml}ml/día) × ${MARGINS.mo}×`,fmtC(mo_fm)]]:[]),
@@ -15683,7 +15685,7 @@ function calcFormaleta(F){
   const total=costo_mat+mo;
   const costo_ml=ml>0?total/ml:0;
 
-  return buildResult('Formaleta',
+  return buildResult('Formaleta','res_formaleta',
     [[fmtC(total),'Costo total'],[fmtC(costo_ml),'Costo por ml'],[dias+' días','Días instalación'],[pines.n_pines+' pines','Total pines']],
     [
       ...(F.tipo==='madera'?[[`Varas: ${Math.ceil(ml*VARAS_POR_ML/reusos)} varas × ₡${fmtN(PRICES.vara_madera)}`,fmtC(Math.ceil(ml*VARAS_POR_ML/reusos)*PRICES.vara_madera)]]:[
@@ -15837,7 +15839,7 @@ function calcTierras(T){
   const costo_m3=vol_ref>0?total/vol_ref:0;
   const costo_m2=area_ref>0?total/area_ref:0;
 
-  return buildResult('Movimiento de Tierras',
+  return buildResult('Movimiento de Tierras','res_tierras',
     [[fmtC(total),'Costo total'],[fmtC(costo_m3),'₡/m³'],[fmtC(costo_m2),'₡/m² (para cotizar)'],[dias_max+' días','Días máx. ejecución'],[T.personal.length+' personas','Personal en sitio']],
     [
       ...detalle.map(e=>[`${e.lbl}: ${e.vol}m³÷${e.rend}m³/día=${e.dias}días × ${jornada}hr × ₡/hr × ${MARGINS.eq}×`,fmtC(e.costo)]),
@@ -15852,7 +15854,11 @@ function calcTierras(T){
 }
 
 // ── RESULTADO GENÉRICO ────────────────────────────────────────────────────
-function buildResult(modulo,kpis,lineas,mats,total){
+function buildResult(modulo,stateKey,kpis,lineas,mats,total){
+  // stateKey: string key in PROJ to store {qty, unit} for this module
+  if(!stateKey) stateKey='result_'+modulo.toLowerCase().replace(/[^a-z]/g,'');
+  if(!PROJ[stateKey]) PROJ[stateKey]={qty:0,unit:'ml'};
+  const st=PROJ[stateKey];
   const res=document.createElement('div');
   const rDiv=document.createElement('div'); rDiv.className='cc-resultado';
   rDiv.innerHTML=`<h3>📊 Resultado — ${modulo}</h3>`;
@@ -15867,6 +15873,38 @@ function buildResult(modulo,kpis,lineas,mats,total){
   });
   rDiv.appendChild(rb);
   res.appendChild(rDiv);
+  // Cantidad manual y total por unidad
+  const qDiv=document.createElement('div'); qDiv.style.cssText='margin-top:12px;background:rgba(255,255,255,.06);border-radius:6px;padding:12px 14px';
+  qDiv.innerHTML='<div style="font-size:.78rem;font-weight:700;color:#ECF0F1;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">📏 Total por Unidad</div>';
+  const qGrid=document.createElement('div'); qGrid.style.cssText='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end';
+  // Cantidad field
+  const qf=document.createElement('div'); qf.className='cc-field';
+  qf.innerHTML='<label style="color:#BDC3C7">Cantidad</label>';
+  const qi=document.createElement('input'); qi.type='number'; qi.value=st.qty||''; qi.min=0; qi.placeholder='Ej: 150';
+  qi.style.cssText='padding:7px 9px;border:1.5px solid rgba(255,255,255,.2);border-radius:5px;font-size:.88rem;color:#fff;background:rgba(255,255,255,.08);width:100%';
+  qi.addEventListener('change',e=>{st.qty=parseFloat(e.target.value)||0; renderContent();});
+  qi.addEventListener('blur',e=>{st.qty=parseFloat(e.target.value)||0; renderContent();});
+  qf.appendChild(qi);
+  // Unidad field
+  const uf=document.createElement('div'); uf.className='cc-field';
+  uf.innerHTML='<label style="color:#BDC3C7">Unidad (ml, m², ud…)</label>';
+  const ui=document.createElement('input'); ui.type='text'; ui.value=st.unit||'ml'; ui.placeholder='ml';
+  ui.style.cssText='padding:7px 9px;border:1.5px solid rgba(255,255,255,.2);border-radius:5px;font-size:.88rem;color:#fff;background:rgba(255,255,255,.08);width:100%';
+  ui.addEventListener('change',e=>{st.unit=e.target.value; renderContent();});
+  ui.addEventListener('blur',e=>{st.unit=e.target.value;});
+  uf.appendChild(ui);
+  // Total por unidad (readonly)
+  const tf=document.createElement('div'); tf.className='cc-field';
+  tf.innerHTML='<label style="color:#BDC3C7">Total por '+( st.unit||'unidad')+'</label>';
+  const totalPorUn=st.qty>0?total/st.qty:0;
+  const ti=document.createElement('input'); ti.type='text'; ti.readOnly=true;
+  ti.value=st.qty>0?fmtC(totalPorUn):'— ingrese cantidad';
+  ti.style.cssText='padding:7px 9px;border:1.5px solid rgba(255,255,255,.2);border-radius:5px;font-size:.9rem;color:#E74C3C;font-weight:700;background:rgba(255,255,255,.05);width:100%';
+  tf.appendChild(ti);
+  qGrid.appendChild(qf); qGrid.appendChild(uf); qGrid.appendChild(tf);
+  qDiv.appendChild(qGrid);
+  rDiv.appendChild(qDiv);
+
   if(mats&&mats.length>0){
     const tDiv=document.createElement('div'); tDiv.style.marginTop='14px';
     tDiv.innerHTML='<div class="cc-sec-title" style="margin-top:0">Lista de Materiales</div>';
@@ -15902,6 +15940,12 @@ function buildGuardados(){
 // ── TAB CONFIG ────────────────────────────────────────────────────────────
 function buildConfig(){
   const frag=document.createDocumentFragment();
+  // Salarios por defecto
+  const gSal=document.createElement('div'); gSal.className='cc-grid';
+  gSal.appendChild(numField('Salario encargado (₡/día)',PRICES.salario_encargado||25000,v=>{PRICES.salario_encargado=v;saveP();},'Default al agregar personal'));
+  gSal.appendChild(numField('Salario operario (₡/día)',PRICES.salario_operario||18000,v=>{PRICES.salario_operario=v;saveP();},'Default al agregar operario nuevo'));
+  frag.appendChild(card('👷 Salarios por Defecto',gSal));
+
   // Márgenes
   const gM=document.createElement('div'); gM.className='cc-grid';
   gM.appendChild(numField('Materiales (factor ×)',MARGINS.mat,v=>{MARGINS.mat=v;saveM();},'Default: 1.20',false,0.01));
