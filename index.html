@@ -14935,1292 +14935,1151 @@ window.initFibraPlus54=initFibraPlus54;
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  MÓDULO CÁLCULOS CONCRE — IIFE aislado
+//  MÓDULO CÁLCULOS CONCRE — IIFE aislado v2
 //  Dovelas · Formaleta · Movimiento de Tierras
 //  Solo visible para superadmin
 // ═══════════════════════════════════════════════════════════════════════════
 (function(){
 'use strict';
 
-// ── STORAGE KEYS ────────────────────────────────────────────────────────────
-const SK = {
-  prices:    'cc_prices_v1',
-  renders:   'cc_renders_v1',
-  projects:  'cc_projects_v1',
-  salaries:  'cc_salaries_v1',
-};
+// ── STORAGE KEYS ──────────────────────────────────────────────────────────
+const SK = { prices:'cc_prices_v2', renders:'cc_renders_v2', projects:'cc_projects_v2', margins:'cc_margins_v2' };
+const loadJ = (k,d) => { try { return JSON.parse(localStorage.getItem(k))||d; } catch { return d; } };
+const saveJ = (k,v) => { try { localStorage.setItem(k,JSON.stringify(v)); } catch {} };
 
-// ── PRECIOS PERSISTENTES POR DEFECTO ────────────────────────────────────────
+// ── MÁRGENES ──────────────────────────────────────────────────────────────
+const DEFAULT_MARGINS = { mat:1.20, mo:1.30, eq:1.15 };
+let MARGINS = loadJ(SK.margins, DEFAULT_MARGINS);
+const saveM = () => saveJ(SK.margins, MARGINS);
+
+// ── PRECIOS POR DEFECTO ────────────────────────────────────────────────────
 const DEFAULT_PRICES = {
-  // Dovelas - varillas (precio varilla 6m en CRC)
-  var3: 2500, var4: 4000, var5: 6000, var6: 13000, var8: 24000,
-  transp_pct: 10,           // % transporte sobre precio varilla
-  corte_dovela: 500,        // CRC por dovela
-  epoxico_kit: 45000,       // kit 2 galones (A+B)
-  molde_canastas: 400000,   // CRC costo molde canastas
-  sold_kg: 6500,            // soldadura kg
-  disco9: 3500,             // disco 9" unidad
-  varilla2: 1150,           // varilla #2 unidad
-  alambre: 1000,            // alambre negro kg
-  grasa: 4500,              // cartucho grasa
-  tubo_pvc_34: 17000,       // tubo PVC 3/4" 6m
-  tapon_34: 400,            // tapón PVC 3/4"
-  pegamento_pvc: 10000,     // pegamento PVC 1/8
-  pintura_gal: 21000,       // pintura galón
-  // Formaleta madera
-  vara_madera: 1100,        // vara madera 15cm (precio base)
-  varilla3: 2200,           // varilla #3 6m (pines)
-  alambre_fm: 1000,         // alambre negro kg formaleta
-  // Formaleta metálica
-  perlin10: 10230,          // perlín 10cm 6m
-  perlin15: 12650,          // perlín 15cm 6m
-  perlin20: 15725,          // perlín 20cm 6m
-  angular_6m: 4850,         // angular 1"×1" 3mm 6m
-  alistado_angular: 45000,  // alistado/sold angular 60ml
-  varilla4_fm: 3850,        // varilla #4 formaleta
-  // Maquinaria movimiento tierras (CRC/hora o viaje)
-  backjoe_hr: 24000,
-  aplanadora_hr: 34000,
-  niveladora_hr: 58000,
-  pala_hr: 60000,
-  tanqueta_viaje: 70000,
-  bobcat_hr: 30000,
-  botada_viaje: 100000,
-  lastre_m3: 8000,
-  cemento_saco: 7000,
+  // Varillas (₡ por varilla de 6m)
+  var3:2500, var4:4000, var5:6000, var6:13000, var8:24000,
+  // Dovelas
+  corte_dovela:500,
+  epoxico_kit:45000,        // kit 2 gal — rendimiento varía por diámetro y profundidad
+  // Formaleta madera (precio por vara, usuario define según ancho)
+  vara_madera:1100,
+  // Formaleta metálica (usuario define según ancho)
+  perlin_ml:2000,           // ₡/ml de perlín instalado (usuario ajusta)
+  angular_ml:800,           // ₡/ml de angular
+  mo_fab_fml_ml:1500,       // ₡/ml mano de obra fabricación formaleta metálica
+  // Pines — siempre varilla #4
+  var4_pin:4000,            // ₡/varilla 6m para pines
+  alambre_kg:1000,          // ₡/kg alambre negro
+  // Equipos mov tierras (₡/hora)
+  backjoe_hr:24000, aplanadora_hr:34000, niveladora_hr:58000,
+  pala_hr:60000, bobcat_hr:30000,
+  // Tanqueta (₡/viaje)
+  tanqueta_viaje:70000,
+  // Lastre y botada
+  lastre_m3:8000, botada_viaje:100000,
 };
+let PRICES = loadJ(SK.prices, DEFAULT_PRICES);
+const saveP = () => saveJ(SK.prices, PRICES);
 
-// ── RENDIMIENTOS PERSISTENTES POR DEFECTO ───────────────────────────────────
+// ── RENDIMIENTOS POR DEFECTO ───────────────────────────────────────────────
 const DEFAULT_RENDERS = {
-  // Dovelas - dovelas por día por cuadrilla
-  dov_formaleta: 60,        // dovelas/día sobre formaleta
-  dov_perforacion: 40,      // dovelas/día perforando losa
-  dov_canastas_ml: 70,      // ml de canastas/día (3 personas)
-  // Maquinaria m3/día
-  backjoe_m3: 100,          // m3/día [ref: 80-120 m3/día CR]
-  aplanadora_m3: 150,       // m3/día [ref: 120-180 m3/día CR]
-  niveladora_m3: 275,       // m3/día [ref: 200-350 m3/día CR]
-  pala_m3: 125,             // m3/día [ref: 100-150 m3/día CR]
-  bobcat_demo_m3: 50,       // m3/día demolición [ref: 40-60 m3/día]
-  bobcat_carga_m3: 50,      // m3/día carga
+  // Dovelas
+  dov_formaleta_ml:10,      // ml dovelas/día sobre formaleta (cuadrilla)
+  dov_perforacion_ml:8,     // ml dovelas/día perforando losa
+  dov_canastas_elab_ml:12,  // ml canastas elaboradas/día
+  dov_canastas_inst_ml:15,  // ml canastas instaladas/día
+  // Formaleta instalación
+  fml_inst_ml:25,           // ml formaleta instalada/día (madera o metal)
+  // Movimiento tierras (m3/día por equipo)
+  backjoe_m3:100, aplanadora_m3:150, niveladora_m3:275,
+  pala_m3:125, bobcat_m3:50,
 };
+let RENDERS = loadJ(SK.renders, DEFAULT_RENDERS);
+const saveR = () => saveJ(SK.renders, RENDERS);
 
-// ── HELPERS ──────────────────────────────────────────────────────────────────
-const loadJSON = (key, def) => { try { return JSON.parse(localStorage.getItem(key)) || def; } catch { return def; } };
-const saveJSON = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} };
+// ── PROYECTOS ──────────────────────────────────────────────────────────────
+let PROJECTS = loadJ(SK.projects, []);
+const savePJ = () => saveJ(SK.projects, PROJECTS);
 
-let PRICES  = loadJSON(SK.prices,   DEFAULT_PRICES);
-let RENDERS = loadJSON(SK.renders,  DEFAULT_RENDERS);
-let PROJECTS= loadJSON(SK.projects, []);
+// ── HELPERS ───────────────────────────────────────────────────────────────
+const fmtN = n => Math.round(n).toLocaleString('es-CR');
+const fmtC = n => '₡' + fmtN(n);
+const ceil1 = n => Math.ceil(n*10)/10;
 
-const saveP = () => saveJSON(SK.prices,   PRICES);
-const saveR = () => saveJSON(SK.renders,  RENDERS);
-const savePJ= () => saveJSON(SK.projects, PROJECTS);
+// Varillas necesarias: cuántas varillas de 6m para cortar dovelas de largo_cm
+// De cada varilla salen floor(600/largo_cm) dovelas; sobrante = desperdicio pero varilla completa se cobra
+function varilasPorDovelas(n_dovelas, largo_cm) {
+  const por_varilla = Math.floor(600 / largo_cm);
+  return Math.ceil(n_dovelas / por_varilla);
+}
 
-// Márgenes
-const M_MAT  = 1.20; // materiales
-const M_MO   = 1.30; // mano de obra
-const M_EQ   = 1.15; // equipos
+// Largo de pin: doble del espesor de la formaleta
+// Pines cada 0.5ml → pines/ml = 2
+// Varillas de 6m para pines: largo_pin_cm * pines_total / 600
+function calcPines(ml, espesor_cm) {
+  const largo_pin_cm = espesor_cm * 2;
+  const n_pines = Math.ceil(ml * 2); // 1 pin cada 0.5ml
+  const n_varillas = Math.ceil(n_pines * largo_pin_cm / 600);
+  const kg_alambre = Math.ceil(ml / 20); // 1kg cada 20ml
+  return { n_pines, largo_pin_cm, n_varillas, kg_alambre };
+}
 
-const fmtCRC = n => '₡' + Math.round(n).toLocaleString('es-CR');
-const el = (tag, attrs={}, children=[]) => {
-  const e = document.createElement(tag);
-  Object.entries(attrs).forEach(([k,v]) => k==='class'?e.className=v : e.setAttribute(k,v));
-  (Array.isArray(children)?children:[children]).forEach(c =>
-    typeof c==='string'?e.insertAdjacentHTML('beforeend',c):c&&e.appendChild(c));
-  return e;
-};
-const div  = (cls, ch=[]) => el('div', {class:cls}, ch);
-const inp  = (attrs={}) => el('input', attrs);
-const btn  = (txt, cls, fn) => { const b=el('button',{class:cls},[txt]); b.onclick=fn; return b; };
-const lbl  = (txt) => el('label', {}, [txt]);
+// ── ESTADO DEL PROYECTO ────────────────────────────────────────────────────
+function newProj() {
+  return {
+    nombre:'', cliente:'', fecha: new Date().toISOString().slice(0,10),
+    dovelas: {
+      tipo:'formaleta',
+      diametro:'#4',
+      largo_cm:50,
+      distancia_cm:45,
+      metros_lineales:30,
+      // Formaleta en dovelas
+      con_formaleta:true,
+      fm_tipo:'madera',
+      fm_precio_vara:1100,      // usuario ingresa precio de vara según ancho
+      fm_varas_ml:2,            // varas por ml (usuario define)
+      fm_precio_perlin_ml:2000, // ₡/ml perlín (usuario define)
+      fm_precio_angular_ml:800,
+      fm_mo_fab_ml:1500,
+      fm_reusos:1,
+      fm_incluir:true,
+      fm_personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000}],
+      fm_rendimiento:25,        // ml/día instalación formaleta
+      // Epóxico
+      epox_activo:false,
+      epox_prof_cm:25,          // profundidad perforación (default: mitad del largo)
+      epox_rend:15,             // dovelas/día perforando
+      // Materiales check
+      mat:{},
+      // Personal dovelas
+      personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000},{rol:'operario',salario:18000}],
+      rendimiento:10,           // ml/día
+      // Canastas
+      can_elab_personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000}],
+      can_elab_rend:12,
+      can_inst_activo:true,
+      can_inst_personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000}],
+      can_inst_rend:15,
+    },
+    formaleta: {
+      tipo:'madera',
+      metros_lineales:100,
+      reusos:1,
+      fm_precio_vara:1100,
+      fm_varas_ml:2,
+      fm_precio_perlin_ml:2000,
+      fm_precio_angular_ml:800,
+      fm_mo_fab_ml:1500,
+      inst_rendimiento:25,
+      inst_personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000}],
+      con_pines:true,
+      espesor_cm:15,
+    },
+    tierras: {
+      escenario:1,
+      // Escenario 1: demolición + estabilización (espesores independientes)
+      demol_area_m2:500,
+      demol_espesor_m:0.10,
+      estab_area_m2:500,
+      estab_espesor_m:0.15,
+      // Escenario 2 y 3
+      area_m2:500,
+      espesor_m:0.15,
+      equipos:{ backjoe:true, aplanadora:true, niveladora:false, pala:false, bobcat:false, tanqueta:true },
+      tanqueta_viajes:5,
+      lastre:true,
+      lastre_m3:50,
+      botada:false,
+      botada_viajes:10,
+      personal:[{rol:'encargado',salario:25000}],
+      jornada_hr:8,
+    }
+  };
+}
 
-// ── ESTADO DEL PROYECTO ACTIVO ───────────────────────────────────────────────
-let PROJ = {
-  nombre:'', cliente:'', fecha: new Date().toISOString().slice(0,10),
-  tipo: [],  // ['dovelas','formaleta','tierras']
-  dovelas: {
-    tipo:'formaleta',       // formaleta | perforacion | canastas
-    con_formaleta: true,
-    diametro:'#4',
-    largo_cm: 50,
-    distancia_cm: 45,
-    metros_lineales: 30,
-    fm_tipo: 'madera',      // madera | metal
-    fm_espesor_cm: 15,
-    fm_reutilizaciones: 1,
-    epox_activo: false,
-    personal: [{rol:'encargado',salario:25000},{rol:'operario',salario:18000},{rol:'operario',salario:18000}],
-    materiales: { grasa:true, tubo_pvc:true, tapones:true, pegamento:true, pintura:true },
-    molde_costo: 400000,
-  },
-  formaleta: {
-    tipo: 'madera',         // madera | metal
-    metros_lineales: 100,
-    espesor_cm: 15,
-    entradas: 1,
-    reutilizaciones: 1,     // solo metal
-    personal: [{rol:'encargado',salario:25000},{rol:'operario',salario:18000}],
-  },
-  tierras: {
-    escenario: 1,           // 1=demol+estab | 2=solo conform | 3=recorte+conform
-    area_m2: 500,
-    espesor_m: 0.15,
-    lastre: true,
-    lastre_m3_extra: 0,
-    botada: false,
-    equipos: { backjoe:true, aplanadora:true, niveladora:true, pala:true, tanqueta:true, bobcat:true },
-    personal: [{rol:'encargado',salario:25000}],
-    jornada_hr: 8,
-  },
-};
+let PROJ = newProj();
 
-// ── ESTILOS ──────────────────────────────────────────────────────────────────
+// ── ESTILOS ────────────────────────────────────────────────────────────────
 const CSS = `
-#sec-calculos { font-family:Arial,sans-serif; background:#F4F5F7; min-height:100vh; color:#2C3E50; }
-.cc-wrap { max-width:1100px; margin:0 auto; padding:16px; }
-.cc-hdr { background:#C8102E; color:#fff; padding:14px 20px; border-radius:8px; margin-bottom:16px; display:flex; align-items:center; gap:12px; }
-.cc-hdr h2 { margin:0; font-size:1.15rem; }
-.cc-hdr-sub { font-size:.8rem; opacity:.85; }
-.cc-card { background:#fff; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,.08); margin-bottom:14px; overflow:hidden; }
-.cc-card-hdr { padding:12px 16px; background:#F8F9FA; border-bottom:1px solid #E8E8E8; display:flex; align-items:center; gap:10px; font-weight:700; font-size:.92rem; color:#2C3E50; }
-.cc-card-hdr .cc-toggle { margin-left:auto; }
-.cc-card-body { padding:16px; }
-.cc-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
-.cc-field { display:flex; flex-direction:column; gap:4px; }
-.cc-field label { font-size:.78rem; color:#636E72; font-weight:600; text-transform:uppercase; letter-spacing:.02em; }
-.cc-field input, .cc-field select { padding:7px 10px; border:1px solid #DDE1E7; border-radius:5px; font-size:.9rem; color:#2C3E50; background:#fff; width:100%; }
-.cc-field input:focus, .cc-field select:focus { outline:none; border-color:#C8102E; }
-.cc-field .cc-note { font-size:.72rem; color:#7F8C8D; font-style:italic; margin-top:2px; }
-.cc-check-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-.cc-check-row input[type=checkbox] { width:16px; height:16px; accent-color:#C8102E; }
-.cc-check-row label { font-size:.88rem; color:#2C3E50; cursor:pointer; }
-.cc-section-title { font-size:.82rem; font-weight:700; color:#C8102E; text-transform:uppercase; letter-spacing:.04em; margin:14px 0 8px; border-bottom:1px solid #F0F0F0; padding-bottom:4px; }
-.cc-persona-row { display:grid; grid-template-columns:140px 1fr 1fr auto; gap:8px; align-items:center; margin-bottom:6px; }
-.cc-persona-row input { padding:6px 8px; border:1px solid #DDE1E7; border-radius:5px; font-size:.85rem; }
-.cc-persona-badge { font-size:.72rem; padding:2px 7px; border-radius:10px; background:#FFF0F0; color:#C8102E; font-weight:700; }
-.cc-result { background:linear-gradient(135deg,#2C3E50,#34495E); color:#fff; border-radius:8px; padding:16px 20px; margin-top:16px; }
-.cc-result h3 { margin:0 0 12px; font-size:1rem; color:#ECF0F1; }
-.cc-result-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; }
-.cc-kpi { background:rgba(255,255,255,.08); border-radius:6px; padding:10px 14px; }
-.cc-kpi .val { font-size:1.3rem; font-weight:700; color:#E74C3C; }
-.cc-kpi .lbl { font-size:.75rem; color:#BDC3C7; margin-top:2px; }
-.cc-warn { background:#FFF8E1; border:1px solid #FFE082; color:#7B5000; border-radius:6px; padding:8px 12px; font-size:.83rem; margin-top:8px; }
-.cc-mat-table { width:100%; border-collapse:collapse; font-size:.85rem; }
-.cc-mat-table th { background:#F8F9FA; padding:7px 10px; text-align:left; font-weight:700; color:#636E72; border-bottom:2px solid #E8E8E8; }
-.cc-mat-table td { padding:7px 10px; border-bottom:1px solid #F0F0F0; }
-.cc-mat-table tr:last-child td { border-bottom:none; }
-.cc-btn { padding:8px 18px; border:none; border-radius:5px; cursor:pointer; font-size:.88rem; font-weight:700; }
-.cc-btn-red { background:#C8102E; color:#fff; }
-.cc-btn-red:hover { background:#a50d25; }
-.cc-btn-gray { background:#ECF0F1; color:#2C3E50; }
-.cc-btn-gray:hover { background:#D5DBDB; }
-.cc-btn-green { background:#27AE60; color:#fff; }
-.cc-btn-green:hover { background:#1e8449; }
-.cc-btn-row { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
-.cc-proj-list { display:grid; gap:8px; }
-.cc-proj-card { background:#fff; border:1px solid #E8E8E8; border-radius:6px; padding:10px 14px; display:flex; align-items:center; gap:12px; }
-.cc-proj-card .name { font-weight:700; font-size:.9rem; flex:1; }
-.cc-proj-card .meta { font-size:.78rem; color:#7F8C8D; }
-.cc-tabs { display:flex; gap:0; border-bottom:2px solid #E8E8E8; margin-bottom:16px; }
-.cc-tab { padding:9px 18px; border:none; background:none; cursor:pointer; font-size:.88rem; color:#7F8C8D; font-weight:600; border-bottom:2px solid transparent; margin-bottom:-2px; }
-.cc-tab.on { color:#C8102E; border-bottom-color:#C8102E; }
-.cc-tipo-btn { padding:7px 16px; border:2px solid #E8E8E8; border-radius:20px; background:#fff; cursor:pointer; font-size:.85rem; font-weight:600; color:#636E72; }
-.cc-tipo-btn.on { border-color:#C8102E; background:#FFF0F0; color:#C8102E; }
-.cc-modulo-check { display:flex; align-items:center; gap:10px; padding:10px 14px; border:2px solid #E8E8E8; border-radius:6px; cursor:pointer; background:#fff; }
-.cc-modulo-check.on { border-color:#C8102E; background:#FFF8F8; }
-.cc-modulo-check label { font-weight:700; cursor:pointer; }
-.cc-sep { height:1px; background:#F0F0F0; margin:12px 0; }
+#sec-calculos{font-family:Arial,sans-serif;background:#F4F5F7;min-height:100vh;color:#2C3E50}
+.cc-wrap{max-width:1150px;margin:0 auto;padding:16px}
+.cc-hdr{background:#C8102E;color:#fff;padding:14px 20px;border-radius:8px;margin-bottom:16px;display:flex;align-items:center;gap:12px}
+.cc-hdr h2{margin:0;font-size:1.15rem}
+.cc-tabs{display:flex;gap:0;border-bottom:2px solid #E8E8E8;margin-bottom:16px;flex-wrap:wrap}
+.cc-tab{padding:9px 16px;border:none;background:none;cursor:pointer;font-size:.87rem;color:#7F8C8D;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-2px}
+.cc-tab.on{color:#C8102E;border-bottom-color:#C8102E}
+.cc-card{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:12px;overflow:hidden}
+.cc-card-hdr{padding:11px 16px;background:#F8F9FA;border-bottom:1px solid #E8E8E8;font-weight:700;font-size:.9rem;color:#2C3E50;display:flex;align-items:center;gap:8px}
+.cc-card-body{padding:14px 16px}
+.cc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.cc-field{display:flex;flex-direction:column;gap:3px}
+.cc-field label{font-size:.74rem;color:#636E72;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.cc-field input,.cc-field select{padding:7px 9px;border:1.5px solid #DDE1E7;border-radius:5px;font-size:.88rem;color:#2C3E50;background:#fff;width:100%}
+.cc-field input:focus,.cc-field select:focus{outline:none;border-color:#C8102E}
+.cc-field .cc-note{font-size:.71rem;color:#7F8C8D;font-style:italic;margin-top:2px}
+.cc-sec-title{font-size:.79rem;font-weight:700;color:#C8102E;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 8px;border-bottom:1px solid #F0F0F0;padding-bottom:3px}
+.cc-check-row{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.cc-check-row input[type=checkbox]{width:15px;height:15px;accent-color:#C8102E;flex-shrink:0}
+.cc-check-row label{font-size:.87rem;cursor:pointer}
+.cc-persona-row{display:grid;grid-template-columns:130px 1fr auto auto;gap:7px;align-items:center;margin-bottom:5px}
+.cc-persona-row input{padding:5px 7px;border:1.5px solid #DDE1E7;border-radius:5px;font-size:.83rem}
+.cc-badge{font-size:.7rem;padding:2px 7px;border-radius:10px;background:#FFF0F0;color:#C8102E;font-weight:700;white-space:nowrap}
+.cc-badge.green{background:#F0FFF4;color:#27AE60}
+.cc-tipo-btn{padding:7px 15px;border:2px solid #E8E8E8;border-radius:20px;background:#fff;cursor:pointer;font-size:.83rem;font-weight:600;color:#636E72}
+.cc-tipo-btn.on{border-color:#C8102E;background:#FFF0F0;color:#C8102E}
+.cc-resultado{background:linear-gradient(135deg,#1a252f,#2C3E50);color:#fff;border-radius:8px;padding:16px;margin-top:14px}
+.cc-resultado h3{margin:0 0 10px;font-size:.95rem;color:#ECF0F1;display:flex;align-items:center;gap:8px}
+.cc-kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;margin-bottom:12px}
+.cc-kpi{background:rgba(255,255,255,.08);border-radius:6px;padding:9px 12px}
+.cc-kpi .val{font-size:1.2rem;font-weight:700;color:#E74C3C}
+.cc-kpi .lbl{font-size:.72rem;color:#BDC3C7;margin-top:2px}
+.cc-resumen-box{background:rgba(0,0,0,.2);border-radius:6px;padding:10px 14px;font-size:.8rem;line-height:1.8}
+.cc-resumen-box .rlin{display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);padding:3px 0}
+.cc-resumen-box .rlin:last-child{border-bottom:none;font-weight:700;margin-top:4px}
+.cc-resumen-box .rlbl{color:#BDC3C7}
+.cc-resumen-box .rval{color:#fff;font-weight:600}
+.cc-resumen-box .rtotal{color:#E74C3C;font-size:.9rem;font-weight:800}
+.cc-mat-tbl{width:100%;border-collapse:collapse;font-size:.82rem;margin-top:10px}
+.cc-mat-tbl th{background:#F8F9FA;padding:6px 10px;text-align:left;font-weight:700;color:#636E72;border-bottom:2px solid #E8E8E8}
+.cc-mat-tbl td{padding:6px 10px;border-bottom:1px solid #F4F4F4}
+.cc-warn{background:#FFF8E1;border:1px solid #FFE082;color:#7B5000;border-radius:5px;padding:7px 11px;font-size:.8rem;margin-top:8px}
+.cc-btn{padding:7px 16px;border:none;border-radius:5px;cursor:pointer;font-size:.85rem;font-weight:700}
+.cc-btn-red{background:#C8102E;color:#fff}.cc-btn-red:hover{background:#a50d25}
+.cc-btn-gray{background:#ECF0F1;color:#2C3E50}.cc-btn-gray:hover{background:#D5DBDB}
+.cc-btn-green{background:#27AE60;color:#fff}
+.cc-btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.cc-proj-row{display:flex;align-items:center;gap:10px;padding:9px 13px;border:1px solid #E8E8E8;border-radius:6px;margin-bottom:7px;background:#fff}
+.cc-proj-row .pnm{font-weight:700;font-size:.88rem;flex:1}
+.cc-proj-row .pmt{font-size:.76rem;color:#7F8C8D}
+.cc-subcard{background:#F8F9FA;border:1px solid #E8E8E8;border-radius:6px;padding:12px 14px;margin-top:10px}
 `;
 
-// ── INIT ─────────────────────────────────────────────────────────────────────
+// ── INIT ──────────────────────────────────────────────────────────────────
 function initCalcCONCRE() {
   const root = document.getElementById('sec-calculos');
   if (!root) return;
-  // Inyectar estilos una vez
-  if (!document.getElementById('cc-styles')) {
+  if (!document.getElementById('cc-styles-v2')) {
     const s = document.createElement('style');
-    s.id = 'cc-styles';
+    s.id = 'cc-styles-v2';
     s.textContent = CSS;
     document.head.appendChild(s);
   }
   render(root);
 }
 
-// ── ESTADO UI ────────────────────────────────────────────────────────────────
-let UI = { tab: 'proyecto', subDov: 'inputs', subFm: 'inputs', subTier: 'inputs' };
+let UI = { tab:'proyecto' };
 
 function render(root) {
   root.innerHTML = '';
-  const wrap = div('cc-wrap');
+  const wrap = document.createElement('div');
+  wrap.className = 'cc-wrap';
 
   // Header
-  const hdr = div('cc-hdr', [
-    el('div', {}, ['<span style="font-size:1.8rem">🏗</span>']),
-    el('div', {}, [
-      el('h2', {}, ['Cálculos CONCRE']),
-      el('div', {class:'cc-hdr-sub'}, ['Dovelas · Formaleta · Movimiento de Tierras']),
-    ]),
-  ]);
+  const hdr = document.createElement('div');
+  hdr.className = 'cc-hdr';
+  hdr.innerHTML = '<span style="font-size:1.8rem">🏗</span><div><h2 style="margin:0">Cálculos CONCRE</h2><div style="font-size:.8rem;opacity:.85">Dovelas · Formaleta · Movimiento de Tierras</div></div>';
   wrap.appendChild(hdr);
 
-  // Tabs principales
-  const tabBar = div('cc-tabs');
-  [['proyecto','📋 Proyecto'],['dovelas','🔩 Dovelas'],['formaleta','🪵 Formaleta'],['tierras','🚜 Mov. Tierras'],['proyectos','💾 Proyectos Guardados'],['precios','⚙ Precios y Rendimientos']].forEach(([id,label]) => {
-    const t = el('button', {class:'cc-tab'+(UI.tab===id?' on':'')}, [label]);
-    t.onclick = () => { UI.tab = id; render(root); };
-    tabBar.appendChild(t);
+  // Tabs
+  const tabBar = document.createElement('div');
+  tabBar.className = 'cc-tabs';
+  [['proyecto','📋 Proyecto'],['dovelas','🔩 Dovelas'],['formaleta','🪵 Formaleta'],['tierras','🚜 Mov. Tierras'],['proyectos','💾 Guardados'],['config','⚙ Precios & Márgenes']].forEach(([id,lbl]) => {
+    const btn = document.createElement('button');
+    btn.className = 'cc-tab' + (UI.tab===id?' on':'');
+    btn.textContent = lbl;
+    btn.onclick = () => { UI.tab=id; render(root); };
+    tabBar.appendChild(btn);
   });
   wrap.appendChild(tabBar);
 
-  // Contenido según tab
-  if (UI.tab === 'proyecto')      wrap.appendChild(renderTabProyecto());
-  if (UI.tab === 'dovelas')       wrap.appendChild(renderTabDovelas());
-  if (UI.tab === 'formaleta')     wrap.appendChild(renderTabFormaleta());
-  if (UI.tab === 'tierras')       wrap.appendChild(renderTabTierras());
-  if (UI.tab === 'proyectos')     wrap.appendChild(renderTabProyectos(root));
-  if (UI.tab === 'precios')       wrap.appendChild(renderTabPrecios());
+  if (UI.tab==='proyecto')  wrap.appendChild(tabProyecto());
+  if (UI.tab==='dovelas')   wrap.appendChild(tabDovelas(root));
+  if (UI.tab==='formaleta') wrap.appendChild(tabFormaleta());
+  if (UI.tab==='tierras')   wrap.appendChild(tabTierras());
+  if (UI.tab==='proyectos') wrap.appendChild(tabGuardados(root));
+  if (UI.tab==='config')    wrap.appendChild(tabConfig());
 
   root.appendChild(wrap);
 }
 
-// ── TAB PROYECTO ─────────────────────────────────────────────────────────────
-function renderTabProyecto() {
-  const c = div('');
-  const card = div('cc-card');
-  card.appendChild(div('cc-card-hdr', ['📋 Datos del Proyecto']));
-  const body = div('cc-card-body');
-
-  const grid = div('cc-grid');
-  [
-    ['Nombre del proyecto', 'nombre', 'text', 'Ej: Bodega San José'],
-    ['Cliente', 'cliente', 'text', 'Nombre del cliente'],
-    ['Fecha', 'fecha', 'date', ''],
-  ].forEach(([label, key, type, ph]) => {
-    const f = div('cc-field');
-    f.appendChild(el('label', {}, [label]));
-    const i = inp({type, value: PROJ[key]||'', placeholder: ph});
-    i.oninput = e => { PROJ[key] = e.target.value; };
-    f.appendChild(i);
-    grid.appendChild(f);
+// ── HELPERS UI ─────────────────────────────────────────────────────────────
+function field(label, value, type, onchange, note='', min=0, step=1) {
+  const d = document.createElement('div');
+  d.className = 'cc-field';
+  const l = document.createElement('label');
+  l.textContent = label;
+  d.appendChild(l);
+  const i = document.createElement('input');
+  i.type = type||'number'; i.value = value; i.min = min; i.step = step;
+  i.oninput = e => onchange(e.target.value);
+  d.appendChild(i);
+  if (note) { const n=document.createElement('div'); n.className='cc-note'; n.textContent='ℹ '+note; d.appendChild(n); }
+  return d;
+}
+function checkRow(label, checked, onchange, id) {
+  const d = document.createElement('div'); d.className='cc-check-row';
+  const cb = document.createElement('input'); cb.type='checkbox'; cb.checked=checked; if(id) cb.id=id;
+  cb.onchange = e => onchange(e.target.checked);
+  const l = document.createElement('label'); l.textContent=label; if(id) l.htmlFor=id;
+  d.appendChild(cb); d.appendChild(l); return d;
+}
+function secTitle(txt) {
+  const d = document.createElement('div'); d.className='cc-sec-title'; d.textContent=txt; return d;
+}
+function tipoBtns(options, current, onchange) {
+  const d = document.createElement('div'); d.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px';
+  options.forEach(([id,lbl]) => {
+    const b = document.createElement('button');
+    b.className = 'cc-tipo-btn'+(current===id?' on':'');
+    b.textContent = lbl;
+    b.onclick = () => onchange(id);
+    d.appendChild(b);
   });
-  body.appendChild(grid);
-
-  // Tipo de cálculo
-  body.appendChild(el('div', {class:'cc-section-title'}, ['Módulos a calcular']));
-  const modGrid = div('', []);
-  modGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;';
-  [['dovelas','🔩 Dovelas'],['formaleta','🪵 Formaleta'],['tierras','🚜 Mov. Tierras']].forEach(([id, label]) => {
-    const on = PROJ.tipo.includes(id);
-    const row = div('cc-modulo-check'+(on?' on':''));
-    const cb = inp({type:'checkbox', id:'mod-'+id});
-    cb.checked = on;
-    cb.onchange = e => {
-      if (e.target.checked && !PROJ.tipo.includes(id)) PROJ.tipo.push(id);
-      else PROJ.tipo = PROJ.tipo.filter(t => t !== id);
-      row.className = 'cc-modulo-check'+(PROJ.tipo.includes(id)?' on':'');
-    };
-    row.appendChild(cb);
-    row.appendChild(el('label', {for:'mod-'+id}, [label]));
-    modGrid.appendChild(row);
+  return d;
+}
+function btnRow(btns) {
+  const d = document.createElement('div'); d.className='cc-btn-row';
+  btns.forEach(([lbl,cls,fn]) => {
+    const b = document.createElement('button'); b.className='cc-btn '+cls; b.textContent=lbl; b.onclick=fn; d.appendChild(b);
   });
-  body.appendChild(modGrid);
-
-  // Botones
-  const bRow = div('cc-btn-row');
-  bRow.appendChild(btn('💾 Guardar Proyecto', 'cc-btn cc-btn-red', () => guardarProyecto()));
-  bRow.appendChild(btn('🆕 Nuevo Proyecto', 'cc-btn cc-btn-gray', () => {
-    if (confirm('¿Nuevo proyecto? Se limpiarán todos los campos excepto precios y rendimientos.')) {
-      resetProyecto();
-    }
-  }));
-  body.appendChild(bRow);
-  card.appendChild(body);
-  c.appendChild(card);
-  return c;
+  return d;
+}
+function card(title, ...children) {
+  const c = document.createElement('div'); c.className='cc-card';
+  const h = document.createElement('div'); h.className='cc-card-hdr'; h.textContent=title; c.appendChild(h);
+  const b = document.createElement('div'); b.className='cc-card-body';
+  children.forEach(ch => { if(ch) b.appendChild(ch); });
+  c.appendChild(b); return c;
+}
+function grid(...fields) {
+  const g = document.createElement('div'); g.className='cc-grid';
+  fields.forEach(f => { if(f) g.appendChild(f); });
+  return g;
+}
+function personalRows(arr, onchange) {
+  const wrap = document.createElement('div');
+  const rebuild = () => {
+    wrap.innerHTML='';
+    arr.forEach((p,i) => {
+      const row = document.createElement('div'); row.className='cc-persona-row';
+      const badge = document.createElement('span'); badge.className='cc-badge'; badge.textContent=p.rol==='encargado'?'⭐ Encargado':'Operario #'+(i);
+      const iSal = document.createElement('input'); iSal.type='number'; iSal.value=p.salario; iSal.min=0;
+      iSal.oninput = e => { p.salario=parseFloat(e.target.value)||0; onchange(); };
+      const unit = document.createElement('span'); unit.style.cssText='font-size:.75rem;color:#7F8C8D'; unit.textContent='₡/día';
+      row.appendChild(badge); row.appendChild(iSal); row.appendChild(unit);
+      if (p.rol!=='encargado') {
+        const del = document.createElement('button'); del.className='cc-btn cc-btn-gray'; del.style.padding='3px 8px'; del.textContent='✕';
+        del.onclick = () => { arr.splice(i,1); rebuild(); onchange(); };
+        row.appendChild(del);
+      }
+      wrap.appendChild(row);
+    });
+    const add = document.createElement('button'); add.className='cc-btn cc-btn-gray'; add.style.marginTop='6px'; add.textContent='+ Operario';
+    add.onclick = () => { arr.push({rol:'operario',salario:arr.find(p=>p.rol==='operario')?.salario||18000}); rebuild(); onchange(); };
+    wrap.appendChild(add);
+  };
+  rebuild();
+  return wrap;
 }
 
-// ── TAB DOVELAS ──────────────────────────────────────────────────────────────
-function renderTabDovelas() {
-  const c = div('');
+// ── TAB PROYECTO ──────────────────────────────────────────────────────────
+function tabProyecto() {
+  const frag = document.createDocumentFragment();
+  const re = () => {};
+  const g = grid(
+    field('Nombre del proyecto', PROJ.nombre, 'text', v=>PROJ.nombre=v, '', -1),
+    field('Cliente', PROJ.cliente, 'text', v=>PROJ.cliente=v, '', -1),
+  );
+  g.querySelector('input').type='text';
+  const dfecha = document.createElement('div'); dfecha.className='cc-field';
+  const lf=document.createElement('label'); lf.textContent='Fecha'; dfecha.appendChild(lf);
+  const inp=document.createElement('input'); inp.type='date'; inp.value=PROJ.fecha;
+  inp.oninput = e => PROJ.fecha=e.target.value; dfecha.appendChild(inp);
+  const g2 = document.createElement('div'); g2.className='cc-grid'; g2.appendChild(dfecha);
+
+  frag.appendChild(card('📋 Datos del Proyecto', g, g2,
+    btnRow([
+      ['💾 Guardar proyecto','cc-btn-red', guardarProyecto],
+      ['🆕 Nuevo','cc-btn-gray', ()=>{ if(confirm('¿Limpiar todo?')){ PROJ=newProj(); UI.tab='proyecto'; render(document.getElementById('sec-calculos')); } }]
+    ])
+  ));
+  return frag;
+}
+
+// ── TAB DOVELAS ───────────────────────────────────────────────────────────
+function tabDovelas(root) {
   const D = PROJ.dovelas;
+  const re = () => render(root);
+  const frag = document.createDocumentFragment();
 
-  // Tipo de instalación
-  const card0 = div('cc-card');
-  card0.appendChild(div('cc-card-hdr', ['🔩 Tipo de Instalación — Dovelas']));
-  const body0 = div('cc-card-body');
-  const tipoBtns = div('', []);
-  tipoBtns.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;';
-  [['formaleta','Sobre Formaleta'],['perforacion','Perforando Losa'],['canastas','Canastas de Dovela']].forEach(([id, label]) => {
-    const b = el('button', {class:'cc-tipo-btn'+(D.tipo===id?' on':'')}, [label]);
-    b.onclick = () => { D.tipo = id; renderTabDovelas_update(c, card0, body0, tipoBtns); };
-    tipoBtns.appendChild(b);
+  // Tipo instalación
+  const cTipo = card('🔩 Tipo de Instalación — Dovelas',
+    tipoBtns([['formaleta','Sobre Formaleta'],['perforacion','Perforando Losa'],['canastas','Canastas de Dovela']], D.tipo, v=>{ D.tipo=v; re(); })
+  );
+  frag.appendChild(cTipo);
+
+  // Parámetros dovela
+  const diam_map = {'#3':SK,'#4':'var4','#5':'var5','#6':'var6','#8':'var8'};
+  const diamSel = document.createElement('div'); diamSel.className='cc-field';
+  const dl=document.createElement('label'); dl.textContent='DIÁMETRO VARILLA'; diamSel.appendChild(dl);
+  const ds=document.createElement('select');
+  ['#3 (3/8")','#4 (1/2")','#5 (5/8")','#6 (3/4")','#8 (1")'].forEach(opt=>{
+    const o=document.createElement('option'); o.value='#'+opt[1]; o.textContent=opt; if(D.diametro==='#'+opt[1]) o.selected=true; ds.appendChild(o);
   });
-  body0.appendChild(tipoBtns);
+  ds.onchange = e => { D.diametro=e.target.value; re(); };
+  diamSel.appendChild(ds);
 
-  // Parámetros básicos
-  body0.appendChild(el('div', {class:'cc-section-title'}, ['Parámetros de Dovela']));
-  const grid1 = div('cc-grid');
+  // Precio varilla según diámetro
+  const dkey = {['#3']:'var3','#4':'var4','#5':'var5','#6':'var6','#8':'var8'}[D.diametro]||'var4';
+  const fPrecioVar = field('Precio varilla '+D.diametro+' (₡/varilla 6m)', PRICES[dkey], 'number', v=>{ PRICES[dkey]=parseFloat(v)||0; saveP(); re(); }, 'Se toma del módulo de precios');
 
-  // Diámetro
-  const fDiam = div('cc-field');
-  fDiam.appendChild(el('label', {}, ['Diámetro varilla']));
-  const selDiam = el('select');
-  ['#3 (3/8")','#4 (1/2")','#5 (5/8")','#6 (3/4")','#8 (1")'].forEach(opt => {
-    const o = el('option', {value: opt.split(' ')[0]}, [opt]);
-    if (D.diametro === opt.split(' ')[0]) o.setAttribute('selected','');
-    selDiam.appendChild(o);
-  });
-  selDiam.onchange = e => { D.diametro = e.target.value; };
-  fDiam.appendChild(selDiam);
-  grid1.appendChild(fDiam);
+  const cParams = card('📐 Parámetros de Dovela',
+    grid(
+      diamSel,
+      fPrecioVar,
+      field('Largo dovela (cm)', D.largo_cm, 'number', v=>{ D.largo_cm=parseFloat(v)||50; re(); }, 'Largo total incluyendo parte exterior'),
+      field('Distancia entre dovelas (cm)', D.distancia_cm, 'number', v=>{ D.distancia_cm=parseFloat(v)||45; re(); }),
+      field('Metros lineales del proyecto', D.metros_lineales, 'number', v=>{ D.metros_lineales=parseFloat(v)||0; re(); }),
+      field('Rendimiento instalación (ml/día)', D.rendimiento, 'number', v=>{ D.rendimiento=parseFloat(v)||1; re(); },
+        D.tipo==='formaleta'?'Ref. campo CR: 8–12 ml/día': D.tipo==='perforacion'?'Ref. campo CR: 6–10 ml/día':'Ref. elaboración canastas: 10–14 ml/día'),
+    )
+  );
+  frag.appendChild(cParams);
 
-  [['Largo dovela (cm)', 'largo_cm', 50], ['Distancia entre dovelas (cm)', 'distancia_cm', 45], ['Metros lineales del proyecto', 'metros_lineales', 30]].forEach(([label, key, def]) => {
-    const f = div('cc-field');
-    f.appendChild(el('label', {}, [label]));
-    const i = inp({type:'number', value: D[key]||def, min:0, step:1});
-    i.oninput = e => { D[key] = parseFloat(e.target.value)||0; };
-    f.appendChild(i);
-    grid1.appendChild(f);
-  });
-  body0.appendChild(grid1);
+  // ── FORMALETA (si aplica) ─────────────────────────────────────────────
+  if (D.tipo==='formaleta') {
+    const cFm = document.createElement('div'); cFm.className='cc-card';
+    const hFm = document.createElement('div'); hFm.className='cc-card-hdr'; hFm.textContent='🪵 Formaleta para Dovelas'; cFm.appendChild(hFm);
+    const bFm = document.createElement('div'); bFm.className='cc-card-body';
 
-  // Rendimiento
-  body0.appendChild(el('div', {class:'cc-section-title'}, ['Rendimiento']));
-  const rKey = D.tipo==='canastas'?'dov_canastas_ml': D.tipo==='perforacion'?'dov_perforacion':'dov_formaleta';
-  const rLabel = D.tipo==='canastas'?'ml de canastas/día (cuadrilla)':'Dovelas instaladas/día (cuadrilla)';
-  const rNote = D.tipo==='canastas'?'Ref. campo CR: 70–80 ml/día cuadrilla 3 pers. + ~1 día armado molde': D.tipo==='perforacion'?'Ref. campo CR: 35–50 dovelas/día según diámetro':'Ref. campo CR: 50–70 dovelas/día sobre formaleta';
-  const fRend = div('cc-field');
-  fRend.appendChild(el('label', {}, [rLabel]));
-  const iRend = inp({type:'number', value: RENDERS[rKey], min:1});
-  iRend.oninput = e => { RENDERS[rKey] = parseFloat(e.target.value)||1; saveR(); };
-  fRend.appendChild(iRend);
-  fRend.appendChild(el('div', {class:'cc-note'}, ['ℹ ' + rNote]));
-  body0.appendChild(fRend);
+    bFm.appendChild(checkRow('Incluir costo de formaleta en este presupuesto', D.fm_incluir, v=>{ D.fm_incluir=v; re(); }, 'dov-fm-incl'));
 
-  card0.appendChild(body0);
-  c.appendChild(card0);
+    if (D.fm_incluir) {
+      bFm.appendChild(tipoBtns([['madera','🪵 Madera'],['metal','🔧 Metálica']], D.fm_tipo, v=>{ D.fm_tipo=v; re(); }));
 
-  // Formaleta (si aplica)
-  if (D.tipo === 'formaleta') {
-    const cFm = div('cc-card');
-    cFm.appendChild(div('cc-card-hdr', ['🪵 Formaleta incluida en dovelas']));
-    const bFm = div('cc-card-body');
-    const rowConSin = div('cc-check-row');
-    const cbFm = inp({type:'checkbox', id:'dov-con-fm'});
-    cbFm.checked = D.con_formaleta;
-    cbFm.onchange = e => { D.con_formaleta = e.target.checked; };
-    rowConSin.appendChild(cbFm);
-    rowConSin.appendChild(el('label', {for:'dov-con-fm'}, ['Incluir costo de formaleta en el cálculo']));
-    bFm.appendChild(rowConSin);
+      const g1 = document.createElement('div'); g1.className='cc-grid';
+      if (D.fm_tipo==='madera') {
+        g1.appendChild(field('Precio vara (₡/vara según ancho)', D.fm_precio_vara, 'number', v=>{ D.fm_precio_vara=parseFloat(v)||0; re(); }, 'Usuario define precio según ancho de formaleta'));
+        g1.appendChild(field('Varas por ml de formaleta', D.fm_varas_ml, 'number', v=>{ D.fm_varas_ml=parseFloat(v)||1; re(); }, 'Incluye 10% desperdicio'));
+        g1.appendChild(field('Reusos de la formaleta', D.fm_reusos, 'number', v=>{ D.fm_reusos=parseInt(v)||1; re(); }, '1 = sin reutilización',1,1));
+      } else {
+        g1.appendChild(field('Precio perlín (₡/ml)', D.fm_precio_perlin_ml, 'number', v=>{ D.fm_precio_perlin_ml=parseFloat(v)||0; re(); }, 'Precio por ml según ancho'));
+        g1.appendChild(field('Precio angular (₡/ml)', D.fm_precio_angular_ml, 'number', v=>{ D.fm_precio_angular_ml=parseFloat(v)||0; re(); }));
+        g1.appendChild(field('MO fabricación (₡/ml)', D.fm_mo_fab_ml, 'number', v=>{ D.fm_mo_fab_ml=parseFloat(v)||0; re(); }, 'Soldadura y elaboración'));
+        g1.appendChild(field('Reusos del metal', D.fm_reusos, 'number', v=>{ D.fm_reusos=parseInt(v)||1; re(); },'',1,1));
+      }
+      g1.appendChild(field('Rendimiento instalación formaleta (ml/día)', D.fm_rendimiento, 'number', v=>{ D.fm_rendimiento=parseFloat(v)||1; re(); }, 'Ref. campo CR: 20–30 ml/día'));
+      bFm.appendChild(g1);
 
-    const gFm = div('cc-grid');
-    const fFmTipo = div('cc-field');
-    fFmTipo.appendChild(el('label', {}, ['Tipo de formaleta']));
-    const sFm = el('select');
-    [['madera','Madera'],['metal','Metálica']].forEach(([v,t]) => {
-      const o = el('option', {value:v}, [t]);
-      if (D.fm_tipo===v) o.setAttribute('selected','');
-      sFm.appendChild(o);
-    });
-    sFm.onchange = e => { D.fm_tipo = e.target.value; };
-    fFmTipo.appendChild(sFm);
-    gFm.appendChild(fFmTipo);
+      // Pines
+      bFm.appendChild(secTitle('Pines y Amarre'));
+      const pines = calcPines(D.metros_lineales, D.largo_cm>0?Math.max(10,D.largo_cm/3):15);
+      const gp = document.createElement('div'); gp.className='cc-grid';
+      gp.appendChild(field('Precio varilla #4 pines (₡/varilla 6m)', PRICES.var4_pin, 'number', v=>{ PRICES.var4_pin=parseFloat(v)||0; saveP(); re(); }));
+      gp.appendChild(field('Precio alambre negro (₡/kg)', PRICES.alambre_kg, 'number', v=>{ PRICES.alambre_kg=parseFloat(v)||0; saveP(); re(); }));
+      bFm.appendChild(gp);
+      const pInfo = document.createElement('div'); pInfo.className='cc-note'; pInfo.style.marginTop='6px';
+      pInfo.textContent = `ℹ 1 pin cada 0.5ml → ${pines.n_pines} pines · Largo pin: ${pines.largo_pin_cm}cm · ${pines.n_varillas} varillas #4 · ${pines.kg_alambre}kg alambre`;
+      bFm.appendChild(pInfo);
 
-    const fEsp = div('cc-field');
-    fEsp.appendChild(el('label', {}, ['Espesor losa (cm)']));
-    const sEsp = el('select');
-    (D.fm_tipo==='metal'?[10,15,20]:[7,10,12,17]).forEach(v => {
-      const labels = D.fm_tipo==='metal'?{10:'Perlín 10cm',15:'Perlín 15cm',20:'Perlín 20cm'}:{7:'5–7.5cm (madera 2")',10:'7.5–10cm (madera 3")',12:'10–14cm (madera 4")',17:'15–20cm (perlín 6")'};
-      const o = el('option', {value:v}, [labels[v]]);
-      if (D.fm_espesor_cm===v) o.setAttribute('selected','');
-      sEsp.appendChild(o);
-    });
-    sEsp.onchange = e => { D.fm_espesor_cm = parseInt(e.target.value); };
-    fEsp.appendChild(sEsp);
-    gFm.appendChild(fEsp);
-
-    if (D.fm_tipo==='metal') {
-      const fReut = div('cc-field');
-      fReut.appendChild(el('label', {}, ['Reutilizaciones del metal']));
-      const iReut = inp({type:'number', value: D.fm_reutilizaciones||1, min:1, max:10});
-      iReut.oninput = e => { D.fm_reutilizaciones = parseInt(e.target.value)||1; };
-      fReut.appendChild(iReut);
-      fReut.appendChild(el('div', {class:'cc-note'}, ['Divide el costo del perlín entre las veces de uso']));
-      gFm.appendChild(fReut);
+      // Personal formaleta
+      bFm.appendChild(secTitle('Personal Instalación Formaleta (mismo cuadro que dovelas)'));
+      bFm.appendChild(personalRows(D.fm_personal, re));
     }
-    bFm.appendChild(gFm);
     cFm.appendChild(bFm);
-    c.appendChild(cFm);
+    frag.appendChild(cFm);
   }
 
-  // Epóxico (si perfora losa)
-  if (D.tipo === 'perforacion') {
-    const cEp = div('cc-card');
-    cEp.appendChild(div('cc-card-hdr', ['🧪 Epóxico de anclaje']));
-    const bEp = div('cc-card-body');
-    const rowEp = div('cc-check-row');
-    const cbEp = inp({type:'checkbox', id:'dov-epox'});
-    cbEp.checked = D.epox_activo;
-    cbEp.onchange = e => { D.epox_activo = e.target.checked; };
-    rowEp.appendChild(cbEp);
-    rowEp.appendChild(el('label', {for:'dov-epox'}, ['Incluir epóxico de anclaje en el cálculo']));
-    bEp.appendChild(rowEp);
+  // ── EPÓXICO (perforación) ─────────────────────────────────────────────
+  if (D.tipo==='perforacion') {
+    const profDefault = Math.round(D.largo_cm/2);
+    const cEp = card('🧪 Epóxico de Anclaje',
+      checkRow('Incluir epóxico en el presupuesto', D.epox_activo, v=>{ D.epox_activo=v; re(); }, 'dov-epox'),
+      ...(D.epox_activo ? [
+        grid(
+          field('Profundidad perforación (cm)', D.epox_prof_cm||profDefault, 'number', v=>{ D.epox_prof_cm=parseFloat(v)||profDefault; re(); }, `Default sugerido: mitad largo dovela (${profDefault}cm)`),
+          field('Rendimiento perforación (dovelas/día)', D.epox_rend||15, 'number', v=>{ D.epox_rend=parseFloat(v)||15; re(); }, 'Ref. CR: 12–20 dovelas/día según diámetro y profundidad'),
+          field('Precio kit epóxico 2 gal (₡)', PRICES.epoxico_kit, 'number', v=>{ PRICES.epoxico_kit=parseFloat(v)||0; saveP(); re(); }, 'Ref.: Hilti RE500 / Sika AnchorFix'),
+        )
+      ] : [])
+    );
+    frag.appendChild(cEp);
+  }
 
-    const fEpPrecio = div('cc-field');
-    fEpPrecio.appendChild(el('label', {}, ['Costo kit epóxico 2 gal (A+B)']));
-    const iEp = inp({type:'number', value: PRICES.epoxico_kit, min:0});
-    iEp.oninput = e => { PRICES.epoxico_kit = parseFloat(e.target.value)||0; saveP(); };
-    fEpPrecio.appendChild(iEp);
-    fEpPrecio.appendChild(el('div', {class:'cc-note'}, ['ℹ Rendimiento ref.: ~40–60 dovelas #4/kit | ~25–35 dovelas #6–#8/kit (Hilti RE500 / Sika AnchorFix). El sistema calcula kits automáticamente según diámetro y cantidad.']));
-    bEp.appendChild(fEpPrecio);
-    cEp.appendChild(bEp);
-    c.appendChild(cEp);
+  // ── CANASTAS ──────────────────────────────────────────────────────────
+  if (D.tipo==='canastas') {
+    const cCan = document.createElement('div'); cCan.className='cc-card';
+    const hCan = document.createElement('div'); hCan.className='cc-card-hdr'; hCan.textContent='🧰 Canastas de Dovela'; cCan.appendChild(hCan);
+    const bCan = document.createElement('div'); bCan.className='cc-card-body';
+
+    bCan.appendChild(secTitle('Fase 1 — Elaboración de Canastas'));
+    bCan.appendChild(grid(
+      field('Rendimiento elaboración (ml/día)', D.can_elab_rend, 'number', v=>{ D.can_elab_rend=parseFloat(v)||1; re(); }, 'Ref. CR: 10–14 ml/día'),
+    ));
+    bCan.appendChild(secTitle('Personal Elaboración'));
+    bCan.appendChild(personalRows(D.can_elab_personal, re));
+
+    bCan.appendChild(secTitle('Fase 2 — Instalación de Canastas'));
+    bCan.appendChild(checkRow('Incluir fase de instalación en el presupuesto', D.can_inst_activo, v=>{ D.can_inst_activo=v; re(); }));
+    if (D.can_inst_activo) {
+      bCan.appendChild(grid(
+        field('Rendimiento instalación (ml/día)', D.can_inst_rend, 'number', v=>{ D.can_inst_rend=parseFloat(v)||1; re(); }, 'Ref. CR: 12–18 ml/día'),
+      ));
+      bCan.appendChild(secTitle('Personal Instalación'));
+      bCan.appendChild(personalRows(D.can_inst_personal, re));
+    }
+    cCan.appendChild(bCan);
+    frag.appendChild(cCan);
+  }
+
+  // ── MATERIALES OPCIONALES ─────────────────────────────────────────────
+  if (D.tipo!=='canastas') {
+    const matOpts = [
+      ['grasa','Grasa para dovelas','grasa_ud',500,'₡/unidad'],
+      ['tubo_pvc','Tubo PVC 3/4" (₡/6m)','tubo_pvc_34',17000,'₡/tubo 6m'],
+      ['tapones','Tapones PVC 3/4"','tapon_34',400,'₡/ud'],
+      ['pegamento','Pegamento PVC 1/8','pegamento_pvc',10000,'₡/caja'],
+      ['pintura','Pintura para dovelas','pintura_gal',21000,'₡/galón'],
+    ];
+    if (!PRICES.grasa_ud) PRICES.grasa_ud=500;
+    if (!PRICES.tubo_pvc_34) PRICES.tubo_pvc_34=17000;
+    if (!PRICES.tapon_34) PRICES.tapon_34=400;
+    if (!PRICES.pegamento_pvc) PRICES.pegamento_pvc=10000;
+    if (!PRICES.pintura_gal) PRICES.pintura_gal=21000;
+    if (!D.mat) D.mat={};
+
+    const cMat = document.createElement('div'); cMat.className='cc-card';
+    cMat.appendChild(Object.assign(document.createElement('div'),{className:'cc-card-hdr',textContent:'📦 Materiales (marcar los que aplican)'}));
+    const bMat = document.createElement('div'); bMat.className='cc-card-body';
+    matOpts.forEach(([key,lbl,pk,def,unit])=>{
+      if(PRICES[pk]===undefined) PRICES[pk]=def;
+      const row = document.createElement('div'); row.style.cssText='display:flex;align-items:center;gap:8px;margin-bottom:7px';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=D.mat[key]!==false; cb.style.cssText='width:15px;height:15px;accent-color:#C8102E;flex-shrink:0';
+      cb.onchange=e=>{ D.mat[key]=e.target.checked; re(); };
+      const lb=document.createElement('label'); lb.textContent=lbl; lb.style.cssText='flex:1;font-size:.86rem';
+      const ip=document.createElement('input'); ip.type='number'; ip.value=PRICES[pk]; ip.style.cssText='width:110px;padding:5px 7px;border:1.5px solid #DDE1E7;border-radius:5px;font-size:.82rem';
+      ip.oninput=e=>{ PRICES[pk]=parseFloat(e.target.value)||0; saveP(); re(); };
+      const un=document.createElement('span'); un.style.cssText='font-size:.76rem;color:#7F8C8D;white-space:nowrap'; un.textContent=unit;
+      row.appendChild(cb); row.appendChild(lb); row.appendChild(ip); row.appendChild(un);
+      bMat.appendChild(row);
+    });
+    cMat.appendChild(bMat);
+    frag.appendChild(cMat);
+  }
+
+  // ── PERSONAL DOVELAS ──────────────────────────────────────────────────
+  if (D.tipo!=='canastas') {
+    const cPer = document.createElement('div'); cPer.className='cc-card';
+    cPer.appendChild(Object.assign(document.createElement('div'),{className:'cc-card-hdr',textContent:'👷 Mano de Obra — Dovelas (salario diario)'}));
+    const bPer = document.createElement('div'); bPer.className='cc-card-body';
+    bPer.appendChild(personalRows(D.personal, re));
+    cPer.appendChild(bPer);
+    frag.appendChild(cPer);
+  }
+
+  // ── RESULTADO ─────────────────────────────────────────────────────────
+  frag.appendChild(calcResultDovelas(D));
+
+  return frag;
+}
+
+function calcResultDovelas(D) {
+  const ml = D.metros_lineales||0;
+  const largo_cm = D.largo_cm||50;
+  const dist_cm = D.distancia_cm||45;
+  const dkey = {['#3']:'var3','#4':'var4','#5':'var5','#6':'var6','#8':'var8'}[D.diametro]||'var4';
+  const precio_var = PRICES[dkey]||4000;
+
+  // Dovelas y varillas
+  const n_dovelas = dist_cm>0 ? Math.ceil(ml*100/dist_cm) : 0;
+  const n_varillas = varilasPorDovelas(n_dovelas, largo_cm);
+  const costo_varillas = n_varillas * precio_var;
+
+  // Días y MO dovelas
+  const dias_dov = D.rendimiento>0 ? Math.ceil(ml/D.rendimiento) : 0;
+  const mo_dia_dov = (D.tipo==='canastas' ? [] : D.personal).reduce((s,p)=>s+p.salario,0);
+  const mo_dov = mo_dia_dov * dias_dov * MARGINS.mo;
+
+  // Materiales opcionales (solo los con check)
+  const mat_items = [];
+  if (D.tipo!=='canastas' && D.mat) {
+    const n_ud = n_dovelas;
+    if (D.mat['grasa']!==false)    { const c=n_dovelas*0.003*(PRICES.grasa_ud||500);    mat_items.push({lbl:'Grasa',qty:Math.ceil(n_dovelas*0.003),unit:'ud',costo:c}); }
+    if (D.mat['tubo_pvc']!==false) { const c=(ml*(PRICES.tubo_pvc_34||17000)/6);        mat_items.push({lbl:'Tubo PVC 3/4"',qty:ceil1(ml/6),unit:'tubos 6m',costo:c}); }
+    if (D.mat['tapones']!==false)  { const c=n_dovelas*(PRICES.tapon_34||400);           mat_items.push({lbl:'Tapones PVC 3/4"',qty:n_dovelas,unit:'ud',costo:c}); }
+    if (D.mat['pegamento']!==false){ const c=n_dovelas*0.0015*(PRICES.pegamento_pvc||10000); mat_items.push({lbl:'Pegamento PVC',qty:ceil1(n_dovelas*0.0015),unit:'cajas',costo:c}); }
+    if (D.mat['pintura']!==false)  { const c=n_dovelas*0.003*(PRICES.pintura_gal||21000);    mat_items.push({lbl:'Pintura',qty:ceil1(n_dovelas*0.003),unit:'galones',costo:c}); }
+  }
+  const costo_mat_opc = mat_items.reduce((s,m)=>s+m.costo,0);
+
+  // Formaleta
+  let costo_fm=0, dias_fm=0, mat_fm=[], mo_fm=0, fm_resumen=[];
+  if (D.tipo==='formaleta' && D.fm_incluir) {
+    const reusos = D.fm_reusos||1;
+    if (D.fm_tipo==='madera') {
+      const varas_total = Math.ceil(ml * (D.fm_varas_ml||2) * 1.10 / reusos); // +10% desperdicio
+      const costo_varas = varas_total * (D.fm_precio_vara||1100);
+      const pines = calcPines(ml, largo_cm>0?Math.max(10,largo_cm/3):15);
+      const costo_pines = pines.n_varillas * (PRICES.var4_pin||4000);
+      const costo_alambre = pines.kg_alambre * (PRICES.alambre_kg||1000);
+      costo_fm = (costo_varas + costo_pines + costo_alambre) * MARGINS.mat;
+      mat_fm = [
+        {lbl:'Varas madera formaleta',qty:varas_total,unit:'varas',costo:costo_varas},
+        {lbl:'Varillas #4 pines',qty:pines.n_varillas,unit:'varillas 6m',costo:costo_pines},
+        {lbl:'Alambre negro',qty:pines.kg_alambre,unit:'kg',costo:costo_alambre},
+      ];
+      fm_resumen = [`${varas_total} varas madera × ₡${fmtN(D.fm_precio_vara||1100)} = ₡${fmtN(costo_varas)}`, `${pines.n_varillas} var. #4 pines × ₡${fmtN(PRICES.var4_pin||4000)} = ₡${fmtN(costo_pines)}`, `${pines.kg_alambre}kg alambre = ₡${fmtN(costo_alambre)}`];
+    } else {
+      const costo_perlin = ml * (D.fm_precio_perlin_ml||2000) / reusos;
+      const costo_angular = ml * (D.fm_precio_angular_ml||800) / reusos;
+      const costo_fab = ml * (D.fm_mo_fab_ml||1500) / reusos;
+      const pines = calcPines(ml, largo_cm>0?Math.max(10,largo_cm/3):15);
+      const costo_pines = pines.n_varillas * (PRICES.var4_pin||4000);
+      const costo_alambre = pines.kg_alambre * (PRICES.alambre_kg||1000);
+      costo_fm = (costo_perlin+costo_angular+costo_fab+costo_pines+costo_alambre) * MARGINS.mat;
+      mat_fm = [
+        {lbl:'Perlín ('+reusos+' uso'+( reusos>1?'s':'')+')' ,qty:ceil1(ml),unit:'ml',costo:costo_perlin},
+        {lbl:'Angular',qty:ceil1(ml),unit:'ml',costo:costo_angular},
+        {lbl:'MO fabricación',qty:ceil1(ml),unit:'ml',costo:costo_fab},
+        {lbl:'Varillas #4 pines',qty:pines.n_varillas,unit:'varillas',costo:costo_pines},
+        {lbl:'Alambre negro',qty:pines.kg_alambre,unit:'kg',costo:costo_alambre},
+      ];
+      fm_resumen = [`Perlín ${ml}ml / ${reusos} reusos × ₡${fmtN(D.fm_precio_perlin_ml||2000)}/ml = ₡${fmtN(costo_perlin)}`, `Angular = ₡${fmtN(costo_angular)}`, `Fabricación MO = ₡${fmtN(costo_fab)}`];
+    }
+    dias_fm = (D.fm_rendimiento||25)>0 ? Math.ceil(ml/(D.fm_rendimiento||25)) : 0;
+    const mo_dia_fm = D.fm_personal.reduce((s,p)=>s+p.salario,0);
+    mo_fm = mo_dia_fm * dias_fm * MARGINS.mo;
+    fm_resumen.push(`Instalación: ${dias_fm} días × ₡${fmtN(mo_dia_fm)}/día × ${MARGINS.mo}× = ₡${fmtN(mo_fm)}`);
+  }
+
+  // Epóxico
+  let costo_epox=0, n_kits=0, epox_resumen='';
+  if (D.tipo==='perforacion' && D.epox_activo) {
+    // Rendimiento por diámetro y profundidad
+    const prof = D.epox_prof_cm||Math.round(largo_cm/2);
+    const rend_sug = prof<=10?20:prof<=20?15:prof<=35?10:7;
+    // Kits: 1 kit Hilti RE500 alcanza aprox: #3=60,#4=40,#5=25,#6=15,#8=8 dovelas (prof 20cm ref)
+    const rend_kit = {['#3']:60,'#4':40,'#5':25,'#6':15,'#8':8}[D.diametro]||40;
+    const factor_prof = Math.max(0.4, 1-(prof-20)*0.015); // ajuste por profundidad vs 20cm ref
+    const dovelas_por_kit = Math.max(4, Math.round(rend_kit*factor_prof));
+    n_kits = Math.ceil(n_dovelas/dovelas_por_kit);
+    costo_epox = n_kits * (PRICES.epoxico_kit||45000) * MARGINS.mat;
+    epox_resumen = `${n_dovelas} dovelas ÷ ${dovelas_por_kit} dov/kit (${D.diametro}, ${prof}cm prof.) = ${n_kits} kits`;
   }
 
   // Canastas
-  if (D.tipo === 'canastas') {
-    const cCan = div('cc-card');
-    cCan.appendChild(div('cc-card-hdr', ['🧰 Costo de Molde de Canastas']));
-    const bCan = div('cc-card-body');
-    const fMolde = div('cc-field');
-    fMolde.appendChild(el('label', {}, ['Costo del molde (CRC)']));
-    const iMolde = inp({type:'number', value: PRICES.molde_canastas, min:0});
-    iMolde.oninput = e => { PRICES.molde_canastas = parseFloat(e.target.value)||0; D.molde_costo = PRICES.molde_canastas; saveP(); };
-    fMolde.appendChild(iMolde);
-    fMolde.appendChild(el('div', {class:'cc-note'}, ['El costo del molde se amortiza por proyecto. Guardado como precio persistente — cámbielo si varía.']));
-    bCan.appendChild(fMolde);
-    cCan.appendChild(bCan);
-    c.appendChild(cCan);
-  }
-
-  // Materiales con checks
-  c.appendChild(renderMaterialesDovelas());
-
-  // Mano de obra
-  c.appendChild(renderPersonal(D.personal, 'Mano de Obra — Dovelas'));
-
-  // Calcular y resultado
-  const resCard = div('cc-card');
-  resCard.appendChild(div('cc-card-hdr', ['📊 Resultado del Cálculo']));
-  const resBody = div('cc-card-body');
-  const res = calcDovelas();
-  resBody.appendChild(renderResultadoDovelas(res));
-  if (res.costo_total < 250000) {
-    resBody.appendChild(div('cc-warn', ['⚠ El monto calculado es menor a ₡250,000. Verificar posible cobro mínimo para esta actividad.']));
-  }
-  resCard.appendChild(resBody);
-  c.appendChild(resCard);
-
-  return c;
-}
-
-function renderTabDovelas_update(c) { /* refresh handled by full render */ }
-
-// ── MATERIALES DOVELAS ────────────────────────────────────────────────────────
-function renderMaterialesDovelas() {
-  const D = PROJ.dovelas;
-  const card = div('cc-card');
-  card.appendChild(div('cc-card-hdr', ['📦 Materiales (activar/desactivar según proyecto)']));
-  const body = div('cc-card-body');
-
-  const mats = [
-    ['grasa',    'Grasa para dovelas',    'grasa',       'cartucho'],
-    ['tubo_pvc', 'Tubo PVC 3/4"',         'tubo_pvc_34', 'm (6m c/u)'],
-    ['tapones',  'Tapones PVC 3/4"',      'tapon_34',    'unidad'],
-    ['pegamento','Pegamento PVC 1/8',     'pegamento_pvc','caja'],
-    ['pintura',  'Pintura para dovelas',  'pintura_gal', 'galón'],
-  ];
-  mats.forEach(([key, label, pkey, unit]) => {
-    const row = div('', []);
-    row.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:8px;';
-    const cb = inp({type:'checkbox', id:'mat-'+key});
-    cb.checked = D.materiales[key] !== false;
-    cb.onchange = e => { D.materiales[key] = e.target.checked; };
-    row.appendChild(cb);
-    row.appendChild(el('label', {for:'mat-'+key, style:'flex:1;font-size:.88rem'}, [label + ' — ' + unit]));
-    const ip = inp({type:'number', value: PRICES[pkey]||0, style:'width:120px;padding:5px 8px;border:1px solid #DDE1E7;border-radius:5px;font-size:.85rem;'});
-    ip.oninput = e => { PRICES[pkey] = parseFloat(e.target.value)||0; saveP(); };
-    row.appendChild(ip);
-    row.appendChild(el('span', {style:'font-size:.78rem;color:#7F8C8D;'}, ['₡/'+unit]));
-    body.appendChild(row);
-  });
-  card.appendChild(body);
-  return card;
-}
-
-// ── PERSONAL REUTILIZABLE ─────────────────────────────────────────────────────
-function renderPersonal(personalArr, titulo) {
-  const card = div('cc-card');
-  card.appendChild(div('cc-card-hdr', ['👷 ' + titulo]));
-  const body = div('cc-card-body');
-
-  body.appendChild(el('div', {class:'cc-note', style:'margin-bottom:10px'}, ['El encargado siempre tiene salario diferenciado. Los demás operarios comparten el mismo salario base.']));
-
-  const lista = div('');
-  const rebuild = () => {
-    lista.innerHTML = '';
-    personalArr.forEach((p, idx) => {
-      const row = div('cc-persona-row');
-      const badge = el('span', {class:'cc-persona-badge'}, [p.rol==='encargado'?'⭐ Encargado':'Operario #'+idx]);
-      row.appendChild(badge);
-      const iSal = inp({type:'number', value: p.salario, min:0, placeholder:'Salario/día'});
-      iSal.oninput = e => { p.salario = parseFloat(e.target.value)||0; };
-      row.appendChild(iSal);
-      row.appendChild(el('span', {style:'font-size:.78rem;color:#7F8C8D'}, ['CRC/día']));
-      if (p.rol !== 'encargado') {
-        const bDel = btn('✕', 'cc-btn cc-btn-gray', () => { personalArr.splice(idx, 1); rebuild(); });
-        bDel.style.padding = '4px 8px';
-        row.appendChild(bDel);
-      } else { row.appendChild(div('', [])); }
-      lista.appendChild(row);
-    });
-  };
-  rebuild();
-  body.appendChild(lista);
-
-  const bAdd = btn('+ Agregar operario', 'cc-btn cc-btn-gray', () => {
-    const salBase = personalArr.find(p => p.rol==='operario')?.salario || 18000;
-    personalArr.push({rol:'operario', salario: salBase});
-    rebuild();
-  });
-  bAdd.style.marginTop = '8px';
-  body.appendChild(bAdd);
-  card.appendChild(body);
-  return card;
-}
-
-// ── CÁLCULO DOVELAS ───────────────────────────────────────────────────────────
-function calcDovelas() {
-  const D = PROJ.dovelas;
-  const diam_map = {'#3':3000,'#4':4000,'#5':6000,'#6':13000,'#8':24000};
-  const precio_var = diam_map[D.diametro] || 4000;
-  const render_map = {'#3':40,'#4':30,'#5':25,'#6':20,'#8':15}; // rendimiento epox dovelas/kit
-  const rend_epox  = render_map[D.diametro] || 30;
-
-  const largo_m   = D.largo_cm / 100;
-  const dist_m    = D.distancia_cm / 100;
-  const n_dovelas = dist_m > 0 ? Math.ceil(D.metros_lineales / dist_m) : 0;
-  const varillas_por_dovela = largo_m / 6; // varilla de 6m
-  const n_varillas = Math.ceil(n_dovelas * varillas_por_dovela);
-
-  // Costo material varilla por dovela
-  const costo_var = precio_var * varillas_por_dovela * (1 + PRICES.transp_pct/100);
-  const costo_corte = PRICES.corte_dovela;
-
-  // Materiales opcionales
-  let mat_items = [];
-  if (D.materiales.grasa)    mat_items.push({label:'Grasa', qty: n_dovelas * 0.003, unit:'cartuchos', precio: PRICES.grasa});
-  if (D.materiales.tubo_pvc) mat_items.push({label:'Tubo PVC 3/4"', qty: n_dovelas * largo_m, unit:'m', precio: PRICES.tubo_pvc_34/6});
-  if (D.materiales.tapones)  mat_items.push({label:'Tapones PVC 3/4"', qty: n_dovelas, unit:'unidades', precio: PRICES.tapon_34});
-  if (D.materiales.pegamento)mat_items.push({label:'Pegamento PVC', qty: n_dovelas * 0.0015, unit:'cajas 1/8', precio: PRICES.pegamento_pvc});
-  if (D.materiales.pintura)  mat_items.push({label:'Pintura', qty: n_dovelas * 0.003, unit:'galones', precio: PRICES.pintura_gal});
-  const costo_mats_opt = mat_items.reduce((s,m) => s + m.qty * m.precio, 0);
-
-  // Epóxico
-  let costo_epox = 0, n_kits_epox = 0;
-  if (D.tipo === 'perforacion' && D.epox_activo) {
-    n_kits_epox = Math.ceil(n_dovelas / rend_epox);
-    costo_epox  = n_kits_epox * PRICES.epoxico_kit;
-  }
-
-  // Formaleta
-  let costo_fm_ml = 0;
-  if (D.tipo === 'formaleta' && D.con_formaleta) {
-    costo_fm_ml = calcCostoFmlPorMl(D.fm_tipo, D.fm_espesor_cm, D.fm_reutilizaciones || 1);
-  }
-  const costo_fm_total = costo_fm_ml * D.metros_lineales;
-
-  // Canastas extras
-  let costo_molde_total = 0;
-  let costo_canasta_extra = 0;
-  if (D.tipo === 'canastas') {
-    costo_molde_total = PRICES.molde_canastas;
-    // Soldadura, discos, varilla #2, alambre
-    const ml = D.metros_lineales;
-    costo_canasta_extra = (
-      PRICES.sold_kg * 0.025 * ml +
-      PRICES.disco9  * 0.05  * ml +
-      PRICES.varilla2 * 7    * (ml/6) +  // 7 varillas #2 por ml de canasta
-      PRICES.alambre * 0.15  * ml
-    );
-  }
-
-  // Costo total materiales (con margen)
-  const mat_base = (costo_var + costo_corte) * n_dovelas + costo_mats_opt + costo_epox + costo_fm_total + costo_canasta_extra + costo_molde_total;
-  const mat_con_margen = mat_base * M_MAT;
-
-  // Mano de obra
-  const rKey = D.tipo==='canastas'?'dov_canastas_ml': D.tipo==='perforacion'?'dov_perforacion':'dov_formaleta';
-  const rendimiento = RENDERS[rKey] || 50;
-  const unidades = D.tipo==='canastas' ? D.metros_lineales : n_dovelas;
-  let dias = rendimiento > 0 ? unidades / rendimiento : 0;
-  if (D.tipo === 'canastas') dias += 1; // día adicional armado molde
-  dias = Math.ceil(dias);
-
-  const costo_mo_dia = D.personal.reduce((s,p) => s + p.salario, 0);
-  const mo_con_margen = costo_mo_dia * dias * M_MO;
-
-  const costo_total = mat_con_margen + mo_con_margen;
-  const costo_por_dovela = n_dovelas > 0 ? costo_total / n_dovelas : 0;
-  const costo_por_ml = D.metros_lineales > 0 ? costo_total / D.metros_lineales : 0;
-
-  return { n_dovelas, n_varillas, dias, costo_total, costo_por_dovela, costo_por_ml, mat_con_margen, mo_con_margen, mat_items, n_kits_epox, costo_fm_total, costo_molde_total };
-}
-
-function calcCostoFmlPorMl(tipo, espesor, reutilizaciones) {
-  if (tipo === 'madera') {
-    // Varas según espesor
-    const varas_por_ml = 1.5625; // ~234 varas/150ml
-    const precio_vara = espesor <= 7 ? PRICES.vara_madera * 0.27 :
-                        espesor <= 10? PRICES.vara_madera * 0.37 :
-                        espesor <= 14? PRICES.vara_madera * 1.0  :
-                                       PRICES.vara_madera * 1.0;
-    const costo_pines = (PRICES.varilla3 / 6) * 0.073; // varilla #3 por ml
-    return (varas_por_ml * precio_vara + costo_pines + 300) * M_MAT; // 300 inst
-  } else {
-    // Metal: perlín + angular
-    const precio_perlin = espesor <= 10 ? PRICES.perlin10 :
-                          espesor <= 15 ? PRICES.perlin15 : PRICES.perlin20;
-    const costo_perlin_ml = (precio_perlin / 6) / reutilizaciones;
-    const costo_angular_ml = (PRICES.angular_6m / 6) / reutilizaciones;
-    const costo_alist_ml   = PRICES.alistado_angular / 60 / reutilizaciones;
-    const costo_pines_ml   = (PRICES.varilla4_fm / 6) * 0.2;
-    return (costo_perlin_ml + costo_angular_ml + costo_alist_ml + costo_pines_ml) * M_MAT;
-  }
-}
-
-function renderResultadoDovelas(res) {
-  const c = div('');
-  const rDiv = div('cc-result');
-  rDiv.appendChild(el('h3', {}, ['Resultado — Dovelas']));
-  const grid = div('cc-result-grid');
-  [
-    [fmtCRC(res.costo_total), 'Costo total del proyecto'],
-    [fmtCRC(res.costo_por_dovela), 'Costo por dovela instalada'],
-    [fmtCRC(res.costo_por_ml), 'Costo por metro lineal'],
-    [res.n_dovelas + ' ud', 'Total dovelas'],
-    [res.dias + ' días', 'Días de ejecución'],
-    [res.n_varillas + ' varillas', 'Varillas a comprar'],
-  ].forEach(([val, lbl]) => {
-    const k = div('cc-kpi');
-    k.innerHTML = '<div class="val">'+val+'</div><div class="lbl">'+lbl+'</div>';
-    grid.appendChild(k);
-  });
-  if (res.n_kits_epox > 0) {
-    const k = div('cc-kpi');
-    k.innerHTML = '<div class="val">'+res.n_kits_epox+' kits</div><div class="lbl">Epóxico (kits 2 gal)</div>';
-    grid.appendChild(k);
-  }
-  rDiv.appendChild(grid);
-  c.appendChild(rDiv);
-
-  // Lista de materiales
-  if (res.mat_items.length > 0) {
-    c.appendChild(el('div', {class:'cc-section-title', style:'margin-top:14px'}, ['Lista de materiales']));
-    const tbl = el('table', {class:'cc-mat-table'});
-    tbl.innerHTML = '<tr><th>Material</th><th>Cantidad</th><th>Unidad</th></tr>';
-    // Varillas
-    const trVar = el('tr');
-    trVar.innerHTML = '<td>Varilla '+PROJ.dovelas.diametro+'</td><td>'+res.n_varillas+'</td><td>varillas 6m</td>';
-    tbl.appendChild(trVar);
-    res.mat_items.forEach(m => {
-      const tr = el('tr');
-      tr.innerHTML = '<td>'+m.label+'</td><td>'+Math.ceil(m.qty)+'</td><td>'+m.unit+'</td>';
-      tbl.appendChild(tr);
-    });
-    c.appendChild(tbl);
-  }
-
-  // Botón PDF
-  const bRow = div('cc-btn-row');
-  bRow.appendChild(btn('📄 Exportar Lista de Materiales (PDF)', 'cc-btn cc-btn-red', () => exportarPDFMateriales('dovelas', res)));
-  c.appendChild(bRow);
-  return c;
-}
-
-// ── TAB FORMALETA ─────────────────────────────────────────────────────────────
-function renderTabFormaleta() {
-  const c = div('');
-  const F = PROJ.formaleta;
-
-  const card = div('cc-card');
-  card.appendChild(div('cc-card-hdr', ['🪵 Formaleta']));
-  const body = div('cc-card-body');
-
-  // Tipo
-  body.appendChild(el('div', {class:'cc-section-title'}, ['Tipo de Formaleta']));
-  const tipoBtns = div('', []);
-  tipoBtns.style.cssText = 'display:flex;gap:10px;margin-bottom:14px;';
-  [['madera','🪵 Madera'],['metal','🔧 Metálica']].forEach(([id, label]) => {
-    const b = el('button', {class:'cc-tipo-btn'+(F.tipo===id?' on':'')}, [label]);
-    b.onclick = () => { F.tipo = id; UI.tab='formaleta'; render(document.getElementById('sec-calculos')); };
-    tipoBtns.appendChild(b);
-  });
-  body.appendChild(tipoBtns);
-
-  const grid = div('cc-grid');
-  [['Metros lineales', 'metros_lineales', 100], ['Entradas', 'entradas', 1]].forEach(([label, key, def]) => {
-    const f = div('cc-field');
-    f.appendChild(el('label', {}, [label]));
-    const i = inp({type:'number', value: F[key]||def, min:0});
-    i.oninput = e => { F[key] = parseFloat(e.target.value)||0; };
-    f.appendChild(i);
-    grid.appendChild(f);
-  });
-
-  // Espesor
-  const fEsp = div('cc-field');
-  fEsp.appendChild(el('label', {}, ['Espesor de losa']));
-  const sEsp = el('select');
-  const optsEsp = F.tipo==='metal' ?
-    [[10,'Perlín 10cm (hasta 10cm losa)'],[15,'Perlín 15cm (hasta 15cm losa)'],[20,'Perlín 20cm (hasta 20cm losa)']] :
-    [[7,'5–7.5cm (madera 2")'],[10,'7.5–10cm (madera 3")'],[12,'10–14cm (madera 4")'],[17,'15–20cm (perlín 6")']];
-  optsEsp.forEach(([v,t]) => {
-    const o = el('option', {value:v}, [t]);
-    if (F.espesor_cm===v) o.setAttribute('selected','');
-    sEsp.appendChild(o);
-  });
-  sEsp.onchange = e => { F.espesor_cm = parseInt(e.target.value); };
-  fEsp.appendChild(sEsp);
-  grid.appendChild(fEsp);
-
-  if (F.tipo === 'metal') {
-    const fReut = div('cc-field');
-    fReut.appendChild(el('label', {}, ['Reutilizaciones del perlín']));
-    const iReut = inp({type:'number', value: F.reutilizaciones||1, min:1, max:10});
-    iReut.oninput = e => { F.reutilizaciones = parseInt(e.target.value)||1; };
-    fReut.appendChild(iReut);
-    fReut.appendChild(el('div', {class:'cc-note'}, ['Divide el costo del perlín entre los usos en el mismo proyecto']));
-    grid.appendChild(fReut);
-  }
-  body.appendChild(grid);
-  card.appendChild(body);
-  c.appendChild(card);
-
-  // Personal
-  c.appendChild(renderPersonal(F.personal, 'Mano de Obra — Formaleta'));
-
-  // Resultado
-  const resCard = div('cc-card');
-  resCard.appendChild(div('cc-card-hdr', ['📊 Resultado']));
-  const resBody = div('cc-card-body');
-  const res = calcFormaleta();
-  resBody.appendChild(renderResultadoFormaleta(res));
-  if (res.costo_total < 250000) {
-    resBody.appendChild(div('cc-warn', ['⚠ El monto calculado es menor a ₡250,000. Verificar posible cobro mínimo para esta actividad.']));
-  }
-  resCard.appendChild(resBody);
-  c.appendChild(resCard);
-  return c;
-}
-
-function calcFormaleta() {
-  const F = PROJ.formaleta;
-  const ml = F.metros_lineales || 1;
-  const esp = F.espesor_cm || 15;
-  const reut = F.reutilizaciones || 1;
-  const entradas = F.entradas || 1;
-  const factor_ent = Math.max(0.4, 1 - (entradas - 1) * 0.1);
-
-  let mat_items = [];
-  let costo_mat_ml = 0;
-
-  if (F.tipo === 'madera') {
-    const varas_ml = 1.5625;
-    const precio_vara = esp <= 7 ? PRICES.vara_madera * 0.27 :
-                        esp <= 10? PRICES.vara_madera * 0.37 :
-                        esp <= 14? PRICES.vara_madera * 1.0  :
-                                   PRICES.vara_madera * 1.0;
-    costo_mat_ml = varas_ml * precio_vara;
-    const n_varas = Math.ceil(varas_ml * ml);
-    const n_varillas3 = Math.ceil((ml * 0.073));
-    const n_alambre = Math.ceil(ml * 0.073);
-    mat_items = [
-      {label:'Madera formaleta', qty: n_varas, unit:'varas'},
-      {label:'Varilla #3 (pines)', qty: n_varillas3, unit:'varillas 6m'},
-      {label:'Alambre negro', qty: n_alambre, unit:'kg'},
-    ];
-  } else {
-    const precio_p = esp<=10?PRICES.perlin10: esp<=15?PRICES.perlin15:PRICES.perlin20;
-    const perlines = Math.ceil(ml / 6);
-    const angulares = Math.ceil(ml / 6);
-    costo_mat_ml = ((precio_p/6) + (PRICES.angular_6m/6) + (PRICES.alistado_angular/60) + (PRICES.varilla4_fm/6)*0.2) / reut;
-    mat_items = [
-      {label:'Perlín '+esp+'cm', qty: perlines, unit:'unidades 6m'},
-      {label:'Angular 1"×1" 3mm', qty: angulares, unit:'unidades 6m'},
-      {label:'Varilla #4 (pines)', qty: Math.ceil(ml * 0.2), unit:'varillas 6m'},
-      {label:'Alambre negro', qty: Math.ceil(ml * 0.073), unit:'kg'},
-    ];
-  }
-
-  const costo_mat_total = costo_mat_ml * ml * factor_ent * M_MAT;
-  const costo_inst_ml   = 1700 * factor_ent; // instalación por ml
-  const costo_inst_total = costo_inst_ml * ml;
-
-  // Mano de obra
-  const dias = Math.ceil(ml / 80); // rendimiento ~80 ml/día cuadrilla
-  const costo_mo_dia = F.personal.reduce((s,p) => s + p.salario, 0);
-  const mo_con_margen = costo_mo_dia * dias * M_MO;
-  const costo_total = costo_mat_total + mo_con_margen;
-  const costo_ml = ml > 0 ? costo_total / ml : 0;
-
-  return { costo_total, costo_ml, dias, mat_items, ml, mo_con_margen, costo_mat_total };
-}
-
-function renderResultadoFormaleta(res) {
-  const c = div('');
-  const rDiv = div('cc-result');
-  rDiv.appendChild(el('h3', {}, ['Resultado — Formaleta']));
-  const grid = div('cc-result-grid');
-  [[fmtCRC(res.costo_total),'Costo total'],[fmtCRC(res.costo_ml),'Costo por ml'],[res.dias+' días','Días de ejecución']].forEach(([val,lbl]) => {
-    const k = div('cc-kpi'); k.innerHTML='<div class="val">'+val+'</div><div class="lbl">'+lbl+'</div>'; grid.appendChild(k);
-  });
-  rDiv.appendChild(grid);
-  c.appendChild(rDiv);
-  // Materiales
-  if (res.mat_items.length) {
-    c.appendChild(el('div', {class:'cc-section-title', style:'margin-top:14px'}, ['Lista de materiales']));
-    const tbl = el('table', {class:'cc-mat-table'});
-    tbl.innerHTML = '<tr><th>Material</th><th>Cantidad</th><th>Unidad</th></tr>';
-    res.mat_items.forEach(m => { const tr=el('tr'); tr.innerHTML='<td>'+m.label+'</td><td>'+m.qty+'</td><td>'+m.unit+'</td>'; tbl.appendChild(tr); });
-    c.appendChild(tbl);
-  }
-  const bRow = div('cc-btn-row');
-  bRow.appendChild(btn('📄 Exportar Lista de Materiales (PDF)', 'cc-btn cc-btn-red', () => exportarPDFMateriales('formaleta', res)));
-  c.appendChild(bRow);
-  return c;
-}
-
-// ── TAB TIERRAS ───────────────────────────────────────────────────────────────
-function renderTabTierras() {
-  const c = div('');
-  const T = PROJ.tierras;
-
-  // Escenario
-  const card0 = div('cc-card');
-  card0.appendChild(div('cc-card-hdr', ['🚜 Escenario de Trabajo']));
-  const body0 = div('cc-card-body');
-  const escBtns = div('', []);
-  escBtns.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;';
-  [
-    [1, 'Demolición + Base Estabilizada'],
-    [2, 'Solo Conformación de Base'],
-    [3, 'Recorte + Conformación Base Actual'],
-  ].forEach(([id, label]) => {
-    const b = el('button', {class:'cc-tipo-btn'+(T.escenario===id?' on':'')}, [id+'. '+label]);
-    b.onclick = () => { T.escenario = id; UI.tab='tierras'; render(document.getElementById('sec-calculos')); };
-    escBtns.appendChild(b);
-  });
-  body0.appendChild(escBtns);
-
-  // Área y espesor
-  const grid = div('cc-grid');
-  [['Área a intervenir (m²)','area_m2',500],['Espesor (m)','espesor_m',0.15]].forEach(([label,key,def]) => {
-    const f = div('cc-field');
-    f.appendChild(el('label', {}, [label]));
-    const i = inp({type:'number', value: T[key]||def, step: key==='espesor_m'?0.01:1, min:0});
-    i.oninput = e => { T[key] = parseFloat(e.target.value)||0; };
-    f.appendChild(i);
-    grid.appendChild(f);
-  });
-  const fVol = div('cc-field');
-  const vol = (T.area_m2||0) * (T.espesor_m||0);
-  fVol.appendChild(el('label', {}, ['Volumen calculado (m³)']));
-  const iVol = inp({type:'text', value: vol.toFixed(2), readonly:'', style:'background:#F8F9FA;color:#636E72;'});
-  fVol.appendChild(iVol);
-  grid.appendChild(fVol);
-  body0.appendChild(grid);
-
-  // Equipos
-  body0.appendChild(el('div', {class:'cc-section-title'}, ['Equipos activos (desmarcar si el cliente los provee o no son necesarios)']));
-  const equipos = [
-    ['backjoe','Back Joe / Excavadora','backjoe_hr'],
-    ['aplanadora','Aplanadora','aplanadora_hr'],
-    ['niveladora','Niveladora','niveladora_hr'],
-    ['pala','Pala mecánica','pala_hr'],
-    ['tanqueta','Tanqueta de agua','tanqueta_viaje'],
-    ...(T.escenario===1?[['bobcat','Bobcat (demolición)','bobcat_hr']]:[] ),
-  ];
-  const eqGrid = div('', []);
-  eqGrid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;';
-  equipos.forEach(([key, label, pkey]) => {
-    const row = div('', []);
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #E8E8E8;border-radius:5px;background:#fff;';
-    const cb = inp({type:'checkbox', id:'eq-'+key});
-    cb.checked = T.equipos[key] !== false;
-    cb.onchange = e => { T.equipos[key] = e.target.checked; };
-    row.appendChild(cb);
-    row.appendChild(el('label', {for:'eq-'+key, style:'flex:1;font-size:.87rem;font-weight:600'}, [label]));
-    const iP = inp({type:'number', value: PRICES[pkey]||0, style:'width:100px;padding:5px;border:1px solid #DDE1E7;border-radius:4px;font-size:.82rem;'});
-    iP.oninput = e => { PRICES[pkey] = parseFloat(e.target.value)||0; saveP(); };
-    row.appendChild(iP);
-    row.appendChild(el('span', {style:'font-size:.75rem;color:#7F8C8D'}, ['₡/hr']));
-    eqGrid.appendChild(row);
-  });
-  body0.appendChild(eqGrid);
-
-  // Rendimientos
-  body0.appendChild(el('div', {class:'cc-section-title'}, ['Rendimientos de Equipos (m³/día) — editables por el usuario']));
-  const rGrid = div('cc-grid');
-  const rends = [
-    ['backjoe','Back Joe','backjoe_m3','Ref. CR: 80–120 m³/día'],
-    ['aplanadora','Aplanadora','aplanadora_m3','Ref. CR: 120–180 m³/día'],
-    ['niveladora','Niveladora','niveladora_m3','Ref. CR: 200–350 m³/día'],
-    ['pala','Pala mecánica','pala_m3','Ref. CR: 100–150 m³/día'],
-    ...(T.escenario===1?[['bobcat_demo','Bobcat demolición','bobcat_demo_m3','Ref. CR: 40–60 m³/día'],['bobcat_carga','Bobcat carga','bobcat_carga_m3','Ref. CR: 40–60 m³/día']]:[] ),
-  ];
-  rends.forEach(([key, label, rkey, nota]) => {
-    if (!T.equipos[key.replace('_demo','').replace('_carga','')]) return;
-    const f = div('cc-field');
-    f.appendChild(el('label', {}, [label + ' (m³/día)']));
-    const i = inp({type:'number', value: RENDERS[rkey]||100, min:1});
-    i.oninput = e => { RENDERS[rkey] = parseFloat(e.target.value)||1; saveR(); };
-    f.appendChild(i);
-    f.appendChild(el('div', {class:'cc-note'}, ['ℹ ' + nota]));
-    rGrid.appendChild(f);
-  });
-  body0.appendChild(rGrid);
-
-  // Botada
-  body0.appendChild(el('div', {class:'cc-section-title'}, ['Botada de material']));
-  const rowBot = div('cc-check-row');
-  const cbBot = inp({type:'checkbox', id:'tier-botada'});
-  cbBot.checked = T.botada || false;
-  cbBot.onchange = e => { T.botada = e.target.checked; };
-  rowBot.appendChild(cbBot);
-  rowBot.appendChild(el('label', {for:'tier-botada'}, ['Material sale del sitio (activar botada)']));
-  body0.appendChild(rowBot);
-  if (T.botada) {
-    const fBot = div('cc-field');
-    fBot.appendChild(el('label', {}, ['Costo botada por viaje (vagoneta 12m³)']));
-    const iBot = inp({type:'number', value: PRICES.botada_viaje||100000, min:0});
-    iBot.oninput = e => { PRICES.botada_viaje = parseFloat(e.target.value)||0; saveP(); };
-    fBot.appendChild(iBot);
-    fBot.appendChild(el('div', {class:'cc-note'}, ['ℹ Se aplica 25% de esponjamiento al volumen excavado para calcular viajes (material suelto ocupa más que compacto)']));
-    body0.appendChild(fBot);
-  }
-
-  // Lastre (escenarios 1 y 2)
-  if (T.escenario === 1 || T.escenario === 2) {
-    body0.appendChild(el('div', {class:'cc-section-title'}, ['Lastre de ajuste']));
-    const rowLas = div('cc-check-row');
-    const cbLas = inp({type:'checkbox', id:'tier-lastre'});
-    cbLas.checked = T.lastre !== false;
-    cbLas.onchange = e => { T.lastre = e.target.checked; };
-    rowLas.appendChild(cbLas);
-    rowLas.appendChild(el('label', {for:'tier-lastre'}, ['Incluir lastre de ajuste en el cálculo']));
-    body0.appendChild(rowLas);
-    if (T.lastre) {
-      const gLas = div('cc-grid');
-      const fLasM3 = div('cc-field');
-      fLasM3.appendChild(el('label', {}, ['Lastre adicional (m³)']));
-      const iLasM3 = inp({type:'number', value: T.lastre_m3_extra||0, min:0});
-      iLasM3.oninput = e => { T.lastre_m3_extra = parseFloat(e.target.value)||0; };
-      fLasM3.appendChild(iLasM3);
-      gLas.appendChild(fLasM3);
-      const fLasP = div('cc-field');
-      fLasP.appendChild(el('label', {}, ['Precio lastre (₡/m³)']));
-      const iLasP = inp({type:'number', value: PRICES.lastre_m3||8000, min:0});
-      iLasP.oninput = e => { PRICES.lastre_m3 = parseFloat(e.target.value)||0; saveP(); };
-      fLasP.appendChild(iLasP);
-      gLas.appendChild(fLasP);
-      body0.appendChild(gLas);
+  let mo_can_elab=0, mo_can_inst=0, dias_elab=0, dias_inst=0;
+  if (D.tipo==='canastas') {
+    dias_elab = (D.can_elab_rend||12)>0 ? Math.ceil(ml/(D.can_elab_rend||12)) : 0;
+    mo_can_elab = D.can_elab_personal.reduce((s,p)=>s+p.salario,0) * dias_elab * MARGINS.mo;
+    if (D.can_inst_activo) {
+      dias_inst = (D.can_inst_rend||15)>0 ? Math.ceil(ml/(D.can_inst_rend||15)) : 0;
+      mo_can_inst = D.can_inst_personal.reduce((s,p)=>s+p.salario,0) * dias_inst * MARGINS.mo;
     }
   }
 
-  // Jornada
-  body0.appendChild(el('div', {class:'cc-section-title'}, ['Jornada laboral']));
-  const fJor = div('cc-field');
-  fJor.appendChild(el('label', {}, ['Horas/día de trabajo de maquinaria']));
-  const iJor = inp({type:'number', value: T.jornada_hr||8, min:1, max:12});
-  iJor.oninput = e => { T.jornada_hr = parseFloat(e.target.value)||8; };
-  fJor.appendChild(iJor);
-  body0.appendChild(fJor);
+  const mat_total = (costo_varillas + costo_mat_opc) * MARGINS.mat;
+  const dias_total = dias_dov + dias_fm;
+  const total = mat_total + mo_dov + costo_fm + mo_fm + costo_epox + mo_can_elab + mo_can_inst;
+  const costo_ml = ml>0 ? total/ml : 0;
+  const costo_dov = n_dovelas>0 ? total/n_dovelas : 0;
 
-  card0.appendChild(body0);
-  c.appendChild(card0);
+  // Render resultado
+  const res = document.createElement('div');
 
-  // Personal
-  c.appendChild(renderPersonal(T.personal, 'Personal en Sitio'));
-
-  // Resultado
-  const resCard = div('cc-card');
-  resCard.appendChild(div('cc-card-hdr', ['📊 Resultado']));
-  const resBody = div('cc-card-body');
-  resBody.appendChild(renderResultadoTierras(calcTierras()));
-  resCard.appendChild(resBody);
-  c.appendChild(resCard);
-  return c;
-}
-
-function calcTierras() {
-  const T = PROJ.tierras;
-  const vol_m3 = (T.area_m2||0) * (T.espesor_m||0);
-  const jornada = T.jornada_hr || 8;
-  const vol_esponj = vol_m3 * 1.25; // 25% esponjamiento
-
-  let costo_eq = 0, dias_max = 0, eq_detail = [];
-  const equipos_activos = [
-    {key:'backjoe',   pkey:'backjoe_hr',   rkey:'backjoe_m3',   label:'Back Joe'},
-    {key:'aplanadora',pkey:'aplanadora_hr',rkey:'aplanadora_m3',label:'Aplanadora'},
-    {key:'niveladora',pkey:'niveladora_hr',rkey:'niveladora_m3',label:'Niveladora'},
-    {key:'pala',      pkey:'pala_hr',      rkey:'pala_m3',      label:'Pala mecánica'},
-    ...(T.escenario===1?[
-      {key:'bobcat', pkey:'bobcat_hr', rkey:'bobcat_demo_m3', label:'Bobcat demolición'},
-      {key:'bobcat', pkey:'bobcat_hr', rkey:'bobcat_carga_m3', label:'Bobcat carga'},
-    ]:[]),
+  // Lista materiales
+  const allMats = [
+    {lbl:'Varilla '+D.diametro,qty:n_varillas,unit:'varillas 6m',costo:costo_varillas},
+    ...mat_items,
+    ...mat_fm,
+    ...(n_kits>0?[{lbl:'Epóxico kit 2 gal',qty:n_kits,unit:'kits',costo:costo_epox}]:[]),
   ];
 
-  equipos_activos.forEach(eq => {
-    if (!T.equipos[eq.key]) return;
-    const rend = RENDERS[eq.rkey] || 100;
-    const dias  = vol_m3 > 0 ? Math.ceil(vol_m3 / rend) : 0;
-    const costo = dias * jornada * PRICES[eq.pkey] * M_EQ;
-    dias_max = Math.max(dias_max, dias);
-    costo_eq += costo;
-    eq_detail.push({label: eq.label, dias, costo});
+  const rDiv = document.createElement('div'); rDiv.className='cc-resultado';
+  rDiv.innerHTML = '<h3>📊 Resultado — Dovelas</h3>';
+
+  const kpiGrid = document.createElement('div'); kpiGrid.className='cc-kpi-grid';
+  [
+    [fmtC(total),'Costo total proyecto'],
+    [fmtC(costo_ml),'Costo por metro lineal'],
+    [fmtC(costo_dov),'Costo por dovela'],
+    [n_dovelas+' ud','Total dovelas'],
+    [n_varillas+' var.','Varillas a comprar'],
+    [dias_total+' días','Total días ejecución'],
+    ...(dias_fm>0?[[dias_fm+' días','Días formaleta']]:[]),
+  ].forEach(([v,l])=>{
+    kpiGrid.innerHTML += `<div class="cc-kpi"><div class="val">${v}</div><div class="lbl">${l}</div></div>`;
+  });
+  rDiv.appendChild(kpiGrid);
+
+  // Resumen cálculo paso a paso
+  const rb = document.createElement('div'); rb.className='cc-resumen-box';
+  rb.innerHTML = '<div style="font-size:.78rem;font-weight:700;color:#ECF0F1;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">📋 Desglose de Cálculo</div>';
+
+  const lineas = [
+    [`${ml}m ÷ ${dist_cm}cm separación = ${n_dovelas} dovelas`, null],
+    [`${n_dovelas} dovelas / ${Math.floor(600/largo_cm)} dov/varilla = ${n_varillas} varillas × ₡${fmtN(precio_var)}`, fmtC(costo_varillas)],
+    ...(costo_mat_opc>0?[[`Materiales adicionales (${mat_items.map(m=>m.lbl).join(', ')})`, fmtC(costo_mat_opc)]]:[]),
+    [`Mat. subtotal × margen ${MARGINS.mat}×`, fmtC(mat_total)],
+    [`MO dovelas: ${dias_dov} días × ₡${fmtN(mo_dia_dov)}/día × ${MARGINS.mo}×`, fmtC(mo_dov)],
+    ...(costo_fm>0?[[`Formaleta materiales × ${MARGINS.mat}×`, fmtC(costo_fm)]]:[]),
+    ...(mo_fm>0?[[`MO formaleta: ${dias_fm} días × ${MARGINS.mo}×`, fmtC(mo_fm)]]:[]),
+    ...(costo_epox>0?[[epox_resumen+` × ${MARGINS.mat}×`, fmtC(costo_epox)]]:[]),
+    ...(mo_can_elab>0?[[`MO elaboración canastas: ${dias_elab} días × ${MARGINS.mo}×`, fmtC(mo_can_elab)]]:[]),
+    ...(mo_can_inst>0?[[`MO instalación canastas: ${dias_inst} días × ${MARGINS.mo}×`, fmtC(mo_can_inst)]]:[]),
+    ...(fm_resumen.map(r=>[r,null])),
+    ['TOTAL PROYECTO', fmtC(total)],
+  ];
+
+  lineas.forEach(([lbl,val],i)=>{
+    const isTotal = i===lineas.length-1;
+    rb.innerHTML += `<div class="rlin"><span class="rlbl ${isTotal?'rtotal':''}">${lbl}</span>${val?`<span class="rval ${isTotal?'rtotal':''}">${val}</span>`:''}</div>`;
+  });
+  rDiv.appendChild(rb);
+  res.appendChild(rDiv);
+
+  // Tabla materiales
+  if (allMats.length>0) {
+    const tDiv = document.createElement('div'); tDiv.style.marginTop='14px';
+    tDiv.innerHTML = '<div class="cc-sec-title" style="margin-top:0">Lista de Materiales</div>';
+    const tbl = document.createElement('table'); tbl.className='cc-mat-tbl';
+    tbl.innerHTML='<thead><tr><th>Material</th><th>Cantidad</th><th>Unidad</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    allMats.forEach(m=>{ tb.innerHTML+=`<tr><td>${m.lbl}</td><td>${typeof m.qty==='number'?Math.ceil(m.qty):m.qty}</td><td>${m.unit}</td></tr>`; });
+    tbl.appendChild(tb);
+    tDiv.appendChild(tbl);
+    tDiv.appendChild(btnRow([['📄 Exportar PDF Materiales','cc-btn-red', ()=>exportarPDF('dovelas',allMats,total,PROJ)]]));
+    res.appendChild(tDiv);
+  }
+
+  return res;
+}
+
+// ── TAB FORMALETA ─────────────────────────────────────────────────────────
+function tabFormaleta() {
+  const F = PROJ.formaleta;
+  const root2 = document.getElementById('sec-calculos');
+  const re = () => render(root2);
+  const frag = document.createDocumentFragment();
+
+  const cTipo = card('🪵 Tipo de Formaleta',
+    tipoBtns([['madera','🪵 Madera'],['metal','🔧 Metálica']], F.tipo, v=>{ F.tipo=v; re(); })
+  );
+  frag.appendChild(cTipo);
+
+  // Parámetros
+  const gp = document.createElement('div'); gp.className='cc-grid';
+  gp.appendChild(field('Metros lineales', F.metros_lineales, 'number', v=>{ F.metros_lineales=parseFloat(v)||0; re(); }));
+  gp.appendChild(field('Espesor losa / formaleta (cm)', F.espesor_cm||15, 'number', v=>{ F.espesor_cm=parseFloat(v)||15; re(); }, 'Define largo de pines y cantidad de material'));
+  gp.appendChild(field('Reusos', F.reusos||1, 'number', v=>{ F.reusos=parseInt(v)||1; re(); }, '1 = sin reutilización',1,1));
+
+  if (F.tipo==='madera') {
+    gp.appendChild(field('Precio vara (₡/vara según ancho)', F.fm_precio_vara||1100, 'number', v=>{ F.fm_precio_vara=parseFloat(v)||0; re(); }, 'Usuario define precio según ancho necesario'));
+    gp.appendChild(field('Varas por ml', F.fm_varas_ml||2, 'number', v=>{ F.fm_varas_ml=parseFloat(v)||1; re(); }, 'El sistema aplica 10% desperdicio'));
+  } else {
+    gp.appendChild(field('Precio perlín (₡/ml)', F.fm_precio_perlin_ml||2000, 'number', v=>{ F.fm_precio_perlin_ml=parseFloat(v)||0; re(); }));
+    gp.appendChild(field('Precio angular (₡/ml)', F.fm_precio_angular_ml||800, 'number', v=>{ F.fm_precio_angular_ml=parseFloat(v)||0; re(); }));
+    gp.appendChild(field('MO fabricación (₡/ml)', F.fm_mo_fab_ml||1500, 'number', v=>{ F.fm_mo_fab_ml=parseFloat(v)||0; re(); }));
+  }
+  frag.appendChild(card('📐 Parámetros', gp));
+
+  // Pines
+  frag.appendChild(card('🔧 Pines y Amarre',
+    grid(
+      field('Precio varilla #4 pines (₡/varilla 6m)', PRICES.var4_pin||4000, 'number', v=>{ PRICES.var4_pin=parseFloat(v)||0; saveP(); re(); }),
+      field('Precio alambre negro (₡/kg)', PRICES.alambre_kg||1000, 'number', v=>{ PRICES.alambre_kg=parseFloat(v)||0; saveP(); re(); }),
+    )
+  ));
+
+  // Instalación
+  const cInst = document.createElement('div'); cInst.className='cc-card';
+  cInst.appendChild(Object.assign(document.createElement('div'),{className:'cc-card-hdr',textContent:'👷 Instalación — Personal (salario diario)'}));
+  const bInst = document.createElement('div'); bInst.className='cc-card-body';
+  bInst.appendChild(field('Rendimiento instalación (ml/día)', F.inst_rendimiento||25, 'number', v=>{ F.inst_rendimiento=parseFloat(v)||1; re(); }, 'Ref. campo CR: 20–30 ml/día formaleta estándar'));
+  bInst.appendChild(personalRows(F.inst_personal, re));
+  cInst.appendChild(bInst);
+  frag.appendChild(cInst);
+
+  // Resultado
+  frag.appendChild(calcResultFormaleta(F));
+
+  return frag;
+}
+
+function calcResultFormaleta(F) {
+  const ml = F.metros_lineales||0;
+  const reusos = F.reusos||1;
+  const espesor = F.espesor_cm||15;
+  const pines = calcPines(ml, espesor);
+  const costo_pines = pines.n_varillas * (PRICES.var4_pin||4000);
+  const costo_alambre = pines.kg_alambre * (PRICES.alambre_kg||1000);
+
+  let costo_mat=0, mat_items=[], mat_resumen=[];
+  if (F.tipo==='madera') {
+    const varas = Math.ceil(ml * (F.fm_varas_ml||2) * 1.10 / reusos);
+    const cv = varas * (F.fm_precio_vara||1100);
+    costo_mat = (cv + costo_pines + costo_alambre) * MARGINS.mat;
+    mat_items = [{lbl:'Varas madera',qty:varas,unit:'varas',costo:cv},{lbl:'Var. #4 pines',qty:pines.n_varillas,unit:'var. 6m',costo:costo_pines},{lbl:'Alambre negro',qty:pines.kg_alambre,unit:'kg',costo:costo_alambre}];
+    mat_resumen = [`${varas} varas × ₡${fmtN(F.fm_precio_vara||1100)} = ₡${fmtN(cv)}`];
+  } else {
+    const cp = ml * (F.fm_precio_perlin_ml||2000) / reusos;
+    const ca = ml * (F.fm_precio_angular_ml||800) / reusos;
+    const cf = ml * (F.fm_mo_fab_ml||1500) / reusos;
+    costo_mat = (cp+ca+cf+costo_pines+costo_alambre) * MARGINS.mat;
+    mat_items = [{lbl:'Perlín ('+reusos+' uso'+( reusos>1?'s':'')+')' ,qty:ceil1(ml),unit:'ml',costo:cp},{lbl:'Angular',qty:ceil1(ml),unit:'ml',costo:ca},{lbl:'MO fabricación',qty:ceil1(ml),unit:'ml',costo:cf},{lbl:'Var. #4 pines',qty:pines.n_varillas,unit:'var. 6m',costo:costo_pines},{lbl:'Alambre negro',qty:pines.kg_alambre,unit:'kg',costo:costo_alambre}];
+    mat_resumen = [`Perlín ${ml}ml/${reusos}uso × ₡${fmtN(F.fm_precio_perlin_ml||2000)}/ml = ₡${fmtN(cp)}`, `Angular = ₡${fmtN(ca)}`, `Fab. MO = ₡${fmtN(cf)}`];
+  }
+
+  const dias_inst = (F.inst_rendimiento||25)>0 ? Math.ceil(ml/(F.inst_rendimiento||25)) : 0;
+  const mo_dia = F.inst_personal.reduce((s,p)=>s+p.salario,0);
+  const mo_inst = mo_dia * dias_inst * MARGINS.mo;
+  const total = costo_mat + mo_inst;
+  const costo_ml = ml>0?total/ml:0;
+
+  const res = document.createElement('div');
+  const rDiv = document.createElement('div'); rDiv.className='cc-resultado';
+  rDiv.innerHTML='<h3>📊 Resultado — Formaleta</h3>';
+  const kg = document.createElement('div'); kg.className='cc-kpi-grid';
+  [[fmtC(total),'Costo total'],[fmtC(costo_ml),'Costo por ml'],[dias_inst+' días','Días instalación'],[pines.n_pines+' pines','Total pines'],[pines.n_varillas+' var.','Varillas #4 pines'],[pines.kg_alambre+'kg','Alambre negro']].forEach(([v,l])=>{ kg.innerHTML+=`<div class="cc-kpi"><div class="val">${v}</div><div class="lbl">${l}</div></div>`; });
+  rDiv.appendChild(kg);
+  const rb=document.createElement('div'); rb.className='cc-resumen-box';
+  rb.innerHTML='<div style="font-size:.78rem;font-weight:700;color:#ECF0F1;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">📋 Desglose</div>';
+  [...mat_resumen,`${pines.n_pines} pines (1 c/0.5ml, largo ${pines.largo_pin_cm}cm) = ${pines.n_varillas} var. #4`,`${pines.kg_alambre}kg alambre (1kg/20ml)`,`Mat. subtotal × ${MARGINS.mat}× → ₡${fmtN(costo_mat)}`,`Instalación: ${dias_inst} días × ₡${fmtN(mo_dia)}/día × ${MARGINS.mo}× → ₡${fmtN(mo_inst)}`,`TOTAL → ${fmtC(total)}`].forEach((l,i,a)=>{
+    const isT=i===a.length-1;
+    rb.innerHTML+=`<div class="rlin"><span class="rlbl ${isT?'rtotal':''}">${l}</span></div>`;
+  });
+  rDiv.appendChild(rb);
+  res.appendChild(rDiv);
+
+  const tDiv=document.createElement('div'); tDiv.style.marginTop='14px';
+  tDiv.innerHTML='<div class="cc-sec-title" style="margin-top:0">Lista de Materiales</div>';
+  const tbl=document.createElement('table'); tbl.className='cc-mat-tbl';
+  tbl.innerHTML='<thead><tr><th>Material</th><th>Cantidad</th><th>Unidad</th></tr></thead>';
+  const tb=document.createElement('tbody');
+  mat_items.forEach(m=>{tb.innerHTML+=`<tr><td>${m.lbl}</td><td>${Math.ceil(typeof m.qty==='number'?m.qty:0)}</td><td>${m.unit}</td></tr>`;});
+  tbl.appendChild(tb); tDiv.appendChild(tbl);
+  tDiv.appendChild(btnRow([['📄 Exportar PDF','cc-btn-red',()=>exportarPDF('formaleta',mat_items,total,PROJ)]]));
+  res.appendChild(tDiv);
+  return res;
+}
+
+// ── TAB TIERRAS ───────────────────────────────────────────────────────────
+function tabTierras() {
+  const T = PROJ.tierras;
+  const root2 = document.getElementById('sec-calculos');
+  const re = () => render(root2);
+  const frag = document.createDocumentFragment();
+
+  // Escenario
+  const cEsc = card('🚜 Escenario de Trabajo',
+    tipoBtns([['1','1 — Demolición + Estabilización'],['2','2 — Solo Conformación'],['3','3 — Recorte + Conformación']], String(T.escenario), v=>{ T.escenario=parseInt(v); re(); })
+  );
+  frag.appendChild(cEsc);
+
+  // Área y espesor según escenario
+  const cArea = document.createElement('div'); cArea.className='cc-card';
+  cArea.appendChild(Object.assign(document.createElement('div'),{className:'cc-card-hdr',textContent:'📐 Volúmenes a Intervenir'}));
+  const bArea=document.createElement('div'); bArea.className='cc-card-body';
+  const gA=document.createElement('div'); gA.className='cc-grid';
+  if (T.escenario===1) {
+    gA.appendChild(field('Área demolición (m²)', T.demol_area_m2||500, 'number', v=>{ T.demol_area_m2=parseFloat(v)||0; re(); }));
+    gA.appendChild(field('Espesor demolición (m)', T.demol_espesor_m||0.10, 'number', v=>{ T.demol_espesor_m=parseFloat(v)||0; re(); },'',0,0.01));
+    const vol_d=(T.demol_area_m2||0)*(T.demol_espesor_m||0);
+    const vd=document.createElement('div'); vd.className='cc-field';
+    vd.innerHTML=`<label>Volumen demolición (m³)</label><input type="text" value="${vol_d.toFixed(2)}" readonly style="background:#F4F4F4;color:#636E72">`;
+    gA.appendChild(vd);
+    gA.appendChild(field('Área estabilización (m²)', T.estab_area_m2||500, 'number', v=>{ T.estab_area_m2=parseFloat(v)||0; re(); }));
+    gA.appendChild(field('Espesor estabilización (m)', T.estab_espesor_m||0.15, 'number', v=>{ T.estab_espesor_m=parseFloat(v)||0; re(); },'',0,0.01));
+    const vol_e=(T.estab_area_m2||0)*(T.estab_espesor_m||0);
+    const ve=document.createElement('div'); ve.className='cc-field';
+    ve.innerHTML=`<label>Volumen estabilización (m³)</label><input type="text" value="${vol_e.toFixed(2)}" readonly style="background:#F4F4F4;color:#636E72">`;
+    gA.appendChild(ve);
+  } else {
+    gA.appendChild(field('Área (m²)', T.area_m2||500, 'number', v=>{ T.area_m2=parseFloat(v)||0; re(); }));
+    gA.appendChild(field('Espesor (m)', T.espesor_m||0.15, 'number', v=>{ T.espesor_m=parseFloat(v)||0; re(); },'',0,0.01));
+    const vol=(T.area_m2||0)*(T.espesor_m||0);
+    const vf=document.createElement('div'); vf.className='cc-field';
+    vf.innerHTML=`<label>Volumen (m³)</label><input type="text" value="${vol.toFixed(2)}" readonly style="background:#F4F4F4;color:#636E72">`;
+    gA.appendChild(vf);
+  }
+  bArea.appendChild(gA);
+  cArea.appendChild(bArea);
+  frag.appendChild(cArea);
+
+  // Equipos
+  const cEq=document.createElement('div'); cEq.className='cc-card';
+  cEq.appendChild(Object.assign(document.createElement('div'),{className:'cc-card-hdr',textContent:'🚧 Equipos (marcar los que aplican)'}));
+  const bEq=document.createElement('div'); bEq.className='cc-card-body';
+  const equipos=[
+    ['backjoe','Back Joe / Excavadora','backjoe_hr',24000,'backjoe_m3',100,'Ref. CR: 80–120 m³/día'],
+    ['aplanadora','Aplanadora','aplanadora_hr',34000,'aplanadora_m3',150,'Ref. CR: 120–180 m³/día'],
+    ['niveladora','Niveladora','niveladora_hr',58000,'niveladora_m3',275,'Ref. CR: 200–350 m³/día'],
+    ['pala','Pala mecánica','pala_hr',60000,'pala_m3',125,'Ref. CR: 100–150 m³/día'],
+    ...(T.escenario===1?[['bobcat','Bobcat (demolición)','bobcat_hr',30000,'bobcat_m3',50,'Ref. CR: 40–60 m³/día']]:[]),
+  ];
+  equipos.forEach(([key,lbl,pk,pd,rk,rd,nota])=>{
+    if(PRICES[pk]===undefined) PRICES[pk]=pd;
+    if(RENDERS[rk]===undefined) RENDERS[rk]=rd;
+    const row=document.createElement('div'); row.style.cssText='display:grid;grid-template-columns:auto 1fr auto auto auto auto;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #F4F4F4';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=T.equipos[key]!==false; cb.style.cssText='width:15px;height:15px;accent-color:#C8102E';
+    cb.onchange=e=>{ T.equipos[key]=e.target.checked; re(); };
+    const lb=document.createElement('span'); lb.style.cssText='font-size:.86rem;font-weight:600'; lb.textContent=lbl;
+    const ip1=document.createElement('input'); ip1.type='number'; ip1.value=PRICES[pk]; ip1.style.cssText='width:90px;padding:5px;border:1.5px solid #DDE1E7;border-radius:5px;font-size:.82rem';
+    ip1.oninput=e=>{ PRICES[pk]=parseFloat(e.target.value)||0; saveP(); re(); };
+    const u1=document.createElement('span'); u1.style.cssText='font-size:.74rem;color:#7F8C8D'; u1.textContent='₡/hr';
+    const ip2=document.createElement('input'); ip2.type='number'; ip2.value=RENDERS[rk]; ip2.style.cssText='width:80px;padding:5px;border:1.5px solid #DDE1E7;border-radius:5px;font-size:.82rem';
+    ip2.oninput=e=>{ RENDERS[rk]=parseFloat(e.target.value)||1; saveR(); re(); };
+    const u2=document.createElement('span'); u2.style.cssText='font-size:.74rem;color:#7F8C8D;white-space:nowrap'; u2.textContent='m³/día';
+    const nt=document.createElement('div'); nt.style.cssText='font-size:.71rem;color:#7F8C8D;grid-column:2/-1'; nt.textContent='ℹ '+nota;
+    row.appendChild(cb); row.appendChild(lb); row.appendChild(ip1); row.appendChild(u1); row.appendChild(ip2); row.appendChild(u2);
+    const wrapper=document.createElement('div'); wrapper.style.cssText='display:contents';
+    bEq.appendChild(row);
+    bEq.appendChild(nt);
   });
 
   // Tanqueta
-  let costo_tanq = 0;
-  if (T.equipos.tanqueta) {
-    const viajes_dia = 2;
-    costo_tanq = dias_max * viajes_dia * PRICES.tanqueta_viaje * M_EQ;
+  const rowT=document.createElement('div'); rowT.style.cssText='display:grid;grid-template-columns:auto 1fr auto auto auto auto;align-items:center;gap:8px;padding:7px 0';
+  const cbT=document.createElement('input'); cbT.type='checkbox'; cbT.checked=T.equipos.tanqueta!==false; cbT.style.cssText='width:15px;height:15px;accent-color:#C8102E';
+  cbT.onchange=e=>{ T.equipos.tanqueta=e.target.checked; re(); };
+  const lbT=document.createElement('span'); lbT.style.cssText='font-size:.86rem;font-weight:600'; lbT.textContent='Tanqueta de agua';
+  const ip1T=document.createElement('input'); ip1T.type='number'; ip1T.value=PRICES.tanqueta_viaje||70000; ip1T.style.cssText='width:90px;padding:5px;border:1.5px solid #DDE1E7;border-radius:5px;font-size:.82rem';
+  ip1T.oninput=e=>{ PRICES.tanqueta_viaje=parseFloat(e.target.value)||0; saveP(); re(); };
+  const u1T=document.createElement('span'); u1T.style.cssText='font-size:.74rem;color:#7F8C8D'; u1T.textContent='₡/viaje';
+  const ip2T=document.createElement('input'); ip2T.type='number'; ip2T.value=T.tanqueta_viajes||5; ip2T.style.cssText='width:80px;padding:5px;border:1.5px solid #DDE1E7;border-radius:5px;font-size:.82rem';
+  ip2T.oninput=e=>{ T.tanqueta_viajes=parseFloat(e.target.value)||0; re(); };
+  const u2T=document.createElement('span'); u2T.style.cssText='font-size:.74rem;color:#7F8C8D'; u2T.textContent='viajes';
+  rowT.appendChild(cbT); rowT.appendChild(lbT); rowT.appendChild(ip1T); rowT.appendChild(u1T); rowT.appendChild(ip2T); rowT.appendChild(u2T);
+  bEq.appendChild(rowT);
+  const ntT=document.createElement('div'); ntT.style.cssText='font-size:.71rem;color:#7F8C8D;margin-bottom:4px'; ntT.textContent='ℹ El usuario define la cantidad de viajes según el proyecto';
+  bEq.appendChild(ntT);
+
+  cEq.appendChild(bEq);
+  frag.appendChild(cEq);
+
+  // Lastre y botada
+  const cExt=document.createElement('div'); cExt.className='cc-card';
+  cExt.appendChild(Object.assign(document.createElement('div'),{className:'cc-card-hdr',textContent:'🪨 Lastre y Botada'}));
+  const bExt=document.createElement('div'); bExt.className='cc-card-body';
+  bExt.appendChild(checkRow('Incluir lastre de ajuste', T.lastre!==false, v=>{ T.lastre=v; re(); }));
+  if(T.lastre!==false){
+    bExt.appendChild(grid(
+      field('Volumen lastre (m³)', T.lastre_m3||0, 'number', v=>{ T.lastre_m3=parseFloat(v)||0; re(); }),
+      field('Precio lastre (₡/m³)', PRICES.lastre_m3||8000, 'number', v=>{ PRICES.lastre_m3=parseFloat(v)||0; saveP(); re(); }),
+    ));
   }
-
-  // Botada
-  let costo_botada = 0, n_viajes_bot = 0;
-  if (T.botada) {
-    n_viajes_bot = Math.ceil(vol_esponj / 12);
-    costo_botada = n_viajes_bot * PRICES.botada_viaje;
+  bExt.appendChild(checkRow('Material sale del sitio (botada)', T.botada||false, v=>{ T.botada=v; re(); }));
+  if(T.botada){
+    bExt.appendChild(grid(
+      field('Viajes de botada', T.botada_viajes||0, 'number', v=>{ T.botada_viajes=parseFloat(v)||0; re(); }, 'Se aplica 25% esponjamiento al calcular sugerencia'),
+      field('Precio botada (₡/vagoneta 12m³)', PRICES.botada_viaje||100000, 'number', v=>{ PRICES.botada_viaje=parseFloat(v)||0; saveP(); re(); }),
+    ));
   }
+  cExt.appendChild(bExt);
+  frag.appendChild(cExt);
 
-  // Lastre
-  let costo_lastre = 0;
-  if ((T.escenario===1||T.escenario===2) && T.lastre && T.lastre_m3_extra > 0) {
-    costo_lastre = T.lastre_m3_extra * PRICES.lastre_m3 * M_MAT;
-  }
+  // Jornada
+  frag.appendChild(card('⏱ Jornada',
+    grid(field('Horas de trabajo por día', T.jornada_hr||8, 'number', v=>{ T.jornada_hr=parseFloat(v)||8; re(); },'',1,0.5))
+  ));
 
-  // Mano de obra personal
-  const costo_mo_dia = T.personal.reduce((s,p) => s+p.salario, 0);
-  const mo_total = costo_mo_dia * dias_max * M_MO;
+  // Personal
+  const cPer=document.createElement('div'); cPer.className='cc-card';
+  cPer.appendChild(Object.assign(document.createElement('div'),{className:'cc-card-hdr',textContent:'👷 Personal en Sitio (salario diario — pagan por todos los días de trabajo)'}));
+  const bPer=document.createElement('div'); bPer.className='cc-card-body';
+  bPer.appendChild(personalRows(T.personal, re));
+  cPer.appendChild(bPer);
+  frag.appendChild(cPer);
 
-  const costo_total = costo_eq + costo_tanq + costo_botada + costo_lastre + mo_total;
-  const costo_m3 = vol_m3 > 0 ? costo_total / vol_m3 : 0;
-  const costo_m2 = (T.area_m2||0) > 0 ? costo_total / T.area_m2 : 0;
+  // Resultado
+  frag.appendChild(calcResultTierras(T));
 
-  return { costo_total, costo_m3, costo_m2, vol_m3, dias_max, n_viajes_bot, eq_detail, costo_lastre, mo_total, costo_tanq };
+  return frag;
 }
 
-function renderResultadoTierras(res) {
-  const c = div('');
-  const rDiv = div('cc-result');
-  rDiv.appendChild(el('h3', {}, ['Resultado — Movimiento de Tierras']));
-  const grid = div('cc-result-grid');
-  [
-    [fmtCRC(res.costo_total), 'Costo total proyecto'],
-    [fmtCRC(res.costo_m3),   'Costo por m³'],
-    [fmtCRC(res.costo_m2),   '🧾 Costo por m² (para cotizar al cliente)'],
-    [res.vol_m3.toFixed(2)+' m³', 'Volumen intervenido'],
-    [res.dias_max+' días', 'Días estimados de ejecución'],
-    ...(res.n_viajes_bot>0?[[res.n_viajes_bot+' viajes','Viajes de botada (vagoneta 12m³)']]:[] ),
-  ].forEach(([val,lbl]) => {
-    const k = div('cc-kpi'); k.innerHTML='<div class="val">'+val+'</div><div class="lbl">'+lbl+'</div>'; grid.appendChild(k);
-  });
-  rDiv.appendChild(grid);
-  c.appendChild(rDiv);
+function calcResultTierras(T) {
+  const jornada = T.jornada_hr||8;
 
-  // Detalle por equipo
-  if (res.eq_detail.length) {
-    c.appendChild(el('div', {class:'cc-section-title', style:'margin-top:14px'}, ['Detalle por equipo']));
-    const tbl = el('table', {class:'cc-mat-table'});
-    tbl.innerHTML = '<tr><th>Equipo</th><th>Días</th><th>Costo estimado</th></tr>';
-    res.eq_detail.forEach(e => {
-      const tr = el('tr');
-      tr.innerHTML = '<td>'+e.label+'</td><td>'+e.dias+'</td><td>'+fmtCRC(e.costo)+'</td>';
-      tbl.appendChild(tr);
-    });
-    tbl.innerHTML += '<tr style="font-weight:700"><td>Personal en sitio</td><td>'+PROJ.tierras.personal.length+' pers.</td><td>'+fmtCRC(res.mo_total)+'</td></tr>';
-    c.appendChild(tbl);
-  }
-  return c;
-}
-
-// ── TAB PROYECTOS GUARDADOS ───────────────────────────────────────────────────
-function renderTabProyectos(root) {
-  const c = div('');
-  const card = div('cc-card');
-  card.appendChild(div('cc-card-hdr', ['💾 Proyectos Guardados']));
-  const body = div('cc-card-body');
-
-  if (!PROJECTS.length) {
-    body.appendChild(el('p', {style:'color:#7F8C8D;font-size:.9rem'}, ['No hay proyectos guardados.']));
-  } else {
-    const lista = div('cc-proj-list');
-    PROJECTS.forEach((p, idx) => {
-      const card2 = div('cc-proj-card');
-      card2.appendChild(el('div', {class:'name'}, [p.nombre||'Sin nombre']));
-      card2.appendChild(el('div', {class:'meta'}, [p.cliente+' · '+p.fecha+' · '+p.tipo.join(', ')]));
-      const bAbrir = btn('Abrir', 'cc-btn cc-btn-gray', () => {
-        Object.assign(PROJ, JSON.parse(JSON.stringify(p)));
-        UI.tab = 'proyecto';
-        render(root);
-      });
-      const bDel = btn('🗑', 'cc-btn cc-btn-gray', () => {
-        if (confirm('¿Eliminar proyecto "'+p.nombre+'"?')) {
-          PROJECTS.splice(idx, 1);
-          savePJ();
-          render(root);
-        }
-      });
-      card2.appendChild(bAbrir);
-      card2.appendChild(bDel);
-      lista.appendChild(card2);
-    });
-    body.appendChild(lista);
-  }
-  card.appendChild(body);
-  c.appendChild(card);
-  return c;
-}
-
-// ── TAB PRECIOS Y RENDIMIENTOS ────────────────────────────────────────────────
-function renderTabPrecios() {
-  const c = div('');
-
-  const groups = [
-    ['🔩 Varillas (precio varilla 6m)', [
-      ['Varilla #3 (₡/6m)', 'var3'],['Varilla #4 (₡/6m)', 'var4'],['Varilla #5 (₡/6m)', 'var5'],
-      ['Varilla #6 (₡/6m)', 'var6'],['Varilla #8 (₡/6m)', 'var8'],['Transporte % sobre varilla', 'transp_pct'],
-      ['Corte de dovela (₡/ud)', 'corte_dovela'],
-    ]],
-    ['🧪 Materiales Dovelas', [
-      ['Epóxico kit 2 gal A+B', 'epoxico_kit'],['Molde canastas', 'molde_canastas'],
-      ['Soldadura (₡/kg)', 'sold_kg'],['Disco 9" (₡/ud)', 'disco9'],
-      ['Varilla #2 (₡/ud 6m)', 'varilla2'],['Alambre negro (₡/kg)', 'alambre'],
-      ['Grasa (₡/cartucho)', 'grasa'],['Tubo PVC 3/4" (₡/6m)', 'tubo_pvc_34'],
-      ['Tapón PVC 3/4" (₡/ud)', 'tapon_34'],['Pegamento PVC 1/8 (₡/caja)', 'pegamento_pvc'],
-      ['Pintura (₡/galón)', 'pintura_gal'],
-    ]],
-    ['🪵 Materiales Formaleta', [
-      ['Vara madera 15cm (₡/vara)', 'vara_madera'],['Varilla #3 formaleta (₡/6m)', 'varilla3'],
-      ['Alambre negro formaleta (₡/kg)', 'alambre_fm'],['Perlín 10cm (₡/6m)', 'perlin10'],
-      ['Perlín 15cm (₡/6m)', 'perlin15'],['Perlín 20cm (₡/6m)', 'perlin20'],
-      ['Angular 1"×1" 3mm (₡/6m)', 'angular_6m'],['Alistado angular 60ml (₡)', 'alistado_angular'],
-      ['Varilla #4 formaleta (₡/6m)', 'varilla4_fm'],
-    ]],
-    ['🚜 Equipos Movimiento de Tierras', [
-      ['Back Joe (₡/hora)', 'backjoe_hr'],['Aplanadora (₡/hora)', 'aplanadora_hr'],
-      ['Niveladora (₡/hora)', 'niveladora_hr'],['Pala mecánica (₡/hora)', 'pala_hr'],
-      ['Tanqueta agua (₡/viaje)', 'tanqueta_viaje'],['Bobcat (₡/hora)', 'bobcat_hr'],
-      ['Botada material (₡/viaje)', 'botada_viaje'],['Lastre (₡/m³)', 'lastre_m3'],
-      ['Cemento (₡/saco)', 'cemento_saco'],
-    ]],
+  // Calcular volúmenes y costos por equipo
+  const equipos_def = [
+    {key:'backjoe',lbl:'Back Joe',pk:'backjoe_hr',rk:'backjoe_m3'},
+    {key:'aplanadora',lbl:'Aplanadora',pk:'aplanadora_hr',rk:'aplanadora_m3'},
+    {key:'niveladora',lbl:'Niveladora',pk:'niveladora_hr',rk:'niveladora_m3'},
+    {key:'pala',lbl:'Pala mecánica',pk:'pala_hr',rk:'pala_m3'},
+    {key:'bobcat',lbl:'Bobcat',pk:'bobcat_hr',rk:'bobcat_m3'},
   ];
 
-  groups.forEach(([titulo, fields]) => {
-    const card = div('cc-card');
-    card.appendChild(div('cc-card-hdr', [titulo]));
-    const body = div('cc-card-body');
-    const grid = div('cc-grid');
-    fields.forEach(([label, key]) => {
-      const f = div('cc-field');
-      f.appendChild(el('label', {}, [label]));
-      const i = inp({type:'number', value: PRICES[key]||0, min:0, step: key==='transp_pct'?0.1:1});
-      i.oninput = e => { PRICES[key] = parseFloat(e.target.value)||0; saveP(); };
-      f.appendChild(i);
-      grid.appendChild(f);
+  let detalle_eq=[], dias_max=0, costo_eq=0;
+
+  if (T.escenario===1) {
+    const vol_d=(T.demol_area_m2||0)*(T.demol_espesor_m||0);
+    const vol_e=(T.estab_area_m2||0)*(T.estab_espesor_m||0);
+    // Bobcat trabaja en demolición
+    equipos_def.forEach(eq=>{
+      if(!T.equipos[eq.key]) return;
+      const rend=RENDERS[eq.rk]||100;
+      const vol = eq.key==='bobcat'?vol_d:vol_e;
+      const dias=Math.ceil(vol/rend);
+      const costo=dias*jornada*(PRICES[eq.pk]||0)*MARGINS.eq;
+      dias_max=Math.max(dias_max,dias);
+      costo_eq+=costo;
+      detalle_eq.push({lbl:eq.lbl,vol:vol.toFixed(1),rend,dias,costo});
     });
-    body.appendChild(grid);
-    card.appendChild(body);
-    c.appendChild(card);
+  } else {
+    const vol=(T.area_m2||0)*(T.espesor_m||0);
+    equipos_def.forEach(eq=>{
+      if(!T.equipos[eq.key]) return;
+      const rend=RENDERS[eq.rk]||100;
+      const dias=Math.ceil(vol/rend);
+      const costo=dias*jornada*(PRICES[eq.pk]||0)*MARGINS.eq;
+      dias_max=Math.max(dias_max,dias);
+      costo_eq+=costo;
+      detalle_eq.push({lbl:eq.lbl,vol:vol.toFixed(1),rend,dias,costo});
+    });
+  }
+
+  // Tanqueta
+  let costo_tanq=0;
+  if(T.equipos.tanqueta) {
+    costo_tanq=(T.tanqueta_viajes||0)*(PRICES.tanqueta_viaje||70000)*MARGINS.eq;
+  }
+
+  // Lastre y botada
+  const costo_lastre = (T.lastre!==false)?(T.lastre_m3||0)*(PRICES.lastre_m3||8000)*MARGINS.mat:0;
+  const costo_botada = T.botada?(T.botada_viajes||0)*(PRICES.botada_viaje||100000):0;
+
+  // MO: personal paga todos los días de máxima duración (trabajo secuencial)
+  const mo_dia = T.personal.reduce((s,p)=>s+p.salario,0);
+  const mo_total = mo_dia * dias_max * MARGINS.mo;
+
+  const total = costo_eq + costo_tanq + costo_lastre + costo_botada + mo_total;
+  const vol_ref = T.escenario===1?(T.demol_area_m2||0)*(T.demol_espesor_m||0)+(T.estab_area_m2||0)*(T.estab_espesor_m||0):(T.area_m2||0)*(T.espesor_m||0);
+  const costo_m3 = vol_ref>0?total/vol_ref:0;
+  const area_ref = T.escenario===1?(T.demol_area_m2||T.estab_area_m2||0):(T.area_m2||0);
+  const costo_m2 = area_ref>0?total/area_ref:0;
+
+  const res=document.createElement('div');
+  const rDiv=document.createElement('div'); rDiv.className='cc-resultado';
+  rDiv.innerHTML='<h3>📊 Resultado — Movimiento de Tierras</h3>';
+  const kg=document.createElement('div'); kg.className='cc-kpi-grid';
+  [[fmtC(total),'Costo total'],[fmtC(costo_m3),'Costo por m³'],[fmtC(costo_m2),'Costo por m² (cotizar cliente)'],[dias_max+' días','Días máximos ejecución'],[T.personal.length+' personas','Personal en sitio']].forEach(([v,l])=>{
+    kg.innerHTML+=`<div class="cc-kpi"><div class="val">${v}</div><div class="lbl">${l}</div></div>`;
   });
-
-  // Botón restaurar defaults
-  const bRow = div('cc-btn-row');
-  bRow.appendChild(btn('↩ Restaurar precios por defecto', 'cc-btn cc-btn-gray', () => {
-    if (confirm('¿Restaurar todos los precios a los valores por defecto?')) {
-      PRICES = {...DEFAULT_PRICES};
-      saveP();
-      UI.tab='precios';
-      render(document.getElementById('sec-calculos'));
-    }
-  }));
-  c.appendChild(bRow);
-  return c;
+  rDiv.appendChild(kg);
+  const rb=document.createElement('div'); rb.className='cc-resumen-box';
+  rb.innerHTML='<div style="font-size:.78rem;font-weight:700;color:#ECF0F1;margin-bottom:6px;text-transform:uppercase">📋 Desglose de Cálculo</div>';
+  detalle_eq.forEach(e=>{
+    rb.innerHTML+=`<div class="rlin"><span class="rlbl">${e.lbl}: ${e.vol}m³ ÷ ${e.rend}m³/día = ${e.dias} días × ${jornada}hr × ₡/hr × ${MARGINS.eq}×</span><span class="rval">${fmtC(e.costo)}</span></div>`;
+  });
+  if(costo_tanq>0) rb.innerHTML+=`<div class="rlin"><span class="rlbl">Tanqueta: ${T.tanqueta_viajes} viajes × ₡${fmtN(PRICES.tanqueta_viaje||70000)} × ${MARGINS.eq}×</span><span class="rval">${fmtC(costo_tanq)}</span></div>`;
+  if(costo_lastre>0) rb.innerHTML+=`<div class="rlin"><span class="rlbl">Lastre: ${T.lastre_m3}m³ × ₡${fmtN(PRICES.lastre_m3||8000)}/m³ × ${MARGINS.mat}×</span><span class="rval">${fmtC(costo_lastre)}</span></div>`;
+  if(costo_botada>0) rb.innerHTML+=`<div class="rlin"><span class="rlbl">Botada: ${T.botada_viajes} viajes × ₡${fmtN(PRICES.botada_viaje||100000)}</span><span class="rval">${fmtC(costo_botada)}</span></div>`;
+  rb.innerHTML+=`<div class="rlin"><span class="rlbl">MO: ${T.personal.length} personas × ${dias_max} días × ₡${fmtN(mo_dia)}/día × ${MARGINS.mo}× (días secuenciales)</span><span class="rval">${fmtC(mo_total)}</span></div>`;
+  rb.innerHTML+=`<div class="rlin"><span class="rlbl rtotal">TOTAL</span><span class="rval rtotal">${fmtC(total)}</span></div>`;
+  rDiv.appendChild(rb);
+  res.appendChild(rDiv);
+  return res;
 }
 
-// ── GUARDAR Y RESET PROYECTO ──────────────────────────────────────────────────
+// ── TAB GUARDADOS ─────────────────────────────────────────────────────────
+function tabGuardados(root) {
+  const frag=document.createDocumentFragment();
+  const c=document.createElement('div'); c.className='cc-card';
+  c.appendChild(Object.assign(document.createElement('div'),{className:'cc-card-hdr',textContent:'💾 Proyectos Guardados'}));
+  const b=document.createElement('div'); b.className='cc-card-body';
+  if(!PROJECTS.length){ b.innerHTML='<p style="color:#7F8C8D;font-size:.9rem">No hay proyectos guardados.</p>'; }
+  else PROJECTS.forEach((p,i)=>{
+    const r=document.createElement('div'); r.className='cc-proj-row';
+    r.innerHTML=`<span class="pnm">${p.nombre||'Sin nombre'}</span><span class="pmt">${p.cliente||''} · ${p.fecha||''}</span>`;
+    const bA=document.createElement('button'); bA.className='cc-btn cc-btn-gray'; bA.textContent='Abrir';
+    bA.onclick=()=>{ PROJ=JSON.parse(JSON.stringify(p)); UI.tab='proyecto'; render(root); };
+    const bD=document.createElement('button'); bD.className='cc-btn cc-btn-gray'; bD.textContent='🗑';
+    bD.onclick=()=>{ if(confirm('¿Eliminar?')){ PROJECTS.splice(i,1); savePJ(); render(root); } };
+    r.appendChild(bA); r.appendChild(bD); b.appendChild(r);
+  });
+  c.appendChild(b); frag.appendChild(c); return frag;
+}
+
+// ── TAB CONFIG ────────────────────────────────────────────────────────────
+function tabConfig() {
+  const root2=document.getElementById('sec-calculos');
+  const re=()=>render(root2);
+  const frag=document.createDocumentFragment();
+
+  // Márgenes
+  frag.appendChild(card('⚖ Márgenes Globales (aplican a todos los módulos)',
+    grid(
+      field('Materiales (factor ×)', MARGINS.mat, 'number', v=>{ MARGINS.mat=parseFloat(v)||1.20; saveM(); re(); },'Default: 1.20 (20% margen)',0,0.01),
+      field('Mano de obra (factor ×)', MARGINS.mo, 'number', v=>{ MARGINS.mo=parseFloat(v)||1.30; saveM(); re(); },'Default: 1.30 (30% margen)',0,0.01),
+      field('Equipos (factor ×)', MARGINS.eq, 'number', v=>{ MARGINS.eq=parseFloat(v)||1.15; saveM(); re(); },'Default: 1.15 (15% margen)',0,0.01),
+    ),
+    btnRow([['↩ Restaurar márgenes por defecto','cc-btn-gray',()=>{ if(confirm('¿Restaurar?')){ MARGINS={...DEFAULT_MARGINS}; saveM(); re(); } }]])
+  ));
+
+  // Precios varillas
+  const gVar=document.createElement('div'); gVar.className='cc-grid';
+  [['#3 (3/8")','var3'],['#4 (1/2")','var4'],['#5 (5/8")','var5'],['#6 (3/4")','var6'],['#8 (1")','var8']].forEach(([l,k])=>{
+    gVar.appendChild(field('Varilla '+l+' (₡/6m)', PRICES[k]||0, 'number', v=>{ PRICES[k]=parseFloat(v)||0; saveP(); }));
+  });
+  frag.appendChild(card('🔩 Precios Varillas (₡ por varilla de 6m)', gVar));
+
+  // Precios equipos
+  const gEq=document.createElement('div'); gEq.className='cc-grid';
+  [['Back Joe (₡/hr)','backjoe_hr'],['Aplanadora (₡/hr)','aplanadora_hr'],['Niveladora (₡/hr)','niveladora_hr'],['Pala mecánica (₡/hr)','pala_hr'],['Bobcat (₡/hr)','bobcat_hr'],['Tanqueta (₡/viaje)','tanqueta_viaje'],['Lastre (₡/m³)','lastre_m3'],['Botada (₡/viaje)','botada_viaje'],['Epóxico kit 2 gal','epoxico_kit'],['Varilla #4 pines (₡/var 6m)','var4_pin'],['Alambre negro (₡/kg)','alambre_kg']].forEach(([l,k])=>{
+    gEq.appendChild(field(l, PRICES[k]||0, 'number', v=>{ PRICES[k]=parseFloat(v)||0; saveP(); }));
+  });
+  frag.appendChild(card('🚜 Equipos, Materiales y Otros', gEq));
+
+  // Rendimientos
+  const gRend=document.createElement('div'); gRend.className='cc-grid';
+  [
+    ['Dovelas sobre formaleta (ml/día)','dov_formaleta_ml','Ref. CR: 8–12'],
+    ['Dovelas perforando losa (ml/día)','dov_perforacion_ml','Ref. CR: 6–10'],
+    ['Elaboración canastas (ml/día)','dov_canastas_elab_ml','Ref. CR: 10–14'],
+    ['Instalación canastas (ml/día)','dov_canastas_inst_ml','Ref. CR: 12–18'],
+    ['Formaleta instalación (ml/día)','fml_inst_ml','Ref. CR: 20–30'],
+    ['Back Joe (m³/día)','backjoe_m3','Ref. CR: 80–120'],
+    ['Aplanadora (m³/día)','aplanadora_m3','Ref. CR: 120–180'],
+    ['Niveladora (m³/día)','niveladora_m3','Ref. CR: 200–350'],
+    ['Pala mecánica (m³/día)','pala_m3','Ref. CR: 100–150'],
+    ['Bobcat (m³/día)','bobcat_m3','Ref. CR: 40–60'],
+  ].forEach(([l,k,nota])=>{
+    gRend.appendChild(field(l+' ('+nota+')', RENDERS[k]||0, 'number', v=>{ RENDERS[k]=parseFloat(v)||1; saveR(); }));
+  });
+  frag.appendChild(card('⚡ Rendimientos por Defecto', gRend));
+
+  frag.appendChild(btnRow([['↩ Restaurar todos los precios por defecto','cc-btn-gray',()=>{ if(confirm('¿Restaurar?')){ PRICES={...DEFAULT_PRICES}; RENDERS={...DEFAULT_RENDERS}; saveP(); saveR(); render(root2); } }]]));
+  return frag;
+}
+
+// ── GUARDAR PROYECTO ──────────────────────────────────────────────────────
 function guardarProyecto() {
-  if (!PROJ.nombre) { alert('Ingrese un nombre de proyecto antes de guardar.'); return; }
-  const snap = JSON.parse(JSON.stringify(PROJ));
-  const idx = PROJECTS.findIndex(p => p.nombre === snap.nombre && p.cliente === snap.cliente);
-  if (idx >= 0) { PROJECTS[idx] = snap; } else { PROJECTS.unshift(snap); }
+  if(!PROJ.nombre){ alert('Ingrese un nombre de proyecto'); return; }
+  const snap=JSON.parse(JSON.stringify(PROJ));
+  const idx=PROJECTS.findIndex(p=>p.nombre===snap.nombre&&p.cliente===snap.cliente);
+  if(idx>=0) PROJECTS[idx]=snap; else PROJECTS.unshift(snap);
   savePJ();
-  alert('✅ Proyecto "'+PROJ.nombre+'" guardado correctamente.');
+  alert('✅ Proyecto "'+PROJ.nombre+'" guardado');
 }
 
-function resetProyecto() {
-  PROJ = {
-    nombre:'', cliente:'', fecha: new Date().toISOString().slice(0,10), tipo:[],
-    dovelas: { tipo:'formaleta', con_formaleta:true, diametro:'#4', largo_cm:50, distancia_cm:45, metros_lineales:30, fm_tipo:'madera', fm_espesor_cm:15, fm_reutilizaciones:1, epox_activo:false, personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000},{rol:'operario',salario:18000}], materiales:{grasa:true,tubo_pvc:true,tapones:true,pegamento:true,pintura:true}, molde_costo:400000 },
-    formaleta: { tipo:'madera', metros_lineales:100, espesor_cm:15, entradas:1, reutilizaciones:1, personal:[{rol:'encargado',salario:25000},{rol:'operario',salario:18000}] },
-    tierras: { escenario:1, area_m2:500, espesor_m:0.15, lastre:true, lastre_m3_extra:0, botada:false, equipos:{backjoe:true,aplanadora:true,niveladora:true,pala:true,tanqueta:true,bobcat:true}, personal:[{rol:'encargado',salario:25000}], jornada_hr:8 },
-  };
-  UI.tab = 'proyecto';
-  render(document.getElementById('sec-calculos'));
-}
-
-// ── EXPORT PDF MATERIALES ─────────────────────────────────────────────────────
-function exportarPDFMateriales(modulo, res) {
-  const items = modulo==='dovelas' ? [
-    {label:'Varilla '+PROJ.dovelas.diametro, qty: res.n_varillas, unit:'varillas 6m'},
-    ...res.mat_items,
-    ...(res.n_kits_epox>0?[{label:'Epóxico kit 2 gal', qty: res.n_kits_epox, unit:'kits'}]:[]),
-  ] : res.mat_items;
-
-  const nombre = PROJ.nombre||'Proyecto';
-  const fecha  = PROJ.fecha||new Date().toISOString().slice(0,10);
-
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-  <title>Lista Materiales — ${nombre}</title>
-  <style>
-    body{font-family:Arial,sans-serif;margin:30px;color:#2C3E50}
-    .hdr{display:flex;align-items:center;gap:16px;border-bottom:3px solid #C8102E;padding-bottom:12px;margin-bottom:20px}
-    .logo{font-size:1.8rem;font-weight:900;color:#C8102E;letter-spacing:-.03em}
-    .logo span{color:#2C3E50}
-    h2{margin:0;font-size:1.05rem;color:#2C3E50}
-    .meta{font-size:.85rem;color:#636E72;margin-bottom:18px}
-    table{width:100%;border-collapse:collapse;font-size:.9rem}
-    th{background:#C8102E;color:#fff;padding:9px 12px;text-align:left}
-    td{padding:8px 12px;border-bottom:1px solid #E8E8E8}
-    tr:nth-child(even) td{background:#F8F9FA}
-    .footer{margin-top:24px;font-size:.75rem;color:#7F8C8D;text-align:center;border-top:1px solid #E8E8E8;padding-top:8px}
-  </style></head><body>
-  <div class="hdr">
-    <div class="logo">CON<span>CRE</span></div>
-    <div><h2>Lista de Materiales — ${modulo.charAt(0).toUpperCase()+modulo.slice(1)}</h2></div>
-  </div>
-  <div class="meta">
-    <b>Proyecto:</b> ${nombre} &nbsp;|&nbsp; <b>Cliente:</b> ${PROJ.cliente||'—'} &nbsp;|&nbsp; <b>Fecha:</b> ${fecha}
-  </div>
-  <table>
-    <tr><th>#</th><th>Material</th><th>Cantidad</th><th>Unidad</th></tr>
-    ${items.map((m,i)=>'<tr><td>'+(i+1)+'</td><td>'+m.label+'</td><td>'+Math.ceil(m.qty||m.qty)+'</td><td>'+(m.unit||'')+'</td></tr>').join('')}
-  </table>
-  <div class="footer">Generado por Sistema CONCRE ERP · ${new Date().toLocaleDateString('es-CR')}</div>
+// ── EXPORT PDF ────────────────────────────────────────────────────────────
+function exportarPDF(modulo, mats, total, proj) {
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Lista Materiales</title>
+  <style>body{font-family:Arial,sans-serif;margin:30px;color:#2C3E50}.logo{font-size:1.8rem;font-weight:900;color:#C8102E}table{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:16px}th{background:#C8102E;color:#fff;padding:8px 12px;text-align:left}td{padding:7px 12px;border-bottom:1px solid #E8E8E8}tfoot td{font-weight:700;background:#F8F9FA}.hdr{display:flex;justify-content:space-between;border-bottom:3px solid #C8102E;padding-bottom:10px;margin-bottom:16px}</style>
+  </head><body>
+  <div class="hdr"><div><div class="logo">CON<span style="color:#2C3E50">CRE</span></div><div>Lista de Materiales — ${modulo}</div></div><div style="text-align:right;font-size:.85rem;color:#636E72"><div>${proj.nombre||''}</div><div>${proj.cliente||''}</div><div>${proj.fecha||''}</div></div></div>
+  <table><thead><tr><th>#</th><th>Material</th><th>Cantidad</th><th>Unidad</th></tr></thead><tbody>
+  ${mats.map((m,i)=>`<tr><td>${i+1}</td><td>${m.lbl}</td><td>${Math.ceil(m.qty||0)}</td><td>${m.unit||''}</td></tr>`).join('')}
+  </tbody><tfoot><tr><td colspan="3">COSTO TOTAL DEL PROYECTO</td><td>₡${Math.round(total).toLocaleString('es-CR')}</td></tr></tfoot></table>
+  <div style="margin-top:20px;font-size:.75rem;color:#7F8C8D;text-align:center">Sistema CONCRE ERP · ${new Date().toLocaleDateString('es-CR')}</div>
   </body></html>`;
-
-  const w = window.open('','_blank');
+  const w=window.open('','_blank');
   w.document.write(html);
   w.document.close();
-  setTimeout(() => w.print(), 600);
+  setTimeout(()=>w.print(),600);
 }
 
-// ── EXPORTAR GLOBAL ───────────────────────────────────────────────────────────
-window.initCalcCONCRE = initCalcCONCRE;
+window.initCalcCONCRE=initCalcCONCRE;
 })();
+
 
 
 
