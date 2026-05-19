@@ -9197,7 +9197,9 @@ function renderPagosUsuarios(){
     // Deductions
     var ccss=ded.ccss_monto||0;
     var rb=ded.rb_monto||0;
-    var dedTotal=q===1?(ccss+rb):rb; // CCSS typically Q1
+    var extraReb=ded.extra_monto||0;
+    // CCSS y préstamo aplican en ambas quincenas; extra solo Q1
+    var dedTotal=ccss+rb+(q===1?extraReb:0);
     var total=salQ+comisVal-dedTotal;
 
     var state=getPagoState(u.id, periodKey);
@@ -11567,9 +11569,13 @@ async function loadInvFromDB(){
 
 // ══ INIT ══
 async function initInventario(){
-  // Usar el contenedor correcto según el rol del usuario
-  var root=document.getElementById('inv-root');
-  if(!root) root=document.getElementById('inv-root-user');
+  // Usar el contenedor correcto según el rol
+  var root;
+  if(SESSION&&(SESSION.rol==='superadmin'||SESSION.rol==='admin')){
+    root=document.getElementById('inv-root');
+  } else {
+    root=document.getElementById('inv-root-user');
+  }
   if(!root) return;
   if(!invCanAccess()){
     root.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">No tienes acceso al módulo de inventario.</div>';
@@ -11581,7 +11587,12 @@ async function initInventario(){
 }
 
 function renderInvMain(){
-  var root=document.getElementById('inv-root')||document.getElementById('inv-root-user');
+  var root;
+  if(SESSION&&(SESSION.rol==='superadmin'||SESSION.rol==='admin')){
+    root=document.getElementById('inv-root');
+  } else {
+    root=document.getElementById('inv-root-user');
+  }
   if(!root) return;
   root.innerHTML=
     '<div id="inv-nav" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap"></div>'+
