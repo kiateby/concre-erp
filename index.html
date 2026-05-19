@@ -1605,14 +1605,17 @@ function showAdminSec(id,btn){
 }
 
 function populateAdminSelectors(){
-  const users=getUsers().filter(u=>u.rol==='user');
+  const users=getUsers().filter(u=>u.rol==='user'||u.rol==='admin'||u.rol==='superadmin');
   ['adminHorasUserSel','comisUserSel'].forEach(id=>{
     const sel=document.getElementById(id);
     if(!sel)return;
-    sel.innerHTML=users.map(u=>`<option value="${u.id}">${u.nombre}</option>`).join('');
+    const prev=sel.value;
+    sel.innerHTML=users.map(u=>`<option value="${u.id}">${u.nombre}${u.rol!=='user'?' ('+u.rol+')':''}</option>`).join('');
+    // Restaurar selección previa si sigue siendo válida
+    if(prev&&users.find(u=>u.id===prev)) sel.value=prev;
   });
   if(users.length){
-    loadAdminUserHoras(users[0].id);
+    loadAdminUserHoras(document.getElementById('adminHorasUserSel')?.value||users[0].id);
     buildComisGrid();
   }
 }
@@ -2023,7 +2026,11 @@ function buildComisGrid(){
   const users=getUsers();
   const u=users.find(x=>x.id===uid);
   if(!u)return;
-  const isAnual=document.getElementById('comisToggle').checked;
+  // Auto-sync toggle from user's saved comisType (set in pestaña Usuarios)
+  const toggle=document.getElementById('comisToggle');
+  const savedIsAnual=(u.comisType||'mensual')==='anual';
+  if(toggle&&toggle.checked!==savedIsAnual) toggle.checked=savedIsAnual;
+  const isAnual=savedIsAnual;
   document.getElementById('comisToggleLabel').textContent=isAnual?'Acumulativa (diciembre)':'Mensual';
   // Sync user config
   const tipo=isAnual?'anual':'mensual';
