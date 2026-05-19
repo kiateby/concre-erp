@@ -1911,8 +1911,10 @@ function saveAdminUserHoras(uid){
   ded.extra_desc=document.getElementById('ah-exdesc').value;
   ded['comis_'+rk]=parseMon(document.getElementById('ah-comis').value)||0;
   localStorage.setItem(`cc_d_${uid}`,JSON.stringify(ded));
+  console.log('[saveAdminUserHoras] uid='+uid+' ccss='+ded.ccss_monto+' rb='+ded.rb_monto+' key=cc_d_'+uid);
   buildAdminOverview();
-  renderPagosUsuarios(); // Actualizar tabla de pagos con nuevas deducciones
+  // Pequeño delay para asegurar que localStorage se escribió antes de leer
+  setTimeout(function(){ renderPagosUsuarios(); }, 50);
   toast('✓ Cambios guardados para '+users[ui].nombre);
 }
 
@@ -3927,27 +3929,37 @@ async function loadFondosFromDB(uid){
   return fd;
 }
 
-function getLimites(){
-  var lim=window._fondosLimCache||{};
-  return {
-    comida: lim.comida||5000,
-    hosp:   lim.hosp||25000
-  };
+function getLimites(uid){
+  // Si se pasa uid específico, retornar sus límites; si no, retornar globales
+  var cache=window._fondosLimCache||{};
+  if(uid&&uid!=='all'){
+    var perUser=cache.users&&cache.users[uid];
+    if(perUser) return {comida:perUser.comida||5000,hosp:perUser.hosp||25000};
+  }
+  return {comida:cache.comida||5000,hosp:cache.hosp||25000};
 }
 function saveFondosLimites(){
   const c=parseMon(document.getElementById('lim-comida').value)||5000;
   const h=parseMon(document.getElementById('lim-hosp').value)||25000;
-  const limObj={comida:c,hosp:h};
-  // Actualizar cache en memoria inmediatamente
-  window._fondosLimCache=limObj;
-  // Persistir en Supabase (fuente de verdad)
+  const uid=document.getElementById('af-user-sel')?.value||'all';
+  // Actualizar cache en memoria
+  if(!window._fondosLimCache) window._fondosLimCache={comida:5000,hosp:25000};
+  if(uid&&uid!=='all'){
+    // Guardar límite específico del usuario
+    if(!window._fondosLimCache.users) window._fondosLimCache.users={};
+    window._fondosLimCache.users[uid]={comida:c,hosp:h};
+  } else {
+    // Guardar límite global (aplica a todos los que no tienen límite específico)
+    window._fondosLimCache.comida=c;
+    window._fondosLimCache.hosp=h;
+  }
+  const limObj=window._fondosLimCache;
   DB.from('configuracion').upsert({clave:'fondos_lim',valor:limObj,updated_at:new Date().toISOString()},{onConflict:'clave'})
     .then(function(r){ if(r.error) console.error('saveFondosLimites Supabase:',r.error); });
-  // Backup en localStorage
   localStorage.setItem('cc_fondos_lim',JSON.stringify(limObj));
   const s=document.getElementById('lim-save-status');
   if(s){s.textContent='✓ Guardado';setTimeout(()=>s.textContent='',2000);}
-  toast('✓ Límites guardados');
+  toast('✓ Límites guardados'+(uid!=='all'?' para '+( getUsers().find(u=>u.id===uid)?.nombre||uid):'(global)'));
   renderFondosUser();
 }
 
@@ -3968,7 +3980,7 @@ function saveMonthData(uid,y,m,data){
 
 // ── ALERT CHECK ──
 function isAlertGasto(g){
-  const lim=getLimites();
+  const lim=getLimites(SESSION&&SESSION.id||'all');
   // g.monto is already a number - use directly
   const monto=typeof g.monto==='number'?g.monto:parseMon(String(g.monto));
   if(g.cat==='alim'){
@@ -4028,7 +4040,7 @@ function checkGastoAlert(){
   const personas=parseInt(document.getElementById('g-personas').value)||1;
   const comidas=parseInt(document.getElementById('g-comidas')?.value)||1;
   const noches=parseInt(document.getElementById('g-noches')?.value)||1;
-  const lim=getLimites();
+  const lim=getLimites(SESSION&&SESSION.id||'all');
   const notaWrap=document.getElementById('g-nota-wrap');
   const ppPrev=document.getElementById('g-pp-preview');
   const montoInp=document.getElementById('g-monto');
@@ -4151,7 +4163,7 @@ function renderFondosUser(){
   if(!SESSION||SESSION.rol!=='user') return;
   const uid=SESSION.id;
   const md=getMonthData(uid,FD_YEAR,FD_MONTH);
-  const lim=getLimites();
+  const lim=getLimites(SESSION&&SESSION.id||'all');
 
   // Update period title
   const pt=document.getElementById('fd-period-title');
@@ -4271,12 +4283,13 @@ function initAdminFondos(){
   if(msel&&msel.options.length===0){
     MES.forEach((m,i)=>{const o=document.createElement('option');o.value=i;o.textContent=m;if(i===new Date().getMonth())o.selected=true;msel.appendChild(o);});
   }
-  // Load limits — Supabase cache first, localStorage fallback
+  // Load limits for selected user (or global if 'all')
   if(!window._fondosLimCache||!window._fondosLimCache.comida){
     var local=localStorage.getItem('cc_fondos_lim');
     if(local) try{ window._fondosLimCache=JSON.parse(local); }catch(e){}
   }
-  const lim=getLimites();
+  const selUid=document.getElementById('af-user-sel')?.value||'all';
+  const lim=getLimites(selUid);
   const lc=document.getElementById('lim-comida'), lh=document.getElementById('lim-hosp');
   if(lc) lc.value=lim.comida.toLocaleString('es-CR');
   if(lh) lh.value=lim.hosp.toLocaleString('es-CR');
@@ -4320,6 +4333,24 @@ function renderAdminFondos(){
   const mselWrap=document.getElementById('af-month-sel');
   const type=document.getElementById('af-period-type')?.value||'month';
   if(mselWrap) mselWrap.style.display=type==='month'?'block':'none';
+
+  // Actualizar inputs de límites según usuario seleccionado
+  const selUid=document.getElementById('af-user-sel')?.value||'all';
+  const limActual=getLimites(selUid);
+  const lcInp=document.getElementById('lim-comida');
+  const lhInp=document.getElementById('lim-hosp');
+  if(lcInp) lcInp.value=limActual.comida.toLocaleString('es-CR');
+  if(lhInp) lhInp.value=limActual.hosp.toLocaleString('es-CR');
+  // Update label to show context
+  const limLabel=document.querySelector('span[style*="amber"]');
+  if(limLabel){
+    if(selUid!=='all'){
+      const uName=getUsers().find(u=>u.id===selUid)?.nombre||selUid;
+      limLabel.textContent='⚙ Límites de alerta — '+uName;
+    } else {
+      limLabel.textContent='⚙ Límites de alerta (globales)';
+    }
+  }
 
   const {allGastos,allDepositos}=getAdminFondosPeriodData();
   const totalGast=allGastos.reduce((s,g)=>s+g.monto,0);
@@ -4511,7 +4542,7 @@ function renderAdminDepTable(depositos){
 function exportFondosUser(){
   const uid=SESSION?SESSION.id:'';
   const md=getMonthData(uid,FD_YEAR,FD_MONTH);
-  const lim=getLimites();
+  const lim=getLimites(SESSION&&SESSION.id||'all');
   const deps=md.depositos||[];
   const gastos=md.gastos||[];
   const totalDep=deps.reduce((s,d)=>s+d.monto,0);
@@ -9160,6 +9191,7 @@ function renderPagosUsuarios(){
     // Get comision for this month (synced to next month q2)
     var payM=m-1; var payY=y; if(payM<0){payM=11;payY--;}
     var ded=JSON.parse(localStorage.getItem('cc_d_'+u.id)||'{}');
+    console.log('[renderPagos] uid='+u.id+' ccss='+ded.ccss_monto+' rb='+ded.rb_monto+' key=cc_d_'+u.id);
     var comisKey='comis_'+y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
     var comisVal=ded[comisKey]||0;
     // Deductions
@@ -11494,8 +11526,9 @@ function invCanAccess(){
   var p=window._invPermisos[SESSION.id];
   if(p==='completo'||p==='restringido') return true;
   // También permitir si el superadmin habilitó la pestaña de inventario en tabPerms
+  // tabPerms: key ausente o no-false = permitido; key=false = denegado
   var perms=SESSION.tabPerms||{};
-  return perms.inventario===true;
+  return perms.inventario!==false;
 }
 function invIsAdminSA(){
   return SESSION&&(SESSION.rol==='admin'||SESSION.rol==='superadmin');
@@ -12799,7 +12832,12 @@ function applySearchableSelects(){
   var SKIP=['av-period-type','av-month-sel','av-year-sel','yrSel','fEstado','vf-tipo-pago',
     'avf-tipo-pago','comisUserSel','liq-sub-sel','liq-period-sel','av-cat-filter','rep-item',
     'rep-user','ilm-estado','fRol','fComisType','crm-tipo-cedula','crm-tipo-cliente',
-    'imm-cat','imm-vendedor','av-user-sel','av-res-user','vf-prod','vf-subprod','avf-prod','avf-subprod'];
+    'imm-cat','imm-vendedor','av-user-sel','av-res-user','vf-prod','vf-subprod','avf-prod','avf-subprod',
+    'adminHorasUserSel','af-user-sel','af-month-sel','af-year-sel',
+    'pago-period-sel','pago-month-sel',
+    'av-trend-user','av-trend-year','av-prod-sel-chart','av-prod-year',
+    'crm-tipo-filter','crm-detail-period',
+    'lv-sub-sel','lv-period-sel'];
   document.querySelectorAll('select').forEach(function(sel){
     if(sel.id&&!sel.dataset.srch&&SKIP.indexOf(sel.id)<0) makeSearchable(sel);
   });
