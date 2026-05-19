@@ -3928,12 +3928,23 @@ async function loadFondosFromDB(uid){
 }
 
 function getLimites(){
-  return (window._fondosLimCache||{});
+  var lim=window._fondosLimCache||{};
+  return {
+    comida: lim.comida||5000,
+    hosp:   lim.hosp||25000
+  };
 }
 function saveFondosLimites(){
   const c=parseMon(document.getElementById('lim-comida').value)||5000;
   const h=parseMon(document.getElementById('lim-hosp').value)||25000;
-  localStorage.setItem('cc_fondos_lim',JSON.stringify({comida:c,hosp:h}));
+  const limObj={comida:c,hosp:h};
+  // Actualizar cache en memoria inmediatamente
+  window._fondosLimCache=limObj;
+  // Persistir en Supabase (fuente de verdad)
+  DB.from('configuracion').upsert({clave:'fondos_lim',valor:limObj,updated_at:new Date().toISOString()},{onConflict:'clave'})
+    .then(function(r){ if(r.error) console.error('saveFondosLimites Supabase:',r.error); });
+  // Backup en localStorage
+  localStorage.setItem('cc_fondos_lim',JSON.stringify(limObj));
   const s=document.getElementById('lim-save-status');
   if(s){s.textContent='✓ Guardado';setTimeout(()=>s.textContent='',2000);}
   toast('✓ Límites guardados');
@@ -4246,11 +4257,13 @@ function setFondosMes(m){
 
 // ── ADMIN FONDOS ──
 function initAdminFondos(){
-  // Populate user selector
+  // Populate user selector — todos los usuarios activos
   const sel=document.getElementById('af-user-sel');
   if(sel&&sel.options.length===1){
-    getUsers().filter(u=>u.rol==='user').forEach(u=>{
-      const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; sel.appendChild(o);
+    getUsers().filter(u=>u.estado==='activo').forEach(u=>{
+      const o=document.createElement('option'); o.value=u.id;
+      o.textContent=u.nombre+(u.rol!=='user'?' ('+u.rol+')':'');
+      sel.appendChild(o);
     });
   }
   // Month selector
@@ -4258,7 +4271,11 @@ function initAdminFondos(){
   if(msel&&msel.options.length===0){
     MES.forEach((m,i)=>{const o=document.createElement('option');o.value=i;o.textContent=m;if(i===new Date().getMonth())o.selected=true;msel.appendChild(o);});
   }
-  // Load limits
+  // Load limits — Supabase cache first, localStorage fallback
+  if(!window._fondosLimCache||!window._fondosLimCache.comida){
+    var local=localStorage.getItem('cc_fondos_lim');
+    if(local) try{ window._fondosLimCache=JSON.parse(local); }catch(e){}
+  }
   const lim=getLimites();
   const lc=document.getElementById('lim-comida'), lh=document.getElementById('lim-hosp');
   if(lc) lc.value=lim.comida.toLocaleString('es-CR');
@@ -9181,6 +9198,9 @@ function renderPagosUsuarios(){
       toast(chk.checked?'✓ Pago marcado para '+chk.dataset.uid:'Pago desmarcado');
     };
   });
+  // Re-aplicar filtro de búsqueda si hay texto activo
+  var searchInp=document.getElementById('pago-search');
+  if(searchInp&&searchInp.value) filterPagosTable(searchInp.value);
 }
 
 
@@ -11470,8 +11490,12 @@ function invCanEdit(){
 function invCanAccess(){
   if(!SESSION) return false;
   if(SESSION.rol==='superadmin'||SESSION.rol==='admin') return true;
+  // Verificar permiso específico de inventario en inv_permisos
   var p=window._invPermisos[SESSION.id];
-  return p==='completo'||p==='restringido';
+  if(p==='completo'||p==='restringido') return true;
+  // También permitir si el superadmin habilitó la pestaña de inventario en tabPerms
+  var perms=SESSION.tabPerms||{};
+  return perms.inventario===true;
 }
 function invIsAdminSA(){
   return SESSION&&(SESSION.rol==='admin'||SESSION.rol==='superadmin');
