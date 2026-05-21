@@ -13168,6 +13168,29 @@ async function fp54PreloadProjs(){
   await _fp54LoadCache();
 }
 
+// ── REFERENCIA CONSECUTIVA GLOBAL ────────────────────────────────────────────
+// Formato: INICIALES-FP-YYYY-NNNN (ej: SPQ-FP-2026-0001)
+// Nunca se repite entre usuarios/roles/años
+
+function fp54GetInitials(){
+  if(!SESSION||!SESSION.nombre) return 'XX';
+  return SESSION.nombre.trim().split(/\s+/).map(function(w){return w[0]||'';}).join('').toUpperCase().slice(0,4);
+}
+
+async function fp54NextRef(){
+  var yr=new Date().getFullYear();
+  var clave='fp54_ref_counter_'+yr;
+  var next=1;
+  try{
+    var r=await DB.from('configuracion').select('valor').eq('clave',clave).single();
+    if(r.data&&r.data.valor) next=parseInt(r.data.valor)+1;
+  }catch(e){ next=1; }
+  // Guardar nuevo contador
+  await DB.from('configuracion').upsert({clave:clave,valor:String(next),updated_at:new Date().toISOString()},{onConflict:'clave'});
+  var pad=String(next).padStart(4,'0');
+  return fp54GetInitials()+'-FP-'+yr+'-'+pad;
+}
+
 // ── FORMATO ───────────────────────────────────────────────────────────────────
 const fp_fmt=(v,d=2)=>typeof v==='number'?v.toFixed(d):String(v||'—');
 const fp_fmtPct=(v)=>(v*100).toFixed(2)+'%';
@@ -13301,13 +13324,13 @@ function _uid(p){return p+'_'+Math.random().toString(36).slice(2,6);}
 function makeState(){
   return{
     tab:'cp',cp_rtab:0,ep_rtab:0,
-    cp:{nombre:'Bodega',referencia:'CP-001',cliente:'Cliente S.A.',elaborado_por:'CONCRE',fecha:'2026',
+    cp:{nombre:'Bodega',referencia:'',cliente:'Cliente S.A.',elaborado_por:'CONCRE',fecha:'2026',
         dosis:2.5,h_cm:15,k:0.098,v:0.20,borde_pct:15,esq_pct:15,Lx_cm:350,Ly_cm:350,
         fck:25,yc:1.5,gF_rack:1.2,gF_din:1.6,gF_udl:1.0,gF_ll:1.0,
         g1_activa:true,g1_P:45,g1_x:100,g1_y:100,g1_interior:true,g1_borde:true,g1_esquina:true,
         g2_activa:true,g2_Q:15,g2_d:500,g3_activa:true,g3_q:0.010,
         g4_activa:true,g4_W:20,g4_Ac:3140,g4_A:965,g4_interior:true,g4_dual:true,g4_borde:true},
-    ep:{nombre:'Proyecto Entrepiso',referencia:'EP-001',cliente:'Cliente S.A.',elaborado_por:'CONCRE',fecha:'2026',
+    ep:{nombre:'Proyecto Entrepiso',referencia:'',cliente:'Cliente S.A.',elaborado_por:'CONCRE',fecha:'2026',
         dosis:2.5,h_cm:12.5,L:1.8,fck:25,yc:1.5,ys:1.15,CP:305,CT:500,gFp:1.35,gFv:1.5,
         combina_malla:false,Fy:480,As:212.18,d_malla:95},
   };
@@ -13718,7 +13741,7 @@ function epDataTable(r,inp){
 async function exportPDF(mod, S, r) {
   const inp = S[mod];
   const isCp = mod === 'cp';
-  const refText = inp.referencia || (isCp ? 'CP-001' : 'EP-001');
+  const refText = inp.referencia || '—';
   const titulo = isCp ? 'INFORME DE DISEÑO — CONTRAPISO INDUSTRIAL' : 'INFORME DE DISEÑO — ENTREPISO METALDECK';
   const norma  = isCp
     ? 'Fibra Plus 54 mm · TR-34 4ª Ed. 2013 · EC2 EN 1992-1-1 · ACI 360R-10 · ANSI-DSI C1.0'
@@ -14754,8 +14777,12 @@ function initFibraPlus54(){
     // Proyecto
     const nomI=_el('input',{type:'text',class:'fp-inp',value:S.cp.nombre,placeholder:'Nombre del proyecto'});
     nomI.addEventListener('change',()=>S.cp.nombre=nomI.value);
-    const refI=_el('input',{type:'text',class:'fp-inp',value:S.cp.referencia,placeholder:'CP-001'});
-    refI.addEventListener('change',()=>S.cp.referencia=refI.value);
+    const refI=_el('input',{type:'text',class:'fp-inp',value:S.cp.referencia||'Generando...',placeholder:'Auto',readonly:'readonly'});
+    refI.style.cssText='background:#F4F5F7;color:#636E72;cursor:not-allowed;';
+    // Auto-generar referencia si no tiene una asignada
+    if(!S.cp.referencia||S.cp.referencia==='CP-001'||S.cp.referencia==='EP-001'){
+      fp54NextRef().then(function(ref){ S.cp.referencia=ref; refI.value=ref; });
+    }
     const cliI=_el('input',{type:'text',class:'fp-inp',value:S.cp.cliente,placeholder:'Cliente S.A.'});
     cliI.addEventListener('change',()=>S.cp.cliente=cliI.value);
     const elaI=_el('input',{type:'text',class:'fp-inp',value:S.cp.elaborado_por});
@@ -14850,7 +14877,11 @@ function initFibraPlus54(){
   function buildSbEp(){
     const sb=_div('fp-sb');
     const nomI=_el('input',{type:'text',class:'fp-inp',value:S.ep.nombre});nomI.addEventListener('change',()=>S.ep.nombre=nomI.value);
-    const refI=_el('input',{type:'text',class:'fp-inp',value:S.ep.referencia});refI.addEventListener('change',()=>S.ep.referencia=refI.value);
+    const refI=_el('input',{type:'text',class:'fp-inp',value:S.ep.referencia||'Generando...',placeholder:'Auto',readonly:'readonly'});
+    refI.style.cssText='background:#F4F5F7;color:#636E72;cursor:not-allowed;';
+    if(!S.ep.referencia||S.ep.referencia==='EP-001'||S.ep.referencia==='CP-001'){
+      fp54NextRef().then(function(ref){ S.ep.referencia=ref; refI.value=ref; });
+    }
     const cliI=_el('input',{type:'text',class:'fp-inp',value:S.ep.cliente});cliI.addEventListener('change',()=>S.ep.cliente=cliI.value);
     const elaI=_el('input',{type:'text',class:'fp-inp',value:S.ep.elaborado_por});elaI.addEventListener('change',()=>S.ep.elaborado_por=elaI.value);
     const fecI=_el('input',{type:'text',class:'fp-inp',value:S.ep.fecha});fecI.addEventListener('change',()=>S.ep.fecha=fecI.value);
@@ -15104,6 +15135,9 @@ function initFibraPlus54(){
 }
 
 window.initFibraPlus54=initFibraPlus54;
+window.initFibraPlus54User=initFibraPlus54User;
+window.fp54PreloadProjs=fp54PreloadProjs;
+window.fp54NextRef=fp54NextRef;
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
