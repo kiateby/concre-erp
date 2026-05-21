@@ -1423,7 +1423,7 @@ function buildAdminTabs(){
     {id:'crm',           label:'👥 CRM Clientes',      extra:'try{initCRM();}catch(e){}'},
     {id:'papelera',      label:'🗑 Papelera',           extra:'try{renderTrashPanel();checkTrashReminder();}catch(e){}'},
     {id:'inventario',    label:'📦 Inventario',          extra:'try{initInventario();}catch(e){}'},
-    {id:'fibraplus',    label:'🧮 FibraPlus54',          extra:'try{initFibraPlus54();}catch(e){}', saOnly:true},
+    {id:'fibraplus',     label:'🧮 FibraPlus54',          extra:'try{initFibraPlus54();}catch(e){}', saOnly:true},
     {id:'calculos',     label:'🏗 Cálculos',              extra:'try{initCalcCONCRE();}catch(e){}',  saOnly:true},
   ];
   // Filter tabs based on admin permissions (superadmin sees all)
@@ -1456,6 +1456,7 @@ function buildUserTabs(){
     {id:'horas',      label:'⏱ Horas y Planilla'},
     {id:'vacaciones', label:'🌴 Vacaciones'},
     {id:'inventario', label:'📦 Inventario'},
+    {id:'fibraplus',  label:'🧮 FibraPlus54'},
   ];
   var visible=allTabs.filter(function(t){ return perms[t.id]!==false; });
   tabs.innerHTML=visible.map(function(t,i){
@@ -1482,12 +1483,14 @@ function switchUserTab(tab, btn){
     var gm=document.getElementById('gastosModule');
     var vtm=document.getElementById('ventasModule');
     var ivm=document.getElementById('invUserModule');
+    var fpm=document.getElementById('fibraUserModule');
     if(um) um.style.display='none';
     if(vm) vm.style.display='none';
     if(fm) fm.style.display='none';
     if(gm) gm.style.display='none';
     if(vtm) vtm.style.display='none';
     if(ivm) ivm.style.display='none';
+    if(fpm) fpm.style.display='none';
     if(tab==='horas'){
       if(um) um.style.cssText='display:flex;flex:1';
     } else if(tab==='vacaciones'){
@@ -1506,6 +1509,9 @@ function switchUserTab(tab, btn){
     } else if(tab==='inventario'){
       if(ivm){ ivm.style.cssText='display:flex;flex:1'; }
       try{ initInventario(); }catch(e2){ console.error('initInventario error:',e2); }
+    } else if(tab==='fibraplus'){
+      if(fpm){ fpm.style.cssText='display:flex;flex:1'; }
+      try{ initFibraPlus54User(); }catch(e2){ console.error('initFibraPlus54User error:',e2); }
     }
   }catch(e){ console.error('switchUserTab error:',e); toast('Error al cambiar pestaña: '+e.message); }
 }
@@ -10457,6 +10463,7 @@ var USER_TAB_DEFS = [
   {id:'horas',       label:'Horas y Planilla'},
   {id:'vacaciones',  label:'Vacaciones'},
   {id:'inventario',  label:'Inventario'},
+  {id:'fibraplus',   label:'FibraPlus54'},
 ];
 var ADMIN_TAB_DEFS = [
   {id:'overview',       label:'Resumen'},
@@ -13116,11 +13123,50 @@ const FCK_OPTS=[
   {v:50.66,l:"C50/57*  (f'c=517 kg/cm²  |  MR=45.0 kg/cm²)"},
 ];
 
-// ── PROYECTOS localStorage ────────────────────────────────────────────────────
+// ── PROYECTOS — Supabase (compartido por todos) + localStorage fallback ─────
 const _LS='concre_fp54_v3';
-const _saveProj=(name,mod,p)=>{const a=JSON.parse(localStorage.getItem(_LS)||'[]');a.unshift({name,modulo:mod,saved:new Date().toISOString(),params:p});localStorage.setItem(_LS,JSON.stringify(a.slice(0,50)));};
-const _listProjs=()=>JSON.parse(localStorage.getItem(_LS)||'[]');
-const _delProj=i=>{const a=_listProjs();a.splice(i,1);localStorage.setItem(_LS,JSON.stringify(a));};
+
+// Cache en memoria para evitar múltiples lecturas
+window._fp54ProjCache=window._fp54ProjCache||null;
+
+async function _fp54LoadCache(){
+  if(window._fp54ProjCache!==null) return window._fp54ProjCache;
+  // Intentar cargar de Supabase
+  try{
+    var r=await DB.from('configuracion').select('valor').eq('clave','fp54_proyectos').single();
+    if(r.data&&Array.isArray(r.data.valor)){
+      window._fp54ProjCache=r.data.valor; return window._fp54ProjCache;
+    }
+  }catch(e){}
+  // Fallback a localStorage
+  var local=JSON.parse(localStorage.getItem(_LS)||'[]');
+  window._fp54ProjCache=local; return local;
+}
+
+async function _fp54SaveCache(arr){
+  window._fp54ProjCache=arr;
+  localStorage.setItem(_LS,JSON.stringify(arr));
+  await DB.from('configuracion').upsert({clave:'fp54_proyectos',valor:arr,updated_at:new Date().toISOString()},{onConflict:'clave'});
+}
+
+// Sync wrappers (usados en renderPjs — inician async internamente)
+const _saveProj=(name,mod,p)=>{
+  _fp54LoadCache().then(function(a){
+    a=a||[];
+    a.unshift({name,modulo:mod,saved:new Date().toISOString(),params:p,uid:SESSION&&SESSION.id||'admin'});
+    _fp54SaveCache(a.slice(0,100));
+  });
+};
+const _listProjs=()=>window._fp54ProjCache||JSON.parse(localStorage.getItem(_LS)||'[]');
+const _delProj=i=>{
+  var a=_listProjs(); a.splice(i,1);
+  _fp54SaveCache(a);
+};
+
+// Preload projects when FibraPlus54 initializes
+async function fp54PreloadProjs(){
+  await _fp54LoadCache();
+}
 
 // ── FORMATO ───────────────────────────────────────────────────────────────────
 const fp_fmt=(v,d=2)=>typeof v==='number'?v.toFixed(d):String(v||'—');
@@ -14625,9 +14671,35 @@ function plotCuantiaANSI(r,inp,divId){
 }
 
 // ── FUNCIÓN PRINCIPAL ─────────────────────────────────────────────────────────
+// Wrapper para usuarios — redirige FibraPlus54 al contenedor de usuario
+async function initFibraPlus54User(){
+  // Precargar proyectos de Supabase antes de renderizar
+  await fp54PreloadProjs();
+  // Temporalmente redirigir el root para que initFibraPlus54 use el contenedor de usuario
+  var adminRoot=document.getElementById('sec-fibraplus');
+  var userRoot=document.getElementById('sec-fibraplus-user');
+  if(!userRoot) return;
+  // Swapear ids temporalmente
+  if(adminRoot) adminRoot.id='sec-fibraplus-admin-bak';
+  userRoot.id='sec-fibraplus';
+  try{
+    initFibraPlus54();
+  } finally {
+    // Restaurar ids
+    userRoot.id='sec-fibraplus-user';
+    if(adminRoot) adminRoot.id='sec-fibraplus';
+  }
+}
+
 function initFibraPlus54(){
   const root=document.getElementById('sec-fibraplus');
   if(!root){console.error('No #sec-fibraplus');return;}
+  // Precargar proyectos de Supabase si no están en cache
+  if(window._fp54ProjCache===null) fp54PreloadProjs().then(()=>{
+    // Re-renderizar panels de proyectos si ya se cargó la UI
+    var pjLists=root.querySelectorAll('.pj-list-cp, .pj-list-ep');
+    // No hay referencia directa — la recarga se hará la próxima vez que abra el panel
+  });
   if(!document.getElementById('fp54-css')){
     const s=document.createElement('style');s.id='fp54-css';s.textContent=FP_CSS;document.head.appendChild(s);
   }
@@ -17947,6 +18019,10 @@ window.initCalcCONCRE=initCalcCONCRE;
   </div><!-- /ventasModule -->
 
 <!-- GASTOS DE PROYECTO MODULE -->
+<div id="fibraUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px)">
+  <div id="sec-fibraplus-user" style="padding:14px 18px;max-width:1400px;margin:0 auto;width:100%"></div>
+</div>
+
 <div id="invUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px)">
   <div style="padding:14px 18px;max-width:1280px;margin:0 auto">
     <div id="inv-root-user"></div>
