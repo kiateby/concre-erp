@@ -14964,19 +14964,20 @@ function initFibraPlus54(){
       pjSave.disabled=true; pjSave.textContent='💾 Guardando...';
       _saveProj(pjNom.value.trim()||S.cp.nombre||'Sin nombre','CP',{...S.cp},function(){
         pjSave.disabled=false; pjSave.textContent='💾 Guardar proyecto';
-        renderPjs(pjList,'CP');
+        refreshPjsList('CP');
       });
     });
     const pjNew=_el('button',{class:'fp-btn fp-btn-g'},['🆕 Nuevo proyecto']);
     pjNew.addEventListener('click',()=>{
       Object.assign(S.cp,{nombre:'Bodega',referencia:'',g1_P:0,g2_Q:0,g3_q:0,g4_W:0});
-      root.innerHTML='';
-      // Detectar si estamos en contexto de usuario o admin
-      if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
-        fp54NextRef().then(function(ref){ S.cp.referencia=ref; initFibraPlus54User(); });
-      } else {
-        initFibraPlus54();
-      }
+      root.innerHTML='<div style="padding:40px;text-align:center;color:#888">⏳ Cargando...</div>';
+      fp54PreloadProjs().then(function(){
+        if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
+          fp54NextRef().then(function(ref){ S.cp.referencia=ref; root.innerHTML=''; initFibraPlus54User(); });
+        } else {
+          root.innerHTML=''; initFibraPlus54();
+        }
+      });
     });
     const pjList=_div('');renderPjs(pjList,'CP');
     pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjNew,pjList);sb.appendChild(pjSec);
@@ -15040,18 +15041,20 @@ function initFibraPlus54(){
       pjSave.disabled=true; pjSave.textContent='💾 Guardando...';
       _saveProj(pjNom.value.trim()||S.ep.nombre||'Sin nombre','EP',{...S.ep},function(){
         pjSave.disabled=false; pjSave.textContent='💾 Guardar';
-        renderPjs(pjList,'EP');
+        refreshPjsList('EP');
       });
     });
     const pjNew=_el('button',{class:'fp-btn fp-btn-g'},['🆕 Nuevo']);
     pjNew.addEventListener('click',()=>{
       Object.assign(S.ep,{nombre:'Proyecto Entrepiso',referencia:'',CP:0,CT:0});
-      root.innerHTML='';
-      if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
-        fp54NextRef().then(function(ref){ S.ep.referencia=ref; initFibraPlus54User(); });
-      } else {
-        initFibraPlus54();
-      }
+      root.innerHTML='<div style="padding:40px;text-align:center;color:#888">⏳ Cargando...</div>';
+      fp54PreloadProjs().then(function(){
+        if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
+          fp54NextRef().then(function(ref){ S.ep.referencia=ref; root.innerHTML=''; initFibraPlus54User(); });
+        } else {
+          root.innerHTML=''; initFibraPlus54();
+        }
+      });
     });
     const pjList=_div('');renderPjs(pjList,'EP');
     pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjNew,pjList);sb.appendChild(pjSec);
@@ -15061,15 +15064,41 @@ function initFibraPlus54(){
   // ── PROYECTOS ───────────────────────────────────────────────────────────────
   function renderPjs(container,mod){
     container.innerHTML='';
+    container.dataset.fpmod=mod; // Marcar para re-encontrar el container
     const all=_listProjs().filter(p=>p.modulo===mod);
     if(!all.length){container.appendChild(_div('fp-empty',['Sin proyectos guardados.']));return;}
     all.slice(0,10).forEach((p,i)=>{
       const row=_div('pj-row');
       const info=_div('');info.append(_div('pj-name',[(mod==='CP'?'🏭 ':'🏢 ')+p.name]),_div('pj-meta',[p.saved.slice(0,16).replace('T',' ')]));
-      const lb=_el('button',{class:'pj-btn'},['Abrir']);lb.addEventListener('click',()=>{Object.assign(S[mod.toLowerCase()],p.params);root.innerHTML='';initFibraPlus54();});
-      const db=_el('button',{class:'pj-btn'},['✕']);db.addEventListener('click',()=>{_delProj(i);renderPjs(container,mod);});
+      const lb=_el('button',{class:'pj-btn'},['Abrir']);
+      lb.addEventListener('click',()=>{
+        Object.assign(S[mod.toLowerCase()],p.params);
+        root.innerHTML='<div style="padding:40px;text-align:center;color:#888">⏳ Cargando...</div>';
+        fp54PreloadProjs().then(function(){
+          root.innerHTML='';
+          if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
+            initFibraPlus54User();
+          } else {
+            initFibraPlus54();
+          }
+        });
+      });
+      const db=_el('button',{class:'pj-btn'},['✕']);
+      db.addEventListener('click',()=>{
+        _delProj(i);
+        renderPjs(container,mod);
+      });
       row.append(info,lb,db);container.appendChild(row);
     });
+  }
+
+  // Función para re-renderizar lista de proyectos buscando el container en el DOM activo
+  function refreshPjsList(mod){
+    // Buscar el container por data-fpmod en el root actual
+    var containers=root.querySelectorAll('[data-fpmod="'+mod+'"]');
+    if(containers.length>0){
+      renderPjs(containers[containers.length-1],mod);
+    }
   }
 
   // ── PANEL PRINCIPAL ─────────────────────────────────────────────────────────
