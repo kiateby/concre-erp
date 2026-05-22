@@ -1209,13 +1209,57 @@ const pad=n=>String(n).padStart(2,'0');
 const dkey=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const rkey=()=>`${getYr()}-${pad(CM+1)}-${CQ}`;
 const fmt=n=>'₡'+Math.round(n).toLocaleString('es-CR');
-const parseMon=s=>parseFloat((s||'').replace(/\D/g,''))||0;
+// parseMon: soporta enteros y decimales en formato es-CR o estándar
+const parseMon=s=>{
+  if(!s) return 0;
+  var str=String(s).trim().replace(/\s/g,'');
+  // Quitar símbolos de moneda y espacios
+  str=str.replace(/[₡$€£¥]/g,'');
+  if(str.includes(',')&&str.includes('.')){
+    // Ambos separadores: detectar cuál es decimal
+    // es-CR: punto=miles, coma=decimal  (1.234,50)
+    // En: coma=miles, punto=decimal     (1,234.50)
+    if(str.lastIndexOf(',')>str.lastIndexOf('.')){
+      str=str.replace(/\./g,'').replace(',','.');  // es-CR
+    } else {
+      str=str.replace(/,/g,'');  // EN
+    }
+  } else if(str.includes(',')){
+    str=str.replace(',','.');
+  } else if(str.includes('.')){
+    // Solo puntos: si hay múltiples puntos O exactamente 3 dígitos después del último → separadores de miles
+    var dotParts=str.split('.');
+    var lastPart=dotParts[dotParts.length-1];
+    if(dotParts.length>2||(dotParts.length===2&&lastPart.length===3)){
+      str=str.replace(/\./g,''); // todos son separadores de miles
+    }
+    // Si hay 1 o 2 dígitos después del único punto → decimal
+  }
+  str=str.replace(/[^\d.]/g,'');
+  var parts=str.split('.');
+  if(parts.length>2) str=parts[0]+'.'+parts.slice(1).join('');
+  return parseFloat(str)||0;
+};
+function fmtInp(i){
+  var raw=i.value;
+  // No reformatear mientras el usuario escribe decimales
+  if(/[,.]$/.test(raw)||/[,.]\d{1}$/.test(raw)) return;
+  var v=parseMon(raw);
+  if(v) i.value=v.toLocaleString('es-CR',{minimumFractionDigits:0,maximumFractionDigits:2});
+}
 const getYr=()=>parseInt((document.getElementById('yrSel')||{value:'2026'}).value)||2026;
 const getSal=()=>(SESSION&&SESSION.rol==='user'?SESSION.salario:0);
 const vheBase=()=>getSal()/(4.5*54);
 const vhe=()=>vheBase()*1.5;
-function fmtInp(i){const v=parseMon(i.value);if(v)i.value=v.toLocaleString('es-CR')}
-function fmtCFG(i){const v=parseMon(i.value);if(v)i.value=v.toLocaleString('es-CR')}
+function fmtCFG(i){
+  var raw=i.value;
+  if(/[,.]$/.test(raw)||/[,.]\d{1}$/.test(raw)) return;
+  var v=parseMon(raw);
+  if(v) i.value=v.toLocaleString('es-CR',{minimumFractionDigits:0,maximumFractionDigits:2});
+}
+// ── Ordenar alfabéticamente por propiedad de texto ──────────────────────
+const sortAlpha=(arr,key='nombre')=>arr.slice().sort((a,b)=>(a[key]||'').localeCompare(b[key]||'','es',{sensitivity:'base'}));
+
 
 function loadUserData(uid){
   REG=JSON.parse(localStorage.getItem(`cc_h_${uid}`)||'{}');
@@ -1264,7 +1308,6 @@ async function loadAllDataFromDB(){
             loadedCat.every(function(c){ return c.id && (c.id.startsWith('cat')||c.id.startsWith('cu')); });
           window._catalogoCache = isNew ? loadedCat : DEFAULT_CATALOGO;
           if(!isNew){
-            console.log('[Catálogo] Guardando catálogo nuevo en Supabase...');
             setCatalogo(DEFAULT_CATALOGO);
           }
         }
@@ -1622,7 +1665,7 @@ function populateAdminSelectors(){
     const sel=document.getElementById(id);
     if(!sel)return;
     const prev=sel.value;
-    sel.innerHTML=users.map(u=>`<option value="${u.id}">${u.nombre}${u.rol!=='user'?' ('+u.rol+')':''}</option>`).join('');
+    sel.innerHTML=sortAlpha(users,'nombre').map(u=>`<option value="${u.id}">${u.nombre}${u.rol!=='user'?' ('+u.rol+')':''}</option>`).join('');
     // Restaurar selección previa si sigue siendo válida
     if(prev&&users.find(u=>u.id===prev)) sel.value=prev;
   });
@@ -1636,7 +1679,7 @@ function populateAdminSelectors(){
 function buildAdminOverview(){
   // IC is now lazy-loaded on demand via toggleIC()
   // (collapsed by default in the overview)
-  const users=getUsers().filter(u=>u.rol==='user'&&u.estado==='activo');
+  const users=sortAlpha(getUsers().filter(u=>u.rol==='user'&&u.estado==='activo'),'nombre');
   const today=new Date();
   const mesesAg=Math.min(today.getMonth()+2,12); // +2: Dec prev year + months Jan-current
 
@@ -1917,7 +1960,6 @@ function saveAdminUserHoras(uid){
   ded.extra_desc=document.getElementById('ah-exdesc').value;
   ded['comis_'+rk]=parseMon(document.getElementById('ah-comis').value)||0;
   localStorage.setItem(`cc_d_${uid}`,JSON.stringify(ded));
-  console.log('[saveAdminUserHoras] uid='+uid+' ccss='+ded.ccss_monto+' rb='+ded.rb_monto+' key=cc_d_'+uid);
   buildAdminOverview();
   // Pequeño delay para asegurar que localStorage se escribió antes de leer
   setTimeout(function(){ renderPagosUsuarios(); }, 50);
@@ -2133,7 +2175,7 @@ function buildAgGlobal(){
 }
 
 function exportGlobalCSV(){
-  const users=getUsers().filter(u=>u.rol==='user'&&u.estado==='activo');
+  const users=sortAlpha(getUsers().filter(u=>u.rol==='user'&&u.estado==='activo'),'nombre');
   const today=new Date();
   const yr=today.getFullYear();
   const mes=MES[today.getMonth()];
@@ -4353,7 +4395,7 @@ function initAdminFondos(){
   // Populate user selector — todos los usuarios activos
   const sel=document.getElementById('af-user-sel');
   if(sel&&sel.options.length===1){
-    getUsers().filter(u=>u.estado==='activo').forEach(u=>{
+    sortAlpha(getUsers().filter(u=>u.estado==='activo'),'nombre').forEach(u=>{
       const o=document.createElement('option'); o.value=u.id;
       o.textContent=u.nombre+(u.rol!=='user'?' ('+u.rol+')':'');
       sel.appendChild(o);
@@ -4948,7 +4990,6 @@ function getCatalogo(){
     const isNew = cached.every(function(c){ return c.id && (c.id.startsWith('cat')||c.id.startsWith('cu')); });
     if(isNew) return cached;
     // Catálogo viejo detectado — migrar al nuevo y guardar en Supabase
-    console.log('[Catálogo] Viejo detectado, migrando...');
     window._catalogoCache = DEFAULT_CATALOGO;
     setCatalogo(DEFAULT_CATALOGO);
     return DEFAULT_CATALOGO;
@@ -5245,7 +5286,7 @@ function buildProdSelect(){
     filter.innerHTML='<option value="all">Todas</option>';
     const tiposVistos={};
     const typeLabels={concreto:'Concreto',fibra:'Fibra',sello:'Sello de juntas',pulido:'Pulido/Densificado',equipo:'Equipo',herramienta:'Herramienta',consumible:'Consumible',otros:'Otros'};
-    cat.forEach(function(c){
+    sortAlpha(cat,'nombre').forEach(function(c){
       if(!tiposVistos[c.tipo]){
         tiposVistos[c.tipo]=true;
         const o=document.createElement('option');
@@ -5858,8 +5899,6 @@ function renderResumenCategorias(allVentas, catMap){
   var filterTo=resToSel?resToSel.value:'';
 
   // Filter ventas
-  console.log('[ResumenCat] allVentas recibidas:',allVentas.length,'filterUser:',filterUser,'filterFrom:',filterFrom,'filterTo:',filterTo);
-  if(allVentas.length>0) console.log('[ResumenCat] Muestra de uid en ventas:',allVentas.slice(0,3).map(function(v){return v.uid;}));
   var ventas=allVentas.filter(function(v){
     if(filterUser!=='all'&&v.uid!==filterUser) return false;
     // Solo aplicar filtro de fecha si ambas están definidas
@@ -5873,7 +5912,6 @@ function renderResumenCategorias(allVentas, catMap){
     return true;
   });
 
-  console.log('[ResumenCat] Tras filtro:',ventas.length,'ventas. normalizeProdId test:',ventas.slice(0,2).map(function(v){return v.prodId+'→'+normalizeProdId(v.prodId);}));
   var cat=getCatalogo();
   // Filtrar solo categorías con datos o mostrar todas
   // Construir lookup: para cada venta, ¿a qué categoría pertenece?
@@ -5995,7 +6033,6 @@ function renderAdminVentas(){
   if(mselWrap) mselWrap.style.display=type==='month'?'block':'none';
 
   const {allVentas,users}=getAdminVentasPeriodData();
-  console.log('[renderAdminVentas] allVentas:',allVentas.length,'users:',users.map(u=>u.id));
   const cat=getCatalogo();
   const catMap=Object.fromEntries(cat.map(c=>[c.id,c]));
 
@@ -7239,9 +7276,6 @@ var LIQ_REBAJOS = [];  // temp rebajos for modal
 
 // ── STORAGE ──
 function getLiqSubs(){
-  return [];
-}
-function getLiqSubs(){
   return window._liqSubsCache||[];
 }
 function setLiqSubs(d){
@@ -8394,7 +8428,7 @@ function toggleAdminVentaForm(){
     var sel=document.getElementById('avf-prod');
     if(sel){
       sel.innerHTML='<option value="">— Categoría —</option>';
-      getCatalogo().forEach(function(c){
+      sortAlpha(getCatalogo(),'nombre').forEach(function(c){
         var o=document.createElement('option');
         o.value=c.id; o.textContent=c.nombre;
         sel.appendChild(o);
@@ -8600,9 +8634,6 @@ var DEFAULT_TIPOS_PROYECTO = [
 function getTiposProyecto(){
   return (window._tiposProyCache&&window._tiposProyCache.length?window._tiposProyCache:DEFAULT_TIPOS_PROYECTO);
 }
-function getTiposProyecto(){
-  return window._tiposProyCache||[];
-}
 function setTiposProyecto(d){
   window._tiposProyCache=d;
   DB.from('configuracion').upsert({clave:'tipos_proyecto',valor:d,updated_at:new Date().toISOString()},{onConflict:'clave'})
@@ -8677,7 +8708,7 @@ function populateGpSelectors(){
   var subSel=document.getElementById('gp-encargado');
   if(subSel){
     subSel.innerHTML='<option value="">— Seleccionar —</option>';
-    getLiqSubs().forEach(function(s){
+    sortAlpha(getLiqSubs(),'nombre').forEach(function(s){
       var o=document.createElement('option');o.value=s.id;o.textContent=s.nombre;subSel.appendChild(o);
     });
   }
@@ -8685,7 +8716,7 @@ function populateGpSelectors(){
   var tipoSel=document.getElementById('gp-tipo');
   if(tipoSel){
     tipoSel.innerHTML='<option value="">— Seleccionar —</option>';
-    getTiposProyecto().forEach(function(t){
+    sortAlpha(getTiposProyecto(),'nombre').forEach(function(t){
       var o=document.createElement('option');o.value=t.id;o.textContent=t.nombre;tipoSel.appendChild(o);
     });
   }
@@ -9102,7 +9133,7 @@ function initAdminGastos(){
   // Populate tipo filter
   var tf=document.getElementById('ag-tipo-filter');
   if(tf&&tf.options.length<=1){
-    getTiposProyecto().forEach(function(t){
+    sortAlpha(getTiposProyecto(),'nombre').forEach(function(t){
       var o=document.createElement('option');o.value=t.id;o.textContent=t.nombre;tf.appendChild(o);
     });
   }
@@ -9275,7 +9306,7 @@ function renderPagosUsuarios(){
   var periodKey=y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
   var qLabel='Q'+(q)+' '+MES[m]+' '+y;
 
-  var users=getUsers().filter(function(u){return u.estado==='activo';});
+  var users=sortAlpha(getUsers().filter(function(u){return u.estado==='activo';}),'nombre');
   var fibraCosto=getFibraCosto(m,y);
 
   tbody.innerHTML=users.map(function(u){
@@ -9284,7 +9315,6 @@ function renderPagosUsuarios(){
     // Get comision for this month (synced to next month q2)
     var payM=m-1; var payY=y; if(payM<0){payM=11;payY--;}
     var ded=JSON.parse(localStorage.getItem('cc_d_'+u.id)||'{}');
-    console.log('[renderPagos] uid='+u.id+' ccss='+ded.ccss_monto+' rb='+ded.rb_monto+' key=cc_d_'+u.id);
     var comisKey='comis_'+y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
     var comisRaw=ded[comisKey]||0;
     // Usuarios con comisión anual: NO incluir en planilla mensual (solo en diciembre Q2)
@@ -12191,7 +12221,7 @@ function openInvMovModal(itemId, tipo, loteId){
       +'<div id="imm-vendedor-wrap" style="display:none;margin-bottom:10px"><span class="liq-label">Usuario que realizó la venta *</span>'
       +'<select id="imm-vendedor" class="liq-inp">'
       +'<option value="">-- Seleccionar usuario --</option>'
-      +getUsers().map(function(u){return '<option value="'+u.id+'">'+u.nombre+' ('+u.rol+')</option>';}).join('')
+      +sortAlpha(getUsers(),'nombre').map(function(u){return '<option value="'+u.id+'">'+u.nombre+' ('+u.rol+')</option>';}).join('')
       +'</select></div>';
   } else if(tipo==='ingreso'){
     catHTML='<input type="hidden" id="imm-cat" value="compra">';
@@ -12381,7 +12411,7 @@ function renderInvReportes(){
 
   // Filter controls
   var html='<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">';
-  html+='<div><span class="liq-label">Ítem</span><select id="rep-item" class="liq-inp" style="min-width:160px"><option value="all">Todos</option>'+items.map(function(i){return '<option value="'+i.id+'">'+i.nombre+'</option>';}).join('')+'</select></div>';
+  html+='<div><span class="liq-label">Ítem</span><select id="rep-item" class="liq-inp" style="min-width:160px"><option value="all">Todos</option>'+sortAlpha(items,'nombre').map(function(i){return '<option value="'+i.id+'">'+i.nombre+'</option>';}).join('')+'</select></div>';
   html+='<div><span class="liq-label">Usuario</span><select id="rep-user" class="liq-inp" style="min-width:140px"><option value="all">Todos</option>'+getUsers().map(function(u){return '<option value="'+u.id+'">'+u.nombre+'</option>';}).join('')+'</select></div>';
   html+='<div><span class="liq-label">Desde</span><input type="date" id="rep-desde" class="liq-inp"></div>';
   html+='<div><span class="liq-label">Hasta</span><input type="date" id="rep-hasta" class="liq-inp"></div>';
