@@ -1261,14 +1261,60 @@ function fmtCFG(i){
 const sortAlpha=(arr,key='nombre')=>arr.slice().sort((a,b)=>(a[key]||'').localeCompare(b[key]||'','es',{sensitivity:'base'}));
 
 
-function loadUserData(uid){
-  REG=JSON.parse(localStorage.getItem(`cc_h_${uid}`)||'{}');
-  DED=JSON.parse(localStorage.getItem(`cc_d_${uid}`)||'{}');
+// ── Helper para cargar DED/REG de OTRO usuario desde Supabase (solo admin) ─
+async function _loadUserDEDForAdmin(uid){
+  try{
+    // Cargar DED
+    var rd=await DB.from('configuracion').select('valor').eq('clave','user_ded_'+uid).single();
+    if(rd.data&&rd.data.valor){
+      localStorage.setItem('cc_d_'+uid, JSON.stringify(rd.data.valor));
+    }
+    // Cargar REG
+    var rr=await DB.from('configuracion').select('valor').eq('clave','user_horas_'+uid).single();
+    if(rr.data&&rr.data.valor){
+      localStorage.setItem('cc_h_'+uid, JSON.stringify(rr.data.valor));
+    }
+  }catch(e){
+    // Si no existe en Supabase, el localStorage local es el fallback
+  }
+}
+
+// ── Helpers cross-device: REG/DED en Supabase ──────────────────────────
+async function _loadFromSupabase(clave, fallbackLocalKey){
+  try{
+    var r=await DB.from('configuracion').select('valor').eq('clave',clave).single();
+    if(r.data&&r.data.valor&&typeof r.data.valor==='object') return r.data.valor;
+  }catch(e){}
+  var local=localStorage.getItem(fallbackLocalKey);
+  return local?JSON.parse(local):{};
+}
+function _saveToSupabase(clave, valor, localKey){
+  localStorage.setItem(localKey, JSON.stringify(valor));
+  DB.from('configuracion').upsert(
+    {clave:clave, valor:valor, updated_at:new Date().toISOString()},
+    {onConflict:'clave'}
+  ).then(function(r){
+    if(r.error) console.error('_saveToSupabase '+clave+':', r.error);
+  });
+}
+async function loadUserData(uid){
+  REG=await _loadFromSupabase('user_horas_'+uid, 'cc_h_'+uid);
+  DED=await _loadFromSupabase('user_ded_'+uid, 'cc_d_'+uid);
 }
 function saveData(uid){
-  localStorage.setItem(`cc_h_${uid}`,JSON.stringify(REG));
-  localStorage.setItem(`cc_d_${uid}`,JSON.stringify(DED));
+  _saveToSupabase('user_horas_'+uid, REG, 'cc_h_'+uid);
+  _saveToSupabase('user_ded_'+uid, DED, 'cc_d_'+uid);
 }
+// getDED: usa memoria si es el usuario actual, localStorage si es otro usuario
+function getDED(uid){
+  if(SESSION&&uid===SESSION.id) return DED;
+  return JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
+}
+function getREG(uid){
+  if(SESSION&&uid===SESSION.id) return REG;
+  return JSON.parse(localStorage.getItem('cc_h_'+uid)||'{}');
+}
+
 
 // ══════════════════════════════════════════════
 //  AUTH
@@ -1335,7 +1381,7 @@ async function loadAllDataFromDB(){
     if(SESSION){
       var uid=SESSION.id;
       await loadVentasFromDB(uid);
-      loadUserData(uid);
+      await loadUserData(uid); // async now — loads REG/DED from Supabase
       await loadVacFromDB(uid);
       await loadFondosFromDB(uid);
       await loadGastosFromDB(uid);
@@ -1350,6 +1396,8 @@ async function loadAllDataFromDB(){
             await loadVacFromDB(u.id);
             await loadGastosFromDB(u.id);
             await loadFondosFromDB(u.id);
+            // Cargar horas y deducciones de este usuario desde Supabase
+            await _loadUserDEDForAdmin(u.id);
           }
         }
         // Load all liq data
@@ -1623,7 +1671,7 @@ function initApp(){
     if(document.getElementById('fondosModule')) document.getElementById('fondosModule').style.display='none';
     if(document.getElementById('ventasModule')) document.getElementById('ventasModule').style.display='none';
     document.getElementById('userModule').style.cssText='display:flex;flex:1';
-    loadUserData(SESSION.id);
+    // REG/DED ya cargados de Supabase en loadAllDataFromDB — no recargar de localStorage
     document.getElementById('salLockVal').textContent=fmt(SESSION.salario);
     CM=new Date().getMonth();
     buildAll();
@@ -1873,7 +1921,7 @@ function loadAdminUserHoras(uid){
   if(!u)return;
   // Always clear embed so ag-edit-grid is fresh for this uid
   document.getElementById('adminHorasEmbed').innerHTML='';
-  const ded=JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
+  const ded=getDED(uid)||{};
   const rk=new Date().getFullYear()+'-'+pad(new Date().getMonth()+1)+'-1';
   document.getElementById('adminHorasEmbed').innerHTML=`
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;box-shadow:var(--sh)">
@@ -1915,7 +1963,7 @@ function buildAgEditGrid(uid){
   if(!u)return;
   const el=document.getElementById('ag-edit-grid-'+uid);
   if(!el)return;
-  const ded=JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
+  const ded=getDED(uid)||{};
   const mm=u.salario/12;
   const mn=['Dic','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov'];
   const today=new Date();
@@ -1933,14 +1981,14 @@ function buildAgEditGrid(uid){
 }
 
 function saveAgOverrides(uid){
-  const ded=JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
+  const ded=getDED(uid)||{};
   const today=new Date();
   const mesesAg=Math.min(today.getMonth()+2,12); // +2: Dec prev year + months Jan-current
   for(let i=0;i<mesesAg;i++){
     const inp=document.getElementById('ag-m-'+uid+'-'+i);
     if(inp) ded['ag_mes_'+i]=parseMon(inp.value)||0;
   }
-  localStorage.setItem('cc_d_'+uid,JSON.stringify(ded));
+  _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
   buildAgGlobal();
   toast('✓ Aguinaldo actualizado para este colaborador');
 }
@@ -1951,7 +1999,7 @@ function saveAdminUserHoras(uid){
   if(ui<0)return;
   users[ui].salario=parseMon(document.getElementById('ah-sal').value)||users[ui].salario;
   setUsers(users);
-  const ded=JSON.parse(localStorage.getItem(`cc_d_${uid}`)||'{}');
+  var ded=getDED(uid)||{};
   const rk=`${new Date().getFullYear()}-${pad(new Date().getMonth()+1)}-1`;
   ded.ccss_monto=parseMon(document.getElementById('ah-ccss').value)||0;
   ded.rb_monto=parseMon(document.getElementById('ah-rb').value)||0;
@@ -1959,7 +2007,9 @@ function saveAdminUserHoras(uid){
   ded.extra_monto=parseMon(document.getElementById('ah-ex').value)||0;
   ded.extra_desc=document.getElementById('ah-exdesc').value;
   ded['comis_'+rk]=parseMon(document.getElementById('ah-comis').value)||0;
-  localStorage.setItem(`cc_d_${uid}`,JSON.stringify(ded));
+  // Si es el usuario actual, actualizar DED en memoria también
+  if(SESSION&&uid===SESSION.id) DED=ded;
+  _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
   buildAdminOverview();
   // Pequeño delay para asegurar que localStorage se escribió antes de leer
   setTimeout(function(){ renderPagosUsuarios(); }, 50);
@@ -2097,7 +2147,7 @@ function buildComisGrid(){
 
   const yr=new Date().getFullYear();
   document.getElementById('comisYrLabel').textContent=yr;
-  const ded=JSON.parse(localStorage.getItem(`cc_d_${uid}`)||'{}');
+  const ded=getDED(uid)||{};
 
   // Build monthly cards
   let total=0;
@@ -2149,7 +2199,7 @@ function saveComisMonth(inp){
   var ded=JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
   ded[key]=parseMon(inp.value)||0;
   inp.style.color=ded[key]>0?'#1a9e5c':'#9a9b9d';
-  localStorage.setItem('cc_d_'+uid,JSON.stringify(ded));
+  _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
   buildComisGrid();
 }
 
@@ -2617,7 +2667,7 @@ function recalcQ(){
 function buildAgDetailUser(sal,mesesAg){
   const mn=['Dic','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov'];
   const uid=SESSION?SESSION.id:'';
-  const ded=JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
+  const ded=getDED(uid)||{};
   const mm=sal/12;
   let total=0;
   let rows='';
@@ -5141,7 +5191,7 @@ function getComisBase(uid){
   return parseFloat(d.amount||0);
 }
 function setComisBase(uid,amount){
-  localStorage.setItem('cc_comis_base_'+uid,JSON.stringify({amount,updatedAt:new Date().toISOString()}));
+  _saveToSupabase('user_comis_base_'+uid, {amount,updatedAt:new Date().toISOString()}, 'cc_comis_base_'+uid);
 }
 
 // Calculate comision for a single venta line (no base deduction here)
@@ -5542,10 +5592,10 @@ function syncComisionToPlanilla(uid,saleYear,saleMonth,allVentas){
   const fibraCosto=getFibraCosto(saleMonth,saleYear);
   const totalComis=calcTotalComisionConBase(allVentas,fibraCosto,uid);
   // Store in DED as comis_YEAR-MM-2 (quincena 2 = 15th)
-  const ded=JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
+  const ded=getDED(uid)||{};
   const key='comis_'+payYear+'-'+pad(payMonth+1)+'-2';
   ded[key]=Math.round(totalComis);
-  localStorage.setItem('cc_d_'+uid,JSON.stringify(ded));
+  _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
 }
 
 function delVenta(id){
@@ -9256,7 +9306,7 @@ function getPagoState(uid, periodKey){
   return JSON.parse(localStorage.getItem('cc_pago_'+uid+'_'+periodKey.replace(/-/g,'_'))||'{}');
 }
 function setPagoState(uid, periodKey, state){
-  localStorage.setItem('cc_pago_'+uid+'_'+periodKey.replace(/-/g,'_'), JSON.stringify(state));
+  _saveToSupabase('user_pago_'+uid+'_'+periodKey.replace(/-/g,'_'), state, 'cc_pago_'+uid+'_'+periodKey.replace(/-/g,'_'));
 }
 
 function initPagosUsuarios(){
@@ -9295,7 +9345,7 @@ function renderPagosUsuarios(){
     var salQ=Math.round(sal/2);
     // Get comision for this month (synced to next month q2)
     var payM=m-1; var payY=y; if(payM<0){payM=11;payY--;}
-    var ded=JSON.parse(localStorage.getItem('cc_d_'+u.id)||'{}');
+    var ded=getDED(u.id)||{};
     var comisKey='comis_'+y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
     var comisRaw=ded[comisKey]||0;
     // Usuarios con comisión anual: NO incluir en planilla mensual (solo en diciembre Q2)
