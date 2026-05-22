@@ -5262,7 +5262,7 @@ function buildProdSelect(){
   const cat=getCatalogo();
   // Build category select
   sel.innerHTML='<option value="">— Categoría —</option>';
-  cat.forEach(function(c){
+  sortAlpha(cat,'nombre').forEach(function(c){
     const o=document.createElement('option');
     o.value=c.id; o.textContent=c.nombre;
     sel.appendChild(o);
@@ -5308,7 +5308,7 @@ function onCatProdChange(){
     subSel.innerHTML='<option value="">— Subcategoría —</option>';
   } else {
     subSel.innerHTML='<option value="">— Subcategoría —</option>';
-    cat.subs.forEach(function(s){
+    sortAlpha(cat.subs,'nombre').forEach(function(s){
       const o=document.createElement('option');
       o.value=s.id; o.textContent=s.nombre;
       subSel.appendChild(o);
@@ -5803,7 +5803,7 @@ function initAdminVentas(){
   renderAdminOwnVentas(); // Admin own sales table
   const sel=document.getElementById('av-user-sel');
   if(sel&&sel.options.length===1){
-    getUsers().filter(u=>u.rol==='user').forEach(u=>{
+    sortAlpha(getUsers().filter(u=>u.rol==='user'),'nombre').forEach(u=>{
       const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; sel.appendChild(o);
     });
   }
@@ -6164,7 +6164,7 @@ function renderRanking(allVentas, catMap){
 function initTrendSelectors(){
   const sel=document.getElementById('av-trend-user');
   if(sel&&sel.options.length===1){
-    getUsers().filter(function(u){return u.rol==='user';}).forEach(function(u){
+    sortAlpha(getUsers().filter(function(u){return u.rol==='user';}),'nombre').forEach(function(u){
       var o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; sel.appendChild(o);
     });
   }
@@ -6266,7 +6266,7 @@ function initProductChart(catMap){
   const sel=document.getElementById('av-prod-sel-chart');
   if(!sel||sel.options.length>1) return;
   const cat=getCatalogo();
-  cat.forEach(function(p){
+  sortAlpha(cat,'nombre').forEach(function(p){
     var o=document.createElement('option'); o.value=p.id; o.textContent=p.nombre; sel.appendChild(o);
   });
   // Auto-select first product and render
@@ -6641,7 +6641,7 @@ function renderCatalogoModal(){
     html+='<button onclick="delCatItem(\''+c.id+'\')" style="background:var(--red-dim2);border:1px solid rgba(227,24,55,.3);color:var(--red);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px">\u2715 Cat.</button>';
     html+='</div>';
     if(c.subs&&c.subs.length>0){
-      c.subs.forEach(function(s){
+      sortAlpha(c.subs,'nombre').forEach(function(s){
         html+='<div style="display:flex;align-items:center;gap:8px;padding:6px 12px 6px 28px;border-bottom:1px solid #F4F4F4">';
         html+='\u21b3 ';
         html+='<input type="text" value="'+escHtml(s.nombre)+'" style="flex:1;font-size:12px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:5px" onchange="updateSubNombre(\''+c.id+'\',\''+s.id+'\',this.value)">';
@@ -7433,7 +7433,7 @@ function renderLiqSidebar(){
     return;
   }
   var html='';
-  subs.forEach(function(s){
+  sortAlpha(subs,'nombre').forEach(function(s){
     var on=LIQ_SUB===s.id;
     html+='<div class="liq-sub-btn" data-sid="'+s.id+'" style="display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:100px;cursor:pointer;transition:all .15s;'
       +(on?'background:var(--gray-dark);':'background:var(--surface2);border:1.5px solid var(--border);')+'">'
@@ -8464,7 +8464,7 @@ function onAdminCatProdChange(){
     subSel.innerHTML='<option value="">— Subcategoría —</option>';
   } else {
     subSel.innerHTML='<option value="">— Subcategoría —</option>';
-    cat.subs.forEach(function(s){
+    sortAlpha(cat.subs,'nombre').forEach(function(s){
       var o=document.createElement('option');
       o.value=s.id; o.textContent=s.nombre;
       subSel.appendChild(o);
@@ -9126,7 +9126,7 @@ function initAdminGastos(){
   // Populate user filter
   var uf=document.getElementById('ag-user-filter');
   if(uf&&uf.options.length<=1){
-    getUsers().filter(function(u){return u.rol==='user';}).forEach(function(u){
+    sortAlpha(getUsers().filter(function(u){return u.rol==='user';}),'nombre').forEach(function(u){
       var o=document.createElement('option');o.value=u.id;o.textContent=u.nombre;uf.appendChild(o);
     });
   }
