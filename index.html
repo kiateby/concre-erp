@@ -5105,7 +5105,10 @@ function saveMonthVentas(uid,y,m,mv){
 // Helper to load all ventas from Supabase into cache
 async function loadVentasFromDB(uid){
   var {data,error}=await DB.from('ventas').select('*').eq('uid',uid).order('fecha');
-  if(error){ console.error('loadVentas:',error); return {}; }
+  // 406 = no rows / RLS empty — treat as empty, not a failure
+  if(error&&error.code!=='PGRST116'&&error.status!==406){
+    console.error('loadVentas:',error);
+  }
   var vd={};
   (data||[]).forEach(function(row){
     var mk=row.anio+'-'+pad(row.mes+1);
@@ -7331,7 +7334,7 @@ function setLiqData(subId,d){
 }
 async function loadLiqFromDB(subId){
   var {data,error}=await DB.from('liq_proyectos').select('*').eq('sub_id',subId);
-  if(error){ console.error('loadLiq:',error); return {}; }
+  if(error&&error.status!==406){ console.error('loadLiq:',error); }
   var d={};
   (data||[]).forEach(function(row){
     if(!d[row.period_key]) d[row.period_key]={proyectos:[],created:row.created_at};
@@ -8665,7 +8668,7 @@ function setGastosData(uid,d){
 }
 async function loadGastosFromDB(uid){
   var {data,error}=await DB.from('gastos_proyecto').select('*').eq('uid',uid).order('fecha');
-  if(error){ console.error('loadGastos:',error); return []; }
+  if(error&&error.status!==406){ console.error('loadGastos:',error); }
   var regs=(data||[]).map(function(row){
     return {id:row.id,fecha:row.fecha,proyecto:row.proyecto,
       encId:row.enc_id,encNombre:row.enc_nombre,tipoId:row.tipo_id,
@@ -10789,7 +10792,7 @@ function setTrash(d){
 }
 async function loadTrashFromDB(){
   var {data,error}=await DB.from('papelera').select('*').order('deleted_at',{ascending:false});
-  if(error){ console.error('loadTrash:',error); return []; }
+  if(error&&error.status!==406){ console.error('loadTrash:',error); }
   window._trashCache=(data||[]).map(function(row){
     return {id:row.id,type:row.type,uid:row.uid,uNombre:row.u_nombre,
       data:row.data,crmLink:row.crm_link,liqProject:row.liq_project,
