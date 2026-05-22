@@ -5028,64 +5028,72 @@ function getVentasData(uid){
 }
 function setVentasData(uid, d){
   window._ventasCache[uid] = d;
-  // Persist usando upsert por registro — NUNCA delete masivo
-  // Así si falla un insert, los demás registros están seguros en Supabase
-  var allVentas = [];
-  Object.keys(d).forEach(function(mk){
-    (d[mk].ventas||[]).forEach(function(v){
-      var parts = mk.split('-');
-      allVentas.push({
-        id: v.id, uid: uid,
-        fecha: v.fecha || mk+'-01',
-        anio: parseInt(parts[0]||2026),
-        mes: parseInt(parts[1]||1)-1,
-        prod_id: v.prodId||'',
-        sub_prod_id: v.subProdId||'',
-        sub_prod_nombre: v.subProdNombre||'',
-        cantidad: v.cantidad||0,
-        precio_unit: v.precioUnit||v.precio||0,
-        subtotal: v.subtotal||0,
-        iva_pct: v.ivaPct||0,
-        iva: v.ivaAmt||v.iva||0,
-        total: v.total||v.subtotal||0,
-        cliente: v.cliente||'',
-        crm_cliente_id: v.crmClienteId||'',
-        crm_contacto_id: v.crmContactoId||'',
-        factura: v.factura||'', proyecto: v.proyecto||'',
-        pago: v.tipoPago||v.pago||'CONTADO',
-        plazo_credito: v.plazoCredito||0,
-        comision: v.comision||0,
-        es_tercero: v.esTercero||false,
-        is_usd: v.isUsd||v.isUSD||false,
-        tc_used: v.tcUsed||0,
-        deposito_num: v.depositoNum||'',
-        notas: v.notas||'',
-        estado: v.estado||'activo',
-        is_admin_venta: v.isAdminVenta||false,
-        tiene_insumos: v.tieneInsumos||false,
-        ins_monto: v.insMontoNum||0,
-        ins_desc: v.insDesc||'',
-        tiene_pendiente: v.tienePendiente||false,
-        pend_monto: v.pendMonto||0,
-        pend_cancelado: v.pendCancelado||'no',
-        pagado_admin: v.pagadoAdmin||false,
-        ejecutado: v.ejecutado||false,
-        ejecutado_fecha: v.ejecutadoFecha||null,
-        cxc_pagado: v.cxcPagado||false,
-        referido: v.referido||''
+  // NO hacemos delete masivo — guardamos individualmente con insert/update
+  // Esta función es llamada cuando se agrega/edita/elimina UNA venta
+  // El guardado individual lo maneja _saveSingleVenta y _deleteSingleVenta
+}
+
+// Guardar UNA venta específica en Supabase (insert o update según si existe)
+function _saveSingleVenta(uid, v, mk){
+  if(!v||!v.id) return;
+  var parts=(mk||'').split('-');
+  var row={
+    id: v.id, uid: uid,
+    fecha: v.fecha || (mk||'')+'-01',
+    anio: parseInt(parts[0]||new Date().getFullYear()),
+    mes: parseInt(parts[1]||1)-1,
+    prod_id: v.prodId||'',
+    sub_prod_id: v.subProdId||'',
+    sub_prod_nombre: v.subProdNombre||'',
+    cantidad: v.cantidad||0,
+    precio_unit: v.precioUnit||v.precio||0,
+    subtotal: v.subtotal||0,
+    iva_pct: v.ivaPct||0,
+    iva: v.ivaAmt||v.iva||0,
+    total: v.total||v.subtotal||0,
+    cliente: v.cliente||'',
+    crm_cliente_id: v.crmClienteId||'',
+    crm_contacto_id: v.crmContactoId||'',
+    factura: v.factura||'', proyecto: v.proyecto||'',
+    pago: v.tipoPago||v.pago||'CONTADO',
+    plazo_credito: v.plazoCredito||0,
+    comision: v.comision||0,
+    es_tercero: v.esTercero||false,
+    is_usd: v.isUsd||v.isUSD||false,
+    tc_used: v.tcUsed||0,
+    deposito_num: v.depositoNum||'',
+    notas: v.notas||'',
+    estado: v.estado||'activo',
+    is_admin_venta: v.isAdminVenta||false,
+    tiene_insumos: v.tieneInsumos||false,
+    ins_monto: v.insMontoNum||0,
+    ins_desc: v.insDesc||'',
+    tiene_pendiente: v.tienePendiente||false,
+    pend_monto: v.pendMonto||0,
+    pend_cancelado: v.pendCancelado||'no',
+    pagado_admin: v.pagadoAdmin||false,
+    ejecutado: v.ejecutado||false,
+    ejecutado_fecha: v.ejecutadoFecha||null,
+    cxc_pagado: v.cxcPagado||false,
+    referido: v.referido||''
+  };
+  // Intentar insert; si falla por duplicado, hacer update
+  DB.from('ventas').insert([row]).then(function(r){
+    if(r.error){
+      // Ya existe — hacer update
+      DB.from('ventas').update(row).eq('id',v.id).then(function(r2){
+        if(r2.error) console.error('_saveSingleVenta update:',r2.error);
       });
-    });
+    }
   });
-  // Upsert en lotes de 50 para no saturar la conexión
-  if(allVentas.length>0){
-    var chunks=[];
-    for(var i=0;i<allVentas.length;i+=50) chunks.push(allVentas.slice(i,i+50));
-    chunks.forEach(function(chunk){
-      DB.from('ventas').upsert(chunk,{onConflict:'id'}).then(function(r){
-        if(r.error) console.error('setVentasData upsert:',r.error);
-      });
-    });
-  }
+}
+
+// Eliminar UNA venta de Supabase
+function _deleteSingleVenta(ventaId){
+  if(!ventaId) return;
+  DB.from('ventas').delete().eq('id',ventaId).then(function(r){
+    if(r.error) console.error('_deleteSingleVenta:',r.error);
+  });
 }
 function getMonthVentas(uid,y,m){
   const vd=getVentasData(uid);
@@ -5094,9 +5102,11 @@ function getMonthVentas(uid,y,m){
   return vd[key];
 }
 function saveMonthVentas(uid,y,m,mv){
+  // Solo actualiza el cache en memoria — el guardado a Supabase lo hace _saveSingleVenta
   const vd=getVentasData(uid);
   vd[y+'-'+pad(m+1)]=mv;
-  setVentasData(uid,vd);
+  if(!window._ventasCache) window._ventasCache={};
+  window._ventasCache[uid]=vd;
 }
 // Helper to load all ventas from Supabase into cache
 async function loadVentasFromDB(uid){
@@ -5547,7 +5557,12 @@ function _doSaveVenta(){
   const m=parseInt(fecha.split('-')[1])-1;
   const mv=getMonthVentas(uid,y,m);
   mv.ventas.push(v);
-  saveMonthVentas(uid,y,m,mv);
+  // Actualizar cache en memoria
+  const vd=getVentasData(uid);
+  vd[y+'-'+pad(m+1)]=mv;
+  window._ventasCache[uid]=vd;
+  // Guardar SOLO esta venta en Supabase (no reescribir todo el histórico)
+  _saveSingleVenta(uid,v,y+'-'+pad(m+1));
 
   // Auto-update comision in planilla for month 15 of next month
   syncComisionToPlanilla(uid,y,m,mv.ventas);
@@ -6595,7 +6610,8 @@ function saveDepositoNum(uid, ventaId, val){
     const idx2=(vd[mk].ventas||[]).findIndex(function(v){return v.id===ventaId;});
     if(idx2>=0){
       vd[mk].ventas[idx2].depositoNum=val;
-      setVentasData(uid,vd);
+      window._ventasCache[uid]=vd;
+      _saveSingleVenta(uid,vd[mk].ventas[idx2],mk);
     }
   });
 }
@@ -6607,7 +6623,8 @@ function toggleVentaPago(uid,ventaId,chk){
     const idx=(vd[mk].ventas||[]).findIndex(v=>v.id===ventaId);
     if(idx>=0){
       vd[mk].ventas[idx].pagadoAdmin=chk.checked;
-      setVentasData(uid,vd);
+      window._ventasCache[uid]=vd;
+      _saveSingleVenta(uid,vd[mk].ventas[idx],mk);
       if(chk.checked) toast('✓ Pago verificado — línea marcada en verde');
       renderAdminVentasTable();
     }
@@ -6999,7 +7016,10 @@ function updateVenta(){
     updated:new Date().toISOString()
   };
 
-  setVentasData(uid,vd);
+  window._ventasCache[uid]=vd;
+  // Guardar la venta editada en Supabase
+  var editedV=vd[mk].ventas.find(function(v){return v.id===ventaId;});
+  if(editedV) _saveSingleVenta(uid,editedV,mk);
   syncComisionToPlanilla(uid,
     parseInt(mk.split('-')[0]),
     parseInt(mk.split('-')[1])-1,
@@ -7026,13 +7046,14 @@ function marcarEjecutado(ventaId, fromMonthKey){
   const v=vd[fromMonthKey].ventas[idx];
   v.ejecutado=true;
   v.ejecutadoFecha=new Date().toISOString().split('T')[0];
-  v.tienePendiente=false; // no longer pending
-  setVentasData(uid,vd);
+  v.tienePendiente=false;
+  // Actualizar la venta original en cache y Supabase
+  window._ventasCache[uid]=vd;
+  _saveSingleVenta(uid,v,fromMonthKey);
   // Add execution record to CURRENT month
   const nowY=VY, nowM=VM;
   const mv=getMonthVentas(uid,nowY,nowM);
-  // Create an execution entry referencing original sale
-  mv.ventas.push({
+  const execVenta={
     id:'exec'+Date.now(),
     fecha:new Date().toISOString().split('T')[0],
     prodId:v.prodId,
@@ -7055,8 +7076,12 @@ function marcarEjecutado(ventaId, fromMonthKey){
     ejecutado:false,ejecutadoFecha:null,
     esEjecucion:true,refVentaId:ventaId,
     created:new Date().toISOString()
-  });
-  saveMonthVentas(uid,nowY,nowM,mv);
+  };
+  mv.ventas.push(execVenta);
+  var vdExec=getVentasData(uid);
+  vdExec[nowY+'-'+pad(nowM+1)]=mv;
+  window._ventasCache[uid]=vdExec;
+  _saveSingleVenta(uid,execVenta,nowY+'-'+pad(nowM+1));
   syncComisionToPlanilla(uid,nowY,nowM,mv.ventas);
   renderVentasUser();
   toast('✓ Proyecto marcado como ejecutado — comisión registrada en '+MES[nowM]);
@@ -7072,7 +7097,8 @@ function marcarCxcPagado(ventaId, monthKey){
   if(idx<0) return;
   vd[monthKey].ventas[idx].cxcPagado=true;
   vd[monthKey].ventas[idx].cxcPagadoDate=new Date().toISOString();
-  setVentasData(uid,vd);
+  window._ventasCache[uid]=vd;
+  _saveSingleVenta(uid,vd[monthKey].ventas[idx],monthKey);
   renderVentasUser();
   toast('✓ Pago confirmado — se mantendrá en historial 7 días');
 }
@@ -7210,9 +7236,10 @@ function adminMarcarCxcPagado(uid,ventaId){
       vd[mk].ventas[idx].cxcPagado=true;
       vd[mk].ventas[idx].cxcPagadoDate=new Date().toISOString();
       vd[mk].ventas[idx].pagadoAdmin=true;
+      window._ventasCache[uid]=vd;
+      _saveSingleVenta(uid,vd[mk].ventas[idx],mk);
     }
   });
-  setVentasData(uid,vd);
   toast('✓ Pago registrado — se eliminará del seguimiento en 7 días');
   renderAdminVentas();
 }
@@ -8539,7 +8566,12 @@ function saveAdminVenta(){
   var m=parseInt(fecha.split('-')[1])-1;
   var mv=getMonthVentas(uid,y,m);
   mv.ventas.push(v);
-  saveMonthVentas(uid,y,m,mv);
+  // Actualizar cache en memoria
+  var vdA=getVentasData(uid);
+  vdA[y+'-'+pad(m+1)]=mv;
+  window._ventasCache[uid]=vdA;
+  // Guardar SOLO esta venta en Supabase
+  _saveSingleVenta(uid,v,y+'-'+pad(m+1));
   // Link to CRM
   var avCrmId=document.getElementById('avf-crm-client-id')?.value;
   var avCrmCtId=document.getElementById('avf-crm-contact-id')?.value||'';
@@ -10831,7 +10863,12 @@ function restoreFromTrash(trashId, restoreToUser){
       var mv=getMonthVentas(item.uid,y,m);
       mv.ventas=mv.ventas||[];
       mv.ventas.push(item.data);
-      saveMonthVentas(item.uid,y,m,mv);
+      // Actualizar cache en memoria
+      var vdT=getVentasData(item.uid);
+      vdT[y+'-'+pad(m+1)]=mv;
+      window._ventasCache[item.uid]=vdT;
+      // Guardar en Supabase
+      _saveSingleVenta(item.uid,item.data,y+'-'+pad(m+1));
       // Restore CRM link if existed
       if(item.crmLink){
         var links=getCRMLinks();
@@ -10949,12 +10986,17 @@ function checkTrashReminder(){
 function safeDeleteVenta(uid, ventaId){
   var vd=getVentasData(uid);
   var venta=null;
+  var ventaMk=null;
   Object.keys(vd).forEach(function(mk){
     var idx=(vd[mk].ventas||[]).findIndex(function(v){return v.id===ventaId;});
     if(idx>=0&&!venta){
       venta=vd[mk].ventas[idx];
+      ventaMk=mk;
       vd[mk].ventas.splice(idx,1);
-      setVentasData(uid,vd);
+      // Actualizar cache en memoria
+      window._ventasCache[uid]=vd;
+      // Eliminar SOLO esta venta de Supabase
+      _deleteSingleVenta(ventaId);
     }
   });
   if(!venta) return;
