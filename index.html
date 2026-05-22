@@ -1264,15 +1264,15 @@ const sortAlpha=(arr,key='nombre')=>arr.slice().sort((a,b)=>(a[key]||'').localeC
 // ── Helper para cargar DED/REG de OTRO usuario desde Supabase (solo admin) ─
 async function _loadUserDEDForAdmin(uid){
   try{
-    // Cargar DED
-    var rd=await DB.from('configuracion').select('valor').eq('clave','user_ded_'+uid).single();
-    if(rd.data&&rd.data.valor){
-      localStorage.setItem('cc_d_'+uid, JSON.stringify(rd.data.valor));
+    // Cargar DED — usar select() sin .single() para evitar 406
+    var rd=await DB.from('configuracion').select('valor').eq('clave','user_ded_'+uid);
+    if(!rd.error && rd.data && rd.data.length>0 && rd.data[0].valor){
+      localStorage.setItem('cc_d_'+uid, JSON.stringify(rd.data[0].valor));
     }
     // Cargar REG
-    var rr=await DB.from('configuracion').select('valor').eq('clave','user_horas_'+uid).single();
-    if(rr.data&&rr.data.valor){
-      localStorage.setItem('cc_h_'+uid, JSON.stringify(rr.data.valor));
+    var rr=await DB.from('configuracion').select('valor').eq('clave','user_horas_'+uid);
+    if(!rr.error && rr.data && rr.data.length>0 && rr.data[0].valor){
+      localStorage.setItem('cc_h_'+uid, JSON.stringify(rr.data[0].valor));
     }
   }catch(e){
     // Si no existe en Supabase, el localStorage local es el fallback
@@ -1282,9 +1282,14 @@ async function _loadUserDEDForAdmin(uid){
 // ── Helpers cross-device: REG/DED en Supabase ──────────────────────────
 async function _loadFromSupabase(clave, fallbackLocalKey){
   try{
-    var r=await DB.from('configuracion').select('valor').eq('clave',clave).single();
-    if(r.data&&r.data.valor&&typeof r.data.valor==='object') return r.data.valor;
+    var r=await DB.from('configuracion').select('valor').eq('clave',clave);
+    // .select() sin .single() devuelve array — 406 no ocurre
+    if(!r.error && r.data && r.data.length>0 && r.data[0].valor &&
+       typeof r.data[0].valor==='object'){
+      return r.data[0].valor;
+    }
   }catch(e){}
+  // No existe en Supabase — leer de localStorage
   var local=localStorage.getItem(fallbackLocalKey);
   return local?JSON.parse(local):{};
 }
@@ -1298,8 +1303,38 @@ function _saveToSupabase(clave, valor, localKey){
   });
 }
 async function loadUserData(uid){
+  // 1. Cargar de Supabase (cross-device)
   REG=await _loadFromSupabase('user_horas_'+uid, 'cc_h_'+uid);
   DED=await _loadFromSupabase('user_ded_'+uid, 'cc_d_'+uid);
+  // 2. Si Supabase devuelve vacío pero localStorage tiene datos → migrar a Supabase
+  //    Esto ocurre la primera vez que el usuario usa el nuevo código
+  var localReg=localStorage.getItem('cc_h_'+uid);
+  var localDed=localStorage.getItem('cc_d_'+uid);
+  if(localReg && Object.keys(REG).length===0){
+    try{
+      var parsed=JSON.parse(localReg);
+      if(Object.keys(parsed).length>0){
+        REG=parsed;
+        // Migrar silenciosamente a Supabase
+        DB.from('configuracion').upsert(
+          {clave:'user_horas_'+uid, valor:parsed, updated_at:new Date().toISOString()},
+          {onConflict:'clave'}
+        ).then(function(){}); // silencioso
+      }
+    }catch(e){}
+  }
+  if(localDed && Object.keys(DED).length===0){
+    try{
+      var parsedD=JSON.parse(localDed);
+      if(Object.keys(parsedD).length>0){
+        DED=parsedD;
+        DB.from('configuracion').upsert(
+          {clave:'user_ded_'+uid, valor:parsedD, updated_at:new Date().toISOString()},
+          {onConflict:'clave'}
+        ).then(function(){}); // silencioso
+      }
+    }catch(e){}
+  }
 }
 function saveData(uid){
   _saveToSupabase('user_horas_'+uid, REG, 'cc_h_'+uid);
@@ -13295,9 +13330,9 @@ async function _fp54LoadCache(){
   if(window._fp54ProjCache!==null) return window._fp54ProjCache;
   // Intentar cargar de Supabase
   try{
-    var r=await DB.from('configuracion').select('valor').eq('clave','fp54_proyectos').single();
-    if(r.data&&Array.isArray(r.data.valor)){
-      window._fp54ProjCache=r.data.valor; return window._fp54ProjCache;
+    var r=await DB.from('configuracion').select('valor').eq('clave','fp54_proyectos');
+    if(!r.error&&r.data&&r.data.length>0&&Array.isArray(r.data[0].valor)){
+      window._fp54ProjCache=r.data[0].valor; return window._fp54ProjCache;
     }
   }catch(e){}
   // Fallback a localStorage
@@ -13346,8 +13381,8 @@ async function fp54NextRef(){
   var clave='fp54_ref_counter_'+yr;
   var next=1;
   try{
-    var r=await DB.from('configuracion').select('valor').eq('clave',clave).single();
-    if(r.data&&r.data.valor) next=parseInt(r.data.valor)+1;
+    var r=await DB.from('configuracion').select('valor').eq('clave',clave);
+    if(!r.error&&r.data&&r.data.length>0&&r.data[0].valor) next=parseInt(r.data[0].valor)+1;
   }catch(e){ next=1; }
   // Guardar nuevo contador
   await DB.from('configuracion').upsert({clave:clave,valor:String(next),updated_at:new Date().toISOString()},{onConflict:'clave'});
