@@ -3204,15 +3204,13 @@ function setVacData(uid,d){
     .then(function(r){ if(r.error) console.error('setVac saldo:',r.error); });
   // Upsert solicitudes
   if(d.requests&&d.requests.length>0){
-    DB.from('vacaciones_solicitudes').delete().eq('uid',uid).then(function(){
-      var rows=(d.requests||[]).map(function(r){
-        return {id:r.id,uid:uid,fecha_inicio:r.fechaInicio||'',fecha_fin:r.fechaFin||'',
-          dias:r.dias||0,estado:r.estado||'pendiente',tipo:r.tipo||'',
-          motivo:r.motivo||'',aprobado_por:r.aprobadoPor||''};
-      });
-      if(rows.length>0) DB.from('vacaciones_solicitudes').insert(rows)
-        .then(function(r){ if(r.error) console.error('setVac req:',r.error); });
+    var rows=(d.requests||[]).map(function(r){
+      return {id:r.id,uid:uid,fecha_inicio:r.fechaInicio||'',fecha_fin:r.fechaFin||'',
+        dias:r.dias||0,estado:r.estado||'pendiente',tipo:r.tipo||'',
+        motivo:r.motivo||'',aprobado_por:r.aprobadoPor||''};
     });
+    if(rows.length>0) DB.from('vacaciones_solicitudes').upsert(rows,{onConflict:'id'})
+      .then(function(r){ if(r.error) console.error('setVac req:',r.error); });
   }
 }
 async function loadVacFromDB(uid){
@@ -4031,14 +4029,12 @@ function getFondosData(uid){
 function setFondosData(uid,d){
   if(!window._fondosCache) window._fondosCache={};
   window._fondosCache[uid]=d;
-  DB.from('fondos_gastos').delete().eq('uid',uid).then(function(){
-    var rows=(d.gastos||[]).map(function(g){
-      return {id:g.id,uid:uid,fecha:g.fecha||'',descripcion:g.descripcion||'',
-        monto:g.monto||0,tipo:g.tipo||'',factura:g.factura||'',estado:g.estado||'activo'};
-    });
-    if(rows.length>0) DB.from('fondos_gastos').insert(rows)
-      .then(function(r){ if(r.error) console.error('setFondos:',r.error); });
+  var rows=(d.gastos||[]).map(function(g){
+    return {id:g.id,uid:uid,fecha:g.fecha||'',descripcion:g.descripcion||'',
+      monto:g.monto||0,tipo:g.tipo||'',factura:g.factura||'',estado:g.estado||'activo'};
   });
+  if(rows.length>0) DB.from('fondos_gastos').upsert(rows,{onConflict:'id'})
+    .then(function(r){ if(r.error) console.error('setFondos:',r.error); });
 }
 async function loadFondosFromDB(uid){
   var g=await DB.from('fondos_gastos').select('*').eq('uid',uid);
@@ -5032,7 +5028,8 @@ function getVentasData(uid){
 }
 function setVentasData(uid, d){
   window._ventasCache[uid] = d;
-  // Persist all ventas for this uid
+  // Persist usando upsert por registro — NUNCA delete masivo
+  // Así si falla un insert, los demás registros están seguros en Supabase
   var allVentas = [];
   Object.keys(d).forEach(function(mk){
     (d[mk].ventas||[]).forEach(function(v){
@@ -5079,16 +5076,15 @@ function setVentasData(uid, d){
       });
     });
   });
+  // Upsert en lotes de 50 para no saturar la conexión
   if(allVentas.length>0){
-    DB.from('ventas').delete().eq('uid',uid).then(function(){
-      if(allVentas.length>0){
-        DB.from('ventas').insert(allVentas).then(function(r){
-          if(r.error) console.error('setVentasData:', r.error);
-        });
-      }
+    var chunks=[];
+    for(var i=0;i<allVentas.length;i+=50) chunks.push(allVentas.slice(i,i+50));
+    chunks.forEach(function(chunk){
+      DB.from('ventas').upsert(chunk,{onConflict:'id'}).then(function(r){
+        if(r.error) console.error('setVentasData upsert:',r.error);
+      });
     });
-  } else {
-    DB.from('ventas').delete().eq('uid',uid).then(function(){});
   }
 }
 function getMonthVentas(uid,y,m){
@@ -8649,8 +8645,7 @@ function getGastosData(uid){
 function setGastosData(uid,d){
   if(!window._gastosCache) window._gastosCache={};
   window._gastosCache[uid]=d;
-  DB.from('gastos_proyecto').delete().eq('uid',uid).then(function(){
-    var rows=d.map(function(r){
+  var rows=d.map(function(r){
       return {id:r.id,uid:uid,fecha:r.fecha||'',proyecto:r.proyecto||'',
         enc_id:r.encId||'',enc_nombre:r.encNombre||'',
         tipo_id:r.tipoId||'',tipo_nombre:r.tipoNombre||'',
@@ -8662,9 +8657,8 @@ function setGastosData(uid,d){
         sellos:r.sellos||0,cristalizante:r.cristalizante||0,
         baque_rod:r.baqueRod||0,discos:r.discos||0,otros_desc:r.otrosDesc||''};
     });
-    if(rows.length>0) DB.from('gastos_proyecto').insert(rows)
+    if(rows.length>0) DB.from('gastos_proyecto').upsert(rows,{onConflict:'id'})
       .then(function(res){ if(res.error) console.error('setGastos:',res.error); });
-  });
 }
 async function loadGastosFromDB(uid){
   var {data,error}=await DB.from('gastos_proyecto').select('*').eq('uid',uid).order('fecha');
