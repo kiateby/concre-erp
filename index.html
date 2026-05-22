@@ -7055,7 +7055,7 @@ function updateVenta(){
 
   window._ventasCache[uid]=vd;
   // Guardar la venta editada en Supabase
-  var editedV=vd[mk].ventas.find(function(v){return v.id===ventaId;});
+  var editedV=vd[mk].ventas.find(function(v){return v.id===editingVentaId;});
   if(editedV) _saveSingleVenta(uid,editedV,mk);
   syncComisionToPlanilla(uid,
     parseInt(mk.split('-')[0]),
