@@ -5037,24 +5037,23 @@ function setVentasData(uid, d){
 function _saveSingleVenta(uid, v, mk){
   if(!v||!v.id) return;
   var parts=(mk||'').split('-');
+  // SOLO columnas que existen en la tabla ventas de Supabase
   var row={
     id: v.id, uid: uid,
     fecha: v.fecha || (mk||'')+'-01',
     anio: parseInt(parts[0]||new Date().getFullYear()),
     mes: parseInt(parts[1]||1)-1,
     prod_id: v.prodId||'',
-    sub_prod_id: v.subProdId||'',
-    sub_prod_nombre: v.subProdNombre||'',
     cantidad: v.cantidad||0,
     precio_unit: v.precioUnit||v.precio||0,
     subtotal: v.subtotal||0,
-    iva_pct: v.ivaPct||0,
     iva: v.ivaAmt||v.iva||0,
     total: v.total||v.subtotal||0,
     cliente: v.cliente||'',
     crm_cliente_id: v.crmClienteId||'',
     crm_contacto_id: v.crmContactoId||'',
-    factura: v.factura||'', proyecto: v.proyecto||'',
+    factura: v.factura||'',
+    proyecto: v.proyecto||'',
     pago: v.tipoPago||v.pago||'CONTADO',
     plazo_credito: v.plazoCredito||0,
     comision: v.comision||0,
@@ -5064,23 +5063,12 @@ function _saveSingleVenta(uid, v, mk){
     deposito_num: v.depositoNum||'',
     notas: v.notas||'',
     estado: v.estado||'activo',
-    is_admin_venta: v.isAdminVenta||false,
-    tiene_insumos: v.tieneInsumos||false,
-    ins_monto: v.insMontoNum||0,
-    ins_desc: v.insDesc||'',
-    tiene_pendiente: v.tienePendiente||false,
-    pend_monto: v.pendMonto||0,
-    pend_cancelado: v.pendCancelado||'no',
-    pagado_admin: v.pagadoAdmin||false,
-    ejecutado: v.ejecutado||false,
-    ejecutado_fecha: v.ejecutadoFecha||null,
-    cxc_pagado: v.cxcPagado||false,
-    referido: v.referido||''
+    is_admin_venta: v.isAdminVenta||false
   };
-  // Intentar insert; si falla por duplicado, hacer update
+  // Intentar insert; si ya existe hacer update
   DB.from('ventas').insert([row]).then(function(r){
     if(r.error){
-      // Ya existe — hacer update
+      // Registro ya existe — actualizar
       DB.from('ventas').update(row).eq('id',v.id).then(function(r2){
         if(r2.error) console.error('_saveSingleVenta update:',r2.error);
       });
