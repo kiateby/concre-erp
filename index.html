@@ -2490,7 +2490,10 @@ function recalcQ(){
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
   const ccss=DED.ccss_monto||0,rb=DED.rb_monto||0,ex=DED.extra_monto||0;
   const rk=`${y}-${pad(CM+1)}-${CQ}`;
-  const comis=DED[`comis_${rk}`]||0;
+  const comisRaw=DED[`comis_${rk}`]||0;
+  // Comisión anual: solo se paga en diciembre Q2
+  const sesComisType=(SESSION&&SESSION.comisType)||getUsers().find(function(u){return SESSION&&u.id===SESSION.id;})?.comisType||'mensual';
+  const comis=(sesComisType==='anual')?(CM===11&&CQ===30?comisRaw:0):comisRaw;
   const tot=bruto-ccss-rb-ex;
 
   document.getElementById('sdias').textContent=diasR;
@@ -2503,6 +2506,40 @@ function recalcQ(){
   document.getElementById('u-exRes').textContent=ex>0?`-${fmt(ex)}`:'₡0';
   document.getElementById('u-exDesc').textContent=DED.extra_desc||'—';
   document.getElementById('u-comisRes').textContent=comis>0?`+${fmt(comis)}`:'+₡0';
+  // Label para tipo de comisión
+  var comisLbl=document.getElementById('u-comis-tipo-lbl');
+  if(comisLbl) comisLbl.textContent=sesComisType==='anual'?'Acumulativa (pago en diciembre)':'Pago independiente por mes';
+  // Mostrar resumen anual si es usuario con comisión anual
+  var anualWrap=document.getElementById('u-comis-anual-wrap');
+  if(anualWrap){
+    if(sesComisType==='anual'){
+      anualWrap.style.display='';
+      document.getElementById('u-comis-anual-yr').textContent='Año '+y;
+      var tabla=document.getElementById('u-comis-anual-tabla');
+      if(tabla){
+        var totalAnual=0;
+        var mesesHtml='';
+        for(var mi=0;mi<12;mi++){
+          var mkQ1='comis_'+y+'-'+pad(mi+1)+'-15';
+          var mkQ2='comis_'+y+'-'+pad(mi+1)+'-'+String(new Date(y,mi+1,0).getDate());
+          var cQ1=DED[mkQ1]||0;
+          var cQ2=DED[mkQ2]||0;
+          var cMes=cQ1+cQ2;
+          totalAnual+=cMes;
+          var isActual=mi===CM;
+          mesesHtml+='<div style="padding:5px 8px;border-radius:6px;background:'+(isActual?'rgba(217,119,6,.12)':'var(--surface2)')+';border:1px solid '+(isActual?'var(--amber)':'var(--border)')+'">'
+            +'<div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase">'+MES[mi]+(isActual?' ◀':'')+'</div>'
+            +'<div style="font-family:var(--cond);font-size:14px;font-weight:800;color:'+(cMes>0?'var(--amber)':'var(--text3)')+'">'+fmt(cMes)+'</div>'
+            +'</div>';
+        }
+        tabla.innerHTML=mesesHtml;
+        var totEl=document.getElementById('u-comis-anual-total');
+        if(totEl) totEl.textContent=fmt(totalAnual);
+      }
+    } else {
+      anualWrap.style.display='none';
+    }
+  }
   document.getElementById('plbase').textContent=fmt(salQ);
   document.getElementById('plhc').textContent=totExt.toFixed(1);
   document.getElementById('plext').textContent=fmt(mExt);
@@ -2531,6 +2568,44 @@ function recalcQ(){
   document.getElementById('agb').style.width=(mesesAg/12*100)+'%';
   document.getElementById('ags').textContent=mesesAg+' de 12 meses acumulados · cierre 30 nov';
   buildAgDetailUser(sal,mesesAg);
+
+  // Resumen comisiones anuales en sidebar
+  var csbWrap=document.getElementById('u-comis-sidebar-wrap');
+  if(csbWrap){
+    if(sesComisType==='anual'){
+      csbWrap.style.display='';
+      var csbYr=document.getElementById('u-comis-sidebar-yr');
+      if(csbYr) csbYr.textContent=String(y);
+      var csbDetail=document.getElementById('u-csb-detail');
+      var csbTotal=document.getElementById('u-csb-total');
+      var csbBar=document.getElementById('u-csb-bar');
+      var csbSub=document.getElementById('u-csb-sub');
+      if(csbDetail){
+        var totalComisAnual=0;
+        var csbRows='';
+        var mesesConComis=0;
+        for(var mi2=0;mi2<12;mi2++){
+          var mkQ1c='comis_'+y+'-'+pad(mi2+1)+'-15';
+          var mkQ2c='comis_'+y+'-'+pad(mi2+1)+'-'+String(new Date(y,mi2+1,0).getDate());
+          var cMes2=(DED[mkQ1c]||0)+(DED[mkQ2c]||0);
+          if(cMes2>0) mesesConComis++;
+          totalComisAnual+=cMes2;
+          var isActualMes=mi2===CM;
+          csbRows+='<div class="ag-det-row" style="'+(isActualMes?'font-weight:800;color:var(--amber)':'')+'">'
+            +'<span class="ag-det-l">'+['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'][mi2]+'</span>'
+            +'<span class="ag-det-v" style="'+(cMes2>0?'color:var(--amber)':'color:var(--text3)')+'">'+fmt(cMes2)+'</span>'
+            +'</div>';
+        }
+        csbRows+='<div class="ag-det-row"><span class="ag-det-l">TOTAL</span><span class="ag-det-v">'+fmt(totalComisAnual)+'</span></div>';
+        csbDetail.innerHTML=csbRows;
+        if(csbTotal) csbTotal.textContent=fmt(totalComisAnual);
+        if(csbBar) csbBar.style.width=(mesesConComis/12*100)+'%';
+        if(csbSub) csbSub.textContent=mesesConComis+' meses con comisión · pago: dic Q2';
+      }
+    } else {
+      csbWrap.style.display='none';
+    }
+  }
 }
 
 function buildAgDetailUser(sal,mesesAg){
@@ -8586,6 +8661,18 @@ function initGastosModule(){
 }
 
 function populateGpSelectors(){
+  // Asegurar que estos selects NO sean widgets de makeSearchable
+  ['gp-encargado','gp-tipo'].forEach(function(id){
+    var s=document.getElementById(id);
+    if(s&&s.dataset.srch){
+      // Remover widget wrapper si existe
+      var prev=s.previousElementSibling;
+      if(prev&&prev.tagName==='INPUT') prev.remove();
+      delete s.dataset.srch;
+      delete s._allOpts;
+      s.style.display='';
+    }
+  });
   // Encargado — from Liq subs
   var subSel=document.getElementById('gp-encargado');
   if(subSel){
@@ -9199,7 +9286,11 @@ function renderPagosUsuarios(){
     var ded=JSON.parse(localStorage.getItem('cc_d_'+u.id)||'{}');
     console.log('[renderPagos] uid='+u.id+' ccss='+ded.ccss_monto+' rb='+ded.rb_monto+' key=cc_d_'+u.id);
     var comisKey='comis_'+y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
-    var comisVal=ded[comisKey]||0;
+    var comisRaw=ded[comisKey]||0;
+    // Usuarios con comisión anual: NO incluir en planilla mensual (solo en diciembre Q2)
+    var isAnual=(u.comisType||'mensual')==='anual';
+    var esDiciembre=m===11;
+    var comisVal=isAnual?(esDiciembre&&q===2?comisRaw:0):comisRaw;
     // Deductions
     var ccss=ded.ccss_monto||0;
     var rb=ded.rb_monto||0;
@@ -17367,6 +17458,16 @@ window.initCalcCONCRE=initCalcCONCRE;
             <div class="ag-detail" id="agDetail"></div>
           </div>
         </div>
+        <!-- Comisión anual — solo visible si comisType=anual -->
+        <div id="u-comis-sidebar-wrap" style="display:none">
+          <div class="slabel" style="color:var(--amber)">Comisiones <span id="u-comis-sidebar-yr">2026</span></div>
+          <div class="agwrap" style="border-color:var(--amber)">
+            <div class="aghdr"><span class="agttl">Acumulado</span><span class="agval" id="u-csb-total" style="color:var(--amber)">₡0</span></div>
+            <div class="agbar"><div class="agfill" id="u-csb-bar" style="width:0%;background:var(--amber)"></div></div>
+            <div class="agsub" id="u-csb-sub">Pago: segunda quincena de diciembre</div>
+            <div class="ag-detail" id="u-csb-detail"></div>
+          </div>
+        </div>
         <div>
           <button class="btn btnp" onclick="exportPlanilla()">⬇ Colilla de Planilla</button>
           <button class="btn btna" onclick="exportAguinaldo()">⬇ Colilla de Aguinaldo</button>
@@ -17422,7 +17523,7 @@ window.initCalcCONCRE=initCalcCONCRE;
             <div class="ded-row cr"><span class="ded-tag ccss">CCSS</span><div class="ded-lw"><span class="ded-lm">Seguro Social Obrero</span><span class="ded-ls">Definido por administrador</span></div><span class="ded-res neg" id="u-ccssRes">₡0</span></div>
             <div class="ded-row pr"><span class="ded-tag other">Préstamo</span><div class="ded-lw"><span class="ded-lm">Préstamo / Convenio</span><span class="ded-ls" id="u-rbDesc">—</span></div><span class="ded-res neg" id="u-rbRes">₡0</span></div>
             <div class="ded-row pr"><span class="ded-tag other">Otro</span><div class="ded-lw"><span class="ded-lm">Otro rebajo</span><span class="ded-ls" id="u-exDesc">—</span></div><span class="ded-res neg" id="u-exRes">₡0</span></div>
-            <div class="ded-row kr"><span class="ded-tag comis">Comisión</span><div class="ded-lw"><span class="ded-lm">Comisión por ventas</span><span class="ded-ls">Pago independiente</span></div><span class="ded-res pos" id="u-comisRes">+₡0</span></div>
+            <div class="ded-row kr"><span class="ded-tag comis">Comisión</span><div class="ded-lw"><span class="ded-lm">Comisión por ventas</span><span class="ded-ls" id="u-comis-tipo-lbl">Pago independiente</span></div><span class="ded-res pos" id="u-comisRes">+₡0</span></div>
             <div class="locked-msg">🔒 Los descuentos son aplicados por el administrador. Contacta a RRHH si tienes alguna duda.</div>
           </div>
         </div>
@@ -17447,6 +17548,23 @@ window.initCalcCONCRE=initCalcCONCRE;
                 <span class="pll" style="color:var(--green)">Comisión (pago independiente)</span>
                 <span class="plv amber" id="plcomision">₡0</span>
               </div>
+            </div>
+          </div>
+        </div>
+        <!-- Resumen comisión anual (solo para usuarios con comisType=anual) -->
+        <div id="u-comis-anual-wrap" style="display:none;margin-top:16px">
+          <div class="plcard" style="border-top:3px solid var(--amber)">
+            <div class="plhdr" style="background:rgba(217,119,6,.08)">
+              <span class="plhdrl" style="color:var(--amber)">📅 Comisiones acumuladas del año</span>
+              <span class="plhdrr" id="u-comis-anual-yr"></span>
+            </div>
+            <div class="plbody">
+              <div id="u-comis-anual-tabla" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px 12px;font-size:12px"></div>
+              <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);display:flex;justify-content:space-between;align-items:center">
+                <span style="font-weight:700;color:var(--text)">Total acumulado año</span>
+                <span id="u-comis-anual-total" style="font-family:var(--cond);font-size:20px;font-weight:900;color:var(--amber)">₡0</span>
+              </div>
+              <div style="font-size:11px;color:var(--text3);margin-top:6px">💡 El pago se realizará en la segunda quincena de diciembre.</div>
             </div>
           </div>
         </div>
