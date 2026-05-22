@@ -2278,43 +2278,7 @@ td:last-child{border-left:2px solid rgba(26,158,92,.2)}
   openPrint(html, 'Resumen_Global_'+mes+'_'+yr+'.html');
 }
 
-function exportComisiones(){
-  const uid=document.getElementById('comisUserSel').value;
-  const users=getUsers();
-  const u=users.find(x=>x.id===uid);
-  const isAnual=document.getElementById('comisToggle').checked;
-  const yr=new Date().getFullYear();
-  const ded=JSON.parse(localStorage.getItem(`cc_d_${uid}`)||'{}');
-  let total=0,filas='';
-  let acum=0;
-  MES.forEach((m,i)=>{
-    const key=`comis_${yr}-${pad(i+1)}-1`;
-    const val=ded[key]||0;
-    total+=val;acum+=val;
-    filas+=`<div class="col-row${i%2===1?' alt':''}">
-      <span class="cr-label">${m} ${yr}</span>
-      <span class="cr-value ${val>0?'green':''}">${val>0?fmt(val):'—'}</span>
-      ${isAnual?`<span style="font-size:11px;color:#9a9b9d;margin-left:auto">Acum: ${fmt(acum)}</span>`:''}
-    </div>`;
-  });
-  const emitida=new Date().toLocaleDateString('es-CR');
-  const html=buildColilla({
-    titulo:`Comisiones ${yr} — ${isAnual?'Pago Acumulativo Diciembre':'Pago Mensual'}`,
-    subtitulo:'Detalle anual de comisiones por ventas',
-    usuario:u.nombre,
-    periodo:`${isAnual?`Acumulado diciembre ${yr}`:`Enero–Diciembre ${yr}`}`,
-    emitida,
-    seccion1:'Comisiones por mes',
-    filas1:filas,
-    totalLabel:`${isAnual?'🎁 TOTAL A PAGAR EN DICIEMBRE':'📊 TOTAL ANUAL'}`,
-    totalVal:fmt(total),
-    colorAccent:'#d97706',
-    nota:isAnual
-      ?`Las comisiones acumuladas durante ${yr} se pagarán en el mes de diciembre como pago único.`
-      :`Las comisiones se pagan mensualmente según el detalle anterior.`
-  });
-  openPrint(html,`Comisiones_${u.nombre}_${yr}.html`);
-}
+
 
 // ══════════════════════════════════════════════
 //  USER HOURS MODULE
@@ -11091,12 +11055,7 @@ function buildTSV(headers, rows){
   return lines.join('\r\n');
 }
 
-function strToUTF16LE(str){
-  var buf=new ArrayBuffer(str.length*2);
-  var view=new Uint16Array(buf);
-  for(var i=0;i<str.length;i++) view[i]=str.charCodeAt(i);
-  return new Uint8Array(buf);
-}
+
 
 function tsvToBlob(content){
   var bom=new Uint8Array([0xFF,0xFE]);
@@ -13004,7 +12963,11 @@ function applySearchableSelects(){
     'av-trend-user','av-trend-year','av-prod-sel-chart','av-prod-year',
     'crm-tipo-filter','crm-detail-period',
     'lv-sub-sel','lv-period-sel',
-    'gp-tipo','gp-encargado'];
+    'gp-tipo','gp-encargado',
+    'vac-admin-filter','af-period-type','af-cat-filter',
+    'avf-iva','proj-tipo','ag-user-filter','ag-tipo-filter',
+    'crm-top-freq-period','crm-top-monto-period',
+    'vac-tipo','vac-hist-filter','g-cat','vf-iva','v-filter-cat'];
   document.querySelectorAll('select').forEach(function(sel){
     if(sel.id&&!sel.dataset.srch&&SKIP.indexOf(sel.id)<0) makeSearchable(sel);
   });
