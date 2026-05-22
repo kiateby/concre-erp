@@ -12855,7 +12855,8 @@ function applySearchableSelects(){
     'pago-period-sel','pago-month-sel',
     'av-trend-user','av-trend-year','av-prod-sel-chart','av-prod-year',
     'crm-tipo-filter','crm-detail-period',
-    'lv-sub-sel','lv-period-sel'];
+    'lv-sub-sel','lv-period-sel',
+    'gp-tipo','gp-encargado'];
   document.querySelectorAll('select').forEach(function(sel){
     if(sel.id&&!sel.dataset.srch&&SKIP.indexOf(sel.id)<0) makeSearchable(sel);
   });
@@ -17319,9 +17320,6 @@ window.initCalcCONCRE=initCalcCONCRE;
         </div>
 
 
-      </div><!-- /admin-main -->
-    </div><!-- /admin-layout -->
-  
           <div id="sec-inventario" class="admin-section">
             <div id="inv-root"></div>
           </div>
@@ -17331,6 +17329,9 @@ window.initCalcCONCRE=initCalcCONCRE;
 
           <!-- Cálculos CONCRE -->
           <div id="sec-calculos" class="admin-section"></div>
+
+      </div><!-- /admin-main -->
+    </div><!-- /admin-layout -->
 </div><!-- /adminPanel -->
 
   <!-- USER MODULE -->
