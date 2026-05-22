@@ -13242,12 +13242,14 @@ async function _fp54SaveCache(arr){
 }
 
 // Sync wrappers (usados en renderPjs — inician async internamente)
-const _saveProj=(name,mod,p)=>{
-  _fp54LoadCache().then(function(a){
-    a=a||[];
-    a.unshift({name,modulo:mod,saved:new Date().toISOString(),params:p,uid:SESSION&&SESSION.id||'admin'});
-    _fp54SaveCache(a.slice(0,100));
-  });
+const _saveProj=(name,mod,p,onDone)=>{
+  // Guardar directamente en cache actual (evitar doble carga de Supabase)
+  var a=window._fp54ProjCache||(JSON.parse(localStorage.getItem(_LS)||'[]'));
+  if(!window._fp54ProjCache) window._fp54ProjCache=a;
+  a.unshift({name,modulo:mod,saved:new Date().toISOString(),params:p,uid:SESSION&&SESSION.id||'admin'});
+  var sliced=a.slice(0,100);
+  window._fp54ProjCache=sliced;
+  _fp54SaveCache(sliced).then(function(){ if(onDone) onDone(); });
 };
 const _listProjs=()=>window._fp54ProjCache||JSON.parse(localStorage.getItem(_LS)||'[]');
 const _delProj=i=>{
@@ -14957,9 +14959,25 @@ function initFibraPlus54(){
     const pjSec=_div('sb-sec');pjSec.appendChild(_div('sb-tit',['💾 Proyectos']));
     const pjNom=_el('input',{type:'text',class:'fp-inp',value:S.cp.nombre,placeholder:'Nombre del proyecto'});
     const pjSave=_el('button',{class:'fp-btn fp-btn-r'},['💾 Guardar proyecto']);
-    pjSave.addEventListener('click',()=>{_saveProj(pjNom.value.trim()||S.cp.nombre||'Sin nombre','CP',{...S.cp});renderPjs(pjList,'CP');});
+    pjSave.addEventListener('click',()=>{
+      if(pjSave.disabled) return;
+      pjSave.disabled=true; pjSave.textContent='💾 Guardando...';
+      _saveProj(pjNom.value.trim()||S.cp.nombre||'Sin nombre','CP',{...S.cp},function(){
+        pjSave.disabled=false; pjSave.textContent='💾 Guardar proyecto';
+        renderPjs(pjList,'CP');
+      });
+    });
     const pjNew=_el('button',{class:'fp-btn fp-btn-g'},['🆕 Nuevo proyecto']);
-    pjNew.addEventListener('click',()=>{Object.assign(S.cp,{nombre:'Bodega',referencia:'CP-001',g1_P:0,g2_Q:0,g3_q:0,g4_W:0});root.innerHTML='';initFibraPlus54();});
+    pjNew.addEventListener('click',()=>{
+      Object.assign(S.cp,{nombre:'Bodega',referencia:'',g1_P:0,g2_Q:0,g3_q:0,g4_W:0});
+      root.innerHTML='';
+      // Detectar si estamos en contexto de usuario o admin
+      if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
+        fp54NextRef().then(function(ref){ S.cp.referencia=ref; initFibraPlus54User(); });
+      } else {
+        initFibraPlus54();
+      }
+    });
     const pjList=_div('');renderPjs(pjList,'CP');
     pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjNew,pjList);sb.appendChild(pjSec);
     return sb;
@@ -15016,8 +15034,25 @@ function initFibraPlus54(){
     // Proyectos EP
     const pjSec=_div('sb-sec');pjSec.appendChild(_div('sb-tit',['💾 Proyectos']));
     const pjNom=_el('input',{type:'text',class:'fp-inp',value:S.ep.nombre,placeholder:'Nombre'});
-    const pjSave=_el('button',{class:'fp-btn fp-btn-r'},['💾 Guardar']);pjSave.addEventListener('click',()=>{_saveProj(pjNom.value.trim()||S.ep.nombre||'Sin nombre','EP',{...S.ep});renderPjs(pjList,'EP');});
-    const pjNew=_el('button',{class:'fp-btn fp-btn-g'},['🆕 Nuevo']);pjNew.addEventListener('click',()=>{Object.assign(S.ep,{nombre:'Proyecto Entrepiso',CP:0,CT:0});root.innerHTML='';initFibraPlus54();});
+    const pjSave=_el('button',{class:'fp-btn fp-btn-r'},['💾 Guardar']);
+    pjSave.addEventListener('click',()=>{
+      if(pjSave.disabled) return;
+      pjSave.disabled=true; pjSave.textContent='💾 Guardando...';
+      _saveProj(pjNom.value.trim()||S.ep.nombre||'Sin nombre','EP',{...S.ep},function(){
+        pjSave.disabled=false; pjSave.textContent='💾 Guardar';
+        renderPjs(pjList,'EP');
+      });
+    });
+    const pjNew=_el('button',{class:'fp-btn fp-btn-g'},['🆕 Nuevo']);
+    pjNew.addEventListener('click',()=>{
+      Object.assign(S.ep,{nombre:'Proyecto Entrepiso',referencia:'',CP:0,CT:0});
+      root.innerHTML='';
+      if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
+        fp54NextRef().then(function(ref){ S.ep.referencia=ref; initFibraPlus54User(); });
+      } else {
+        initFibraPlus54();
+      }
+    });
     const pjList=_div('');renderPjs(pjList,'EP');
     pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjNew,pjList);sb.appendChild(pjSec);
     return sb;
