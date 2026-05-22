@@ -5114,12 +5114,18 @@ function _saveSingleVenta(uid, v, mk){
     estado: v.estado||'activo',
     is_admin_venta: v.isAdminVenta||false
   };
-  // Intentar insert; si ya existe hacer update
-  DB.from('ventas').insert([row]).then(function(r){
+  // Usar dbUpsert que maneja insert y update automáticamente
+  DB.from('ventas').upsert([row],{onConflict:'id'}).then(function(r){
     if(r.error){
-      // Registro ya existe — actualizar
-      DB.from('ventas').update(row).eq('id',v.id).then(function(r2){
-        if(r2.error) console.error('_saveSingleVenta update:',r2.error);
+      console.error('_saveSingleVenta upsert error (code='+r.error.code+'):',r.error.message||r.error);
+      // Si upsert falla, intentar insert directo como fallback
+      DB.from('ventas').insert([row]).then(function(r2){
+        if(r2.error){
+          // Si insert también falla (duplicado), hacer update
+          DB.from('ventas').update(row).eq('id',v.id).then(function(r3){
+            if(r3.error) console.error('_saveSingleVenta all methods failed:',r3.error);
+          });
+        }
       });
     }
   });
@@ -5150,8 +5156,10 @@ async function loadVentasFromDB(uid){
   var {data,error}=await DB.from('ventas').select('*').eq('uid',uid).order('fecha');
   // 406 = no rows / RLS empty — treat as empty, not a failure
   if(error&&error.code!=='PGRST116'&&error.status!==406){
-    console.error('loadVentas:',error);
+    console.error('loadVentas error for uid='+uid+':', error);
   }
+  var rowCount=(data||[]).length;
+  if(rowCount>0) console.log('loadVentas uid='+uid+': '+rowCount+' ventas cargadas de Supabase');
   var vd={};
   (data||[]).forEach(function(row){
     var mk=row.anio+'-'+pad(row.mes+1);
