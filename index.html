@@ -12548,12 +12548,16 @@ async function saveInvMov(itemId, tipo, loteId){
     venta_id:''
   };
 
-  // Solo enviar a Supabase las columnas que existen en la tabla
+  // Enviar todas las columnas a Supabase
   var rowForDB={
     id:movRow.id, item_id:movRow.item_id, lote_id:movRow.lote_id,
     tipo:movRow.tipo, categoria:movRow.categoria, cantidad:movRow.cantidad,
+    boleta_salida:movRow.boleta_salida,
+    cantidad_antes:movRow.cantidad_antes, cantidad_despues:movRow.cantidad_despues,
     nota:movRow.nota, uid_responsable:movRow.uid_responsable,
-    created_at:movRow.created_at
+    nombre_responsable:movRow.nombre_responsable,
+    uid_vendedor:movRow.uid_vendedor, nombre_vendedor:movRow.nombre_vendedor,
+    venta_id:movRow.venta_id, created_at:movRow.created_at
   };
 
   var res=await DB.from('inv_movimientos').insert(rowForDB);
