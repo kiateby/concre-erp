@@ -1361,36 +1361,39 @@ function getREG(uid){
 // ══════════════════════════════════════════════════════════════
 
 async function loadAllDataFromDB(){
-  // Show loading overlay without destroying loginScreen HTML
   var loadOverlay=document.getElementById('load-overlay');
   if(!loadOverlay){
     loadOverlay=document.createElement('div');
     loadOverlay.id='load-overlay';
     loadOverlay.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(20,20,40,.92);display:flex;align-items:center;justify-content:center;z-index:9999;font-family:var(--cond);font-size:20px;font-weight:800;color:#fff;letter-spacing:1px';
-    loadOverlay.innerHTML='⏳ Cargando datos...';
+    loadOverlay.innerHTML='⏳ Cargando...';
     document.body.appendChild(loadOverlay);
   }
   loadOverlay.style.display='flex';
 
   try {
-    var users=await DB.from('usuarios').select('*');
-    if(!users.error&&users.data){
-      window._usersCache=users.data.map(dbRowToUser);
-    }
+    // ── FASE 1: Datos globales en PARALELO ──────────────────────────────────
+    var phase1=await Promise.all([
+      DB.from('usuarios').select('*'),
+      DB.from('configuracion').select('*'),
+      DB.from('liq_subcontratistas').select('*'),
+      DB.from('crm_clientes').select('*').order('nombre_empresa'),
+      DB.from('crm_links').select('*'),
+      DB.from('papelera').select('*').order('deleted_at',{ascending:false})
+    ]);
 
-    // Load configs
-    var configs=await DB.from('configuracion').select('*');
+    var users=phase1[0], configs=phase1[1], subs=phase1[2];
+    var crmC=phase1[3], crmL=phase1[4], trashR=phase1[5];
+
+    if(!users.error&&users.data) window._usersCache=users.data.map(dbRowToUser);
+
     if(!configs.error&&configs.data){
       configs.data.forEach(function(row){
         if(row.clave==='catalogo'){
-          var loadedCat = row.valor;
-          // Solo aceptar catálogos con ids nuevos (cat01, cat02...)
-          var isNew = Array.isArray(loadedCat) && loadedCat.length>0 &&
-            loadedCat.every(function(c){ return c.id && (c.id.startsWith('cat')||c.id.startsWith('cu')); });
-          window._catalogoCache = isNew ? loadedCat : DEFAULT_CATALOGO;
-          if(!isNew){
-            setCatalogo(DEFAULT_CATALOGO);
-          }
+          var lc=row.valor;
+          var isNew=Array.isArray(lc)&&lc.length>0&&lc.every(function(c){return c.id&&(c.id.startsWith('cat')||c.id.startsWith('cu'));});
+          window._catalogoCache=isNew?lc:DEFAULT_CATALOGO;
+          if(!isNew) setCatalogo(DEFAULT_CATALOGO);
         }
         if(row.clave==='tipos_proyecto') window._tiposProyCache=row.valor;
         if(row.clave==='liq_cost_types') window._liqCostTypesCache=row.valor;
@@ -1398,49 +1401,48 @@ async function loadAllDataFromDB(){
       });
     }
 
-    // Load LiqSubs
-    var subs=await DB.from('liq_subcontratistas').select('*');
     if(!subs.error&&subs.data){
       window._liqSubsCache=subs.data.map(function(s){
         return {id:s.id,nombre:s.nombre,especialidad:s.especialidad||'',tel:s.tel||''};
       });
     }
+    if(!crmC.error&&crmC.data) window._crmClientes=crmC.data;
+    if(!crmL.error&&crmL.data) window._crmLinks=crmL.data;
+    if(!trashR.error&&trashR.data) window._trashCache=trashR.data;
 
-    // Load CRM
-    await loadCRMFromDB();
-
-    // Load Trash
-    await loadTrashFromDB();
-
-    // Load all user-specific data for current user
+    // ── FASE 2: Datos de usuarios en PARALELO ───────────────────────────────
     if(SESSION){
       var uid=SESSION.id;
-      await loadVentasFromDB(uid);
-      await loadUserData(uid); // async now — loads REG/DED from Supabase
-      await loadVacFromDB(uid);
-      await loadFondosFromDB(uid);
-      await loadGastosFromDB(uid);
+      var allUsers=window._usersCache||[];
+      var others=allUsers.filter(function(u){return u.id!==uid;});
+      var liqSubs=window._liqSubsCache||[];
+      var isAdminSA=SESSION.rol==='admin'||SESSION.rol==='superadmin';
 
-      // If admin/superadmin, load all users' data
-      if(SESSION.rol==='admin'||SESSION.rol==='superadmin'){
-        var allUsers=window._usersCache||[];
-        for(var i=0;i<allUsers.length;i++){
-          var u=allUsers[i];
-          if(u.id!==uid){
-            await loadVentasFromDB(u.id);
-            await loadVacFromDB(u.id);
-            await loadGastosFromDB(u.id);
-            await loadFondosFromDB(u.id);
-            // Cargar horas y deducciones de este usuario desde Supabase
-            await _loadUserDEDForAdmin(u.id);
-          }
-        }
-        // Load all liq data
-        var liqSubs=window._liqSubsCache||[];
-        for(var j=0;j<liqSubs.length;j++){
-          await loadLiqFromDB(liqSubs[j].id);
-        }
+      // Armar todas las promesas en paralelo
+      var promises=[
+        loadVentasFromDB(uid),
+        loadUserData(uid),
+        loadVacFromDB(uid),
+        loadFondosFromDB(uid),
+        loadGastosFromDB(uid)
+      ];
+
+      if(isAdminSA){
+        // Datos de otros usuarios — todos en paralelo
+        others.forEach(function(u){
+          promises.push(loadVentasFromDB(u.id));
+          promises.push(loadVacFromDB(u.id));
+          promises.push(loadGastosFromDB(u.id));
+          promises.push(loadFondosFromDB(u.id));
+          promises.push(_loadUserDEDForAdmin(u.id));
+        });
+        // Liquidaciones — todas en paralelo
+        liqSubs.forEach(function(sub){
+          promises.push(loadLiqFromDB(sub.id));
+        });
       }
+
+      await Promise.all(promises);
     }
 
     var lo=document.getElementById('load-overlay');
