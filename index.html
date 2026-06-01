@@ -923,7 +923,7 @@ select{color:var(--text) !important}
   .ventas-section{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);margin-bottom:16px}
   .ventas-hdr{background:var(--gray-dark);border-bottom:2px solid var(--red);padding:11px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
   .ventas-hdr-title{font-family:var(--cond);font-size:14px;font-weight:800;color:#fff}
-  .venta-row td{padding:8px 10px;font-size:12px;vertical-align:middle;border-bottom:1px solid var(--border)}
+  .venta-row td{padding:5px 7px;font-size:11px;vertical-align:middle;border-bottom:1px solid var(--border)}
 .venta-row{transition:background .1s}
   .venta-row:hover{background:var(--surface2)}
   .venta-row.venta-incompleta{background:rgba(227,24,55,.07)!important;border-left:3px solid var(--red);}
@@ -4063,9 +4063,9 @@ const FONDOS_CATS = {
 };
 
 const PIE_COLORS = [
-  '#E31837','#2563eb','#1a9e5c','#d97706','#7c3aed',
-  '#0891b2','#dc2626','#16a34a','#ca8a04','#9333ea',
-  '#0284c7','#b91c1c','#15803d','#b45309','#7c3aed',
+  '#E31837','#2563eb','#059669','#f59e0b','#7c3aed',
+  '#0891b2','#ea580c','#16a34a','#db2777','#0369a1',
+  '#65a30d','#b91c1c','#0d9488','#b45309','#6d28d9',
 ];
 
 let FD_MONTH = new Date().getMonth();
@@ -6291,8 +6291,8 @@ function renderTrendChart(){
   datasets.forEach(function(ds){
     ctx.beginPath();
     ctx.strokeStyle=ds.color;
-    ctx.lineWidth=ds.isBold?2.5:1.5;
-    if(ds.isDashed) ctx.setLineDash([6,3]);
+    ctx.lineWidth=ds.isBold?4:2.5;
+    if(ds.isDashed) ctx.setLineDash([8,4]);
     else ctx.setLineDash([]);
     var started=false;
     ds.data.forEach(function(val,i){
@@ -6308,8 +6308,9 @@ function renderTrendChart(){
       if(val===0) return;
       const x=padL+i*monthW;
       const y=padT+chartH-(val/maxVal)*chartH;
-      ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2);
+      ctx.beginPath(); ctx.arc(x,y,5,0,Math.PI*2);
       ctx.fillStyle=ds.color; ctx.fill();
+      ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke();
     });
   });
 
@@ -6616,11 +6617,11 @@ function renderAdminVentasTable(){
       ?'<span class="v-badge contado">Contado</span>'
       :'<span class="v-badge credito">Crédito '+(v.plazoCredito>0?v.plazoCredito+'d':'')+'</span>';
     return '<tr style="'+(v.pagadoAdmin?'background:rgba(26,158,92,.06)':v.esTercero?'background:rgba(217,119,6,.04)':'')+'">'
-      +'<td><strong>'+v.uname+'</strong></td>'
-      +'<td style="font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
-      +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+p.nombre+'</span></td>'
-      +'<td>'+v.cliente+'</td>'
-      +'<td style="font-size:11px;color:var(--text3)">'+( v.factura||'—')+'</td>'
+      +'<td style="position:sticky;left:0;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';white-space:nowrap"><strong>'+v.uname+'</strong></td>'
+      +'<td style="position:sticky;left:140px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
+      +'<td style="position:sticky;left:230px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';white-space:nowrap"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+p.nombre+'</span></td>'
+      +'<td style="position:sticky;left:340px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';white-space:nowrap">'+v.cliente+'</td>'
+      +'<td style="position:sticky;left:450px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';font-size:11px;color:var(--text3)">'+( v.factura||'—')+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'
       +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+( v.precio>0?fmt(v.precio):'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.subtotal)+'</td>'
@@ -17166,17 +17167,21 @@ window.initCalcCONCRE=initCalcCONCRE;
           </div>
 
           <!-- Full sales detail -->
-          <div class="admin-table-wrap" style="overflow-x:auto">
+          <div class="admin-table-wrap" style="overflow-x:auto;position:relative">
             <div class="admin-table-hdr">
               <span class="ath-title">Detalle completo de ventas</span>
               <select class="form-select" id="av-cat-filter" onchange="renderAdminVentasTable()" style="font-size:11px;padding:5px 8px;width:auto;background:var(--surface);border:1.5px solid var(--border2);color:var(--text);border-radius:6px">
                 <option value="all">Todas las categorías</option>
               </select>
             </div>
-            <table class="atbl" style="min-width:1000px">
+            <table class="atbl" style="min-width:1000px;border-collapse:separate;border-spacing:0">
               <thead><tr>
-                <th>Colaborador</th><th>Fecha</th><th>Producto</th><th>Cliente</th>
-                <th>Factura</th><th>Cant.</th><th>Precio unit.</th>
+                <th style="position:sticky;left:0;z-index:3;background:var(--surface2);white-space:nowrap;min-width:130px">Colaborador</th>
+                <th style="position:sticky;left:130px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:90px">Fecha</th>
+                <th style="position:sticky;left:220px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:110px">Producto</th>
+                <th style="position:sticky;left:330px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:110px">Cliente</th>
+                <th style="position:sticky;left:440px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:70px">Factura</th>
+                <th>Cant.</th><th>Precio unit.</th>
                 <th style="text-align:right">Subtotal</th><th>IVA ₡</th><th style="text-align:right">Total</th>
                 <th>Pago / Plazo</th><th>Base comis.</th><th>Comisión</th>
                 <th>Notas / Extra</th><th>Estado</th><th>Depósito #</th><th>✓ Pago</th>
@@ -18332,12 +18337,12 @@ window.initCalcCONCRE=initCalcCONCRE;
             </div>
           </div>
           <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
-          <table class="atbl" style="width:100%;min-width:1100px">
-            <thead><tr>
-              <th>Fecha</th><th>Cantidad</th><th>Precio unit.</th><th>Producto</th><th>Cliente</th><th>Factura</th>
-              <th>Pago</th><th style="text-align:center">IVA ₡</th>
-              <th style="text-align:right">Subtotal</th><th style="text-align:right">Total</th>
-              <th style="text-align:right">Comisión</th><th>Proyecto</th><th>Notas / Extra</th><th>Estado</th><th></th>
+          <table class="atbl" style="width:100%;min-width:900px">
+            <thead><tr style="font-size:10px">
+              <th style="padding:5px 6px">Fecha</th><th style="padding:5px 6px">Cant.</th><th style="padding:5px 6px">Precio</th><th style="padding:5px 6px">Producto</th><th style="padding:5px 6px">Cliente</th><th style="padding:5px 6px">Fact.</th>
+              <th style="padding:5px 6px">Pago</th><th style="text-align:center;padding:5px 6px">IVA</th>
+              <th style="text-align:right;padding:5px 6px">Subtotal</th><th style="text-align:right;padding:5px 6px">Total</th>
+              <th style="text-align:right;padding:5px 6px">Comisión</th><th style="padding:5px 6px">Proyecto</th><th style="padding:5px 6px">Notas</th><th style="padding:5px 6px">Estado</th><th style="padding:5px 6px"></th>
             </tr></thead>
             <tbody id="v-ventas-list"></tbody>
           </table>
