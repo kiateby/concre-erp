@@ -11760,18 +11760,28 @@ function invNextMovNum(itemId){
 
 // ══ DB LOADERS ══
 async function loadInvFromDB(){
+  // Cargar items — tabla principal, funciona para todos los roles
   var r1=await DB.from('inv_items').select('*').order('nombre');
+  if(!r1.error && r1.data) window._invItems=r1.data;
+  else if(r1.error) console.error('inv_items load error:',r1.error.message);
+
+  // Lotes — puede fallar con RLS para usuarios normales
   var r2=await DB.from('inv_lotes').select('*').order('created_at');
+  if(!r2.error && r2.data) window._invLotes=r2.data;
+
+  // Movimientos — puede fallar con RLS para usuarios normales
   var r3=await DB.from('inv_movimientos').select('*').order('created_at',{ascending:false});
+  if(!r3.error && r3.data) window._invMovs=r3.data;
+
+  // Alertas — puede fallar con RLS para usuarios normales
   var r4=await DB.from('inv_alertas').select('*').eq('resuelta',false).order('created_at',{ascending:false});
+  if(!r4.error && r4.data) window._invAlertas=r4.data;
+
+  // Permisos — solo relevante para superadmin/admin
   var r5=await DB.from('inv_permisos').select('*');
-  if(!r1.error) window._invItems=r1.data||[];
-  if(!r2.error) window._invLotes=r2.data||[];
-  if(!r3.error) window._invMovs=r3.data||[];
-  if(!r4.error) window._invAlertas=r4.data||[];
-  if(!r5.error){
+  if(!r5.error && r5.data){
     window._invPermisos={};
-    (r5.data||[]).forEach(function(p){ window._invPermisos[p.uid]=p.nivel; });
+    r5.data.forEach(function(p){ window._invPermisos[p.uid]=p.nivel; });
   }
 }
 
