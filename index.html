@@ -17,7 +17,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
 
 <script>
-(function(){var m={"name":"CONCRE ERP","short_name":"CONCRE","start_url":"/","display":"standalone","background_color":"#E31837","theme_color":"#E31837"};var b=new Blob([JSON.stringify(m)],{type:'application/manifest+json'});var l=document.createElement('link');l.rel='manifest';l.href=URL.createObjectURL(b);document.head.appendChild(l);})();
+(function(){var m={"name":"CONCRE ERP","short_name":"CONCRE","start_url":"https://concre-erp.vercel.app/","display":"standalone","background_color":"#E31837","theme_color":"#E31837"};var b=new Blob([JSON.stringify(m)],{type:'application/manifest+json'});var l=document.createElement('link');l.rel='manifest';l.href=URL.createObjectURL(b);document.head.appendChild(l);})();
 </script>
 <style>
 :root{
@@ -12205,8 +12205,8 @@ async function openInvItemDetail(itemId){
       html+='<td style="padding:7px 12px"><span style="background:'+tipoBg+';color:'+tipoColor+';padding:2px 6px;border-radius:4px;font-weight:700;font-size:10px">'+m.tipo.toUpperCase()+'</span></td>';
       html+='<td style="padding:7px 12px;color:var(--text2)">'+catLabel+'</td>';
       html+='<td style="padding:7px 12px;text-align:right;font-weight:700;color:'+(m.tipo==='ingreso'?'var(--green)':m.tipo==='salida'?'var(--red)':'var(--gray)')+'">'+((m.tipo==='ingreso'||m.tipo==='ajuste')?'+':'-')+invFmt(m.cantidad)+'</td>';
-      html+='<td style="padding:7px 12px;text-align:right">'+invFmt(m.cantidad_despues)+'</td>';
-      html+='<td style="padding:7px 12px">'+m.nombre_responsable+'</td>';
+      html+='<td style="padding:7px 12px;text-align:right">'+invFmt(m.cantidad_despues!=null?m.cantidad_despues:'—')+'</td>';
+      html+='<td style="padding:7px 12px">'+(m.nombre_responsable||m.uid_responsable||'—')+'</td>';
       html+='<td style="padding:7px 12px;color:var(--text2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+m.nota+'">'+m.nota+'</td>';
       html+='<td style="padding:7px 12px;color:var(--text3);white-space:nowrap">'+invDateFmt(m.created_at)+'</td>';
       html+='</tr>';
@@ -12318,7 +12318,7 @@ async function openFibraLoteDetail(loteId){
     movs.forEach(function(m){
       var tipoColor=m.tipo==='ingreso'?'var(--green)':m.tipo==='salida'?'var(--red)':'var(--gray)';
       var catLabel=m.categoria==='uso_propio'?'Uso propio':m.categoria==='venta_cliente'?'Venta cliente':m.categoria==='compra'?'Compra':m.categoria==='ajuste'?'Ajuste':'—';
-      html+='<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 12px"><span onclick="invShowMovDetail(\''+m.id+'\')" style="color:var(--blue);cursor:pointer;text-decoration:underline;font-weight:700">'+m.id+'</span></td><td style="padding:7px 12px;font-weight:700;color:'+tipoColor+'">'+m.tipo.toUpperCase()+'</td><td style="padding:7px 12px;color:var(--text2)">'+catLabel+'</td><td style="padding:7px 12px;text-align:right;font-weight:700;color:'+tipoColor+'">'+((m.tipo==='ingreso')?'+':'-')+invFmt(m.cantidad)+'</td><td style="padding:7px 12px;text-align:right">'+invFmt(m.cantidad_despues)+'</td><td style="padding:7px 12px">'+m.nombre_responsable+'</td><td style="padding:7px 12px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+m.nota+'</td><td style="padding:7px 12px;color:var(--text3);white-space:nowrap">'+invDateFmt(m.created_at)+'</td></tr>';
+      html+='<tr style="border-bottom:1px solid var(--border)"><td style="padding:7px 12px"><span onclick="invShowMovDetail(\''+m.id+'\')" style="color:var(--blue);cursor:pointer;text-decoration:underline;font-weight:700">'+m.id+'</span></td><td style="padding:7px 12px;font-weight:700;color:'+tipoColor+'">'+m.tipo.toUpperCase()+'</td><td style="padding:7px 12px;color:var(--text2)">'+catLabel+'</td><td style="padding:7px 12px;text-align:right;font-weight:700;color:'+tipoColor+'">'+((m.tipo==='ingreso')?'+':'-')+invFmt(m.cantidad)+'</td><td style="padding:7px 12px;text-align:right">'+invFmt(m.cantidad_despues!=null?m.cantidad_despues:'—')+'</td><td style="padding:7px 12px">'+(m.nombre_responsable||m.uid_responsable||'—')+'</td><td style="padding:7px 12px;color:var(--text2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+m.nota+'</td><td style="padding:7px 12px;color:var(--text3);white-space:nowrap">'+invDateFmt(m.created_at)+'</td></tr>';
     });
     html+='</tbody></table>';
   }
@@ -12530,16 +12530,33 @@ async function saveInvMov(itemId, tipo, loteId){
 
   var vendedor=vendedorId?getUsers().find(function(u){return u.id===vendedorId;}):null;
 
+  var notaFull=nota;
+  if(tipo==='salida'&&boletaSalida) notaFull='BOL:'+boletaSalida+(nota?' | '+nota:'');
+  if(vendedorId) notaFull=(notaFull?notaFull+' | ':'')+'Vendedor:'+( vendedor?vendedor.nombre:vendedorId);
+
   var movRow={
     id:movId, item_id:itemId, lote_id:loteId&&loteId!=='null'?loteId:null,
-    tipo:tipo, categoria:cat, cantidad:cantidad, boleta_salida:tipo==='salida'?boletaSalida:'',
+    tipo:tipo, categoria:cat, cantidad:cantidad,
+    nota:notaFull,
+    uid_responsable:SESSION.id,
+    created_at:new Date().toISOString(),
+    // Campos extendidos — se guardan localmente aunque no estén en Supabase
+    boleta_salida:tipo==='salida'?boletaSalida:'',
     cantidad_antes:cantAntes, cantidad_despues:cantDespues,
-    nota:nota, uid_responsable:SESSION.id, nombre_responsable:SESSION.nombre,
+    nombre_responsable:SESSION.nombre,
     uid_vendedor:vendedorId||'', nombre_vendedor:vendedor?vendedor.nombre:'',
-    venta_id:'', created_at:new Date().toISOString()
+    venta_id:''
   };
 
-  var res=await DB.from('inv_movimientos').insert(movRow);
+  // Solo enviar a Supabase las columnas que existen en la tabla
+  var rowForDB={
+    id:movRow.id, item_id:movRow.item_id, lote_id:movRow.lote_id,
+    tipo:movRow.tipo, categoria:movRow.categoria, cantidad:movRow.cantidad,
+    nota:movRow.nota, uid_responsable:movRow.uid_responsable,
+    created_at:movRow.created_at
+  };
+
+  var res=await DB.from('inv_movimientos').insert(rowForDB);
   if(res.error){ toast('Error: '+res.error.message); return; }
   window._invMovs.unshift(movRow);
 
@@ -12777,7 +12794,7 @@ function invExportMovs(mode){
       var item=items.find(function(i){return i.id===m.item_id;})||{nombre:m.item_id};
       var lote=m.lote_id?window._invLotes.find(function(l){return l.id===m.lote_id;}):null;
       var catLabel=m.categoria==='uso_propio'?'Uso propio':m.categoria==='venta_cliente'?'Venta cliente':m.categoria==='compra'?'Compra':m.categoria==='ajuste'?'Ajuste':'';
-      return [m.id,item.nombre,lote?lote.nombre:'',m.tipo,catLabel,m.cantidad,m.cantidad_antes,m.cantidad_despues,m.nombre_responsable,m.nombre_vendedor||'',m.nota,invDateFmt(m.created_at)];
+      return [m.id,item.nombre,lote?lote.nombre:'',m.tipo,catLabel,m.cantidad,(m.cantidad_antes||'—'),(m.cantidad_despues||'—'),(m.nombre_responsable||m.uid_responsable||''),(m.nombre_vendedor||''),m.nota,invDateFmt(m.created_at)];
     });
     tsv='sep=\t\r\n'+headers2.join('\t')+'\r\n'+rows2.map(function(r){return r.map(function(v){return String(v||'').replace(/\t/g,' ');}).join('\t');}).join('\r\n');
     filename='CONCRE_Inventario_Historial_'+new Date().toISOString().split('T')[0]+'.csv';
