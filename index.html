@@ -11827,13 +11827,24 @@ function renderInvMain(){
   }
   if(!root) return;
   root.innerHTML=
-    '<div id="inv-nav" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap"></div>'+
-    '<div id="inv-body"></div>';
+    '<div id="inv-nav-'+root.id+'" style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;align-items:center"></div>'+
+    '<div id="inv-body-'+root.id+'"></div>';
+  // Use scoped IDs to avoid collision between admin and user DOMs
+  window._invRootId=root.id;
   renderInvNav('dashboard');
 }
 
+function _invBody(){
+  var rootId=window._invRootId||'inv-root';
+  return document.getElementById('inv-body-'+rootId)||document.getElementById('inv-body');
+}
+function _invNav(){
+  var rootId=window._invRootId||'inv-root';
+  return document.getElementById('inv-nav-'+rootId)||document.getElementById('inv-nav');
+}
+
 function renderInvNav(active){
-  var nav=document.getElementById('inv-nav');
+  var nav=_invNav();
   if(!nav) return;
   var tabs=[
     {id:'dashboard',  label:'📊 Dashboard'},
@@ -11858,7 +11869,7 @@ function renderInvNav(active){
 
 function switchInvTab(tab){
   // Update nav active state
-  var nav=document.getElementById('inv-nav');
+  var nav=_invNav();
   if(nav) nav.querySelectorAll('button').forEach(function(btn){
     var isActive=btn.textContent.trim().includes(tab==='dashboard'?'Dashboard':tab==='inventario'?'Inventario':tab==='activos'?'Activo':tab==='reportes'?'Reporte':'Permiso');
     btn.style.background=isActive?'var(--blue)':'var(--surface)';
@@ -11867,13 +11878,45 @@ function switchInvTab(tab){
     btn.style.fontWeight=isActive?'800':'500';
   });
 
-  var body=document.getElementById('inv-body');
+  var body=_invBody();
   if(!body) return;
   if(tab==='dashboard') renderInvDashboard();
   else if(tab==='inventario') renderInvList('inventario');
   else if(tab==='activos') renderInvList('activo');
   else if(tab==='reportes') renderInvReportes();
   else if(tab==='permisos') renderInvPermisos();
+}
+
+// ── Subir foto de inventario — convierte a base64 y guarda en Supabase ──────
+function invHandlePhoto(input){
+  var file=input.files[0];
+  if(!file) return;
+  if(file.size>2*1024*1024){ toast('⚠ La foto debe ser menor a 2MB'); input.value=''; return; }
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var dataUrl=e.target.result; // base64 data URL
+    // Show preview immediately
+    var prev=document.getElementById('iim-foto-preview');
+    if(prev) prev.innerHTML='<img src="'+dataUrl+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--green);margin-top:4px">✅ Lista para guardar</div>';
+    // Store data URL in hidden field
+    var fotoInp=document.getElementById('iim-foto');
+    if(fotoInp) fotoInp.value=dataUrl;
+    // Also try Supabase Storage upload for smaller stored value
+    // (optional enhancement — if Storage is configured)
+    var fname='inv-foto-'+Date.now()+'.'+file.name.split('.').pop();
+    DB.storage.from('inventario-fotos').upload(fname, file, {upsert:true,contentType:file.type})
+      .then(function(res){
+        if(!res.error){
+          var pub=DB.storage.from('inventario-fotos').getPublicUrl(fname);
+          if(pub&&pub.data&&pub.data.publicUrl){
+            if(fotoInp) fotoInp.value=pub.data.publicUrl;
+            if(prev) prev.innerHTML='<img src="'+pub.data.publicUrl+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--green);margin-top:4px">✅ Subida a la nube</div>';
+          }
+        }
+        // If Storage fails, base64 stays as fallback — already set above
+      });
+  };
+  reader.readAsDataURL(file);
 }
 
 function exportInvExcel(type){
@@ -11921,7 +11964,7 @@ function exportInvExcel(type){
 
 
 function renderInvDashboard(){
-  var body=document.getElementById('inv-body');
+  var body=_invBody();
   if(!body) return;
   var items=window._invItems;
   var movs=window._invMovs;
@@ -12030,7 +12073,7 @@ function invSearchScore(item, q){
 }
 
 function renderInvList(type, searchQ){
-  var body=document.getElementById('inv-body');
+  var body=_invBody();
   if(!body) return;
   var allItems=window._invItems.filter(function(i){return i.type===type&&i.activo!==false;});
   var label=type==='inventario'?'Inventario':'Activo';
@@ -12103,7 +12146,7 @@ async function openInvItemDetail(itemId){
   }
 
   var movs=window._invMovs.filter(function(m){return m.item_id===itemId;});
-  var body=document.getElementById('inv-body');
+  var body=_invBody();
   if(!body) return;
 
   var bajoMin=item.cantidad<=item.cantidad_minima;
@@ -12162,7 +12205,7 @@ async function openInvItemDetail(itemId){
 
 // ══ FIBRA — LOTES ══
 function renderFibraLotes(item){
-  var body=document.getElementById('inv-body');
+  var body=_invBody();
   if(!body) return;
   var lotes=window._invLotes.filter(function(l){return l.item_id===item.id;});
   var lotesActivos=lotes.filter(function(l){return l.estado==='activo';});
@@ -12223,7 +12266,7 @@ async function openFibraLoteDetail(loteId){
   var item=window._invItems.find(function(i){return i.id===lote.item_id;});
   if(!item) return;
   var movs=window._invMovs.filter(function(m){return m.lote_id===loteId;});
-  var body=document.getElementById('inv-body');
+  var body=_invBody();
   if(!body) return;
 
   var pct=lote.cantidad_inicial>0?Math.round(lote.cantidad_actual/lote.cantidad_inicial*100):0;
@@ -12314,7 +12357,7 @@ function openInvItemModal(itemId, type){
     +'<div><span class="liq-label">Cantidad actual</span><input type="number" id="iim-cantidad" class="liq-inp" value="'+(item?item.cantidad:0)+'" min="0"></div>'
     +'<div><span class="liq-label">Cantidad mínima</span><input type="number" id="iim-minimo" class="liq-inp" value="'+(item?item.cantidad_minima:0)+'" min="0"></div>'
     +'</div>'
-    +'<div style="margin-bottom:10px"><span class="liq-label">Foto (URL o subir)</span><input type="text" id="iim-foto" class="liq-inp" value="'+(item?item.foto_url||'':'')+'" placeholder="URL de imagen o deja vacío"></div>'
+    +'<div style="margin-bottom:10px"><span class="liq-label">Fotografía</span>'    +'<div style="border:2px dashed var(--border);border-radius:8px;padding:10px;text-align:center;cursor:pointer;background:var(--surface2);transition:border-color .2s" onclick="document.getElementById(\'iim-foto-file\').click()" onmouseover="this.style.borderColor=\'var(--blue)\'" onmouseout="this.style.borderColor=\'var(--border)\'">'+(item&&item.foto_url?'<div id="iim-foto-preview"><img src="'+item.foto_url+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--text3);margin-top:4px">Clic para cambiar</div></div>':'<div id="iim-foto-preview"><div style="font-size:28px;margin-bottom:4px">📷</div><div style="font-size:12px;color:var(--text3)">Clic para subir foto</div><div style="font-size:10px;color:var(--text3);margin-top:2px">JPG · PNG · WEBP — máx 2MB</div></div>')+'<input type="file" id="iim-foto-file" accept="image/*" style="display:none" onchange="invHandlePhoto(this)"></div>'    +'<input type="hidden" id="iim-foto" value="'+(item?item.foto_url||'':'')+'">'+'</div>'
     +'<div style="margin-bottom:10px"><span class="liq-label">Notas</span><textarea id="iim-notas" class="liq-inp" rows="2" style="resize:vertical">'+(item?item.notas||'':'')+'</textarea></div>'
     +'</div>'
     +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invItemModal\').classList.add(\'hidden\')">Cancelar</button><button class="modal-btn save" onclick="saveInvItem(\''+type+'\',\''+itemId+'\')">Guardar</button></div>'
@@ -12596,7 +12639,7 @@ function invShowMovDetail(movId){
 
 // ══ REPORTES ══
 function renderInvReportes(){
-  var body=document.getElementById('inv-body');
+  var body=_invBody();
   if(!body) return;
   var movs=window._invMovs;
   var items=window._invItems;
@@ -12738,7 +12781,7 @@ function invExportMovs(mode){
 
 // ══ PERMISOS ══
 function renderInvPermisos(){
-  var body=document.getElementById('inv-body');
+  var body=_invBody();
   if(!body) return;
   var users=getUsers().filter(function(u){return u.rol==='user';});
   var admins=getUsers().filter(function(u){return u.rol==='admin';});
