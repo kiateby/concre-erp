@@ -11760,29 +11760,43 @@ function invNextMovNum(itemId){
 
 // ══ DB LOADERS ══
 async function loadInvFromDB(){
-  // Cargar items — tabla principal, funciona para todos los roles
-  var r1=await DB.from('inv_items').select('*').order('nombre');
-  if(!r1.error && r1.data) window._invItems=r1.data;
-  else if(r1.error) console.error('inv_items load error:',r1.error.message);
+  // Cargar items — tabla principal
+  try{
+    var r1=await DB.from('inv_items').select('*').order('nombre');
+    if(r1.error){
+      console.error('inv_items error (status='+r1.error.status+'):', r1.error.message);
+    } else {
+      window._invItems=r1.data||[];
+      console.log('inv_items: '+window._invItems.length+' ítems cargados');
+    }
+  }catch(e){ console.error('inv_items exception:',e); }
 
-  // Lotes — puede fallar con RLS para usuarios normales
-  var r2=await DB.from('inv_lotes').select('*').order('created_at');
-  if(!r2.error && r2.data) window._invLotes=r2.data;
+  // Lotes
+  try{
+    var r2=await DB.from('inv_lotes').select('*').order('created_at');
+    if(!r2.error && r2.data) window._invLotes=r2.data;
+  }catch(e){}
 
-  // Movimientos — puede fallar con RLS para usuarios normales
-  var r3=await DB.from('inv_movimientos').select('*').order('created_at',{ascending:false});
-  if(!r3.error && r3.data) window._invMovs=r3.data;
+  // Movimientos
+  try{
+    var r3=await DB.from('inv_movimientos').select('*').order('created_at',{ascending:false});
+    if(!r3.error && r3.data) window._invMovs=r3.data;
+  }catch(e){}
 
-  // Alertas — puede fallar con RLS para usuarios normales
-  var r4=await DB.from('inv_alertas').select('*').eq('resuelta',false).order('created_at',{ascending:false});
-  if(!r4.error && r4.data) window._invAlertas=r4.data;
+  // Alertas
+  try{
+    var r4=await DB.from('inv_alertas').select('*').eq('resuelta',false).order('created_at',{ascending:false});
+    if(!r4.error && r4.data) window._invAlertas=r4.data;
+  }catch(e){}
 
-  // Permisos — solo relevante para superadmin/admin
-  var r5=await DB.from('inv_permisos').select('*');
-  if(!r5.error && r5.data){
-    window._invPermisos={};
-    r5.data.forEach(function(p){ window._invPermisos[p.uid]=p.nivel; });
-  }
+  // Permisos
+  try{
+    var r5=await DB.from('inv_permisos').select('*');
+    if(!r5.error && r5.data){
+      window._invPermisos={};
+      r5.data.forEach(function(p){ window._invPermisos[p.uid]=p.nivel; });
+    }
+  }catch(e){}
 }
 
 // ══ INIT ══
@@ -11834,6 +11848,11 @@ function renderInvNav(active){
     return '<button onclick="switchInvTab(\''+t.id+'\')" style="padding:7px 16px;border-radius:8px;border:1.5px solid '+(on?'var(--blue)':'var(--border)')+';background:'+(on?'var(--blue)':'var(--surface)')+';color:'+(on?'#fff':'var(--text)')+';font-weight:'+(on?'800':'500')+';font-size:13px;cursor:pointer">'+t.label+'</button>';
   }).join('');
 
+  // Botón exportar Excel — solo superadmin en pestañas inventario/activos
+  if(SESSION&&SESSION.rol==='superadmin'&&(active==='inventario'||active==='activos')){
+    nav.innerHTML+='<button onclick="exportInvExcel(\''+active+'\')" style="margin-left:auto;padding:7px 16px;border-radius:8px;border:1.5px solid #16a34a;background:#16a34a;color:#fff;font-weight:700;font-size:13px;cursor:pointer">⬇ Excel</button>';
+  }
+
   switchInvTab(active);
 }
 
@@ -11857,7 +11876,50 @@ function switchInvTab(tab){
   else if(tab==='permisos') renderInvPermisos();
 }
 
-// ══ DASHBOARD ══
+function exportInvExcel(type){
+  var label=type==='inventario'?'Inventario':'Activos';
+  var items=window._invItems.filter(function(i){ return i.type===type&&i.activo!==false; });
+  if(!items.length){ toast('Sin ítems para exportar'); return; }
+
+  // Headers
+  var headers=['Código','Nombre','Unidad','Cantidad','Cantidad Mínima','Estado','Notas','Foto URL','Creado por','Actualizado'];
+  var rows=items.map(function(i){
+    return [
+      i.codigo||'',
+      i.nombre||'',
+      i.unidad||'',
+      i.cantidad!=null?i.cantidad:'',
+      i.cantidad_minima!=null?i.cantidad_minima:'',
+      i.activo===false?'Inactivo':'Activo',
+      i.notas||'',
+      i.foto_url||'',
+      i.created_by||'',
+      i.updated_at?(i.updated_at.slice(0,10)):''
+    ];
+  });
+
+  // Build CSV with BOM for Excel Spanish encoding
+  var BOM='\uFEFF';
+  var csv=BOM+headers.join(',')+'\n'+rows.map(function(r){
+    return r.map(function(v){
+      var s=String(v).replace(/"/g,'""');
+      return (s.includes(',')||s.includes('"')||s.includes('\n'))?'"'+s+'"':s;
+    }).join(',');
+  }).join('\n');
+
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download='CONCRE_'+label+'_'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('✅ Exportado: '+items.length+' ítems');
+}
+
+
 function renderInvDashboard(){
   var body=document.getElementById('inv-body');
   if(!body) return;
