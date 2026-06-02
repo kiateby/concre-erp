@@ -12173,6 +12173,10 @@ function renderInvList(type, searchQ){
       }
       html+='<div style="font-weight:800;font-size:13px;margin-bottom:3px">'+displayNombre+'</div>';
       html+='<div style="font-size:10px;color:var(--text3);margin-bottom:8px">'+displayCodigo+'</div>';
+      if(item.es_fibra){
+        var nLotes=window._invLotes.filter(function(l){return l.item_id===item.id&&l.estado==='activo';}).length;
+        html+='<div style="font-size:10px;color:var(--blue);font-weight:700;margin-bottom:6px">📦 '+nLotes+' lote'+(nLotes!==1?'s':'')+' activo'+(nLotes!==1?'s':'')+'</div>';
+      }
       html+='<div style="display:flex;justify-content:space-between;align-items:center">';
       html+='<div style="font-size:18px;font-weight:900;color:'+(bajoMin?'var(--red)':'var(--blue)')+'">'+invFmt(item.cantidad)+'<span style="font-size:10px;color:var(--text3);font-weight:400;margin-left:3px">'+(item.unidad||'')+'</span></div>';
       if(bajoMin) html+='<span style="background:rgba(227,24,55,.1);color:var(--red);font-size:9px;font-weight:800;padding:2px 6px;border-radius:100px">BAJO MÍN</span>';
@@ -12431,6 +12435,11 @@ function openInvItemModal(itemId, type){
 async function deleteInvItem(itemId, type){
   var item=window._invItems.find(function(i){return i.id===itemId;});
   if(!item) return;
+  // Fibra items cannot be deleted — they are permanent
+  if(item.es_fibra){
+    toast('⚠ El ítem de fibra no se puede eliminar — es permanente. Solo se pueden cerrar/borrar sus lotes.');
+    return;
+  }
   var label=type==='inventario'?'ítem de inventario':'activo';
   if(!confirm('¿Seguro que deseas eliminar "'+item.nombre+'"?\n\nEl '+label+' se enviará a la papelera de reciclaje donde podrás restaurarlo o borrarlo definitivamente.')) return;
 
