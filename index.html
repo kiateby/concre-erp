@@ -10943,7 +10943,21 @@ function restoreFromTrash(trashId, restoreToUser){
         pd.proyectos.push(lp.proj);
         saveLiqPeriod(lp.subId,lp.periodKey,pd);
       }
-    } else if(item.type==='gasto'){
+    } else if(item.type==='inv_item'){
+      // Restaurar ítem de inventario — reactivar en Supabase
+      var invItem=item.data;
+      DB.from('inv_items').update({activo:true, updated_at:new Date().toISOString()}).eq('id',invItem.id).then(function(r){
+        if(!r.error){
+          invItem.activo=true;
+          window._invItems.push(invItem);
+          toast('✅ "'+invItem.nombre+'" restaurado al inventario');
+        } else {
+          toast('Error al restaurar: '+r.error.message);
+        }
+      });
+      setTrash(trash.filter(function(t){return t.id!==trashId;}));
+      toast('✅ Ítem restaurado al inventario');
+      return;
       var regs=getGastosData(item.uid);
       regs.push(item.data);
       setGastosData(item.uid,regs);
@@ -10976,6 +10990,11 @@ function deleteFromTrashPermanently(trashId){
     toast('Solo el superadmin puede eliminar definitivamente'); return;
   }
   if(!confirm('¿Eliminar DEFINITIVAMENTE este registro? Esta acción no se puede deshacer.')) return;
+  var item=getTrash().find(function(t){return t.id===trashId;});
+  // Si es ítem de inventario, borrar definitivamente de Supabase también
+  if(item&&item.type==='inv_item'&&item.data&&item.data.id){
+    DB.from('inv_items').delete().eq('id',item.data.id).then(function(){});
+  }
   var trash=getTrash().filter(function(t){return t.id!==trashId;});
   setTrash(trash);
   renderTrashPanel();
@@ -10990,7 +11009,7 @@ function renderTrashPanel(){
     el.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3)">🗑 Papelera vacía — sin registros pendientes</div>';
     return;
   }
-  var TYPE_LABELS={'venta':'Venta','gasto':'Gasto Proyecto','fondos':'Fondos','cliente_crm':'Cliente CRM'};
+  var TYPE_LABELS={'venta':'Venta','gasto':'Gasto Proyecto','fondos':'Fondos','cliente_crm':'Cliente CRM','inv_item':'Inv/Activo'};
   el.innerHTML='<table class="atbl" style="min-width:800px"><thead><tr>'
     +'<th>Fecha borrado</th><th>Usuario</th><th>Tipo</th><th>Registro</th>'
     +'<th>Estado</th><th>Acciones</th></tr></thead><tbody>'
@@ -12374,9 +12393,41 @@ function openInvItemModal(itemId, type){
     +'<div style="margin-bottom:10px"><span class="liq-label">Fotografía</span>'    +'<div style="border:2px dashed var(--border);border-radius:8px;padding:10px;text-align:center;cursor:pointer;background:var(--surface2);transition:border-color .2s" onclick="document.getElementById(\'iim-foto-file\').click()" onmouseover="this.style.borderColor=\'var(--blue)\'" onmouseout="this.style.borderColor=\'var(--border)\'">'+(item&&item.foto_url?'<div id="iim-foto-preview"><img src="'+item.foto_url+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--text3);margin-top:4px">Clic para cambiar</div></div>':'<div id="iim-foto-preview"><div style="font-size:28px;margin-bottom:4px">📷</div><div style="font-size:12px;color:var(--text3)">Clic para subir foto</div><div style="font-size:10px;color:var(--text3);margin-top:2px">JPG · PNG · WEBP — máx 2MB</div></div>')+'<input type="file" id="iim-foto-file" accept="image/*" style="display:none" onchange="invHandlePhoto(this)"></div>'    +'<input type="hidden" id="iim-foto" value="'+(item?item.foto_url||'':'')+'">'+'</div>'
     +'<div style="margin-bottom:10px"><span class="liq-label">Notas</span><textarea id="iim-notas" class="liq-inp" rows="2" style="resize:vertical">'+(item?item.notas||'':'')+'</textarea></div>'
     +'</div>'
-    +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invItemModal\').classList.add(\'hidden\')">Cancelar</button><button class="modal-btn save" onclick="saveInvItem(\''+type+'\',\''+itemId+'\')">Guardar</button></div>'
+    +'<div class="modal-footer">'
+    +(itemId&&SESSION&&SESSION.rol==='superadmin'?'<button class="modal-btn" onclick="deleteInvItem(\''+itemId+'\',\''+type+'\')" style="background:rgba(227,24,55,.1);color:var(--red);border:1px solid rgba(227,24,55,.3);margin-right:auto">🗑 Eliminar</button>':'')
+    +'<button class="modal-btn cancel" onclick="document.getElementById(\'invItemModal\').classList.add(\'hidden\')">Cancelar</button>'
+    +'<button class="modal-btn save" onclick="saveInvItem(\''+type+'\',\''+itemId+'\')">Guardar</button>'
+    +'</div>'
     +'</div>';
   m.classList.remove('hidden');
+}
+
+async function deleteInvItem(itemId, type){
+  var item=window._invItems.find(function(i){return i.id===itemId;});
+  if(!item) return;
+  var label=type==='inventario'?'ítem de inventario':'activo';
+  if(!confirm('¿Seguro que deseas eliminar "'+item.nombre+'"?\n\nEl '+label+' se enviará a la papelera de reciclaje donde podrás restaurarlo o borrarlo definitivamente.')) return;
+
+  // Cerrar modal
+  document.getElementById('invItemModal').classList.add('hidden');
+
+  // Marcar como inactivo en Supabase (soft delete)
+  await DB.from('inv_items').update({activo:false, updated_at:new Date().toISOString()}).eq('id',itemId);
+
+  // Quitar del cache local
+  window._invItems=window._invItems.filter(function(i){return i.id!==itemId;});
+
+  // Enviar a papelera
+  addToTrash({
+    type:'inv_item',
+    uid:SESSION.id,
+    uNombre:SESSION.nombre,
+    data:item,
+    invType:type
+  });
+
+  toast('🗑 "'+item.nombre+'" enviado a la papelera');
+  renderInvList(type, '');
 }
 
 async function saveInvItem(type, itemId){
