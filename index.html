@@ -11924,30 +11924,47 @@ function switchInvTab(tab){
 function invHandlePhoto(input){
   var file=input.files[0];
   if(!file) return;
-  if(file.size>2*1024*1024){ toast('⚠ La foto debe ser menor a 2MB'); input.value=''; return; }
+  if(file.size>10*1024*1024){ toast('⚠ La foto debe ser menor a 10MB'); input.value=''; return; }
+
+  var prev=document.getElementById('iim-foto-preview');
+  var fotoInp=document.getElementById('iim-foto');
+  if(prev) prev.innerHTML='<div style="font-size:11px;color:var(--text3);padding:10px">⏳ Procesando imagen...</div>';
+
+  // Comprimir imagen con canvas antes de guardar (máx 400px, calidad 75%)
   var reader=new FileReader();
   reader.onload=function(e){
-    var dataUrl=e.target.result; // base64 data URL
-    // Show preview immediately
-    var prev=document.getElementById('iim-foto-preview');
-    if(prev) prev.innerHTML='<img src="'+dataUrl+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--green);margin-top:4px">✅ Lista para guardar</div>';
-    // Store data URL in hidden field
-    var fotoInp=document.getElementById('iim-foto');
-    if(fotoInp) fotoInp.value=dataUrl;
-    // Also try Supabase Storage upload for smaller stored value
-    // (optional enhancement — if Storage is configured)
-    var fname='inv-foto-'+Date.now()+'.'+file.name.split('.').pop();
-    DB.storage.from('inventario-fotos').upload(fname, file, {upsert:true,contentType:file.type})
-      .then(function(res){
-        if(!res.error){
-          var pub=DB.storage.from('inventario-fotos').getPublicUrl(fname);
-          if(pub&&pub.data&&pub.data.publicUrl){
-            if(fotoInp) fotoInp.value=pub.data.publicUrl;
-            if(prev) prev.innerHTML='<img src="'+pub.data.publicUrl+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--green);margin-top:4px">✅ Subida a la nube</div>';
-          }
-        }
-        // If Storage fails, base64 stays as fallback — already set above
-      });
+    var img=new Image();
+    img.onload=function(){
+      var MAX=400;
+      var w=img.width, h=img.height;
+      if(w>MAX||h>MAX){
+        if(w>h){ h=Math.round(h*MAX/w); w=MAX; }
+        else { w=Math.round(w*MAX/h); h=MAX; }
+      }
+      var canvas=document.createElement('canvas');
+      canvas.width=w; canvas.height=h;
+      var ctx=canvas.getContext('2d');
+      ctx.drawImage(img,0,0,w,h);
+      var dataUrl=canvas.toDataURL('image/jpeg',0.75);
+      if(prev) prev.innerHTML='<img src="'+dataUrl+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--green);margin-top:4px">✅ Lista para guardar ('+(Math.round(dataUrl.length/1024))+'KB)</div>';
+      if(fotoInp) fotoInp.value=dataUrl;
+      // Intentar subir a Supabase Storage si está configurado
+      canvas.toBlob(function(blob){
+        if(!blob) return;
+        var fname='inv-foto-'+Date.now()+'.jpg';
+        DB.storage.from('inventario-fotos').upload(fname,blob,{upsert:true,contentType:'image/jpeg'})
+          .then(function(res){
+            if(!res.error){
+              var pub=DB.storage.from('inventario-fotos').getPublicUrl(fname);
+              if(pub&&pub.data&&pub.data.publicUrl){
+                if(fotoInp) fotoInp.value=pub.data.publicUrl;
+                if(prev) prev.innerHTML='<img src="'+pub.data.publicUrl+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--green);margin-top:4px">✅ Subida a la nube</div>';
+              }
+            }
+          });
+      },'image/jpeg',0.75);
+    };
+    img.src=e.target.result;
   };
   reader.readAsDataURL(file);
 }
