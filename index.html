@@ -1603,12 +1603,10 @@ function buildUserTabs(){
     var cls='htab'+(i===0?' on':'');
     return '<button class="'+cls+'" data-tabid="'+t.id+'" onclick="switchUserTab(this.dataset.tabid,this)">'+t.label+'</button>';
   }).join('');
-  // Auto-show first available tab
+  // Auto-show first available tab — NO setTimeout to avoid race with data loading
   if(visible.length>0){
-    setTimeout(function(){
-      var firstBtn=tabs.querySelector('.htab');
-      if(firstBtn) switchUserTab(visible[0].id, firstBtn);
-    },0);
+    var firstBtn=tabs.querySelector('.htab');
+    if(firstBtn) switchUserTab(visible[0].id, firstBtn);
   }
 }
 
@@ -1716,21 +1714,15 @@ function initApp(){
   } else {
     document.getElementById('appShell').style.cssText='display:flex;flex-direction:column;min-height:100vh';
     document.getElementById('adminPanel').style.display='none';
-    document.getElementById('vacModule').style.display='none';
-    if(document.getElementById('fondosModule')) document.getElementById('fondosModule').style.display='none';
-    if(document.getElementById('ventasModule')) document.getElementById('ventasModule').style.display='none';
-    document.getElementById('userModule').style.cssText='display:flex;flex:1';
-    // REG/DED ya cargados de Supabase en loadAllDataFromDB — no recargar de localStorage
+    // Hide ALL user modules before buildUserTabs decides which one to show
+    ['userModule','vacModule','fondosModule','ventasModule','gastosModule','invUserModule','fibraUserModule'].forEach(function(id){
+      var el=document.getElementById(id); if(el) el.style.display='none';
+    });
     document.getElementById('salLockVal').textContent=fmt(SESSION.salario);
     CM=new Date().getMonth();
     buildAll();
     injectNotifBell();
-    buildUserTabs();
-    // Show ventas as default first tab
-    setTimeout(function(){
-      var ventasBtn=document.querySelector('.htab');
-      if(ventasBtn) switchUserTab('ventas', ventasBtn);
-    },0);
+    buildUserTabs(); // This handles first tab selection based on tabPerms
     setTimeout(applySearchableSelects,600);
     registerServiceWorker();
   }
@@ -4092,21 +4084,44 @@ function getFondosData(uid){
 function setFondosData(uid,d){
   if(!window._fondosCache) window._fondosCache={};
   window._fondosCache[uid]=d;
-  var rows=(d.gastos||[]).map(function(g){
-    return {id:g.id,uid:uid,fecha:g.fecha||'',descripcion:g.descripcion||'',
-      monto:g.monto||0,tipo:g.tipo||'',factura:g.factura||'',estado:g.estado||'activo'};
+  // Save full month-keyed structure to configuracion (same as REG/DED)
+  _saveToSupabase('user_fondos_'+uid, d, 'cc_fondos_'+uid);
+  // Also save individual gastos rows to fondos_gastos for admin reports
+  var allGastos=[];
+  Object.keys(d).forEach(function(mk){
+    if(mk==='gastos'||mk==='depositos') return; // skip legacy flat keys
+    var month=d[mk];
+    if(month&&month.gastos) month.gastos.forEach(function(g){
+      allGastos.push({id:g.id,uid:uid,fecha:g.fecha||mk+'-01',
+        descripcion:g.descripcion||'',monto:g.monto||0,
+        tipo:g.tipo||g.cat||'',factura:g.factura||'',estado:g.estado||'activo'});
+    });
   });
-  if(rows.length>0) DB.from('fondos_gastos').upsert(rows,{onConflict:'id'})
-    .then(function(r){ if(r.error) console.error('setFondos:',r.error); });
+  if(allGastos.length>0) DB.from('fondos_gastos').upsert(allGastos,{onConflict:'id'})
+    .then(function(r){ if(r.error) console.error('setFondos rows:',r.error); });
 }
 async function loadFondosFromDB(uid){
-  var g=await DB.from('fondos_gastos').select('*').eq('uid',uid);
-  var gastos=(g.data&&!g.error)?g.data.map(function(x){
-    return {id:x.id,fecha:x.fecha,descripcion:x.descripcion,monto:x.monto,
-      tipo:x.tipo,factura:x.factura,estado:x.estado};
-  }):[];
-  var fd={gastos:gastos,depositos:[]};
   if(!window._fondosCache) window._fondosCache={};
+  // Load full structure from configuracion
+  var fd=await _loadFromSupabase('user_fondos_'+uid, 'cc_fondos_'+uid);
+  // Migrate: if old flat structure from fondos_gastos, convert
+  if(!fd||Object.keys(fd).length===0){
+    var g=await DB.from('fondos_gastos').select('*').eq('uid',uid);
+    if(!g.error&&g.data&&g.data.length>0){
+      fd={};
+      g.data.forEach(function(x){
+        var mk=(x.fecha||'').slice(0,7);
+        if(!mk) return;
+        if(!fd[mk]) fd[mk]={depositos:[],gastos:[]};
+        fd[mk].gastos.push({id:x.id,fecha:x.fecha,descripcion:x.descripcion,
+          monto:x.monto,tipo:x.tipo,cat:x.tipo,factura:x.factura,estado:x.estado});
+      });
+      // Migrate to configuracion
+      _saveToSupabase('user_fondos_'+uid, fd, 'cc_fondos_'+uid);
+    } else {
+      fd={};
+    }
+  }
   window._fondosCache[uid]=fd;
   return fd;
 }
