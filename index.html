@@ -16725,7 +16725,10 @@ window.initCalcCONCRE=initCalcCONCRE;
     <label class="login-label" for="loginUser">Usuario</label>
     <input class="login-inp" id="loginUser" type="text" placeholder="Ingresa tu usuario" autocomplete="username" onkeydown="if(event.key==='Enter')doLogin()">
     <label class="login-label" for="loginPass">Contraseña</label>
-    <input class="login-inp" id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    <div style="position:relative">
+      <input class="login-inp" id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()" style="padding-right:44px">
+      <button type="button" onclick="var i=document.getElementById('loginPass');var b=this;i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'👁':'🙈';" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:var(--text3);padding:4px;line-height:1" tabindex="-1">👁</button>
+    </div>
     <button class="login-btn" onclick="doLogin()">Ingresar →</button>
     <div class="login-version" style="margin-top:18px;font-size:11px;color:#6b7280;text-align:center">CONCRE v2.0 · Sistema interno</div>
   </div>
