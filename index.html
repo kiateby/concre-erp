@@ -10861,21 +10861,25 @@ function getTrash(){
 }
 function setTrash(d){
   window._trashCache=d;
-  // Full sync to Supabase
-  DB.from('papelera').delete().neq('id','__none__').then(function(){
-    if(d.length>0){
-      var rows=d.map(function(item){
-        return {id:item.id,type:item.type,uid:item.uid,u_nombre:item.uNombre,
-          data:item.data,crm_link:item.crmLink||null,liq_project:item.liqProject||null,
-          status:item.status||'pending',conserved_by:item.conservedBy||'',
-          conserved_at:item.conservedAt||null,deleted_at:item.deletedAt||new Date().toISOString()};
-      });
-      DB.from('papelera').insert(rows).then(function(r){
-        if(r.error) console.error('setTrash:',r.error);
-      });
-    }
-  });
+  // Upsert each row individually — safer than delete-all + insert
+  if(d.length>0){
+    var rows=d.map(function(item){
+      // Strip large base64 from inv_item data before saving to papelera
+      var dataToSave=item.data;
+      if(item.type==='inv_item'&&dataToSave&&dataToSave.foto_url&&dataToSave.foto_url.startsWith('data:')){
+        dataToSave=Object.assign({},dataToSave,{foto_url:'[foto-local]'});
+      }
+      return {id:item.id,type:item.type,uid:item.uid,u_nombre:item.uNombre,
+        data:dataToSave,crm_link:item.crmLink||null,liq_project:item.liqProject||null,
+        status:item.status||'pending',conserved_by:item.conservedBy||'',
+        conserved_at:item.conservedAt||null,deleted_at:item.deletedAt||new Date().toISOString()};
+    });
+    DB.from('papelera').upsert(rows,{onConflict:'id'}).then(function(r){
+      if(r.error) console.error('setTrash upsert:',r.error);
+    });
+  }
 }
+
 async function loadTrashFromDB(){
   var {data,error}=await DB.from('papelera').select('*').order('deleted_at',{ascending:false});
   if(error&&error.status!==406){ console.error('loadTrash:',error); }
@@ -10889,18 +10893,34 @@ async function loadTrashFromDB(){
 }
 
 function addToTrash(reg){
-  // reg: {type, uid, uNombre, data, deletedAt, status:'pending'}
-  var trash=getTrash();
-  trash.push(Object.assign({id:'tr'+Date.now()}, reg, {
+  var entry=Object.assign({id:'tr'+Date.now()}, reg, {
     deletedAt:new Date().toISOString(),
     status:'pending',
     notifiedAt:new Date().toISOString()
-  }));
-  setTrash(trash);
+  });
+  var trash=getTrash();
+  trash.push(entry);
+  window._trashCache=trash;
 
-  // Notify all admins/superadmins
+  // Strip large base64 photos before saving to Supabase
+  var dataToSave=entry.data;
+  if(entry.type==='inv_item'&&dataToSave&&dataToSave.foto_url&&dataToSave.foto_url.startsWith('data:')){
+    dataToSave=Object.assign({},dataToSave,{foto_url:'[foto-local]'});
+  }
+
+  // Direct upsert to Supabase — more reliable than setTrash full-sync
+  DB.from('papelera').upsert({
+    id:entry.id, type:entry.type, uid:entry.uid, u_nombre:entry.uNombre,
+    data:dataToSave, crm_link:entry.crmLink||null, liq_project:entry.liqProject||null,
+    status:'pending', conserved_by:'', conserved_at:null,
+    deleted_at:entry.deletedAt
+  },{onConflict:'id'}).then(function(r){
+    if(r.error) console.error('addToTrash save error:',r.error);
+  });
+
+  // Notify admins/superadmins
   var admins=getUsers().filter(function(u){return u.rol==='admin'||u.rol==='superadmin';});
-  var typeName={'venta':'venta','gasto':'gasto de proyecto','fondos':'gasto de fondos','cliente_crm':'cliente CRM'}[reg.type]||reg.type;
+  var typeName={'venta':'venta','gasto':'gasto de proyecto','fondos':'gasto de fondos','cliente_crm':'cliente CRM','inv_item':'ítem de inventario'}[reg.type]||reg.type;
   var msg='🗑 '+reg.uNombre+' eliminó un registro de '+typeName;
   if(reg.data&&reg.data.nombre) msg+=' ('+reg.data.nombre+')';
   else if(reg.data&&reg.data.proyecto) msg+=' ('+reg.data.proyecto+')';
@@ -10909,7 +10929,7 @@ function addToTrash(reg){
   sendPushToAdmins(msg);
 }
 
-function restoreFromTrash(trashId, restoreToUser){
+async function restoreFromTrash(trashId, restoreToUser){
   var trash=getTrash();
   var item=trash.find(function(t){return t.id===trashId;});
   if(!item) return;
@@ -10946,18 +10966,14 @@ function restoreFromTrash(trashId, restoreToUser){
     } else if(item.type==='inv_item'){
       // Restaurar ítem de inventario — reactivar en Supabase
       var invItem=item.data;
-      DB.from('inv_items').update({activo:true, updated_at:new Date().toISOString()}).eq('id',invItem.id).then(function(r){
-        if(!r.error){
-          invItem.activo=true;
-          window._invItems.push(invItem);
-          toast('✅ "'+invItem.nombre+'" restaurado al inventario');
-        } else {
-          toast('Error al restaurar: '+r.error.message);
-        }
-      });
+      await DB.from('inv_items').update({activo:true, updated_at:new Date().toISOString()}).eq('id',invItem.id);
+      invItem.activo=true;
+      window._invItems.push(invItem);
       setTrash(trash.filter(function(t){return t.id!==trashId;}));
-      toast('✅ Ítem restaurado al inventario');
+      renderTrashPanel();
+      toast('✅ "'+invItem.nombre+'" restaurado al inventario');
       return;
+    } else if(item.type==='gasto'){
       var regs=getGastosData(item.uid);
       regs.push(item.data);
       setGastosData(item.uid,regs);
@@ -10991,12 +11007,16 @@ function deleteFromTrashPermanently(trashId){
   }
   if(!confirm('¿Eliminar DEFINITIVAMENTE este registro? Esta acción no se puede deshacer.')) return;
   var item=getTrash().find(function(t){return t.id===trashId;});
-  // Si es ítem de inventario, borrar definitivamente de Supabase también
+  // Si es ítem de inventario, borrar definitivamente de Supabase
   if(item&&item.type==='inv_item'&&item.data&&item.data.id){
     DB.from('inv_items').delete().eq('id',item.data.id).then(function(){});
   }
-  var trash=getTrash().filter(function(t){return t.id!==trashId;});
-  setTrash(trash);
+  // Eliminar de papelera en Supabase directamente por ID
+  DB.from('papelera').delete().eq('id',trashId).then(function(r){
+    if(r.error) console.error('deleteFromTrash:',r.error);
+  });
+  // Actualizar cache local
+  window._trashCache=(window._trashCache||[]).filter(function(t){return t.id!==trashId;});
   renderTrashPanel();
   toast('Registro eliminado definitivamente');
 }
