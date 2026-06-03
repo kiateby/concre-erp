@@ -4135,30 +4135,80 @@ function getLimites(uid){
   }
   return {comida:cache.comida||5000,hosp:cache.hosp||25000};
 }
-function saveFondosLimites(){
-  const c=parseMon(document.getElementById('lim-comida').value)||5000;
-  const h=parseMon(document.getElementById('lim-hosp').value)||25000;
-  const uid=document.getElementById('af-user-sel')?.value||'all';
-  // Actualizar cache en memoria
+function saveFondosLimitesGlobal(){
+  var c=parseMon(document.getElementById('lim-comida').value)||5000;
+  var h=parseMon(document.getElementById('lim-hosp').value)||25000;
   if(!window._fondosLimCache) window._fondosLimCache={comida:5000,hosp:25000};
-  if(uid&&uid!=='all'){
-    // Guardar límite específico del usuario
-    if(!window._fondosLimCache.users) window._fondosLimCache.users={};
-    window._fondosLimCache.users[uid]={comida:c,hosp:h};
+  window._fondosLimCache.comida=c;
+  window._fondosLimCache.hosp=h;
+  _saveFondosLimToSupabase();
+  var s=document.getElementById('lim-save-status');
+  if(s){s.textContent='✓ Guardado';setTimeout(function(){s.textContent='';},2000);}
+  toast('✓ Límites globales guardados');
+}
+function saveFondosLimites(){ saveFondosLimitesGlobal(); } // backward compat
+
+function onLimUserChange(){
+  var uid=document.getElementById('lim-user-sel').value;
+  if(!uid) return;
+  var cache=window._fondosLimCache||{};
+  var perUser=cache.users&&cache.users[uid];
+  var ci=document.getElementById('lim-u-comida');
+  var hi=document.getElementById('lim-u-hosp');
+  var clrBtn=document.getElementById('lim-u-clear-btn');
+  if(perUser){
+    if(ci) ci.value=fmt(perUser.comida);
+    if(hi) hi.value=fmt(perUser.hosp);
+    if(clrBtn) clrBtn.style.display='';
   } else {
-    // Guardar límite global (aplica a todos los que no tienen límite específico)
-    window._fondosLimCache.comida=c;
-    window._fondosLimCache.hosp=h;
+    if(ci) ci.value='';
+    if(hi) hi.value='';
+    if(clrBtn) clrBtn.style.display='none';
   }
-  const limObj=window._fondosLimCache;
+}
+function saveFondosLimitesUser(){
+  var uid=document.getElementById('lim-user-sel').value;
+  if(!uid){ toast('Selecciona un usuario'); return; }
+  var c=parseMon(document.getElementById('lim-u-comida').value);
+  var h=parseMon(document.getElementById('lim-u-hosp').value);
+  if(!c||!h){ toast('Ingresa ambos montos'); return; }
+  if(!window._fondosLimCache) window._fondosLimCache={comida:5000,hosp:25000};
+  if(!window._fondosLimCache.users) window._fondosLimCache.users={};
+  window._fondosLimCache.users[uid]={comida:c,hosp:h};
+  _saveFondosLimToSupabase();
+  var u=getUsers().find(function(u){return u.id===uid;});
+  var s=document.getElementById('lim-u-save-status');
+  if(s){s.textContent='✓ Guardado';setTimeout(function(){s.textContent='';},2000);}
+  document.getElementById('lim-u-clear-btn').style.display='';
+  toast('✓ Límite guardado para '+(u?u.nombre:uid));
+}
+function clearFondosLimitesUser(){
+  var uid=document.getElementById('lim-user-sel').value;
+  if(!uid) return;
+  if(!confirm('¿Quitar límite específico para este usuario? Usará el límite global.')) return;
+  if(window._fondosLimCache&&window._fondosLimCache.users){
+    delete window._fondosLimCache.users[uid];
+  }
+  _saveFondosLimToSupabase();
+  document.getElementById('lim-u-comida').value='';
+  document.getElementById('lim-u-hosp').value='';
+  document.getElementById('lim-u-clear-btn').style.display='none';
+  toast('Límite específico eliminado — usará límite global');
+}
+function _saveFondosLimToSupabase(){
+  var limObj=window._fondosLimCache;
   DB.from('configuracion').upsert({clave:'fondos_lim',valor:limObj,updated_at:new Date().toISOString()},{onConflict:'clave'})
     .then(function(r){ if(r.error) console.error('saveFondosLimites Supabase:',r.error); });
   localStorage.setItem('cc_fondos_lim',JSON.stringify(limObj));
-  const s=document.getElementById('lim-save-status');
-  if(s){s.textContent='✓ Guardado';setTimeout(()=>s.textContent='',2000);}
-  toast('✓ Límites guardados'+(uid!=='all'?' para '+( getUsers().find(u=>u.id===uid)?.nombre||uid):'(global)'));
-  renderFondosUser();
 }
+function initFondosLimUserSel(){
+  var sel=document.getElementById('lim-user-sel');
+  if(!sel) return;
+  var users=getUsers().filter(function(u){return u.rol==='user'&&u.estado!=='inactivo';});
+  sel.innerHTML='<option value="">— Seleccionar usuario —</option>'+
+    users.sort(sortAlpha).map(function(u){return '<option value="'+u.id+'">'+u.nombre+'</option>';}).join('');
+}
+
 
 function getFondosMesKey(y,m){ return y+'-'+pad(m+1); }
 
@@ -4466,6 +4516,7 @@ function setFondosMes(m){
 
 // ── ADMIN FONDOS ──
 function initAdminFondos(){
+  initFondosLimUserSel();
   // Populate user selector — todos los usuarios activos
   const sel=document.getElementById('af-user-sel');
   if(sel&&sel.options.length===1){
@@ -12048,7 +12099,210 @@ function exportInvExcel(type){
 }
 
 
+// ══════════════════════════════════════════════════════════════
+//  AUDITORÍA DE INVENTARIO — Sistema de conteo físico semanal
+// ══════════════════════════════════════════════════════════════
+
+function getAuditWeekKey(date){
+  var d=date?new Date(date):new Date();
+  var day=d.getDay();
+  var monday=new Date(d);
+  monday.setDate(d.getDate()-(day===0?6:day-1));
+  var year=monday.getFullYear();
+  var start=new Date(year,0,1);
+  var weekNum=Math.ceil(((monday-start)/86400000+start.getDay()+1)/7);
+  return year+'-W'+String(weekNum).padStart(2,'0');
+}
+function getAuditMondayDate(){
+  var d=new Date();
+  var day=d.getDay();
+  var monday=new Date(d);
+  monday.setDate(d.getDate()-(day===0?6:day-1));
+  return monday.toISOString().slice(0,10);
+}
+function getAuditPool(){
+  return (window._invItems||[]).filter(function(i){return i.activo!==false&&!i.es_fibra;});
+}
+function userHasAuditDuty(){
+  if(!SESSION||SESSION.rol==='admin'||SESSION.rol==='superadmin') return false;
+  return (SESSION.tabPerms||{}).inventario!==false;
+}
+async function ensureAuditCiclo(){
+  var r=await DB.from('inv_auditoria_ciclos').select('*').eq('id','global');
+  var pool=getAuditPool();
+  if(!pool.length) return null;
+  if(!r.error&&r.data&&r.data.length>0&&r.data[0].secuencia&&r.data[0].secuencia.length>0) return r.data[0];
+  var seq=pool.map(function(i){return i.id;});
+  for(var i=seq.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=seq[i];seq[i]=seq[j];seq[j]=t;}
+  var newC={id:'global',secuencia:seq,punteros:{},generado_at:new Date().toISOString()};
+  await DB.from('inv_auditoria_ciclos').upsert(newC,{onConflict:'id'});
+  return newC;
+}
+async function getOrCreateAuditForUser(uid){
+  var weekKey=getAuditWeekKey();
+  var auditId='aud-'+uid+'-'+weekKey;
+  var r=await DB.from('inv_auditoria').select('*').eq('id',auditId);
+  if(!r.error&&r.data&&r.data.length>0) return r.data[0];
+  var ciclo=await ensureAuditCiclo();
+  if(!ciclo) return null;
+  var seq=ciclo.secuencia||[];
+  var punteros=ciclo.punteros||{};
+  var ptr=typeof punteros[uid]==='number'?punteros[uid]:0;
+  if(ptr>=seq.length){ptr=0;}
+  var items3=[]; var usedPtr=ptr;
+  while(items3.length<3&&usedPtr<seq.length){
+    var inv=(window._invItems||[]).find(function(i){return i.id===seq[usedPtr];});
+    if(inv&&inv.activo!==false&&!inv.es_fibra){
+      items3.push({item_id:inv.id,nombre:inv.nombre,codigo:inv.codigo||'',tipo:inv.type||'inventario',
+        unidad:inv.unidad||'unidad',cantidad_sistema:inv.cantidad||0,cantidad_usuario:null,confirmado:false});
+    }
+    usedPtr++;
+  }
+  if(!items3.length) return null;
+  punteros[uid]=usedPtr;
+  await DB.from('inv_auditoria_ciclos').update({punteros:punteros,updated_at:new Date().toISOString()}).eq('id','global');
+  var audit={id:auditId,uid:uid,semana_key:weekKey,lunes_date:getAuditMondayDate(),
+    items:items3,completado:false,completado_at:null,discrepancias:[],
+    alerta_enviada:false,superadmin_revisado:false,
+    created_at:new Date().toISOString(),updated_at:new Date().toISOString()};
+  await DB.from('inv_auditoria').upsert(audit,{onConflict:'id'});
+  return audit;
+}
+async function renderAuditPanel(){
+  if(!userHasAuditDuty()) return;
+  var body=_invBody();
+  if(!body) return;
+  var audit=await getOrCreateAuditForUser(SESSION.id);
+  if(!audit||audit.completado) return;
+  var items=audit.items||[];
+  var html='<div id="inv-audit-panel" style="background:var(--surface);border:2px solid var(--amber);border-radius:12px;padding:18px;margin-bottom:20px;box-shadow:0 2px 12px rgba(217,119,6,.15)">';
+  html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">';
+  html+='<span style="font-size:20px">📋</span><div style="flex:1">';
+  html+='<div style="font-family:var(--cond);font-size:16px;font-weight:900;color:var(--amber)">Auditoría de Inventario — Semana '+audit.semana_key+'</div>';
+  html+='<div style="font-size:11px;color:var(--text3)">Realiza el conteo físico de estos 3 ítems y confirma las cantidades encontradas</div></div></div>';
+  html+='<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px"><thead>';
+  html+='<tr style="background:var(--surface2)">';
+  ['ÍTEM','CÓDIGO','UNIDAD','CANT. SISTEMA','TU CONTEO FÍSICO','ESTADO'].forEach(function(h){
+    html+='<th style="padding:8px 12px;text-align:'+(h==='ÍTEM'?'left':'center')+';font-size:11px;color:var(--text3)">'+h+'</th>';
+  });
+  html+='</tr></thead><tbody>';
+  items.forEach(function(item,idx){
+    var ok=item.confirmado;
+    html+='<tr style="border-bottom:1px solid var(--border);'+(ok?'background:rgba(22,163,74,.05)':'')+'">';
+    html+='<td style="padding:10px 12px;font-weight:700">'+item.nombre+'</td>';
+    html+='<td style="padding:10px 12px;text-align:center;font-size:11px;color:var(--text3)">'+item.codigo+'</td>';
+    html+='<td style="padding:10px 12px;text-align:center;font-size:11px">'+item.unidad+'</td>';
+    html+='<td style="padding:10px 12px;text-align:center;font-weight:800;color:var(--blue)">'+invFmt(item.cantidad_sistema)+'</td>';
+    if(ok){
+      var match=Number(item.cantidad_usuario)===Number(item.cantidad_sistema);
+      html+='<td style="padding:10px 12px;text-align:center;font-weight:800;color:'+(match?'var(--green)':'var(--red)')+'">'+invFmt(item.cantidad_usuario)+'</td>';
+      html+='<td style="padding:10px 12px;text-align:center"><span style="font-size:11px;font-weight:800;color:'+(match?'var(--green)':'var(--red)')+';">'+(match?'✅ Correcto':'⚠ Diferencia')+'</span></td>';
+    } else {
+      html+='<td style="padding:10px 12px;text-align:center"><input id="audit-qty-'+idx+'" type="number" min="0" step="0.01" placeholder="Ingresar cantidad" style="width:120px;padding:6px 8px;border:1.5px solid var(--border2);border-radius:6px;font-size:13px;text-align:center;background:var(--surface);color:var(--text)" onkeydown="if(event.key===\'Enter\')confirmAuditItem(\''+audit.id+'\','+idx+')"></td>';
+      html+='<td style="padding:10px 12px;text-align:center"><button onclick="confirmAuditItem(\''+audit.id+'\','+idx+')" style="background:var(--blue);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:700">Confirmar</button></td>';
+    }
+    html+='</tr>';
+  });
+  html+='</tbody></table>';
+  var allOk=items.every(function(i){return i.confirmado;});
+  if(allOk){
+    html+='<button onclick="submitAudit(\''+audit.id+'\')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:10px 24px;cursor:pointer;font-size:14px;font-weight:800;width:100%">✅ Enviar auditoría completa</button>';
+  }
+  html+='</div>';
+  body.innerHTML=html+body.innerHTML;
+}
+async function confirmAuditItem(auditId,idx){
+  var input=document.getElementById('audit-qty-'+idx);
+  if(!input||input.value===''){toast('Ingresa la cantidad contada');return;}
+  var qty=parseFloat(input.value);
+  if(isNaN(qty)||qty<0){toast('Cantidad inválida');return;}
+  var r=await DB.from('inv_auditoria').select('*').eq('id',auditId);
+  if(r.error||!r.data||!r.data.length) return;
+  var audit=r.data[0];
+  var items=JSON.parse(JSON.stringify(audit.items||[]));
+  var item=items[idx]; if(!item) return;
+  item.cantidad_usuario=qty; item.confirmado=true;
+  var disc=JSON.parse(JSON.stringify(audit.discrepancias||[]));
+  if(Number(qty)!==Number(item.cantidad_sistema)){
+    var msg='⚠ Discrepancia auditoría: '+SESSION.nombre+' contó '+invFmt(qty)+' de "'+item.nombre+'" — sistema indica '+invFmt(item.cantidad_sistema);
+    getUsers().filter(function(u){return u.rol==='superadmin';}).forEach(function(sa){addNotification(sa.id,'⚠',msg);});
+    disc.push({item_id:item.item_id,nombre:item.nombre,sistema:item.cantidad_sistema,usuario:qty,uid:SESSION.id,uNombre:SESSION.nombre,fecha:new Date().toISOString()});
+  }
+  await DB.from('inv_auditoria').update({items:items,discrepancias:disc,updated_at:new Date().toISOString()}).eq('id',auditId);
+  // Re-render
+  var body=_invBody();
+  if(body){var panel=document.getElementById('inv-audit-panel');var rest=body.innerHTML.replace(panel?panel.outerHTML:'','');body.innerHTML=rest;}
+  await renderAuditPanel();
+  if(Number(qty)!==Number(item.cantidad_sistema)) toast('⚠ Diferencia registrada — superadmin notificado');
+  else toast('✅ Cantidad confirmada');
+}
+async function submitAudit(auditId){
+  var r=await DB.from('inv_auditoria').select('*').eq('id',auditId);
+  if(r.error||!r.data||!r.data.length) return;
+  if(!(r.data[0].items||[]).every(function(i){return i.confirmado;})){toast('Confirma todos los ítems primero');return;}
+  await DB.from('inv_auditoria').update({completado:true,completado_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',auditId);
+  var panel=document.getElementById('inv-audit-panel');
+  if(panel) panel.remove();
+  toast('✅ Auditoría completada — gracias por el conteo');
+}
+async function checkOverdueAudits(){
+  if(!SESSION||SESSION.rol!=='superadmin') return;
+  var r=await DB.from('inv_auditoria').select('*').eq('completado',false).eq('alerta_enviada',false);
+  if(r.error||!r.data) return;
+  var now=new Date();
+  for(var i=0;i<r.data.length;i++){
+    var a=r.data[i];
+    var diff=(now-new Date(a.created_at))/(1000*60*60*24);
+    if(diff>=7){
+      var u=getUsers().find(function(u){return u.id===a.uid;});
+      var names=(a.items||[]).map(function(x){return x.nombre;}).join(', ');
+      var msg='🚨 '+(u?u.nombre:a.uid)+' no completó su auditoría de inventario ('+a.semana_key+'). Ítems: '+names;
+      getUsers().filter(function(u){return u.rol==='superadmin';}).forEach(function(sa){addNotification(sa.id,'🚨',msg);});
+      await DB.from('inv_auditoria').update({alerta_enviada:true}).eq('id',a.id);
+    }
+  }
+}
+async function renderAuditAdmin(){
+  if(!SESSION||SESSION.rol!=='superadmin') return;
+  var r=await DB.from('inv_auditoria').select('*').order('created_at',{ascending:false});
+  if(r.error||!r.data||!r.data.length) return;
+  var body=_invBody(); if(!body) return;
+  var html='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">';
+  html+='<div style="font-family:var(--cond);font-size:16px;font-weight:900;margin-bottom:12px">📋 Auditorías de Inventario</div>';
+  html+='<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)">';
+  ['Usuario','Semana','Ítems','Estado','Discrepancias','Acción'].forEach(function(h){html+='<th style="padding:8px;text-align:center">'+h+'</th>';});
+  html+='</tr></thead><tbody>';
+  r.data.slice(0,30).forEach(function(a){
+    var u=getUsers().find(function(u){return u.id===a.uid;});
+    var disc=(a.discrepancias||[]).length;
+    var color=a.completado?'var(--green)':disc>0?'var(--red)':'var(--amber)';
+    var label=a.completado?'✅ Completa':disc>0?'⚠ Discrepancia':'⏳ Pendiente';
+    html+='<tr style="border-bottom:1px solid var(--border)">';
+    html+='<td style="padding:8px;font-weight:700">'+(u?u.nombre:a.uid)+'</td>';
+    html+='<td style="padding:8px;text-align:center">'+a.semana_key+'</td>';
+    html+='<td style="padding:8px;text-align:center">'+(a.items||[]).length+'</td>';
+    html+='<td style="padding:8px;text-align:center"><span style="font-size:11px;font-weight:800;color:'+color+'">'+label+'</span></td>';
+    html+='<td style="padding:8px;text-align:center;color:'+(disc>0?'var(--red)':'var(--text3)')+'">'+disc+'</td>';
+    html+='<td style="padding:8px;text-align:center">'+((!a.completado&&!a.superadmin_revisado)?'<button onclick="markAuditRevisada(\''+a.id+'\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">✓ Marcar revisada</button>':(a.superadmin_revisado?'<span style="font-size:11px;color:var(--text3)">Revisada</span>':''))+'</td>';
+    html+='</tr>';
+  });
+  html+='</tbody></table></div>';
+  body.innerHTML=html+body.innerHTML;
+}
+async function markAuditRevisada(auditId){
+  await DB.from('inv_auditoria').update({superadmin_revisado:true,completado:true,completado_at:new Date().toISOString()}).eq('id',auditId);
+  toast('✅ Auditoría marcada como revisada');
+  var body=_invBody();if(body){var panel=body.querySelector('[style*="Auditorías de Inventario"]');if(panel)panel.remove();}
+  renderAuditAdmin();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  FIN AUDITORÍA
+// ══════════════════════════════════════════════════════════════
+
 function renderInvDashboard(){
+  checkOverdueAudits();
+  renderAuditAdmin();
   var body=_invBody();
   if(!body) return;
   var items=window._invItems;
@@ -12221,6 +12475,8 @@ function renderInvList(type, searchQ){
   }
   body.innerHTML=html;
   if(q){var inp=document.getElementById(searchId);if(inp){inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}}
+  // Show audit panel for users with inventory duty
+  if(userHasAuditDuty()) renderAuditPanel();
 }
 
 // ══ DETALLE DE ÍTEM ══
@@ -17207,8 +17463,8 @@ window.initCalcCONCRE=initCalcCONCRE;
           </div>
 
           <!-- Límites configurables -->
-          <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--amber);border-radius:var(--r-sm);padding:13px 18px;margin-bottom:16px;display:flex;gap:20px;align-items:center;flex-wrap:wrap;box-shadow:var(--sh)">
-            <span style="font-size:11px;font-weight:800;color:var(--amber);text-transform:uppercase;letter-spacing:.8px">⚙ Límites de alerta</span>
+          <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--amber);border-radius:var(--r-sm);padding:13px 18px;margin-bottom:8px;display:flex;gap:20px;align-items:center;flex-wrap:wrap;box-shadow:var(--sh)">
+            <span style="font-size:11px;font-weight:800;color:var(--amber);text-transform:uppercase;letter-spacing:.8px">⚙ Límites globales</span>
             <div style="display:flex;align-items:center;gap:8px">
               <label style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">Comida por persona ₡</label>
               <input class="form-inp" id="lim-comida" type="text" value="5.000" oninput="fmtInp(this)" style="width:110px;font-size:12px;padding:6px 8px">
@@ -17217,8 +17473,27 @@ window.initCalcCONCRE=initCalcCONCRE;
               <label style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">Hospedaje por persona/noche ₡</label>
               <input class="form-inp" id="lim-hosp" type="text" value="25.000" oninput="fmtInp(this)" style="width:110px;font-size:12px;padding:6px 8px">
             </div>
-            <button class="modal-btn save" onclick="saveFondosLimites()">💾 Guardar límites</button>
+            <button class="modal-btn save" onclick="saveFondosLimitesGlobal()">💾 Guardar globales</button>
             <span id="lim-save-status" style="font-size:11px;color:var(--green)"></span>
+          </div>
+
+          <!-- Límites por usuario -->
+          <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:var(--r-sm);padding:13px 18px;margin-bottom:16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;box-shadow:var(--sh)">
+            <span style="font-size:11px;font-weight:800;color:var(--blue);text-transform:uppercase;letter-spacing:.8px">👤 Límites por usuario</span>
+            <select class="form-select" id="lim-user-sel" onchange="onLimUserChange()" style="font-size:12px;padding:6px 8px;width:180px">
+              <option value="">— Seleccionar usuario —</option>
+            </select>
+            <div style="display:flex;align-items:center;gap:8px">
+              <label style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">Comida ₡</label>
+              <input class="form-inp" id="lim-u-comida" type="text" placeholder="Global" oninput="fmtInp(this)" style="width:110px;font-size:12px;padding:6px 8px">
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <label style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">Hospedaje ₡</label>
+              <input class="form-inp" id="lim-u-hosp" type="text" placeholder="Global" oninput="fmtInp(this)" style="width:110px;font-size:12px;padding:6px 8px">
+            </div>
+            <button class="modal-btn save" onclick="saveFondosLimitesUser()">💾 Guardar usuario</button>
+            <button class="modal-btn cancel" id="lim-u-clear-btn" onclick="clearFondosLimitesUser()" style="display:none;font-size:11px">✕ Quitar límite</button>
+            <span id="lim-u-save-status" style="font-size:11px;color:var(--green)"></span>
           </div>
 
           <!-- KPIs -->
