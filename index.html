@@ -4102,26 +4102,32 @@ function setFondosData(uid,d){
 }
 async function loadFondosFromDB(uid){
   if(!window._fondosCache) window._fondosCache={};
-  // Load full structure from configuracion
-  var fd=await _loadFromSupabase('user_fondos_'+uid, 'cc_fondos_'+uid);
-  // Migrate: if old flat structure from fondos_gastos, convert
-  if(!fd||Object.keys(fd).length===0){
-    var g=await DB.from('fondos_gastos').select('*').eq('uid',uid);
-    if(!g.error&&g.data&&g.data.length>0){
-      fd={};
-      g.data.forEach(function(x){
-        var mk=(x.fecha||'').slice(0,7);
-        if(!mk) return;
-        if(!fd[mk]) fd[mk]={depositos:[],gastos:[]};
-        fd[mk].gastos.push({id:x.id,fecha:x.fecha,descripcion:x.descripcion,
-          monto:x.monto,tipo:x.tipo,cat:x.tipo,factura:x.factura,estado:x.estado});
-      });
-      // Migrate to configuracion
-      _saveToSupabase('user_fondos_'+uid, fd, 'cc_fondos_'+uid);
-    } else {
-      fd={};
-    }
+  var fd={};
+
+  // Source 1: configuracion table (new system - month-keyed)
+  var conf=await _loadFromSupabase('user_fondos_'+uid,'cc_fondos_'+uid);
+  if(conf&&typeof conf==='object'&&Object.keys(conf).length>0){
+    fd=conf;
   }
+
+  // Source 2: fondos_gastos table (always read - authoritative for gastos rows)
+  var g=await DB.from('fondos_gastos').select('*').eq('uid',uid);
+  if(!g.error&&g.data&&g.data.length>0){
+    g.data.forEach(function(x){
+      var mk=(x.fecha||'').slice(0,7);
+      if(!mk) return;
+      if(!fd[mk]) fd[mk]={depositos:[],gastos:[]};
+      if(!fd[mk].gastos) fd[mk].gastos=[];
+      // Only add if not already in fd (avoid duplicates)
+      var exists=fd[mk].gastos.some(function(gg){return gg.id===x.id;});
+      if(!exists){
+        fd[mk].gastos.push({id:x.id,fecha:x.fecha,descripcion:x.descripcion,
+          desc:x.descripcion,monto:x.monto,tipo:x.tipo,cat:x.tipo,
+          factura:x.factura,estado:x.estado});
+      }
+    });
+  }
+
   window._fondosCache[uid]=fd;
   return fd;
 }
@@ -4204,25 +4210,21 @@ function _saveFondosLimToSupabase(){
 function initFondosLimUserSel(){
   var sel=document.getElementById('lim-user-sel');
   if(!sel) return;
-  // Include all users except admin and superadmin
-  var users=getUsers().filter(function(u){
-    return u.rol!=='admin'&&u.rol!=='superadmin'&&u.estado!=='inactivo';
-  });
-  if(users.length===0){
-    // Fallback: show all users if filter returns empty
-    users=getUsers().filter(function(u){return u.estado!=='inactivo';});
+  var users=getUsers();
+  if(!users||users.length===0){
+    // Users not loaded yet - retry after short delay
+    setTimeout(initFondosLimUserSel, 500);
+    return;
   }
   sel.innerHTML='<option value="">— Seleccionar usuario —</option>'+
-    users.sort(sortAlpha).map(function(u){
-      return '<option value="'+u.id+'">'+u.nombre+' ('+u.rol+')</option>';
+    users.slice().sort(function(a,b){return (a.nombre||'').localeCompare(b.nombre||'','es')}).map(function(u){
+      return '<option value="'+u.id+'">'+u.nombre+' — '+u.rol+'</option>';
     }).join('');
-  // Pre-load existing per-user limits display
+  // Show count of users with custom limits
   var cache=window._fondosLimCache||{};
-  var usersWithLimits=cache.users?Object.keys(cache.users):[];
-  if(usersWithLimits.length>0){
-    var existing=document.getElementById('lim-u-save-status');
-    if(existing) existing.textContent=usersWithLimits.length+' usuario(s) con límites personalizados';
-  }
+  var count=cache.users?Object.keys(cache.users).length:0;
+  var st=document.getElementById('lim-u-save-status');
+  if(st&&count>0) st.textContent=count+' usuario(s) con límites personalizados';
 }
 
 
@@ -4531,7 +4533,7 @@ function setFondosMes(m){
 }
 
 // ── ADMIN FONDOS ──
-function initAdminFondos(){
+async function initAdminFondos(){
   initFondosLimUserSel();
   // Populate user selector — todos los usuarios activos
   const sel=document.getElementById('af-user-sel');
@@ -4547,16 +4549,23 @@ function initAdminFondos(){
   if(msel&&msel.options.length===0){
     MES.forEach((m,i)=>{const o=document.createElement('option');o.value=i;o.textContent=m;if(i===new Date().getMonth())o.selected=true;msel.appendChild(o);});
   }
-  // Load limits for selected user (or global if 'all')
+  // Load limits — always from Supabase to ensure latest values
   if(!window._fondosLimCache||!window._fondosLimCache.comida){
+    // Try localStorage first
     var local=localStorage.getItem('cc_fondos_lim');
     if(local) try{ window._fondosLimCache=JSON.parse(local); }catch(e){}
+    // Then try Supabase (authoritative)
+    var r=await DB.from('configuracion').select('valor').eq('clave','fondos_lim');
+    if(!r.error&&r.data&&r.data.length>0&&r.data[0].valor){
+      window._fondosLimCache=r.data[0].valor;
+      localStorage.setItem('cc_fondos_lim',JSON.stringify(window._fondosLimCache));
+    }
   }
-  const selUid=document.getElementById('af-user-sel')?.value||'all';
-  const lim=getLimites(selUid);
+  // Set input values from loaded cache
+  const lim=getLimites('all');
   const lc=document.getElementById('lim-comida'), lh=document.getElementById('lim-hosp');
-  if(lc) lc.value=lim.comida.toLocaleString('es-CR');
-  if(lh) lh.value=lim.hosp.toLocaleString('es-CR');
+  if(lc&&lim.comida) lc.value=fmt(lim.comida);
+  if(lh&&lim.hosp) lh.value=fmt(lim.hosp);
 
   renderAdminFondos();
 }
@@ -4600,24 +4609,6 @@ function renderAdminFondos(){
   const mselWrap=document.getElementById('af-month-sel');
   const type=document.getElementById('af-period-type')?.value||'month';
   if(mselWrap) mselWrap.style.display=type==='month'?'block':'none';
-
-  // Actualizar inputs de límites según usuario seleccionado
-  const selUid=document.getElementById('af-user-sel')?.value||'all';
-  const limActual=getLimites(selUid);
-  const lcInp=document.getElementById('lim-comida');
-  const lhInp=document.getElementById('lim-hosp');
-  if(lcInp) lcInp.value=limActual.comida.toLocaleString('es-CR');
-  if(lhInp) lhInp.value=limActual.hosp.toLocaleString('es-CR');
-  // Update label to show context
-  const limLabel=document.querySelector('span[style*="amber"]');
-  if(limLabel){
-    if(selUid!=='all'){
-      const uName=getUsers().find(u=>u.id===selUid)?.nombre||selUid;
-      limLabel.textContent='⚙ Límites de alerta — '+uName;
-    } else {
-      limLabel.textContent='⚙ Límites de alerta (globales)';
-    }
-  }
 
   const {allGastos,allDepositos}=getAdminFondosPeriodData();
   const totalGast=allGastos.reduce((s,g)=>s+g.monto,0);
@@ -17511,11 +17502,11 @@ window.initCalcCONCRE=initCalcCONCRE;
             <span style="font-size:11px;font-weight:800;color:var(--amber);text-transform:uppercase;letter-spacing:.8px">⚙ Límites globales</span>
             <div style="display:flex;align-items:center;gap:8px">
               <label style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">Comida por persona ₡</label>
-              <input class="form-inp" id="lim-comida" type="text" value="5.000" oninput="fmtInp(this)" style="width:110px;font-size:12px;padding:6px 8px">
+              <input class="form-inp" id="lim-comida" type="text" placeholder="5.000" oninput="fmtInp(this)" style="width:110px;font-size:12px;padding:6px 8px">
             </div>
             <div style="display:flex;align-items:center;gap:8px">
               <label style="font-size:12px;font-weight:600;color:var(--text2);white-space:nowrap">Hospedaje por persona/noche ₡</label>
-              <input class="form-inp" id="lim-hosp" type="text" value="25.000" oninput="fmtInp(this)" style="width:110px;font-size:12px;padding:6px 8px">
+              <input class="form-inp" id="lim-hosp" type="text" placeholder="25.000" oninput="fmtInp(this)" style="width:110px;font-size:12px;padding:6px 8px">
             </div>
             <button class="modal-btn save" onclick="saveFondosLimitesGlobal()">💾 Guardar globales</button>
             <span id="lim-save-status" style="font-size:11px;color:var(--green)"></span>
@@ -17524,7 +17515,7 @@ window.initCalcCONCRE=initCalcCONCRE;
           <!-- Límites por usuario -->
           <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:var(--r-sm);padding:13px 18px;margin-bottom:16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;box-shadow:var(--sh)">
             <span style="font-size:11px;font-weight:800;color:var(--blue);text-transform:uppercase;letter-spacing:.8px">👤 Límites por usuario</span>
-            <select class="form-select" id="lim-user-sel" onchange="onLimUserChange()" style="font-size:12px;padding:6px 8px;width:180px">
+            <select class="form-select" id="lim-user-sel" onchange="onLimUserChange()" data-no-search="1" style="font-size:12px;padding:6px 8px;width:220px">
               <option value="">— Seleccionar usuario —</option>
             </select>
             <div style="display:flex;align-items:center;gap:8px">
