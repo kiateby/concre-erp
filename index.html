@@ -4245,12 +4245,14 @@ function saveMonthData(uid,y,m,data){
 
 // ── ALERT CHECK ──
 function isAlertGasto(g){
-  const lim=getLimites(SESSION&&SESSION.id||'all');
+  // Use the gasto owner's uid to get their specific limits (not the viewer's)
+  var ownerUid=g.uid||( SESSION&&SESSION.id)||'all';
+  const lim=getLimites(ownerUid);
   // g.monto is already a number - use directly
   const monto=typeof g.monto==='number'?g.monto:parseMon(String(g.monto));
   if(g.cat==='alim'){
     const pp=monto/((g.personas||1)*(g.comidas||1));
-    return pp > lim.comida;
+    return pp > lim.comida; // strictly greater — exactly at limit is OK
   }
   if(g.cat==='hosp'){
     const pp=monto/((g.personas||1)*(g.noches||1));
