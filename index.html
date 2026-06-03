@@ -6178,7 +6178,8 @@ function renderResumenCategorias(allVentas, catMap){
     });
     var cantidad=cvs.reduce(function(s,v){ return s+(parseFloat(v.cantidad)||0); },0);
     var subtotal=cvs.reduce(function(s,v){ return s+(v.subtotal||0); },0);
-    var ejecutado=cvs.reduce(function(s,v){ return s+(v.subtotal||0)/(1+(v.ivaPct||0)/100); },0);
+    // ejecutado = subtotal (ya está sin IVA — ivaAmt es separado en este sistema)
+    var ejecutado=subtotal;
     var pendiente=cvs.filter(function(v){ return v.tienePendiente&&v.pendCancelado!=='si'; }).reduce(function(s,v){ return s+(v.pendMonto||0); },0);
     return {nombre:c.nombre, cantidad:cantidad, subtotal:subtotal, ejecutado:ejecutado, pendiente:pendiente, count:cvs.length};
   });
