@@ -4204,9 +4204,25 @@ function _saveFondosLimToSupabase(){
 function initFondosLimUserSel(){
   var sel=document.getElementById('lim-user-sel');
   if(!sel) return;
-  var users=getUsers().filter(function(u){return u.rol==='user'&&u.estado!=='inactivo';});
+  // Include all users except admin and superadmin
+  var users=getUsers().filter(function(u){
+    return u.rol!=='admin'&&u.rol!=='superadmin'&&u.estado!=='inactivo';
+  });
+  if(users.length===0){
+    // Fallback: show all users if filter returns empty
+    users=getUsers().filter(function(u){return u.estado!=='inactivo';});
+  }
   sel.innerHTML='<option value="">— Seleccionar usuario —</option>'+
-    users.sort(sortAlpha).map(function(u){return '<option value="'+u.id+'">'+u.nombre+'</option>';}).join('');
+    users.sort(sortAlpha).map(function(u){
+      return '<option value="'+u.id+'">'+u.nombre+' ('+u.rol+')</option>';
+    }).join('');
+  // Pre-load existing per-user limits display
+  var cache=window._fondosLimCache||{};
+  var usersWithLimits=cache.users?Object.keys(cache.users):[];
+  if(usersWithLimits.length>0){
+    var existing=document.getElementById('lim-u-save-status');
+    if(existing) existing.textContent=usersWithLimits.length+' usuario(s) con límites personalizados';
+  }
 }
 
 
@@ -12264,29 +12280,55 @@ async function checkOverdueAudits(){
 }
 async function renderAuditAdmin(){
   if(!SESSION||SESSION.rol!=='superadmin') return;
+  checkOverdueAudits();
   var r=await DB.from('inv_auditoria').select('*').order('created_at',{ascending:false});
-  if(r.error||!r.data||!r.data.length) return;
   var body=_invBody(); if(!body) return;
+  var audits=(!r.error&&r.data)?r.data:[];
+  var pool=getAuditPool();
+  var weekKey=getAuditWeekKey();
+  var mondayDate=getAuditMondayDate();
+
   var html='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">';
-  html+='<div style="font-family:var(--cond);font-size:16px;font-weight:900;margin-bottom:12px">📋 Auditorías de Inventario</div>';
-  html+='<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)">';
-  ['Usuario','Semana','Ítems','Estado','Discrepancias','Acción'].forEach(function(h){html+='<th style="padding:8px;text-align:center">'+h+'</th>';});
-  html+='</tr></thead><tbody>';
-  r.data.slice(0,30).forEach(function(a){
-    var u=getUsers().find(function(u){return u.id===a.uid;});
-    var disc=(a.discrepancias||[]).length;
-    var color=a.completado?'var(--green)':disc>0?'var(--red)':'var(--amber)';
-    var label=a.completado?'✅ Completa':disc>0?'⚠ Discrepancia':'⏳ Pendiente';
-    html+='<tr style="border-bottom:1px solid var(--border)">';
-    html+='<td style="padding:8px;font-weight:700">'+(u?u.nombre:a.uid)+'</td>';
-    html+='<td style="padding:8px;text-align:center">'+a.semana_key+'</td>';
-    html+='<td style="padding:8px;text-align:center">'+(a.items||[]).length+'</td>';
-    html+='<td style="padding:8px;text-align:center"><span style="font-size:11px;font-weight:800;color:'+color+'">'+label+'</span></td>';
-    html+='<td style="padding:8px;text-align:center;color:'+(disc>0?'var(--red)':'var(--text3)')+'">'+disc+'</td>';
-    html+='<td style="padding:8px;text-align:center">'+((!a.completado&&!a.superadmin_revisado)?'<button onclick="markAuditRevisada(\''+a.id+'\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">✓ Marcar revisada</button>':(a.superadmin_revisado?'<span style="font-size:11px;color:var(--text3)">Revisada</span>':''))+'</td>';
-    html+='</tr>';
-  });
-  html+='</tbody></table></div>';
+  html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">';
+  html+='<span style="font-size:20px">📋</span>';
+  html+='<div style="flex:1"><div style="font-family:var(--cond);font-size:16px;font-weight:900">Auditorías de Inventario</div>';
+  html+='<div style="font-size:11px;color:var(--text3)">Semana actual: '+weekKey+' (lunes '+mondayDate+') — Pool: '+pool.length+' ítems disponibles</div></div>';
+  html+='</div>';
+
+  if(audits.length===0){
+    html+='<div style="background:var(--surface2);border-radius:8px;padding:16px;text-align:center;color:var(--text3)">';
+    html+='<div style="font-size:24px;margin-bottom:8px">⏳</div>';
+    html+='<div style="font-weight:700;margin-bottom:4px">Aún no hay auditorías generadas</div>';
+    html+='<div style="font-size:12px">Las auditorías se generan automáticamente cuando los usuarios con acceso a inventario abran la pestaña por primera vez en la semana.<br>La semana empieza el lunes. La próxima asignación será el <strong>'+mondayDate+'</strong>.</div>';
+    html+='</div>';
+  } else {
+    html+='<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)">';
+    ['Usuario','Semana','Ítems','Estado','Discrepancias','Acción'].forEach(function(h){
+      html+='<th style="padding:8px 10px;text-align:'+(h==='Usuario'?'left':'center')+'">'+h+'</th>';
+    });
+    html+='</tr></thead><tbody>';
+    audits.slice(0,30).forEach(function(a){
+      var u=getUsers().find(function(u){return u.id===a.uid;});
+      var disc=(a.discrepancias||[]).length;
+      var color=a.completado?'var(--green)':disc>0?'var(--red)':'var(--amber)';
+      var label=a.completado?'✅ Completa':disc>0?'⚠ Discrepancia':'⏳ Pendiente';
+      html+='<tr style="border-bottom:1px solid var(--border)">';
+      html+='<td style="padding:8px 10px;font-weight:700">'+(u?u.nombre:a.uid)+'</td>';
+      html+='<td style="padding:8px;text-align:center;font-size:11px">'+a.semana_key+'</td>';
+      html+='<td style="padding:8px;text-align:center">'+(a.items||[]).length+'</td>';
+      html+='<td style="padding:8px;text-align:center"><span style="font-size:11px;font-weight:800;color:'+color+'">'+label+'</span></td>';
+      html+='<td style="padding:8px;text-align:center;color:'+(disc>0?'var(--red)':'var(--text3)')+'">'+disc+'</td>';
+      html+='<td style="padding:8px;text-align:center">';
+      if(!a.completado&&!a.superadmin_revisado){
+        html+='<button onclick="markAuditRevisada(\''+a.id+'\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">✓ Marcar revisada</button>';
+      } else if(a.superadmin_revisado||a.completado){
+        html+='<span style="font-size:11px;color:var(--text3)">✓ Revisada</span>';
+      }
+      html+='</td></tr>';
+    });
+    html+='</tbody></table>';
+  }
+  html+='</div>';
   body.innerHTML=html+body.innerHTML;
 }
 async function markAuditRevisada(auditId){
@@ -12301,8 +12343,7 @@ async function markAuditRevisada(auditId){
 // ══════════════════════════════════════════════════════════════
 
 function renderInvDashboard(){
-  checkOverdueAudits();
-  renderAuditAdmin();
+  renderAuditAdmin(); // includes checkOverdueAudits internally
   var body=_invBody();
   if(!body) return;
   var items=window._invItems;
