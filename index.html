@@ -5263,6 +5263,7 @@ function _saveSingleVenta(uid, v, mk){
     es_tercero: v.esTercero||false,
     is_usd: v.isUsd||v.isUSD||false,
     tc_used: v.tcUsed||0,
+    usd: v.usd||0,
     deposito_num: v.depositoNum||'',
     notas: v.notas||'',
     estado: v.estado||'activo',
@@ -5346,6 +5347,7 @@ async function loadVentasFromDB(uid){
       isUsd:row.is_usd||false,
       isUSD:row.is_usd||false,
       tcUsed:row.tc_used||0,
+      usd:row.usd||0,
       depositoNum:row.deposito_num||'',
       notas:row.notas||'',
       estado:row.estado||'activo',
@@ -5533,13 +5535,30 @@ function onIvaChange(){
 }
 
 function onUsdChange(){
-  const chk=document.getElementById('vf-is-usd').checked;
-  const wrap=document.getElementById('vf-usd-wrap');
-  if(wrap) wrap.style.display=chk?'block':'none';
-  // Pre-fill TC from current month
-  if(chk){
-    const tc=document.getElementById('vf-tc-used');
-    if(tc&&!tc.value) tc.value=getTCMes(SESSION.id,VY,VM);
+  const isUsd=document.getElementById('vf-is-usd').checked;
+  // Switch visual
+  var track=document.getElementById('vf-switch-track');
+  var thumb=document.getElementById('vf-switch-thumb');
+  if(track) track.style.background=isUsd?'var(--blue)':'var(--border2)';
+  if(thumb) thumb.style.left=isUsd?'22px':'2px';
+  // Labels
+  var lbCR=document.getElementById('vf-currency-label-cr');
+  var lbUSD=document.getElementById('vf-currency-label-usd');
+  if(lbCR){lbCR.style.color=isUsd?'var(--text3)':'var(--text)';lbCR.style.fontWeight=isUsd?'600':'800';}
+  if(lbUSD){lbUSD.style.color=isUsd?'var(--blue)':'var(--text3)';lbUSD.style.fontWeight=isUsd?'800':'600';}
+  // TC field
+  var tcWrap=document.getElementById('vf-tc-wrap');
+  if(tcWrap) tcWrap.style.display=isUsd?'flex':'none';
+  // Precio label
+  var lbl=document.getElementById('vf-precio-label');
+  if(lbl) lbl.textContent=isUsd?'Precio unitario $':'Precio unitario ₡';
+  // USD info line
+  var usdInfo=document.getElementById('vf-usd-info');
+  if(usdInfo) usdInfo.style.display=isUsd?'block':'none';
+  // Pre-fill TC
+  if(isUsd){
+    var tc=document.getElementById('vf-tc-used');
+    if(tc&&!tc.value) tc.value=getTCMes(SESSION.id,VY,VM)||525;
   }
   calcVentaPreview();
 }
@@ -5582,11 +5601,16 @@ function getIvaPct(){
 
 function calcVentaPreview(){
   const isUsd=document.getElementById('vf-is-usd').checked;
-  let subtotal=0;
+  let subtotal=0, usdAmt=0, tcUsed=0;
   if(isUsd){
-    const usd=parseMon(document.getElementById('vf-usd').value)||0;
-    const tc=parseMon(document.getElementById('vf-tc-used').value)||525;
-    subtotal=usd*tc;
+    // Price entered in USD, TC converts to colones
+    const qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
+    usdAmt=(parseMon(document.getElementById('vf-precio').value)||0)*qty;
+    tcUsed=parseMon(document.getElementById('vf-tc-used').value)||525;
+    subtotal=usdAmt*tcUsed;
+    // Keep hidden vf-usd in sync for backward compat
+    var usdInp=document.getElementById('vf-usd');
+    if(usdInp) usdInp.value=usdAmt;
   } else {
     const qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
     const precio=parseMon(document.getElementById('vf-precio').value)||0;
@@ -5598,9 +5622,14 @@ function calcVentaPreview(){
   const insMontoNum=parseMon(document.getElementById('vf-ins-monto').value)||0;
   const esTercero=document.getElementById('vf-terc-chk').checked;
 
-  document.getElementById('vf-subtotal-preview').textContent=fmt(subtotal);
+  document.getElementById('vf-subtotal-preview').textContent=fmt(subtotal)+(isUsd&&usdAmt>0?' ($'+usdAmt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+')':'');
   document.getElementById('vf-iva-preview').textContent=fmt(ivaAmt)+(ivaPct>0?' ('+ivaPct+'%)':'');
   document.getElementById('vf-total-preview').textContent=fmt(total);
+  // USD info line below total
+  var usdInfo=document.getElementById('vf-usd-info');
+  if(usdInfo&&isUsd&&usdAmt>0&&tcUsed>0){
+    usdInfo.textContent='($'+usdAmt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' × ₡'+tcUsed+'/$ = '+fmt(total)+')';
+  }
 
   // Comision preview
   const prodId=document.getElementById('vf-prod').value;
@@ -5674,7 +5703,21 @@ function clearVentaForm(){
   document.getElementById('vf-ins-chk').checked=false;
   document.getElementById('vf-terc-chk').checked=false;
   document.getElementById('vf-pend-cancelado').value='no';
-  document.getElementById('vf-usd-wrap').style.display='none';
+  // Reset USD switch
+  var track2=document.getElementById('vf-switch-track');
+  var thumb2=document.getElementById('vf-switch-thumb');
+  if(track2) track2.style.background='var(--border2)';
+  if(thumb2) thumb2.style.left='2px';
+  var tcWrap2=document.getElementById('vf-tc-wrap');
+  if(tcWrap2) tcWrap2.style.display='none';
+  var lbl2=document.getElementById('vf-precio-label');
+  if(lbl2) lbl2.textContent='Precio unitario ₡';
+  var usdInfo2=document.getElementById('vf-usd-info');
+  if(usdInfo2) usdInfo2.style.display='none';
+  var lbCR2=document.getElementById('vf-currency-label-cr');
+  var lbUSD2=document.getElementById('vf-currency-label-usd');
+  if(lbCR2){lbCR2.style.color='var(--text)';lbCR2.style.fontWeight='800';}
+  if(lbUSD2){lbUSD2.style.color='var(--text3)';lbUSD2.style.fontWeight='600';}
   document.getElementById('vf-pendiente-wrap').className='vf-pendiente-wrap';
   document.getElementById('vf-insumos-wrap').className='vf-insumos-wrap';
   document.getElementById('vf-tercero-wrap').className='vf-tercero-wrap';
@@ -5700,7 +5743,9 @@ function _doSaveVenta(){
   const isUsd=document.getElementById('vf-is-usd').checked;
   let subtotal=0, usd=0, tcUsed=0;
   if(isUsd){
-    usd=parseMon(document.getElementById('vf-usd').value)||0;
+    const qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
+    const precioUsd=parseMon(document.getElementById('vf-precio').value)||0;
+    usd=precioUsd*qty; // total USD
     tcUsed=parseMon(document.getElementById('vf-tc-used').value)||525;
     subtotal=usd*tcUsed;
   } else {
@@ -5975,7 +6020,7 @@ function renderVentasUser(){
       '<td style="white-space:nowrap">'+pagoLabel+'</td>'+
       '<td style="font-family:var(--cond);text-align:center;font-size:12px">'+(v.ivaAmt>0?fmt(v.ivaAmt):'S/IVA')+'</td>'+
       '<td style="font-family:var(--cond);font-weight:800;text-align:right">'+fmt(v.subtotal)+'</td>'+
-      '<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+'</td>'+
+      '<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(2)+')</span>':'')+'</td>'+
       '<td style="font-family:var(--cond);font-weight:700;color:var(--green);text-align:right">'+
         (v.esTercero?'<span style="color:var(--amber);font-size:10px">Tercero</span>':fmt(comis))+
       '</td>'+
@@ -6781,7 +6826,7 @@ function renderAdminVentasTable(){
       +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+( v.precio>0?fmt(v.precio):'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.subtotal)+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;font-size:12px">'+(v.ivaAmt>0?fmt(v.ivaAmt):'S/IVA')+'</td>'
-      +'<td style="font-family:var(--cond);text-align:right">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+'</td>'
+      +'<td style="font-family:var(--cond);text-align:right">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(2)+')</span>':'')+'</td>'
       +'<td style="white-space:nowrap">'+pagoAdminLabel+'</td>'
       +'<td style="font-family:var(--cond);color:var(--blue);text-align:right">'+fmt(Math.max(0,v.subtotal-(v.insMontoNum||0)))+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:'+(v.esTercero?'var(--amber)':'var(--green)')+';text-align:right">'+(v.esTercero?'Tercero':fmt(comis))+'</td>'
@@ -7113,10 +7158,17 @@ function editVenta(ventaId){
     document.getElementById('vf-plazo').value=found.plazoCredito||30;
   }
   document.getElementById('vf-is-usd').checked=found.isUsd||false;
+    // Restore currency switch state
+    if(found.isUsd) onUsdChange();
+    // Restore price in USD (precio field stores unit price, for USD it was stored as precioUnit)
   if(found.isUsd){
-    document.getElementById('vf-usd-wrap').style.display='block';
-    document.getElementById('vf-usd').value=found.usd||'';
+    // Restore USD unit price to precio field
+    // For USD ventas: precioUnit was stored as the USD unit price
+    var usdUnitPrice=found.precioUnit||found.precio||0;
+    document.getElementById('vf-precio').value=usdUnitPrice?usdUnitPrice.toLocaleString('es-CR'):'';
     document.getElementById('vf-tc-used').value=found.tcUsed||525;
+    // vf-usd hidden field for compat
+    document.getElementById('vf-usd').value=found.usd||'';
   }
   document.getElementById('vf-pend-chk').checked=found.tienePendiente||false;
   if(found.tienePendiente){
@@ -7169,7 +7221,9 @@ function updateVenta(){
   const isUsd=document.getElementById('vf-is-usd').checked;
   let subtotal=0,usd=0,tcUsed=0;
   if(isUsd){
-    usd=parseMon(document.getElementById('vf-usd').value)||0;
+    const qtyU=parseFloat(document.getElementById('vf-cantidad').value)||0;
+    const precioUsdU=parseMon(document.getElementById('vf-precio').value)||0;
+    usd=precioUsdU*qtyU; // total USD
     tcUsed=parseMon(document.getElementById('vf-tc-used').value)||525;
     subtotal=usd*tcUsed;
   } else {
@@ -7198,9 +7252,9 @@ function updateVenta(){
     factura:document.getElementById('vf-factura').value.trim(),
     cantidad:document.getElementById('vf-cantidad').value,
     precio:parseMon(document.getElementById('vf-precio').value)||0,
+    precioUnit:parseMon(document.getElementById('vf-precio').value)||0,
     subtotal,ivaPct,ivaAmt,total:subtotal+ivaAmt,
     tipoPago:document.getElementById('vf-tipo-pago').value,
-    plazoCredito:parseInt(document.getElementById('vf-plazo').value)||0,
     plazoCredito:plazo,
     isUsd,usd,tcUsed,
     tieneInsumos:insChk,
@@ -8702,15 +8756,44 @@ function onAdminCatProdChange(){
 
 function onAdminVentaProdChange(){ calcAdminVentaPreview(); }
 
+function onAdminUsdChange(){
+  var isUsd=document.getElementById('avf-is-usd').checked;
+  var track=document.getElementById('avf-switch-track');
+  var thumb=document.getElementById('avf-switch-thumb');
+  if(track) track.style.background=isUsd?'var(--blue)':'var(--border2)';
+  if(thumb) thumb.style.left=isUsd?'22px':'2px';
+  var lbCR=document.getElementById('avf-currency-label-cr');
+  var lbUSD=document.getElementById('avf-currency-label-usd');
+  if(lbCR){lbCR.style.color=isUsd?'var(--text3)':'var(--text)';lbCR.style.fontWeight=isUsd?'600':'800';}
+  if(lbUSD){lbUSD.style.color=isUsd?'var(--blue)':'var(--text3)';lbUSD.style.fontWeight=isUsd?'800':'600';}
+  var tcWrap=document.getElementById('avf-tc-wrap');
+  if(tcWrap) tcWrap.style.display=isUsd?'flex':'none';
+  var lbl=document.getElementById('avf-precio-label');
+  if(lbl) lbl.textContent=isUsd?'Precio unitario $':'Precio unitario ₡';
+  if(isUsd){
+    var tc=document.getElementById('avf-tc-used');
+    if(tc&&!tc.value) tc.value=getTCMes(SESSION.id,VY,VM)||525;
+  }
+  calcAdminVentaPreview();
+}
 function calcAdminVentaPreview(){
+  var isUsd=document.getElementById('avf-is-usd')?.checked;
   var qty=parseFloat(document.getElementById('avf-cantidad')?.value)||0;
   var price=parseMon(document.getElementById('avf-precio')?.value)||0;
   var iva=document.getElementById('avf-iva')?.value;
-  var sub=qty*price;
   var ivaPct=iva==='13'?13:0;
+  var sub, usdAmt=0, tcUsed=0;
+  if(isUsd){
+    usdAmt=price*qty;
+    tcUsed=parseMon(document.getElementById('avf-tc-used')?.value)||525;
+    sub=usdAmt*tcUsed;
+    var usdInp=document.getElementById('avf-usd'); if(usdInp) usdInp.value=usdAmt;
+  } else {
+    sub=qty*price;
+  }
   var total=sub*(1+ivaPct/100);
   var el=document.getElementById('avf-preview');
-  if(el) el.textContent='Subtotal: '+fmt(sub)+(ivaPct?' + IVA '+fmt(sub*ivaPct/100)+' = '+fmt(total):'');
+  if(el) el.textContent='Subtotal: '+fmt(sub)+(ivaPct?' + IVA '+fmt(sub*ivaPct/100)+' = '+fmt(total):'')+(isUsd&&usdAmt>0?' ($'+usdAmt.toFixed(2)+')':'');
 }
 
 function saveAdminVenta(){
@@ -8731,9 +8814,18 @@ function saveAdminVenta(){
     if(avlbl){ avlbl.parentElement.style.borderColor='var(--red)'; avlbl.parentElement.style.background='rgba(227,24,55,.04)'; }
     return;
   }
+  var isUsd=document.getElementById('avf-is-usd')?.checked||false;
   var ivaSel=document.getElementById('avf-iva')?.value;
   var ivaPct=ivaSel==='13'?13:0;
-  var sub=Math.round(qty*price);
+  var sub, usdAmt=0, tcUsed=0;
+  if(isUsd){
+    var tcVal=parseMon(document.getElementById('avf-tc-used')?.value)||525;
+    usdAmt=Math.round(qty*price*100)/100;
+    tcUsed=tcVal;
+    sub=Math.round(usdAmt*tcUsed);
+  } else {
+    sub=Math.round(qty*price);
+  }
   var ivaAmt=Math.round(sub*ivaPct/100);
   var v={
     id:'av'+Date.now(),
@@ -8751,7 +8843,7 @@ function saveAdminVenta(){
     total:sub+ivaAmt,
     tipoPago:(document.getElementById('avf-tipo-pago')?.value||'CONTADO'),
     plazoCredito:0,
-    isUsd:false,usd:0,tcUsed:0,
+    isUsd:isUsd,usd:usdAmt,tcUsed:tcUsed,
     tieneInsumos:false,insDesc:'',insMontoNum:0,
     esTercero:false,tercNombre:'',
     tienePendiente:false,pendMonto:0,pendCancelado:'no',
@@ -8778,10 +8870,18 @@ function saveAdminVenta(){
   var avCrmCtId=document.getElementById('avf-crm-contact-id')?.value||'';
   if(avCrmId) linkVentaToCRM(v.id, avCrmId, avCrmCtId);
   // Clear form
-  ['avf-cliente','avf-factura','avf-proyecto','avf-notas','avf-precio'].forEach(function(id){
+  ['avf-cliente','avf-factura','avf-proyecto','avf-notas','avf-precio','avf-tc-used','avf-usd'].forEach(function(id){
     var el=document.getElementById(id); if(el) el.value='';
   });
   ['avf-cantidad'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+  // Reset USD switch
+  var avChk=document.getElementById('avf-is-usd'); if(avChk) avChk.checked=false;
+  var avTrack=document.getElementById('avf-switch-track'); if(avTrack) avTrack.style.background='var(--border2)';
+  var avThumb=document.getElementById('avf-switch-thumb'); if(avThumb) avThumb.style.left='2px';
+  var avTcWrap=document.getElementById('avf-tc-wrap'); if(avTcWrap) avTcWrap.style.display='none';
+  var avLbl=document.getElementById('avf-precio-label'); if(avLbl) avLbl.textContent='Precio unitario ₡';
+  var avLbCR=document.getElementById('avf-currency-label-cr'); if(avLbCR){avLbCR.style.color='var(--text)';avLbCR.style.fontWeight='800';}
+  var avLbUSD=document.getElementById('avf-currency-label-usd'); if(avLbUSD){avLbUSD.style.color='var(--text3)';avLbUSD.style.fontWeight='600';}
   document.getElementById('avf-preview').textContent='₡0';
   // Reset CRM client button
   var avlbl2=document.getElementById('avf-cliente-label');
@@ -17688,10 +17788,27 @@ window.initCalcCONCRE=initCalcCONCRE;
               </div>
               <div class="vf-grid-4">
                 <div><span class="vf-label">Cantidad / M²</span><input type="number" class="vf-inp" id="avf-cantidad" min="0" step="any" oninput="calcAdminVentaPreview()"></div>
-                <div><span class="vf-label">Precio unitario ₡</span><input type="text" class="vf-inp" id="avf-precio" placeholder="0" oninput="fmtInp(this);calcAdminVentaPreview()"></div>
+                <div><span class="vf-label" id="avf-precio-label">Precio unitario ₡</span><input type="text" class="vf-inp" id="avf-precio" placeholder="0" oninput="fmtInp(this);calcAdminVentaPreview()"></div>
                 <div><span class="vf-label">IVA</span><select class="vf-sel" id="avf-iva" onchange="calcAdminVentaPreview()"><option value="no">Sin IVA</option><option value="13">13%</option></select></div>
                 <div><span class="vf-label">Pago</span><select class="vf-sel" id="avf-tipo-pago"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
               </div>
+              <!-- Moneda switch admin -->
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;padding:8px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
+                <span style="font-size:12px;font-weight:700;color:var(--text2)">Moneda:</span>
+                <span style="font-size:13px;font-weight:800;color:var(--text)" id="avf-currency-label-cr">₡ Colones</span>
+                <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer">
+                  <input type="checkbox" id="avf-is-usd" onchange="onAdminUsdChange()" style="opacity:0;width:0;height:0">
+                  <span id="avf-switch-track" style="position:absolute;inset:0;background:var(--border2);border-radius:12px;transition:.2s">
+                    <span id="avf-switch-thumb" style="position:absolute;left:2px;top:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span>
+                  </span>
+                </label>
+                <span style="font-size:13px;font-weight:600;color:var(--text3)" id="avf-currency-label-usd">$ Dólares</span>
+                <div id="avf-tc-wrap" style="display:none;align-items:center;gap:8px;margin-left:8px">
+                  <span style="font-size:12px;font-weight:600;color:var(--text2)">TC ₡/$</span>
+                  <input type="text" class="vf-inp" id="avf-tc-used" placeholder="525" oninput="calcAdminVentaPreview()" style="width:80px;padding:5px 8px;font-size:13px">
+                </div>
+              </div>
+              <input type="hidden" id="avf-usd" value="0">
               <div class="vf-grid-3" style="margin-bottom:10px">
                 
                 <div><span class="vf-label">Notas</span><input type="text" class="vf-inp" id="avf-notas" placeholder="Opcional"></div>
@@ -18873,7 +18990,7 @@ window.initCalcCONCRE=initCalcCONCRE;
               <input type="number" class="vf-inp" id="vf-cantidad" min="0" step="any" oninput="calcVentaPreview()">
             </div>
             <div>
-              <span class="vf-label">Precio unitario ₡</span>
+              <span class="vf-label" id="vf-precio-label">Precio unitario ₡</span>
               <input type="text" class="vf-inp" id="vf-precio" placeholder="0" oninput="fmtInp(this);calcVentaPreview()">
             </div>
             <div>
@@ -18901,6 +19018,25 @@ window.initCalcCONCRE=initCalcCONCRE;
             </div>
           </div>
 
+          <!-- Moneda switch -->
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:10px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
+            <span style="font-size:12px;font-weight:700;color:var(--text2)">Moneda:</span>
+            <span style="font-size:13px;font-weight:800;color:var(--text)" id="vf-currency-label-cr">₡ Colones</span>
+            <!-- Toggle switch -->
+            <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer">
+              <input type="checkbox" id="vf-is-usd" onchange="onUsdChange()" style="opacity:0;width:0;height:0">
+              <span id="vf-switch-track" style="position:absolute;inset:0;background:var(--border2);border-radius:12px;transition:.2s">
+                <span id="vf-switch-thumb" style="position:absolute;left:2px;top:2px;width:20px;height:20px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.25)"></span>
+              </span>
+            </label>
+            <span style="font-size:13px;font-weight:800;color:var(--text3)" id="vf-currency-label-usd">$ Dólares</span>
+            <!-- TC field — shown only when USD -->
+            <div id="vf-tc-wrap" style="display:none;margin-left:8px;align-items:center;gap:8px">
+              <span style="font-size:12px;font-weight:600;color:var(--text2)">TC ₡/$</span>
+              <input type="text" class="vf-inp" id="vf-tc-used" placeholder="525" oninput="calcVentaPreview()" style="width:80px;padding:5px 8px;font-size:13px">
+            </div>
+          </div>
+
           <div class="vf-grid-3">
             <div>
               <span class="vf-label">Subtotal s/IVA ₡</span>
@@ -18913,20 +19049,12 @@ window.initCalcCONCRE=initCalcCONCRE;
             <div>
               <span class="vf-label">Total con IVA ₡</span>
               <div style="background:var(--green-dim);border:1.5px solid rgba(26,158,92,.3);border-radius:7px;padding:7px 9px;font-family:var(--cond);font-weight:800;font-size:14px;color:var(--green)" id="vf-total-preview">₡0</div>
+              <div id="vf-usd-info" style="display:none;font-size:11px;color:var(--text3);margin-top:3px;text-align:right"></div>
             </div>
           </div>
 
-          <!-- Dólares -->
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-            <input type="checkbox" id="vf-is-usd" onchange="onUsdChange()">
-            <label for="vf-is-usd" style="font-size:12px;font-weight:700;color:var(--text2);cursor:pointer">Venta en dólares</label>
-          </div>
-          <div id="vf-usd-wrap" style="display:none;margin-bottom:10px">
-            <div class="vf-grid-2">
-              <div><span class="vf-label">Monto USD $</span><input type="text" class="vf-inp" id="vf-usd" placeholder="0" oninput="fmtInp(this);calcVentaPreview()"></div>
-              <div><span class="vf-label">TC usado</span><input type="text" class="vf-inp" id="vf-tc-used" placeholder="525" oninput="calcVentaPreview()"></div>
-            </div>
-          </div>
+          <!-- Dólares hidden input for vf-usd compat -->
+          <input type="hidden" id="vf-usd" value="0">
 
           <!-- Proyecto pendiente de ejecutar -->
           <div class="vf-check-row" id="vf-pend-row" onclick="togglePendiente()">
