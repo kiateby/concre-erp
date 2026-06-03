@@ -4566,8 +4566,11 @@ function getAdminFondosPeriodData(){
   const month=parseInt(document.getElementById('af-month-sel')?.value??new Date().getMonth());
   const year=parseInt(document.getElementById('af-year-sel')?.value||2026);
   const filterUid=document.getElementById('af-user-sel')?.value||'all';
-  // For comisiones: only rol=user. For allVentas: also include admins with own sales
-  const comisUsers=filterUid==='all'?getUsers().filter(u=>u.rol==='user'):[getUsers().find(u=>u.id===filterUid)].filter(Boolean);
+  // Include ALL non-admin/superadmin users (not just rol===user)
+  const allNonAdmin=getUsers().filter(function(u){
+    return u.rol!=='admin'&&u.rol!=='superadmin';
+  });
+  const comisUsers=filterUid==='all'?allNonAdmin:[getUsers().find(u=>u.id===filterUid)].filter(Boolean);
   const adminSellers=filterUid==='all'?getUsers().filter(function(u){
     if(u.rol!=='admin'&&u.rol!=='superadmin') return false;
     var vd=getVentasData(u.id);
@@ -13669,7 +13672,7 @@ function applySearchableSelects(){
     'vac-admin-filter','af-period-type','af-cat-filter',
     'avf-iva','proj-tipo','ag-user-filter','ag-tipo-filter',
     'crm-top-freq-period','crm-top-monto-period',
-    'vac-tipo','vac-hist-filter','g-cat','vf-iva','v-filter-cat'];
+    'vac-tipo','vac-hist-filter','g-cat','vf-iva','v-filter-cat','lim-user-sel'];
   document.querySelectorAll('select').forEach(function(sel){
     if(sel.id&&!sel.dataset.srch&&SKIP.indexOf(sel.id)<0) makeSearchable(sel);
   });
