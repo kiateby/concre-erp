@@ -2359,11 +2359,11 @@ body{font-family:'Barlow',sans-serif;background:#f4f4f4;padding:28px 16px}
 .ct .em{font-size:12px;color:rgba(255,255,255,.85);font-weight:600}
 .cb{padding:0}
 table{width:100%;border-collapse:collapse}
-thead th{background:#f7f7f7;padding:9px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:#9a9b9d;text-align:left;border-bottom:2px solid #e2e2e2;white-space:nowrap;text-transform:uppercase}
-thead th:last-child{background:rgba(26,158,92,.08);color:#1a9e5c}
-tbody tr{border-bottom:1px solid #f0f0f0}
-tbody tr:hover{background:#fafafa}
-td{padding:9px 12px;font-size:13px;color:#1c1c1c;vertical-align:middle}
+thead th{background:var(--surface2);padding:9px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--text3);text-align:left;border-bottom:2px solid var(--border2);white-space:nowrap;text-transform:uppercase}
+thead th:last-child{background:rgba(26,158,92,.08);color:var(--green)}
+tbody tr{border-bottom:1px solid var(--border)}
+tbody tr:hover{background:var(--surface2)}
+td{padding:9px 12px;font-size:13px;color:var(--text);vertical-align:middle}
 td:last-child{border-left:2px solid rgba(26,158,92,.2)}
 .cf{background:#f7f7f7;padding:12px 24px;border-top:1px solid #e2e2e2;display:flex;justify-content:space-between;font-size:11px;color:#9a9b9d}
 @media print{body{background:#fff;padding:0}.col{box-shadow:none;border-radius:0}}
@@ -6155,25 +6155,25 @@ function renderResumenCategorias(allVentas, catMap){
     return;
   }
 
-  var html='<table style="width:100%;border-collapse:collapse;font-size:12px">';
-  html+='<thead><tr style="background:#F8F9FA">';
-  html+='<th style="text-align:left;padding:8px 10px;border-bottom:2px solid #E8E8E8;font-weight:700;color:#2C3E50">Categoría</th>';
-  html+='<th style="text-align:right;padding:8px 10px;border-bottom:2px solid #E8E8E8;font-weight:700;color:#2C3E50">M2/ML/KG/UN</th>';
-  html+='<th style="text-align:right;padding:8px 10px;border-bottom:2px solid #E8E8E8;font-weight:700;color:#2C3E50">Subtotal</th>';
-  html+='<th style="text-align:right;padding:8px 10px;border-bottom:2px solid #E8E8E8;font-weight:700;color:#2C3E50">Ejecutado s/IVA</th>';
-  html+='<th style="text-align:right;padding:8px 10px;border-bottom:2px solid #E8E8E8;font-weight:700;color:#2C3E50">Pend. Ejecutar</th>';
+  var html='<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:600px">';
+  html+='<thead><tr style="background:var(--surface2)">';
+  html+='<th style="text-align:left;padding:9px 12px;border-bottom:2px solid var(--border2);font-weight:800;color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.05em;min-width:200px">Categoría</th>';
+  html+='<th style="text-align:right;padding:9px 12px;border-bottom:2px solid var(--border2);font-weight:800;color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.05em;min-width:100px">M2/ML/KG/UN</th>';
+  html+='<th style="text-align:right;padding:9px 12px;border-bottom:2px solid var(--border2);font-weight:800;color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.05em;min-width:120px">Subtotal</th>';
+  html+='<th style="text-align:right;padding:9px 12px;border-bottom:2px solid var(--border2);font-weight:800;color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.05em;min-width:130px">Ejecutado s/IVA</th>';
+  html+='<th style="text-align:right;padding:9px 12px;border-bottom:2px solid var(--border2);font-weight:800;color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.05em;min-width:120px">Pend. Ejecutar</th>';
   html+='</tr></thead><tbody>';
 
   rows.forEach(function(r){
     var cuadre=Math.abs(r.subtotal-r.ejecutado)>1;
     var rowStyle=cuadre&&r.subtotal>0?'background:rgba(227,24,55,.07);':'';
     var cuadreMark=cuadre&&r.subtotal>0?'<span title="Diferencia entre subtotal y ejecutado" style="color:#C8102E;font-weight:900;margin-left:4px">!</span>':'';
-    html+='<tr style="border-bottom:1px solid #F0F0F0;'+rowStyle+'">';
-    html+='<td style="padding:7px 10px;font-weight:600;color:#2C3E50">'+escHtml(r.nombre)+cuadreMark+'</td>';
-    html+='<td style="padding:7px 10px;text-align:right;color:#636E72">'+(r.cantidad>0?r.cantidad.toLocaleString('es-CR',{maximumFractionDigits:2}):'—')+'</td>';
-    html+='<td style="padding:7px 10px;text-align:right;font-weight:600">'+fmt(r.subtotal)+'</td>';
-    html+='<td style="padding:7px 10px;text-align:right;color:'+(cuadre&&r.subtotal>0?'#C8102E':'#27AE60')+';font-weight:700">'+fmt(r.ejecutado)+'</td>';
-    html+='<td style="padding:7px 10px;text-align:right;color:'+(r.pendiente>0?'#E67E22':'#636E72')+'">'+(r.pendiente>0?fmt(r.pendiente):'—')+'</td>';
+    html+='<tr style="border-bottom:1px solid var(--border);'+rowStyle+'">';
+    html+='<td style="padding:7px 12px;font-weight:600;color:var(--text)">'+escHtml(r.nombre)+cuadreMark+'</td>';
+    html+='<td style="padding:7px 12px;text-align:right;color:var(--text3)">'+(r.cantidad>0?r.cantidad.toLocaleString('es-CR',{maximumFractionDigits:2}):'—')+'</td>';
+    html+='<td style="padding:7px 12px;text-align:right;font-weight:600;color:var(--text)">'+fmt(r.subtotal)+'</td>';
+    html+='<td style="padding:7px 12px;text-align:right;color:'+(cuadre&&r.subtotal>0?'var(--red)':'var(--green)')+';font-weight:700">'+fmt(r.ejecutado)+'</td>';
+    html+='<td style="padding:7px 12px;text-align:right;color:'+(r.pendiente>0?'var(--amber)':'var(--text3)')+'">'+( r.pendiente>0?fmt(r.pendiente):'—')+'</td>';
     html+='</tr>';
   });
 
@@ -6183,12 +6183,12 @@ function renderResumenCategorias(allVentas, catMap){
   var totEje=rows.reduce(function(s,r){return s+r.ejecutado;},0);
   var totPend=rows.reduce(function(s,r){return s+r.pendiente;},0);
   var totCuadre=Math.abs(totSub-totEje)>1;
-  html+='<tr style="background:#2C3E50;color:#fff;font-weight:700">';
-  html+='<td style="padding:8px 10px">TOTAL</td>';
-  html+='<td style="padding:8px 10px;text-align:right">'+totQty.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>';
-  html+='<td style="padding:8px 10px;text-align:right">'+fmt(totSub)+'</td>';
-  html+='<td style="padding:8px 10px;text-align:right;color:'+(totCuadre?'#FF6B6B':'#69EBA0')+'">'+fmt(totEje)+'</td>';
-  html+='<td style="padding:8px 10px;text-align:right;color:#FFD166">'+fmt(totPend)+'</td>';
+  html+='<tr style="background:var(--red);color:#fff;font-weight:800">';
+  html+='<td style="padding:9px 12px">TOTAL</td>';
+  html+='<td style="padding:9px 12px;text-align:right">'+totQty.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>';
+  html+='<td style="padding:9px 12px;text-align:right">'+fmt(totSub)+'</td>';
+  html+='<td style="padding:9px 12px;text-align:right;color:'+(totCuadre?'#FFB3B3':'#90EE90')+'">'+fmt(totEje)+'</td>';
+  html+='<td style="padding:9px 12px;text-align:right;color:#FFD166">'+fmt(totPend)+'</td>';
   html+='</tr>';
   html+='</tbody></table>';
   if(totCuadre){
@@ -17755,7 +17755,7 @@ window.initCalcCONCRE=initCalcCONCRE;
                 <span style="font-size:11px;color:#BDC3C7">Hasta:</span>
                 <input type="date" id="av-res-to" style="font-size:11px;padding:4px 8px;background:#fff;color:#2C3E50;border:1px solid #aaa;border-radius:4px" onchange="renderAdminVentas()">
               </div>
-              <div class="res-cat-body" style="overflow-x:auto;padding:8px"></div>
+              <div class="res-cat-body" style="overflow-x:auto"></div>
             </div>
           </div>
 
