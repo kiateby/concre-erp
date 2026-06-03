@@ -1434,6 +1434,22 @@ async function loadAllDataFromDB(){
       var promises=[
         loadVentasFromDB(uid),
         loadUserData(uid),
+        // Load comis_verif and fibra_hist from Supabase into localStorage (cross-device)
+        _loadFromSupabase('user_comis_verif_'+uid,'cc_comis_verif_'+uid).then(function(v){
+          if(v&&Object.keys(v).length>0) localStorage.setItem('cc_comis_verif_'+uid,JSON.stringify(v));
+        }),
+        _loadFromSupabase('fibra_hist_global','cc_fibra_hist').then(function(v){
+          if(v&&Object.keys(v).length>0) localStorage.setItem('cc_fibra_hist',JSON.stringify(v));
+        }),
+        // Load notifications from Supabase into localStorage
+        DB.from('notificaciones').select('*').eq('uid',uid).order('time',{ascending:false}).then(function(r){
+          if(!r.error&&r.data&&r.data.length>0){
+            var notifs=r.data.map(function(x){
+              return {id:x.id,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',read:x.read||false,time:x.time};
+            });
+            localStorage.setItem('cc_notif_'+uid,JSON.stringify(notifs));
+          }
+        }),
         loadVacFromDB(uid),
         loadFondosFromDB(uid),
         loadGastosFromDB(uid)
@@ -1447,6 +1463,13 @@ async function loadAllDataFromDB(){
           promises.push(loadGastosFromDB(u.id));
           promises.push(loadFondosFromDB(u.id));
           promises.push(_loadUserDEDForAdmin(u.id));
+          // Load notifications for other users
+          promises.push(DB.from('notificaciones').select('*').eq('uid',u.id).order('time',{ascending:false}).then(function(r){
+            if(!r.error&&r.data&&r.data.length>0){
+              var notifs=r.data.map(function(x){return{id:x.id,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',read:x.read||false,time:x.time};});
+              localStorage.setItem('cc_notif_'+u.id,JSON.stringify(notifs));
+            }
+          }));
         });
         // Liquidaciones — todas en paralelo
         liqSubs.forEach(function(sub){
@@ -3423,7 +3446,22 @@ function checkAnniversaries(){
 
 // ── NOTIFICATIONS ──
 function getNotifications(uid){ return JSON.parse(localStorage.getItem('cc_notif_'+uid)||'[]'); }
-function setNotifications(uid,n){ localStorage.setItem('cc_notif_'+uid,JSON.stringify(n)); }
+function setNotifications(uid,n){
+  localStorage.setItem('cc_notif_'+uid,JSON.stringify(n));
+  // Persist to Supabase notificaciones table
+  DB.from('notificaciones').delete().eq('uid',uid).then(function(){
+    if(n&&n.length>0){
+      var rows=n.slice(0,30).map(function(x){
+        return {id:x.id||('n'+Date.now()+Math.random()),uid:uid,
+          icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',
+          read:x.read||false,time:x.time||new Date().toISOString()};
+      });
+      DB.from('notificaciones').insert(rows).then(function(r){
+        if(r.error) console.error('setNotifications:',r.error);
+      });
+    }
+  });
+}
 
 function addNotification(uid,icon,title,msg){
   const notifs=getNotifications(uid);
@@ -5177,7 +5215,8 @@ function saveFibraCosto(){
   const now=new Date();
   const key=now.getFullYear()+'-'+pad(now.getMonth()+1);
   hist[key]=v;
-  localStorage.setItem('cc_fibra_hist',JSON.stringify(hist));
+  // Guardar historial FibraPlus54 en Supabase (cross-device)
+  _saveToSupabase('fibra_hist_global', hist, 'cc_fibra_hist');
   const s=document.getElementById('av-fibra-status');
   if(s){s.textContent='✓ Guardado para '+key+' en adelante';setTimeout(()=>s.textContent='',3000);}
   toast('✓ Costo fibra actualizado — aplica desde este mes');
@@ -6670,7 +6709,8 @@ function toggleComisDetail(rowId){
 function toggleComisVerif(uid,key,chk){
   const verif=JSON.parse(localStorage.getItem('cc_comis_verif_'+uid)||'{}');
   verif[key]=chk.checked;
-  localStorage.setItem('cc_comis_verif_'+uid,JSON.stringify(verif));
+  // Guardar verificación de comisión en Supabase (cross-device)
+  _saveToSupabase('user_comis_verif_'+uid, verif, 'cc_comis_verif_'+uid);
   if(chk.checked) toast('✓ Comisión verificada — fila marcada en verde');
   // Refresh row color
   renderAdminVentas();
