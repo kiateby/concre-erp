@@ -3255,7 +3255,18 @@ function getVacData(uid){
 function setVacData(uid,d){
   if(!window._vacCache) window._vacCache={};
   window._vacCache[uid]=d;
-  DB.from('vacaciones_saldo').upsert({uid:uid,saldo:d.saldo||0,updated_at:new Date().toISOString()},{onConflict:'uid'})
+  // Save ALL fields to vacaciones_saldo — not just saldo
+  DB.from('vacaciones_saldo').upsert({
+    uid:uid,
+    saldo:d.saldo||0,
+    cedula:d.cedula||'',
+    fecha_nac:d.fechaNac||'',
+    sexo:d.sexo||'',
+    fecha_ingreso:d.fechaIngreso||'',
+    dias_anuales:d.diasAnuales||0,
+    sabado_libre:d.sabadoLibre||false,
+    updated_at:new Date().toISOString()
+  },{onConflict:'uid'})
     .then(function(r){ if(r.error) console.error('setVac saldo:',r.error); });
   // Upsert solicitudes
   if(d.requests&&d.requests.length>0){
@@ -3276,7 +3287,17 @@ async function loadVacFromDB(uid){
     return {id:x.id,fechaInicio:x.fecha_inicio,fechaFin:x.fecha_fin,
       dias:x.dias,estado:x.estado,tipo:x.tipo,motivo:x.motivo,aprobadoPor:x.aprobado_por};
   }):[];
-  var vd={saldo:saldo,requests:reqs};
+  var vd={
+    saldo:saldo,
+    requests:reqs,
+    // Load all personal fields from Supabase
+    cedula:(s.data&&!s.error)?s.data.cedula||'':'',
+    fechaNac:(s.data&&!s.error)?s.data.fecha_nac||'':'',
+    sexo:(s.data&&!s.error)?s.data.sexo||'':'',
+    fechaIngreso:(s.data&&!s.error)?s.data.fecha_ingreso||'':'',
+    diasAnuales:(s.data&&!s.error)?s.data.dias_anuales||0:0,
+    sabadoLibre:(s.data&&!s.error)?s.data.sabado_libre||false:false
+  };
   if(!window._vacCache) window._vacCache={};
   window._vacCache[uid]=vd;
   return vd;
