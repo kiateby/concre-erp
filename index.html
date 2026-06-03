@@ -5376,11 +5376,8 @@ function getTCMes(uid,y,m){
   return mv.tc||525;
 }
 function saveTCMes(){
-  if(!SESSION||SESSION.rol!=='user') return;
-  const v=parseMon(document.getElementById('v-tc-inp').value)||525;
-  const mv=getMonthVentas(SESSION.id,VY,VM);
-  mv.tc=v;
-  saveMonthVentas(SESSION.id,VY,VM,mv);
+  // v-tc-inp was removed — TC is now per-venta via the USD switch
+  // This function is kept for compatibility but no longer called
 }
 
 // ── COMISSION CALC ──
@@ -5864,10 +5861,6 @@ function renderVentasUser(){
   // Month pills
   buildVentasMonthPills();
 
-  // TC
-  const tci=document.getElementById('v-tc-inp');
-  if(tci) tci.value=mv.tc||525;
-
   // Totals
   const totalVentas=ventas.reduce((s,v)=>s+v.subtotal,0);
   const totalNetBase=ventas.reduce(function(s,v){return s+getVentaNetBase(v,fibraCosto);},0);
@@ -6013,7 +6006,7 @@ function renderVentasUser(){
     return '<tr class="'+rowCls+'">'+
       '<td style="font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'+
       '<td style="font-family:var(--cond);font-weight:700;text-align:center">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'+
-      '<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+( v.precio>0?fmt(v.precio):'—')+'</td>'+
+      '<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(2):fmt(v.precio)):'—')+'</td>'+
       '<td><span class="v-cat '+TIPO_COLORS[p.tipo]+'">'+getVentaDisplayNombre(v,catMap)+'</span></td>'+
       '<td style="font-weight:600">'+v.cliente+'</td>'+
       '<td style="font-size:11px;color:var(--text3)">'+( v.factura||'—')+'</td>'+
@@ -6823,7 +6816,7 @@ function renderAdminVentasTable(){
       +'<td style="position:sticky;left:340px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';white-space:nowrap">'+v.cliente+'</td>'
       +'<td style="position:sticky;left:450px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';font-size:11px;color:var(--text3)">'+( v.factura||'—')+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'
-      +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+( v.precio>0?fmt(v.precio):'—')+'</td>'
+      +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(2):fmt(v.precio)):'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.subtotal)+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;font-size:12px">'+(v.ivaAmt>0?fmt(v.ivaAmt):'S/IVA')+'</td>'
       +'<td style="font-family:var(--cond);text-align:right">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(2)+')</span>':'')+'</td>'
@@ -18880,16 +18873,7 @@ window.initCalcCONCRE=initCalcCONCRE;
           </div>
         </div>
 
-        <div>
-          <div class="slabel">Tipo de cambio</div>
-          <div class="tc-bar" style="flex-direction:column;align-items:flex-start;gap:6px">
-            <div style="display:flex;align-items:center;gap:8px">
-              <span class="tc-label">₡ por $1</span>
-              <input type="text" class="tc-inp" id="v-tc-inp" placeholder="525" oninput="saveTCMes()">
-            </div>
-            <div style="font-size:10px;color:var(--text3)">BAC San José · editable por mes</div>
-          </div>
-        </div>
+
 
         <div>
           <div class="slabel">Pendientes de ejecutar</div>
