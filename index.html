@@ -1440,7 +1440,13 @@ async function loadAllDataFromDB(){
           contactoId:row.contacto_id,autoMatched:row.auto_matched};
       });
     }
-    if(!trashR.error&&trashR.data) window._trashCache=trashR.data;
+    if(!trashR.error&&trashR.data) window._trashCache=trashR.data.map(function(row){
+      return {id:row.id,type:row.type,uid:row.uid,uNombre:row.u_nombre||row.uid,
+        data:row.data,status:row.status||'pending',
+        crmLink:row.crm_link,liqProject:row.liq_project,
+        deletedAt:row.deleted_at||new Date().toISOString(),
+        conservedBy:row.conserved_by||'',conservedAt:row.conserved_at||null};
+    });
 
     // ── FASE 2: Datos de usuarios en PARALELO ───────────────────────────────
     if(SESSION){
@@ -1463,7 +1469,7 @@ async function loadAllDataFromDB(){
           if(v&&Object.keys(v).length>0) localStorage.setItem('cc_fibra_hist',JSON.stringify(v));
         }),
         // Load notifications from Supabase into localStorage
-        DB.from('notificaciones').select('*').eq('uid',uid).order('time',{ascending:false}).then(function(r){
+        DB.from('notificaciones').select('*').eq('uid',uid).order('created_at',{ascending:false}).then(function(r){
           if(!r.error&&r.data&&r.data.length>0){
             var notifs=r.data.map(function(x){
               return {id:x.id,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',read:x.read||false,time:x.time};
@@ -1485,9 +1491,9 @@ async function loadAllDataFromDB(){
           promises.push(loadFondosFromDB(u.id));
           promises.push(_loadUserDEDForAdmin(u.id));
           // Load notifications for other users
-          promises.push(DB.from('notificaciones').select('*').eq('uid',u.id).order('time',{ascending:false}).then(function(r){
+          promises.push(DB.from('notificaciones').select('*').eq('uid',u.id).order('created_at',{ascending:false}).then(function(r){
             if(!r.error&&r.data&&r.data.length>0){
-              var notifs=r.data.map(function(x){return{id:x.id,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',read:x.read||false,time:x.time};});
+              var notifs=r.data.map(function(x){return{id:x.id,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',read:x.read||false,time:x.created_at||x.time};});
               localStorage.setItem('cc_notif_'+u.id,JSON.stringify(notifs));
             }
           }));
@@ -1714,7 +1720,10 @@ function injectNotifBell(){
   panel.className='notif-panel';
   panel.innerHTML=`<div class="notif-panel-hdr">
     <span class="notif-panel-title">🔔 Notificaciones</span>
-    <button class="notif-clear" onclick="markAllRead(SESSION.id)">Marcar todas leídas</button>
+    <div style="display:flex;gap:8px">
+      <button class="notif-clear" onclick="markAllRead(SESSION.id)">Marcar leídas</button>
+      <button class="notif-clear" onclick="clearAllNotifications(SESSION.id)" style="color:rgba(255,100,100,.8)">🗑 Borrar todas</button>
+    </div>
   </div><div class="notif-list"></div>`;
   document.body.appendChild(panel);
   // Close on outside click
@@ -3351,7 +3360,8 @@ function setVacData(uid,d){
         estado:r.status||r.estado||'pendiente',
         tipo:r.tipo||'full',
         motivo:r.motivo||'',
-        aprobado_por:r.aprobadoPor||r.approvedBy||''
+        aprobado_por:r.aprobadoPor||r.approvedBy||'',
+        created_at:r.created||r.created_at||new Date().toISOString()
       };
     });
     DB.from('vacaciones_solicitudes').upsert(rows,{onConflict:'id'})
@@ -3518,13 +3528,14 @@ function checkAnniversaries(){
 function getNotifications(uid){ return JSON.parse(localStorage.getItem('cc_notif_'+uid)||'[]'); }
 function setNotifications(uid,n){
   localStorage.setItem('cc_notif_'+uid,JSON.stringify(n));
-  // Persist to Supabase notificaciones table
+  // Persist to Supabase — delete then insert (notifications are per-user, safe to replace)
   DB.from('notificaciones').delete().eq('uid',uid).then(function(){
     if(n&&n.length>0){
       var rows=n.slice(0,30).map(function(x){
-        return {id:x.id||('n'+Date.now()+Math.random()),uid:uid,
-          icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',
-          read:x.read||false,time:x.time||new Date().toISOString()};
+        var ts=x.time||x.created_at||new Date().toISOString();
+        return {id:x.id||('n'+Date.now()+Math.floor(Math.random()*10000)),
+          uid:uid,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',
+          read:x.read||false,created_at:ts};
       });
       DB.from('notificaciones').insert(rows).then(function(r){
         if(r.error) console.error('setNotifications:',r.error);
@@ -3535,8 +3546,15 @@ function setNotifications(uid,n){
 
 function addNotification(uid,icon,title,msg){
   const notifs=getNotifications(uid);
-  notifs.unshift({id:'n'+Date.now(),icon,title,msg,read:false,time:new Date().toISOString()});
+  notifs.unshift({id:'n'+Date.now(),icon,title,msg,read:false,time:new Date().toISOString(),created_at:new Date().toISOString()});
   setNotifications(uid,notifs.slice(0,30)); // keep last 30
+}
+
+function clearAllNotifications(uid){
+  setNotifications(uid,[]);
+  renderNotifPanel();
+  renderNotifBell();
+  toast('Notificaciones borradas');
 }
 
 function markAllRead(uid){
@@ -3567,14 +3585,23 @@ function renderNotifPanel(){
     panel.querySelector('.notif-list').innerHTML='<div class="notif-empty">Sin notificaciones</div>';
     return;
   }
-  panel.querySelector('.notif-list').innerHTML=n.map(x=>`
-    <div class="notif-item${x.read?'':' unread'}">
+  panel.querySelector('.notif-list').innerHTML=n.map((x,i)=>`
+    <div class="notif-item${x.read?'':' unread'}" style="position:relative">
       <div class="notif-icon">${x.icon||'🔔'}</div>
       <div class="notif-content">
-        <div class="notif-msg"><strong>${x.title}</strong><br>${x.msg}</div>
-        <div class="notif-time">${new Date(x.time).toLocaleString('es-CR')}</div>
+        <div class="notif-msg"><strong>${x.title||''}</strong>${x.msg?'<br>'+x.msg:''}</div>
+        <div class="notif-time">${new Date(x.time||x.created_at||Date.now()).toLocaleString('es-CR')}</div>
       </div>
+      <button onclick="deleteOneNotif('${uid}',${i})" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;padding:2px 6px;flex-shrink:0" title="Borrar">✕</button>
     </div>`).join('');
+}
+
+function deleteOneNotif(uid,idx){
+  const n=getNotifications(uid);
+  n.splice(idx,1);
+  setNotifications(uid,n);
+  renderNotifPanel();
+  renderNotifBell();
 }
 
 function toggleNotifPanel(){
