@@ -1434,6 +1434,7 @@ async function loadAllDataFromDB(){
       var promises=[
         loadVentasFromDB(uid),
         loadUserData(uid),
+        loadFondosCatsFromDB(), // load custom categories for all users
         // Load comis_verif and fibra_hist from Supabase into localStorage (cross-device)
         _loadFromSupabase('user_comis_verif_'+uid,'cc_comis_verif_'+uid).then(function(v){
           if(v&&Object.keys(v).length>0) localStorage.setItem('cc_comis_verif_'+uid,JSON.stringify(v));
@@ -4656,7 +4657,8 @@ function openFondosCatModal(catId){
     '<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Nombre</label>'+
       '<input id="fcm-label" type="text" value="'+(cat.label||'')+'" placeholder="Nombre de la categoría" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;font-size:13px;background:var(--surface);color:var(--text)"></div>'+
     '<div style="margin-bottom:16px"><label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Ícono (emoji)</label>'+
-      '<input id="fcm-icon" type="text" value="'+(cat.icon||'📌')+'" placeholder="📌" style="width:80px;padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;font-size:18px;text-align:center;background:var(--surface);color:var(--text)"></div>'+
+      '<input id="fcm-icon" type="text" value="'+(cat.icon||'📌')+'" placeholder="📌" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;font-size:22px;text-align:left;background:var(--surface);color:var(--text)">'+
+      '<div style="font-size:11px;color:var(--text3);margin-top:4px">💡 Windows: tecla <strong>Win+.</strong> — Mac: <strong>Ctrl+Cmd+Espacio</strong> — o pega el emoji directamente</div></div>'+
     '<div style="display:flex;gap:10px;justify-content:flex-end">'+
       '<button onclick="document.getElementById(\'fondos-cat-modal\').remove()" style="background:none;border:1px solid var(--border2);border-radius:7px;padding:8px 16px;cursor:pointer;font-size:13px">Cancelar</button>'+
       '<button onclick="saveFondosCat(\''+catId+'\')" style="background:var(--purple);color:#fff;border:none;border-radius:7px;padding:8px 20px;cursor:pointer;font-size:13px;font-weight:700">Guardar</button>'+
@@ -4675,6 +4677,7 @@ function saveFondosCat(existingId){
   var m=document.getElementById('fondos-cat-modal'); if(m) m.remove();
   renderFondosCatList();
   initFondosCatFilter();
+  populateGCatSelect(); // update user gasto form too
   toast('✅ Categoría '+(existingId?'actualizada':'creada')+': '+label);
 }
 function deleteFondosCat(catId){
@@ -4684,6 +4687,7 @@ function deleteFondosCat(catId){
   _saveToSupabase('fondos_cats_custom',FONDOS_CATS,'cc_fondos_cats');
   renderFondosCatList();
   initFondosCatFilter();
+  populateGCatSelect(); // update user gasto form too
   toast('Categoría eliminada');
 }
 function initFondosCatFilter(){
@@ -9120,7 +9124,19 @@ async function loadGastosFromDB(uid){
 }
 
 // ── INIT ──
+function populateGCatSelect(){
+  var sel=document.getElementById('g-cat');
+  if(!sel) return;
+  var current=sel.value;
+  sel.innerHTML='<option value="">— Seleccionar —</option>'+
+    Object.entries(FONDOS_CATS).map(function(e){
+      return '<option value="'+e[0]+'">'+e[1].icon+' '+e[1].label+'</option>';
+    }).join('');
+  if(current&&sel.querySelector('option[value="'+current+'"]')) sel.value=current;
+}
+
 function initGastosModule(){
+  populateGCatSelect(); // always from FONDOS_CATS (includes custom categories)
   populateGpSelectors();
   renderGastosTable();
   // Hide form by default
@@ -18905,20 +18921,6 @@ window.initCalcCONCRE=initCalcCONCRE;
                 <span class="ag-label">Categoría</span>
                 <select class="ag-select" id="g-cat" onchange="onCatChange()">
                   <option value="">— Seleccionar —</option>
-                  <option value="comb_v">⛽ Combustible vehículo</option>
-                  <option value="comb_m">⛽ Combustible maquinaria</option>
-                  <option value="alim">🍽 Alimentación</option>
-                  <option value="hosp">🛏 Hospedaje</option>
-                  <option value="peaje">🛣 Peaje</option>
-                  <option value="ferre">🔨 Ferretería</option>
-                  <option value="mat">📦 Materias primas / Prod. propios</option>
-                  <option value="rep_e">⚙ Repuestos equipos bodega</option>
-                  <option value="rep_v">🚛 Repuestos vehículos</option>
-                  <option value="ins">🧰 Insumos para proyectos</option>
-                  <option value="herr">🔧 Herramientas</option>
-                  <option value="ger">👔 Compras gerencia</option>
-                  <option value="epp">🦺 Equipo de protección personal</option>
-                  <option value="otros">📌 Otros</option>
                 </select>
               </div>
               <div id="g-vehiculo-wrap" style="display:none">
