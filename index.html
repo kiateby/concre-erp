@@ -4864,6 +4864,7 @@ async function loadFondosCatsFromDB(){
 
 async function initAdminFondos(){
   await loadFondosCatsFromDB(); // load custom cats before anything
+  await loadFondosAprobados(); // load approval states
   initFondosCatPanel();
   initFondosCatFilter();
   initFondosLimUserSel(); // populate per-user limits selector
@@ -5092,10 +5093,40 @@ function renderBarChart(depositos,gastos){
   }
 }
 
+// ── Fondos aprobados (superadmin) ──────────────────────────────
+window._fondosAprobados = {};
+
+async function loadFondosAprobados(){
+  try{
+    const {data}=await _sb().from('configuracion').select('valor').eq('clave','fondos_aprobados').single();
+    window._fondosAprobados = data ? JSON.parse(data.valor||'{}') : {};
+  } catch(e){ window._fondosAprobados={}; }
+}
+
+async function saveFondosAprobados(){
+  try{
+    await _sb().from('configuracion').upsert({clave:'fondos_aprobados',valor:JSON.stringify(window._fondosAprobados)},{onConflict:'clave'});
+  } catch(e){ console.warn('saveFondosAprobados error',e); }
+}
+
+async function toggleFondoAprobado(gid){
+  if(!gid) return;
+  if(window._fondosAprobados[gid]){
+    delete window._fondosAprobados[gid];
+  } else {
+    window._fondosAprobados[gid]=true;
+  }
+  await saveFondosAprobados();
+  renderAdminFondosTable();
+}
+// ───────────────────────────────────────────────────────────────
+
 function renderAdminFondosTable(){
   const {allGastos}=getAdminFondosPeriodData();
   const catFilter=document.getElementById('af-cat-filter')?.value||'all';
-  // Recalculate alerta with current limits — never use stored g.alerta
+  const isSA=currentUser&&currentUser.rol==='superadmin';
+  const thAp=document.getElementById('af-th-aprobado');
+  if(thAp) thAp.style.display=isSA?'':'none';
   const filtered=catFilter==='alerta'
     ? allGastos.filter(g=>isAlertGasto(g))
     : catFilter==='all'
@@ -5103,25 +5134,43 @@ function renderAdminFondosTable(){
       : allGastos.filter(g=>(g.cat||g.tipo||'otros')===catFilter);
   const body=document.getElementById('af-table-body');
   if(!body) return;
-  body.innerHTML=filtered.length
-    ? filtered.sort((a,b)=>a.fecha>b.fecha?-1:1).map(g=>{
-        const alerta=isAlertGasto(g);
-        const cat=FONDOS_CATS[g.cat]||{label:g.cat,cls:'cat-otros',icon:'📌'};
-        return `<tr${alerta?' style="background:rgba(227,24,55,.04)"':''}>
-          <td style="font-size:11px;color:var(--text3)">${formatDate(parseDate(g.fecha))}</td>
-          <td><strong>${g.uname||g.uid}</strong></td>
-          <td><span class="gasto-cat ${cat.cls}">${cat.icon} ${cat.label}</span></td>
-          <td style="font-size:12px">${[g.desc||g.descripcion,g.vehiculo?'('+g.vehiculo+')':''].filter(Boolean).join(' ')||'—'}</td>
-          <td style="font-size:11px;color:var(--text3)">${g.factura||'—'}</td>
-          <td style="font-family:var(--cond);font-weight:800">${fmt(g.monto)}</td>
-          <td style="font-size:11px;color:${alerta?'var(--red)':'var(--text3)'}">${getPpLabel(g)||'—'}</td>
-          <td style="font-size:11px;color:var(--text3)">${g.proyecto||'—'}</td>
-          <td>${alerta?`<span title="${g.nota||'Sin nota'}" style="cursor:help">🔴</span>`:''}</td>
-        </tr>${alerta&&g.nota?`<tr style="background:rgba(227,24,55,.04)"><td colspan="9" style="font-size:11px;color:var(--red);padding:4px 12px">📝 ${g.nota}</td></tr>`:''}`;})
-      .join('')
-    : '<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:20px">Sin registros en este período</td></tr>';
+  if(!filtered.length){
+    const cols=isSA?10:9;
+    body.innerHTML='<tr><td colspan="'+cols+'" style="text-align:center;color:var(--text3);padding:20px">Sin registros en este período</td></tr>';
+    return;
+  }
+  const rows=filtered.sort((a,b)=>a.fecha>b.fecha?-1:1).map(g=>{
+    const alerta=isAlertGasto(g);
+    const cat=FONDOS_CATS[g.cat]||{label:g.cat,cls:'cat-otros',icon:'📌'};
+    const gid=g.id||g._localId||'';
+    const aprobado=window._fondosAprobados&&window._fondosAprobados[gid];
+    let rowBg=aprobado?'background:rgba(26,158,92,.10)':(alerta?'background:rgba(227,24,55,.04)':'');
+    const apCell=isSA
+      ? '<td style="text-align:center">'+(aprobado
+          ? '<span style="color:#1a9e5c;font-weight:800;font-size:13px">OK</span>'
+          : '<button data-gid="'+gid+'" onclick="toggleFondoAprobado(this.dataset.gid)" style="background:none;border:1.5px solid var(--border2);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px;color:var(--text3)">✓</button>'
+        )+'</td>'
+      : '';
+    const cols=isSA?10:9;
+    let html='<tr style="'+rowBg+'">'
+      +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(g.fecha))+'</td>'
+      +'<td><strong>'+(g.uname||g.uid)+'</strong></td>'
+      +'<td><span class="gasto-cat '+cat.cls+'">'+cat.icon+' '+cat.label+'</span></td>'
+      +'<td style="font-size:12px">'+([g.desc||g.descripcion,g.vehiculo?'('+g.vehiculo+')':''].filter(Boolean).join(' ')||'—')+'</td>'
+      +'<td style="font-size:11px;color:var(--text3)">'+(g.factura||'—')+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800">'+fmt(g.monto)+'</td>'
+      +'<td style="font-size:11px;color:'+(alerta?'var(--red)':'var(--text3)')+'">'+( getPpLabel(g)||'—')+'</td>'
+      +'<td style="font-size:11px;color:var(--text3)">'+(g.proyecto||'—')+'</td>'
+      +'<td>'+(alerta?'<span title="'+(g.nota||'Sin nota')+'" style="cursor:help">🔴</span>':'')+'</td>'
+      +apCell
+      +'</tr>';
+    if(alerta&&g.nota){
+      html+='<tr style="'+rowBg+'"><td colspan="'+cols+'" style="font-size:11px;color:var(--red);padding:4px 12px">📝 '+g.nota+'</td></tr>';
+    }
+    return html;
+  });
+  body.innerHTML=rows.join('');
 }
-
 function renderAdminDepTable(depositos){
   const body=document.getElementById('af-dep-body');
   if(!body) return;
@@ -18109,7 +18158,7 @@ window.initCalcCONCRE=initCalcCONCRE;
             <table class="atbl">
               <thead><tr>
                 <th>Fecha</th><th>Usuario</th><th>Categoría</th><th>Descripción</th>
-                <th>Factura</th><th>Monto</th><th>x Persona</th><th>Proyecto</th><th>⚠</th>
+                <th>Factura</th><th>Monto</th><th>x Persona</th><th>Proyecto</th><th>⚠</th><th id="af-th-aprobado" style="display:none">✓</th>
               </tr></thead>
               <tbody id="af-table-body"></tbody>
             </table>
