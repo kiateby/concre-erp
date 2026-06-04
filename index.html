@@ -1860,6 +1860,24 @@ function buildUsersTable(){
 }
 
 let editingUserIdx=null;
+function toggleFPassCurrent(){
+  var el=document.getElementById('fPass-current-val');
+  var btn=document.getElementById('fPass-current-eye');
+  if(!el) return;
+  var visible=el.dataset.visible==='1';
+  if(visible){
+    el.textContent='••••••••'; el.dataset.visible='0'; if(btn) btn.textContent='👁';
+  } else {
+    el.textContent=el.dataset.pass||'(sin contraseña)'; el.dataset.visible='1'; if(btn) btn.textContent='🙈';
+  }
+}
+function toggleFPassNew(){
+  var inp=document.getElementById('fPass');
+  var btn=document.getElementById('fPass-eye-btn');
+  if(!inp) return;
+  if(inp.type==='password'){ inp.type='text'; if(btn) btn.textContent='🙈'; }
+  else { inp.type='password'; if(btn) btn.textContent='👁'; }
+}
 function openUserModal(idx=null){
   editingUserIdx=idx;
   const users=getUsers();
@@ -1880,17 +1898,26 @@ function openUserModal(idx=null){
     document.getElementById('fRol').value='user';
     document.getElementById('fComisType').value='mensual';
     document.getElementById('fEstado').value='activo';
+    // Hide current password section for new users
+    var cpWrap=document.getElementById('fPass-current');
+    if(cpWrap) cpWrap.style.display='none';
   } else {
     const u=users[idx];
     document.getElementById('fNombre').value=u.nombre;
     document.getElementById('fUser').value=u.username;
     document.getElementById('fPass').value='';
-    document.getElementById('fRol').value=u.rol; // ahora la opción superadmin ya existe
+    document.getElementById('fRol').value=u.rol;
     document.getElementById('fSalario').value=u.salario>0?u.salario.toLocaleString('es-CR'):'';
     document.getElementById('fEmail').value=u.email||'';
     document.getElementById('fPuesto').value=u.puesto||'';
     document.getElementById('fComisType').value=u.comisType||'mensual';
     document.getElementById('fEstado').value=u.estado||'activo';
+    // Show current password for editing (masked by default)
+    var cpWrap2=document.getElementById('fPass-current');
+    var cpVal=document.getElementById('fPass-current-val');
+    if(cpWrap2) cpWrap2.style.display='block';
+    if(cpVal){ cpVal.textContent='••••••••'; cpVal.dataset.pass=u.password||''; cpVal.dataset.visible='0'; }
+    var cpEye=document.getElementById('fPass-current-eye'); if(cpEye) cpEye.textContent='👁';
   }
   document.getElementById('userModal').classList.remove('hidden');
   // Render tab perms UI
@@ -4594,8 +4621,90 @@ function setFondosMes(m){
 }
 
 // ── ADMIN FONDOS ──
+// ── FONDOS CATEGORY MANAGEMENT (superadmin) ──────────────────
+function initFondosCatPanel(){
+  if(!SESSION||SESSION.rol!=='superadmin') return;
+  var panel=document.getElementById('fondos-cat-panel');
+  if(panel) panel.style.display='block';
+  renderFondosCatList();
+}
+function renderFondosCatList(){
+  var wrap=document.getElementById('fondos-cat-list');
+  if(!wrap) return;
+  var cats=Object.entries(FONDOS_CATS);
+  wrap.innerHTML=cats.map(function(entry){
+    var id=entry[0],cat=entry[1];
+    return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:8px">'+
+      '<span style="font-size:18px">'+cat.icon+'</span>'+
+      '<span style="flex:1;font-size:13px;font-weight:600;color:var(--text)">'+cat.label+'</span>'+
+      '<span style="font-size:10px;color:var(--text3);font-family:monospace">'+id+'</span>'+
+      '<button onclick="openFondosCatModal(\''+id+'\')" style="background:none;border:1px solid var(--border2);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px;color:var(--blue)">✏</button>'+
+      (id!=='otros'?'<button onclick="deleteFondosCat(\''+id+'\')" style="background:none;border:1px solid var(--border2);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px;color:var(--red)">🗑</button>':'')+
+    '</div>';
+  }).join('');
+}
+function openFondosCatModal(catId){
+  var isNew=!catId;
+  var cat=catId?FONDOS_CATS[catId]:{label:'',icon:'📌',cls:'cat-otros'};
+  var old=document.getElementById('fondos-cat-modal'); if(old) old.remove();
+  document.body.insertAdjacentHTML('beforeend',
+    '<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center" id="fondos-cat-modal">'+
+    '<div style="background:var(--surface);border-radius:14px;padding:24px;width:380px;max-width:95vw;box-shadow:0 8px 32px rgba(0,0,0,.2)">'+
+    '<div style="font-family:var(--cond);font-size:18px;font-weight:900;margin-bottom:16px">'+(isNew?'Nueva categoría':'Editar: '+cat.label)+'</div>'+
+    (isNew?'<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">ID (único, sin espacios)</label>'+
+      '<input id="fcm-id" type="text" placeholder="ej: transporte" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;font-size:13px;background:var(--surface);color:var(--text)"></div>':'')+
+    '<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Nombre</label>'+
+      '<input id="fcm-label" type="text" value="'+(cat.label||'')+'" placeholder="Nombre de la categoría" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;font-size:13px;background:var(--surface);color:var(--text)"></div>'+
+    '<div style="margin-bottom:16px"><label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Ícono (emoji)</label>'+
+      '<input id="fcm-icon" type="text" value="'+(cat.icon||'📌')+'" placeholder="📌" style="width:80px;padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;font-size:18px;text-align:center;background:var(--surface);color:var(--text)"></div>'+
+    '<div style="display:flex;gap:10px;justify-content:flex-end">'+
+      '<button onclick="document.getElementById(\'fondos-cat-modal\').remove()" style="background:none;border:1px solid var(--border2);border-radius:7px;padding:8px 16px;cursor:pointer;font-size:13px">Cancelar</button>'+
+      '<button onclick="saveFondosCat(\''+catId+'\')" style="background:var(--purple);color:#fff;border:none;border-radius:7px;padding:8px 20px;cursor:pointer;font-size:13px;font-weight:700">Guardar</button>'+
+    '</div></div></div>');
+}
+function saveFondosCat(existingId){
+  var label=(document.getElementById('fcm-label')?.value||'').trim();
+  var icon=(document.getElementById('fcm-icon')?.value||'📌').trim();
+  var idEl=document.getElementById('fcm-id');
+  var catId=existingId||(idEl?idEl.value.trim().replace(/\s+/g,'_').toLowerCase():'');
+  if(!label){toast('El nombre es obligatorio');return;}
+  if(!catId){toast('El ID es obligatorio');return;}
+  if(!existingId&&FONDOS_CATS[catId]){toast('Ese ID ya existe — elige otro');return;}
+  FONDOS_CATS[catId]={label:label,icon:icon,cls:'cat-'+catId};
+  _saveToSupabase('fondos_cats_custom',FONDOS_CATS,'cc_fondos_cats');
+  var m=document.getElementById('fondos-cat-modal'); if(m) m.remove();
+  renderFondosCatList();
+  initFondosCatFilter();
+  toast('✅ Categoría '+(existingId?'actualizada':'creada')+': '+label);
+}
+function deleteFondosCat(catId){
+  if(!catId||catId==='otros'){toast('La categoría "Otros" no se puede eliminar');return;}
+  if(!confirm('¿Eliminar "'+FONDOS_CATS[catId].label+'"?\nLos gastos existentes con esta categoría quedarán como "Otros".')) return;
+  delete FONDOS_CATS[catId];
+  _saveToSupabase('fondos_cats_custom',FONDOS_CATS,'cc_fondos_cats');
+  renderFondosCatList();
+  initFondosCatFilter();
+  toast('Categoría eliminada');
+}
+function initFondosCatFilter(){
+  var sel=document.getElementById('af-cat-filter');
+  if(!sel) return;
+  var current=sel.value;
+  sel.innerHTML='<option value="all">Todas las categorías</option><option value="alerta">⚠ Solo alertas</option>'+
+    Object.entries(FONDOS_CATS).map(function(e){return '<option value="'+e[0]+'">'+e[1].icon+' '+e[1].label+'</option>';}).join('');
+  if(current&&sel.querySelector('option[value="'+current+'"]')) sel.value=current;
+}
+async function loadFondosCatsFromDB(){
+  var r=await _loadFromSupabase('fondos_cats_custom','cc_fondos_cats');
+  if(r&&typeof r==='object'&&Object.keys(r).length>0) Object.assign(FONDOS_CATS,r);
+}
+// ── FIN FONDOS CATEGORIES ────────────────────────────────────
+
 async function initAdminFondos(){
-  initFondosLimUserSel();
+  await loadFondosCatsFromDB(); // load custom cats before anything
+  initFondosCatPanel();
+  initFondosCatFilter();
+  initFondosLimUserSel(); // populate per-user limits selector
   // Populate user selector — todos los usuarios activos
   const sel=document.getElementById('af-user-sel');
   if(sel&&sel.options.length===1){
@@ -4825,7 +4934,11 @@ function renderAdminFondosTable(){
   const {allGastos}=getAdminFondosPeriodData();
   const catFilter=document.getElementById('af-cat-filter')?.value||'all';
   // Recalculate alerta with current limits — never use stored g.alerta
-  const filtered=catFilter==='alerta'?allGastos.filter(g=>isAlertGasto(g)):allGastos;
+  const filtered=catFilter==='alerta'
+    ? allGastos.filter(g=>isAlertGasto(g))
+    : catFilter==='all'
+      ? allGastos
+      : allGastos.filter(g=>(g.cat||g.tipo||'otros')===catFilter);
   const body=document.getElementById('af-table-body');
   if(!body) return;
   body.innerHTML=filtered.length
@@ -17724,6 +17837,20 @@ window.initCalcCONCRE=initCalcCONCRE;
                 <select class="form-select" id="af-cat-filter" onchange="renderAdminFondosTable()" style="font-size:11px;padding:5px 8px;width:auto;background:var(--surface);border:1.5px solid var(--border2);color:var(--text)">
                   <option value="all">Todas las categorías</option>
                   <option value="alerta">⚠ Solo alertas</option>
+                  <option value="comb_v">⛽ Combustible vehículo</option>
+                  <option value="comb_m">⛽ Combustible maquinaria</option>
+                  <option value="alim">🍽 Alimentación</option>
+                  <option value="hosp">🛏 Hospedaje</option>
+                  <option value="peaje">🛣 Peaje</option>
+                  <option value="ferre">🔨 Ferretería</option>
+                  <option value="mat">📦 Mat. primas / Prod.</option>
+                  <option value="rep_e">⚙ Repuestos equipos</option>
+                  <option value="rep_v">🚛 Repuestos vehículos</option>
+                  <option value="ins">🧰 Insumos proyectos</option>
+                  <option value="herr">🔧 Herramientas</option>
+                  <option value="ger">👔 Compras gerencia</option>
+                  <option value="epp">🦺 EPP</option>
+                  <option value="otros">📌 Otros</option>
                 </select>
               </div>
             </div>
@@ -17745,6 +17872,15 @@ window.initCalcCONCRE=initCalcCONCRE;
               <thead><tr><th>Fecha</th><th>Usuario</th><th>Descripción</th><th>Monto</th></tr></thead>
               <tbody id="af-dep-body"></tbody>
             </table>
+          </div>
+
+          <!-- Category management — superadmin only -->
+          <div id="fondos-cat-panel" style="display:none;margin-top:18px;background:var(--surface);border:1.5px solid var(--border);border-left:3px solid var(--purple);border-radius:12px;padding:16px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+              <span style="font-family:var(--cond);font-size:15px;font-weight:900">⚙ Gestión de Categorías de Fondos</span>
+              <button onclick="openFondosCatModal(null)" style="background:var(--purple);color:#fff;border:none;border-radius:7px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:700">+ Nueva categoría</button>
+            </div>
+            <div id="fondos-cat-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px"></div>
           </div>
 
         </div>
@@ -19329,7 +19465,15 @@ window.initCalcCONCRE=initCalcCONCRE;
       <div class="form-row-2">
         <div class="form-row">
           <label class="form-label">Contraseña</label>
-          <input class="form-inp" id="fPass" type="password" placeholder="Mínimo 6 caracteres">
+          <div id="fPass-current" style="display:none;font-size:11px;color:var(--text3);margin-bottom:4px;padding:4px 8px;background:var(--surface2);border-radius:5px;border:1px solid var(--border)">
+            <span style="font-size:10px;color:var(--text3);font-weight:600">ACTUAL: </span>
+            <span id="fPass-current-val" style="font-family:monospace;letter-spacing:2px;color:var(--text)">••••••••</span>
+            <button type="button" onclick="toggleFPassCurrent()" id="fPass-current-eye" style="background:none;border:none;cursor:pointer;padding:2px 4px;margin-left:4px;font-size:13px;vertical-align:middle;color:var(--text3)">👁</button>
+          </div>
+          <div style="position:relative">
+            <input class="form-inp" id="fPass" type="password" placeholder="Nueva contraseña (mín. 6 caracteres)" style="padding-right:40px">
+            <button type="button" onclick="toggleFPassNew()" id="fPass-eye-btn" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:15px;color:var(--text3);padding:0">👁</button>
+          </div>
           <div class="form-hint">Deja vacío para no cambiar (edición)</div>
         </div>
         <div class="form-row">
