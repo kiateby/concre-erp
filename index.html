@@ -10653,10 +10653,18 @@ function confirmEditCRMClient(id){
 function confirmDeleteCRMClient(id){
   var cl=getCRMClients().find(function(c){return c.id===id;})||{};
   if(!confirm('⚠ ¿Eliminar al cliente "'+cl.nombreEmpresa+'" y todos sus vínculos?\n\nEsta acción no se puede deshacer.')) return;
+  // Remove from cache
   var clients=getCRMClients().filter(function(c){return c.id!==id;});
-  setCRMClients(clients);
+  window._crmClientsCache=clients;
   var links=getCRMLinks().filter(function(l){return l.clienteId!==id;});
-  setCRMLinks(links);
+  window._crmLinksCache=links;
+  // Delete from Supabase permanently
+  DB.from('crm_clientes').delete().eq('id',id).then(function(r){
+    if(r.error) console.error('deleteCRMClient:',r.error);
+  });
+  DB.from('crm_links').delete().eq('cliente_id',id).then(function(r){
+    if(r.error) console.error('deleteCRMLinks:',r.error);
+  });
   renderCRMDirectory();
   renderCRMKPIs();
   renderCRMTops();
@@ -11489,6 +11497,10 @@ function safeDeleteGasto(uid, gastoId){
   if(!gasto) return;
   var newRegs=regs.filter(function(r){return r.id!==gastoId;});
   setGastosData(uid,newRegs);
+  // Delete from Supabase so it doesn't reappear on reload
+  DB.from('gastos_proyecto').delete().eq('id',gastoId).then(function(r){
+    if(r.error) console.error('safeDeleteGasto Supabase:',r.error);
+  });
   var uName=(getUsers().find(function(u){return u.id===uid;})||{}).nombre||uid;
   addToTrash({type:'gasto',uid:uid,uNombre:uName,data:gasto});
 }
