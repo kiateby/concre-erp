@@ -1437,6 +1437,7 @@ async function loadAllDataFromDB(){
       var promises=[
         loadVentasFromDB(uid),
         loadUserData(uid),
+        loadCRMFromDB(), // load CRM clients for all roles (needed for venta client selector)
         // Load comis_verif and fibra_hist from Supabase into localStorage (cross-device)
         _loadFromSupabase('user_comis_verif_'+uid,'cc_comis_verif_'+uid).then(function(v){
           if(v&&Object.keys(v).length>0) localStorage.setItem('cc_comis_verif_'+uid,JSON.stringify(v));
@@ -4193,13 +4194,17 @@ async function loadFondosFromDB(uid){
   if(!window._fondosCache) window._fondosCache={};
   var fd={};
 
-  // Source 1: configuracion table (new system - month-keyed)
+  // Source 1: configuracion table (primary — month-keyed, reflects deletions)
   var conf=await _loadFromSupabase('user_fondos_'+uid,'cc_fondos_'+uid);
   if(conf&&typeof conf==='object'&&Object.keys(conf).length>0){
     fd=conf;
+    // configuracion is authoritative — don't merge fondos_gastos on top
+    // (fondos_gastos is only used for admin reports and migration)
+    window._fondosCache[uid]=fd;
+    return fd;
   }
 
-  // Source 2: fondos_gastos table (always read - authoritative for gastos rows)
+  // Source 2: fondos_gastos (fallback for users who never saved to configuracion yet)
   var g=await DB.from('fondos_gastos').select('*').eq('uid',uid);
   if(!g.error&&g.data&&g.data.length>0){
     g.data.forEach(function(x){
@@ -4207,7 +4212,6 @@ async function loadFondosFromDB(uid){
       if(!mk) return;
       if(!fd[mk]) fd[mk]={depositos:[],gastos:[]};
       if(!fd[mk].gastos) fd[mk].gastos=[];
-      // Only add if not already in fd (avoid duplicates)
       var exists=fd[mk].gastos.some(function(gg){return gg.id===x.id;});
       if(!exists){
         fd[mk].gastos.push({id:x.id,fecha:x.fecha,descripcion:x.descripcion,
@@ -4215,6 +4219,8 @@ async function loadFondosFromDB(uid){
           factura:x.factura,estado:x.estado});
       }
     });
+    // Migrate to configuracion so future loads use it as source of truth
+    _saveToSupabase('user_fondos_'+uid, fd, 'cc_fondos_'+uid);
   }
 
   window._fondosCache[uid]=fd;
@@ -4512,6 +4518,10 @@ function delGasto(id){
   const md=getMonthData(uid,FD_YEAR,FD_MONTH);
   md.gastos=md.gastos.filter(g=>g.id!==id);
   saveMonthData(uid,FD_YEAR,FD_MONTH,md);
+  // Delete from fondos_gastos table so it doesn't reappear on reload
+  DB.from('fondos_gastos').delete().eq('id',id).then(function(r){
+    if(r.error) console.error('delGasto Supabase:',r.error);
+  });
   renderFondosUser();
 }
 
@@ -9888,20 +9898,18 @@ function getCRMClients(){
 }
 function setCRMClients(d){
   window._crmClientsCache=d;
-  DB.from('crm_clientes').delete().neq('id','__none__').then(function(){
-    if(d.length>0){
-      var rows=d.map(function(cl){
-        return {id:cl.id,nombre_empresa:cl.nombreEmpresa,cedula:cl.cedula||'',
-          tipo_cedula:cl.tipoCedula||'',tipo_cliente:cl.tipoCliente||'',
-          tipo_cliente_otro:cl.tipoClienteOtro||'',direccion:cl.direccion||'',
-          contactos:cl.contactos||[],created_by:cl.createdBy||'',
-          created_at:cl.created||new Date().toISOString(),
-          updated_at:cl.updatedAt||new Date().toISOString()};
-      });
-      DB.from('crm_clientes').insert(rows).then(function(r){
-        if(r.error) console.error('setCRMClients:',r.error);
-      });
-    }
+  if(!d||!d.length) return;
+  // Upsert each client individually — safe against network failures
+  var rows=d.map(function(cl){
+    return {id:cl.id,nombre_empresa:cl.nombreEmpresa,cedula:cl.cedula||'',
+      tipo_cedula:cl.tipoCedula||'',tipo_cliente:cl.tipoCliente||'',
+      tipo_cliente_otro:cl.tipoClienteOtro||'',direccion:cl.direccion||'',
+      contactos:cl.contactos||[],created_by:cl.createdBy||'',
+      created_at:cl.created||new Date().toISOString(),
+      updated_at:new Date().toISOString()};
+  });
+  DB.from('crm_clientes').upsert(rows,{onConflict:'id'}).then(function(r){
+    if(r.error) console.error('setCRMClients:',r.error);
   });
 }
 
@@ -9911,14 +9919,17 @@ function getCRMLinks(){
 }
 function setCRMLinks(d){
   window._crmLinksCache=d;
-  DB.from('crm_links').delete().neq('id','00000000-0000-0000-0000-000000000000').then(function(){
-    if(d.length>0){
-      var rows=d.map(function(l){
-        return {venta_id:l.ventaId,cliente_id:l.clienteId,
-          contacto_id:l.contactoId||'',auto_matched:l.autoMatched||false};
-      });
-      DB.from('crm_links').insert(rows).then(function(r){
-        if(r.error) console.error('setCRMLinks:',r.error);
+  if(!d||!d.length) return;
+  // Upsert by venta_id — safe, never wipes other users' links
+  var rows=d.map(function(l){
+    return {venta_id:l.ventaId,cliente_id:l.clienteId,
+      contacto_id:l.contactoId||'',auto_matched:l.autoMatched||false};
+  });
+  DB.from('crm_links').upsert(rows,{onConflict:'venta_id'}).then(function(r){
+    if(r.error){
+      // Fallback: insert ignoring conflicts
+      DB.from('crm_links').insert(rows).then(function(r2){
+        if(r2.error) console.error('setCRMLinks:',r2.error);
       });
     }
   });
