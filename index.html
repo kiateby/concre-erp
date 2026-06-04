@@ -787,7 +787,7 @@ td:not(:first-child){text-align:center}
   .ag-per-persona.show{display:block}
 
   /* Expense rows */
-  .gasto-row{display:grid;grid-template-columns:90px 140px 1fr 90px 90px 90px 90px 30px;gap:6px;padding:8px 16px;border-bottom:1px solid var(--border);align-items:center;font-size:12px;transition:background .1s}
+  .gasto-row{display:grid;grid-template-columns:90px 140px 1fr 90px 90px 90px 20px 24px 24px;gap:6px;padding:8px 16px;border-bottom:1px solid var(--border);align-items:center;font-size:12px;transition:background .1s}
   .gasto-row:hover{background:var(--surface2)}
   .gasto-row.alerta{background:rgba(227,24,55,.04);border-left:3px solid var(--red)}
   .gasto-row.alerta-total{background:rgba(227,24,55,.08)!important;border-left:3px solid var(--red)!important}
@@ -1421,8 +1421,25 @@ async function loadAllDataFromDB(){
         return {id:s.id,nombre:s.nombre,especialidad:s.especialidad||'',tel:s.tel||''};
       });
     }
-    if(!crmC.error&&crmC.data) window._crmClientes=crmC.data;
-    if(!crmL.error&&crmL.data) window._crmLinks=crmL.data;
+    if(!crmC.error&&crmC.data){
+      window._crmClientes=crmC.data;
+      // Populate _crmClientsCache directly from Phase 1 data (no second query needed)
+      window._crmClientsCache=crmC.data.map(function(row){
+        return {id:row.id,nombreEmpresa:row.nombre_empresa,cedula:row.cedula,
+          tipoCedula:row.tipo_cedula,tipoCliente:row.tipo_cliente,
+          tipoClienteOtro:row.tipo_cliente_otro,direccion:row.direccion,
+          contactos:row.contactos||[],createdBy:row.created_by,
+          created:row.created_at,updatedAt:row.updated_at};
+      });
+    }
+    if(!crmL.error&&crmL.data){
+      window._crmLinks=crmL.data;
+      // Populate _crmLinksCache directly from Phase 1 data
+      window._crmLinksCache=crmL.data.map(function(row){
+        return {ventaId:row.venta_id,clienteId:row.cliente_id,
+          contactoId:row.contacto_id,autoMatched:row.auto_matched};
+      });
+    }
     if(!trashR.error&&trashR.data) window._trashCache=trashR.data;
 
     // ── FASE 2: Datos de usuarios en PARALELO ───────────────────────────────
@@ -4437,6 +4454,58 @@ function clearGastoForm(){
   if(document.getElementById('g-comidas')) document.getElementById('g-comidas').value=1;
   if(document.getElementById('g-noches')) document.getElementById('g-noches').value=1;
   onCatChange();
+  // Reset edit mode
+  GASTO_EDIT_ID=null;
+  const btn=document.getElementById('gasto-save-btn');
+  if(btn) btn.textContent='✓ Guardar gasto';
+  const title=document.getElementById('gasto-form-title');
+  if(title) title.textContent='Nuevo gasto';
+}
+
+function cancelEditGasto(){
+  GASTO_EDIT_ID=null;
+  clearGastoForm();
+  const f=document.getElementById('addGastoForm');
+  if(f) f.style.display='none';
+}
+
+var GASTO_EDIT_ID = null; // null = new, string = editing existing
+
+function editGasto(id){
+  const uid=SESSION.id;
+  const md=getMonthData(uid,FD_YEAR,FD_MONTH);
+  const g=md.gastos.find(function(x){return x.id===id;});
+  if(!g){toast('Gasto no encontrado');return;}
+
+  GASTO_EDIT_ID=id;
+  populateGCatSelect();
+
+  // Populate form fields
+  const f=document.getElementById('addGastoForm');
+  if(f) f.style.display='block';
+
+  const setV=(id,val)=>{const el=document.getElementById(id);if(el)el.value=val||'';};
+  setV('g-cat',g.cat);
+  onCatChange(); // show/hide context fields
+  setV('g-fecha',g.fecha);
+  setV('g-monto',fmt(g.monto));
+  setV('g-factura',g.factura||'');
+  setV('g-desc',g.desc||'');
+  setV('g-proyecto',g.proyecto||'');
+  setV('g-nota',g.nota||'');
+  setV('g-personas',g.personas||1);
+  setV('g-comidas',g.comidas||1);
+  setV('g-noches',g.noches||1);
+  setV('g-vehiculo',g.vehiculo||'');
+  setV('g-otros-desc',g.otrosDesc||'');
+
+  // Update button label and form title
+  const btn=document.getElementById('gasto-save-btn');
+  if(btn) btn.textContent='💾 Actualizar gasto';
+  const title=document.getElementById('gasto-form-title');
+  if(title) title.textContent='Editar gasto';
+
+  f.scrollIntoView({behavior:'smooth',block:'start'});
 }
 
 function addGasto(){
@@ -4447,7 +4516,7 @@ function addGasto(){
   const fecha=document.getElementById('g-fecha').value||new Date().toISOString().split('T')[0];
 
   const g={
-    id:'g'+Date.now(),
+    id: GASTO_EDIT_ID || ('g'+Date.now()),
     fecha, cat,
     factura: document.getElementById('g-factura').value.trim(),
     monto:   monto,
@@ -4469,20 +4538,36 @@ function addGasto(){
   const y=parseInt(fecha.split('-')[0]);
   const m=parseInt(fecha.split('-')[1])-1;
   const md=getMonthData(uid,y,m);
-  md.gastos.push(g);
-  saveMonthData(uid,y,m,md);
 
-  // Notify admins if alert
-  if(g.alerta){
-    const admins=getUsers().filter(u=>u.rol==='admin');
-    admins.forEach(a=>addNotification(a.id,'⚠','Alerta en fondos',
-      SESSION.nombre+' registró un gasto de '+fmt(monto)+' en '+FONDOS_CATS[cat]?.label+' que supera el límite autorizado.'));
+  if(GASTO_EDIT_ID){
+    // Update existing
+    const idx=md.gastos.findIndex(function(x){return x.id===GASTO_EDIT_ID;});
+    if(idx>=0) md.gastos[idx]=g;
+    else md.gastos.push(g);
+    // Also upsert in fondos_gastos Supabase
+    DB.from('fondos_gastos').upsert({
+      id:g.id,uid:uid,fecha:g.fecha,descripcion:g.desc||'',
+      monto:g.monto,tipo:g.cat,factura:g.factura||'',estado:'activo'
+    },{onConflict:'id'}).then(function(r){
+      if(r.error) console.error('editGasto Supabase:',r.error);
+    });
+    toast('✓ Gasto actualizado');
+  } else {
+    md.gastos.push(g);
+    // Notify admins if alert
+    if(g.alerta){
+      const admins=getUsers().filter(u=>u.rol==='admin');
+      admins.forEach(a=>addNotification(a.id,'⚠','Alerta en fondos',
+        SESSION.nombre+' registró un gasto de '+fmt(monto)+' en '+FONDOS_CATS[cat]?.label+' que supera el límite autorizado.'));
+    }
+    toast('✓ Gasto registrado');
   }
 
+  saveMonthData(uid,y,m,md);
+  GASTO_EDIT_ID=null;
   clearGastoForm();
   document.getElementById('addGastoForm').style.display='none';
   renderFondosUser();
-  toast('✓ Gasto registrado');
 }
 
 function addDeposito(){
@@ -4609,6 +4694,7 @@ function renderFondosUser(){
           <span class="gasto-monto">${fmt(g.monto)}</span>
           <span class="gasto-pp">${ppLabel}</span>
           <span class="gasto-alert-icon">${alerta?'🔴':''}</span>
+          <button class="gasto-del" onclick="editGasto('${g.id}')" title="Editar" style="color:var(--blue);margin-right:2px">✏</button>
           <button class="gasto-del" onclick="delGasto('${g.id}')" title="Eliminar">✕</button>
         </div>
         ${alerta?`<div style="background:rgba(227,24,55,.06);padding:5px 16px 8px 135px;font-size:11px;color:var(--red);border-bottom:1px solid var(--border)">📝 <b>Justificación:</b> ${g.nota||'(sin nota)'}</div>`:''}`;
@@ -7687,13 +7773,14 @@ function getLiqSubs(){
 }
 function setLiqSubs(d){
   window._liqSubsCache=d;
-  DB.from('liq_subcontratistas').delete().neq('id','__none__').then(function(){
-    if(d.length>0){
-      DB.from('liq_subcontratistas').insert(d.map(function(s){
-        return {id:s.id,nombre:s.nombre,especialidad:s.especialidad||'',tel:s.tel||''};
-      })).then(function(r){ if(r.error) console.error('setLiqSubs:',r.error); });
-    }
-  });
+  if(!d||!d.length) return;
+  // Upsert — safe, never wipes all subcontractors
+  DB.from('liq_subcontratistas').upsert(
+    d.map(function(s){
+      return {id:s.id,nombre:s.nombre,especialidad:s.especialidad||'',tel:s.tel||''};
+    }),
+    {onConflict:'id'}
+  ).then(function(r){ if(r.error) console.error('setLiqSubs:',r.error); });
 }
 
 function getLiqCostTypes(){
@@ -7711,12 +7798,14 @@ function getLiqData(subId){
 function setLiqData(subId,d){
   if(!window._liqDataCache) window._liqDataCache={};
   window._liqDataCache[subId]=d;
-  // Sync proyectos to Supabase
+  // Build rows for all projects across all periods
   var allProjs=[];
+  var allIds=[];
   Object.keys(d).forEach(function(pk){
     var pd=d[pk];
     (pd.proyectos||[]).forEach(function(proj){
       var state=JSON.parse(localStorage.getItem('cc_liq_state_'+subId+'_'+pk)||'{}');
+      allIds.push(proj.id);
       allProjs.push({id:proj.id,sub_id:subId,period_key:pk,
         gp_reg_id:proj.gpRegId||'',nombre:proj.nombre||'',fecha:proj.fecha||'',
         tipo_id:proj.tipoId||'',tipo_nombre:proj.tipoNombre||'',
@@ -7728,13 +7817,12 @@ function setLiqData(subId,d){
         cerrada:state.cerrada||false,pagado:state.pagado||false});
     });
   });
-  DB.from('liq_proyectos').delete().eq('sub_id',subId).then(function(){
-    if(allProjs.length>0){
-      DB.from('liq_proyectos').insert(allProjs).then(function(r){
-        if(r.error) console.error('setLiqData:',r.error);
-      });
-    }
-  });
+  // Upsert all current projects (safe — never deletes)
+  if(allProjs.length>0){
+    DB.from('liq_proyectos').upsert(allProjs,{onConflict:'id'}).then(function(r){
+      if(r.error) console.error('setLiqData upsert:',r.error);
+    });
+  }
 }
 async function loadLiqFromDB(subId){
   var {data,error}=await DB.from('liq_proyectos').select('*').eq('sub_id',subId);
@@ -8151,8 +8239,15 @@ function editProject(idx){
 function deleteProject(idx){
   if(!confirm('¿Eliminar este proyecto?')) return;
   var period=getLiqPeriod(LIQ_SUB,LIQ_PERIOD);
+  var proj=period.proyectos[idx];
   period.proyectos.splice(idx,1);
   saveLiqPeriod(LIQ_SUB,LIQ_PERIOD,period);
+  // Delete from Supabase permanently
+  if(proj&&proj.id){
+    DB.from('liq_proyectos').delete().eq('id',proj.id).then(function(r){
+      if(r.error) console.error('deleteProject Supabase:',r.error);
+    });
+  }
   renderLiqProjects();
   toast('Proyecto eliminado');
 }
@@ -9935,19 +10030,29 @@ function setCRMLinks(d){
   });
 }
 async function loadCRMFromDB(){
+  // If Phase 1 already populated the cache, use it (no extra query needed)
+  if(window._crmClientsCache&&window._crmClientsCache.length>0&&
+     window._crmLinksCache&&window._crmLinksCache.length>=0){
+    return; // already loaded from Phase 1
+  }
+  // Fallback: fresh query (first login or cache cleared)
   var c1=await DB.from('crm_clientes').select('*').order('nombre_empresa');
   var c2=await DB.from('crm_links').select('*');
-  window._crmClientsCache=(c1.data||[]).map(function(row){
-    return {id:row.id,nombreEmpresa:row.nombre_empresa,cedula:row.cedula,
-      tipoCedula:row.tipo_cedula,tipoCliente:row.tipo_cliente,
-      tipoClienteOtro:row.tipo_cliente_otro,direccion:row.direccion,
-      contactos:row.contactos||[],createdBy:row.created_by,
-      created:row.created_at,updatedAt:row.updated_at};
-  });
-  window._crmLinksCache=(c2.data||[]).map(function(row){
-    return {ventaId:row.venta_id,clienteId:row.cliente_id,
-      contactoId:row.contacto_id,autoMatched:row.auto_matched};
-  });
+  if(!c1.error&&c1.data){
+    window._crmClientsCache=c1.data.map(function(row){
+      return {id:row.id,nombreEmpresa:row.nombre_empresa,cedula:row.cedula,
+        tipoCedula:row.tipo_cedula,tipoCliente:row.tipo_cliente,
+        tipoClienteOtro:row.tipo_cliente_otro,direccion:row.direccion,
+        contactos:row.contactos||[],createdBy:row.created_by,
+        created:row.created_at,updatedAt:row.updated_at};
+    });
+  }
+  if(!c2.error&&c2.data){
+    window._crmLinksCache=c2.data.map(function(row){
+      return {ventaId:row.venta_id,clienteId:row.cliente_id,
+        contactoId:row.contacto_id,autoMatched:row.auto_matched};
+    });
+  }
 }
 
 // ── Init ──
@@ -10653,24 +10758,27 @@ function confirmEditCRMClient(id){
 function confirmDeleteCRMClient(id){
   var cl=getCRMClients().find(function(c){return c.id===id;})||{};
   if(!confirm('⚠ ¿Eliminar al cliente "'+cl.nombreEmpresa+'" y todos sus vínculos?\n\nEsta acción no se puede deshacer.')) return;
-  // Remove from cache
-  var clients=getCRMClients().filter(function(c){return c.id!==id;});
-  window._crmClientsCache=clients;
-  var links=getCRMLinks().filter(function(l){return l.clienteId!==id;});
-  window._crmLinksCache=links;
-  // Delete from Supabase permanently
+  // Delete from Supabase FIRST, then update cache on success
   DB.from('crm_clientes').delete().eq('id',id).then(function(r){
-    if(r.error) console.error('deleteCRMClient:',r.error);
+    if(r.error){
+      console.error('deleteCRMClient Supabase error:',r.error);
+      toast('❌ Error al eliminar en Supabase: '+r.error.message);
+      return;
+    }
+    // Only update local cache after confirmed Supabase delete
+    window._crmClientsCache=(window._crmClientsCache||[]).filter(function(c){return c.id!==id;});
+    window._crmLinksCache=(window._crmLinksCache||[]).filter(function(l){return l.clienteId!==id;});
+    // Also delete links from Supabase
+    DB.from('crm_links').delete().eq('cliente_id',id).then(function(r2){
+      if(r2.error) console.error('deleteCRMLinks:',r2.error);
+    });
+    renderCRMDirectory();
+    renderCRMKPIs();
+    renderCRMTops();
+    renderCRMSemestral();
+    renderCRMInactiveAlert();
+    toast('✅ Cliente eliminado permanentemente');
   });
-  DB.from('crm_links').delete().eq('cliente_id',id).then(function(r){
-    if(r.error) console.error('deleteCRMLinks:',r.error);
-  });
-  renderCRMDirectory();
-  renderCRMKPIs();
-  renderCRMTops();
-  renderCRMSemestral();
-  renderCRMInactiveAlert();
-  toast('Cliente eliminado');
 }
 
 // ── Link venta to CRM client ──
@@ -18933,6 +19041,10 @@ window.initCalcCONCRE=initCalcCONCRE;
 
           <!-- Add form (hidden by default) -->
           <div class="add-gasto-form" id="addGastoForm" style="display:none">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <span style="font-family:var(--cond);font-size:14px;font-weight:800;color:var(--gray-dark)" id="gasto-form-title">Nuevo gasto</span>
+              <button onclick="cancelEditGasto()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:12px">✕ Cancelar</button>
+            </div>
             <div class="ag-grid">
               <div>
                 <span class="ag-label">Fecha</span>
@@ -18993,7 +19105,7 @@ window.initCalcCONCRE=initCalcCONCRE;
               <input type="text" class="ag-nota-inp" id="g-nota" placeholder="Explica por qué excede el límite autorizado...">
             </div>
             <div style="display:flex;gap:8px;margin-top:10px">
-              <button class="btn btnp" style="width:auto;margin:0" onclick="addGasto()">✓ Guardar gasto</button>
+              <button class="btn btnp" style="width:auto;margin:0" id="gasto-save-btn" onclick="addGasto()">✓ Guardar gasto</button>
               <button class="btn" style="width:auto;margin:0" onclick="clearGastoForm()">✕ Limpiar</button>
             </div>
           </div>
