@@ -9952,6 +9952,9 @@ async function loadCRMFromDB(){
 
 // ── Init ──
 function initCRM(){
+  // Auto-link any unlinked ventas to their clients by name match
+  // This recovers ventas that were saved before CRM integration or after client restore
+  getCRMClients().forEach(function(cl){ tryMatchClientVentas(cl); });
   renderCRMKPIs();
   renderCRMTops();
   renderCRMSemestral();
@@ -9992,6 +9995,7 @@ function renderCRMKPIs(){
 // ── Get all ventas for CRM (via links or fuzzy match) ──
 function getAllVentasForCRM(){
   var links=getCRMLinks();
+  var clients=getCRMClients();
   var result=[];
   var users=getUsers();
   users.forEach(function(u){
@@ -10003,6 +10007,16 @@ function getAllVentasForCRM(){
           result.push({ventaId:v.id,clienteId:link.clienteId,contactoId:link.contactoId,
             fecha:v.fecha,subtotal:v.subtotal,prodId:v.prodId,uid:u.id,
             cliente:v.cliente,proyecto:v.proyecto||''});
+        } else if(v.cliente){
+          // No link — try to match by client name
+          var matched=clients.find(function(cl){
+            return fuzzyMatch(cl.nombreEmpresa,v.cliente.toLowerCase());
+          });
+          if(matched){
+            result.push({ventaId:v.id,clienteId:matched.id,contactoId:'',
+              fecha:v.fecha,subtotal:v.subtotal,prodId:v.prodId,uid:u.id,
+              cliente:v.cliente,proyecto:v.proyecto||'',autoMatched:true});
+          }
         }
       });
     });
@@ -10250,10 +10264,9 @@ function renderCRMDirectory(){
   if(tipoFilter!=='all') clients=clients.filter(function(cl){return cl.tipoCliente===tipoFilter;});
 
   if(!clients.length){
-    tbody.innerHTML='<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--text3)">Sin clientes. Agrega el primero con + Nuevo cliente.</td></tr>';
+    tbody.innerHTML='<tr><td colspan="11" style="padding:24px;text-align:center;color:var(--text3)">Sin clientes. Agrega el primero con + Nuevo cliente.</td></tr>';
     return;
   }
-
   tbody.innerHTML=clients.map(function(cl){
     var cv=allVentas.filter(function(v){return v.clienteId===cl.id;});
     var monto=cv.reduce(function(s,v){return s+v.subtotal;},0);
@@ -10261,39 +10274,16 @@ function renderCRMDirectory(){
     var lastDate=getClientLastPurchaseDate(cl.id);
     var principal=cl.contactos[0]||{};
     var tipoLabel=CRM_TIPOS_LABEL[cl.tipoCliente]||(cl.tipoClienteOtro||cl.tipoCliente);
-
-    // Activity dot
-    var now=new Date();
-    var dot='⚪';
+    var creatorUid=cl.createdBy||'';
+    var creator=getUsers().find(function(u){return u.id===creatorUid;});
+    var creatorName=creator?creator.nombre:(creatorUid||'—');
+    var now=new Date(), dot='⚪';
     if(lastDate){
       var days=Math.floor((now-new Date(lastDate))/(1000*60*60*24));
       dot=days<=30?'🟢':days<=90?'🟡':days<=365?'🟠':'🔴';
     }
-
-    return '<tr>'
-      +'<td><div style="font-weight:800">'+dot+' '+cl.nombreEmpresa+'</div>'
-        +(cl.cedula?'<div style="font-size:10px;color:var(--text3)">'+cl.cedula+(cl.tipoCedula?' ('+cl.tipoCedula+')':'')+'</div>':'')
-      +'</td>'
-      +'<td style="font-size:11px;color:var(--text3)">'+( cl.cedula||'—')+'</td>'
-      +'<td style="font-size:11px"><span class="v-badge contado" style="font-size:9px">'+tipoLabel+'</span></td>'
-      +'<td style="font-size:11px">'+(principal.nombre||'—')+'<br>'
-        +(principal.rol?'<span style="font-size:9px;color:var(--text3)">'+principal.rol+'</span>':'')
-      +'</td>'
-      +'<td style="font-size:11px">'
-        +(principal.tel?'📞 '+principal.tel+'<br>':'')
-        +(principal.email?'✉ '+principal.email:'')
-        +(!principal.tel&&!principal.email?'—':'')
-      +'</td>'
-      +'<td style="font-size:11px;color:var(--text2)">'+( cl.direccion||'—')+'</td>'
-      +'<td style="text-align:center;font-family:var(--cond);font-weight:700">'+freq+'</td>'
-      +'<td style="text-align:right;font-family:var(--cond);font-weight:700">'+fmt(monto)+'</td>'
-      +'<td style="font-size:11px;white-space:nowrap">'+(lastDate?formatDate(parseDate(lastDate)):'Sin compras')+'</td>'
-      +'<td style="white-space:nowrap">'
-        +'<button onclick="openCRMDetail(\''+cl.id+'\')" style="background:rgba(37,99,235,.1);border:1px solid rgba(37,99,235,.25);color:var(--blue);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px;font-weight:700;margin-right:4px">Ver</button>'
-        +'<button onclick="confirmEditCRMClient(\''+cl.id+'\')" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px">✏</button>'
-        +'<button onclick="confirmDeleteCRMClient(\''+cl.id+'\')" style="background:var(--red-dim2);border:1px solid rgba(227,24,55,.3);color:var(--red);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px;margin-left:2px">✕</button>'
-      +'</td>'
-    +'</tr>';
+    var cid=cl.id;
+    return '<tr>'      +'<td><div style="font-weight:800">'+dot+' '+cl.nombreEmpresa+'</div>'        +(cl.cedula?'<div style="font-size:10px;color:var(--text3)">'+cl.cedula+(cl.tipoCedula?' ('+cl.tipoCedula+')':'')+'</div>':'')      +'</td>'      +'<td style="font-size:11px;color:var(--text3)">'+(cl.cedula||'—')+'</td>'      +'<td style="font-size:11px"><span class="v-badge contado" style="font-size:9px">'+tipoLabel+'</span></td>'      +'<td style="font-size:11px">'+(principal.nombre||'—')+'<br>'        +(principal.rol?'<span style="font-size:9px;color:var(--text3)">'+principal.rol+'</span>':'')      +'</td>'      +'<td style="font-size:11px">'        +(principal.tel?'📞 '+principal.tel+'<br>':'')        +(principal.email?'✉ '+principal.email:'')        +(!principal.tel&&!principal.email?'—':'')      +'</td>'      +'<td style="font-size:11px;color:var(--text2)">'+(cl.direccion||'—')+'</td>'      +'<td style="text-align:center;font-family:var(--cond);font-weight:700">'+freq+'</td>'      +'<td style="text-align:right;font-family:var(--cond);font-weight:700">'+fmt(monto)+'</td>'      +'<td style="font-size:11px;white-space:nowrap">'+(lastDate?formatDate(parseDate(lastDate)):'Sin compras')+'</td>'      +'<td style="font-size:11px;color:var(--text3);white-space:nowrap">'+creatorName+'</td>'      +'<td style="white-space:nowrap">'        +'<button onclick="openCRMDetail(\'' +cid+ '\')" style="background:rgba(37,99,235,.1);border:1px solid rgba(37,99,235,.25);color:var(--blue);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px;font-weight:700;margin-right:4px">Ver</button>'        +'<button onclick="confirmEditCRMClient(\'' +cid+ '\')" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px">✏</button>'        +'<button onclick="confirmDeleteCRMClient(\'' +cid+ '\')" style="background:var(--red-dim2);border:1px solid rgba(227,24,55,.3);color:var(--red);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px;margin-left:2px">✕</button>'      +'</td>'    +'</tr>';
   }).join('');
 }
 
@@ -18514,6 +18504,7 @@ window.initCalcCONCRE=initCalcCONCRE;
                     <th style="text-align:center">Compras</th>
                     <th style="text-align:right">Total ₡</th>
                     <th>Último contacto</th>
+                    <th>Creado por</th>
                     <th></th>
                   </tr></thead>
                   <tbody id="crm-directory-tbody"></tbody>
