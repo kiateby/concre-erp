@@ -5124,7 +5124,7 @@ async function toggleFondoAprobado(gid){
 function renderAdminFondosTable(){
   const {allGastos}=getAdminFondosPeriodData();
   const catFilter=document.getElementById('af-cat-filter')?.value||'all';
-  const isSA=currentUser&&currentUser.rol==='superadmin';
+  const isSA=SESSION&&SESSION.rol==='superadmin';
   const thAp=document.getElementById('af-th-aprobado');
   if(thAp) thAp.style.display=isSA?'':'none';
   const filtered=catFilter==='alerta'
