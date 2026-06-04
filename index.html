@@ -1383,6 +1383,9 @@ async function loadAllDataFromDB(){
   }
   loadOverlay.style.display='flex';
 
+  // Load custom fondos categories first (synchronously awaited so all modules see them)
+  await loadFondosCatsFromDB();
+
   try {
     // ── FASE 1: Datos globales en PARALELO ──────────────────────────────────
     var phase1=await Promise.all([
@@ -1434,7 +1437,6 @@ async function loadAllDataFromDB(){
       var promises=[
         loadVentasFromDB(uid),
         loadUserData(uid),
-        loadFondosCatsFromDB(), // load custom categories for all users
         // Load comis_verif and fibra_hist from Supabase into localStorage (cross-device)
         _loadFromSupabase('user_comis_verif_'+uid,'cc_comis_verif_'+uid).then(function(v){
           if(v&&Object.keys(v).length>0) localStorage.setItem('cc_comis_verif_'+uid,JSON.stringify(v));
@@ -4367,6 +4369,7 @@ function toggleAddGastoForm(){
   if(!f)return;
   f.style.display=f.style.display==='none'?'block':'none';
   if(f.style.display==='block'){
+    populateGCatSelect(); // ensure categories loaded (handles async timing)
     const d=document.getElementById('g-fecha');
     if(d&&!d.value) d.value=new Date().toISOString().split('T')[0];
   }
@@ -4657,8 +4660,8 @@ function openFondosCatModal(catId){
     '<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Nombre</label>'+
       '<input id="fcm-label" type="text" value="'+(cat.label||'')+'" placeholder="Nombre de la categoría" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;font-size:13px;background:var(--surface);color:var(--text)"></div>'+
     '<div style="margin-bottom:16px"><label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:4px">Ícono (emoji)</label>'+
-      '<input id="fcm-icon" type="text" value="'+(cat.icon||'📌')+'" placeholder="📌" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;font-size:22px;text-align:left;background:var(--surface);color:var(--text)">'+
-      '<div style="font-size:11px;color:var(--text3);margin-top:4px">💡 Windows: tecla <strong>Win+.</strong> — Mac: <strong>Ctrl+Cmd+Espacio</strong> — o pega el emoji directamente</div></div>'+
+    '<div id="fcm-icon" contenteditable="true" style="width:60px;height:44px;line-height:44px;border:1.5px solid var(--border2);border-radius:7px;font-size:28px;text-align:center;background:var(--surface);color:var(--text);cursor:text;overflow:hidden;display:inline-block" onkeydown="if(event.key===\'Enter\'){event.preventDefault();}" oninput="this.textContent=this.textContent.slice(0,2)">'+(cat.icon||'📌')+'</div>'+
+      '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5">Haz clic en el cuadro y:<br>• <strong>Windows:</strong> tecla <strong>Win + .</strong><br>• <strong>Mac:</strong> <strong>Ctrl+Cmd+Espacio</strong><br>• O pega directamente un emoji (Ctrl+V)</div></div>'+
     '<div style="display:flex;gap:10px;justify-content:flex-end">'+
       '<button onclick="document.getElementById(\'fondos-cat-modal\').remove()" style="background:none;border:1px solid var(--border2);border-radius:7px;padding:8px 16px;cursor:pointer;font-size:13px">Cancelar</button>'+
       '<button onclick="saveFondosCat(\''+catId+'\')" style="background:var(--purple);color:#fff;border:none;border-radius:7px;padding:8px 20px;cursor:pointer;font-size:13px;font-weight:700">Guardar</button>'+
@@ -4666,7 +4669,8 @@ function openFondosCatModal(catId){
 }
 function saveFondosCat(existingId){
   var label=(document.getElementById('fcm-label')?.value||'').trim();
-  var icon=(document.getElementById('fcm-icon')?.value||'📌').trim();
+  var iconEl=document.getElementById('fcm-icon');
+  var icon=(iconEl?(iconEl.value!==undefined?iconEl.value:iconEl.textContent||iconEl.innerText):'📌').trim()||'📌';
   var idEl=document.getElementById('fcm-id');
   var catId=existingId||(idEl?idEl.value.trim().replace(/\s+/g,'_').toLowerCase():'');
   if(!label){toast('El nombre es obligatorio');return;}
@@ -9201,6 +9205,7 @@ function toggleGastosForm(){
   var open=fw.style.display!=='none';
   if(open){ cancelGastosForm(); return; }
   clearGastosForm();
+  populateGCatSelect(); // ensure categories are loaded (handles async timing)
   document.getElementById('gp-edit-id').value='';
   document.getElementById('gastos-form-title').textContent='Nuevo registro de gastos';
   // Default date = today
