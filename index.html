@@ -4635,8 +4635,8 @@ function initFondosCatPanel(){
 function renderFondosCatList(){
   var wrap=document.getElementById('fondos-cat-list');
   if(!wrap) return;
-  var cats=Object.entries(FONDOS_CATS);
-  wrap.innerHTML=cats.map(function(entry){
+  var sorted=Object.entries(FONDOS_CATS).sort(function(a,b){return a[1].label.localeCompare(b[1].label,'es');});
+  wrap.innerHTML=sorted.map(function(entry){
     var id=entry[0],cat=entry[1];
     return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:8px">'+
       '<span style="font-size:18px">'+cat.icon+'</span>'+
@@ -4698,8 +4698,9 @@ function initFondosCatFilter(){
   var sel=document.getElementById('af-cat-filter');
   if(!sel) return;
   var current=sel.value;
+  var sorted=Object.entries(FONDOS_CATS).sort(function(a,b){return a[1].label.localeCompare(b[1].label,'es');});
   sel.innerHTML='<option value="all">Todas las categorías</option><option value="alerta">⚠ Solo alertas</option>'+
-    Object.entries(FONDOS_CATS).map(function(e){return '<option value="'+e[0]+'">'+e[1].icon+' '+e[1].label+'</option>';}).join('');
+    sorted.map(function(e){return '<option value="'+e[0]+'">'+e[1].icon+' '+e[1].label+'</option>';}).join('');
   if(current&&sel.querySelector('option[value="'+current+'"]')) sel.value=current;
 }
 async function loadFondosCatsFromDB(){
@@ -9132,8 +9133,9 @@ function populateGCatSelect(){
   var sel=document.getElementById('g-cat');
   if(!sel) return;
   var current=sel.value;
+  var sorted=Object.entries(FONDOS_CATS).sort(function(a,b){return a[1].label.localeCompare(b[1].label,'es');});
   sel.innerHTML='<option value="">— Seleccionar —</option>'+
-    Object.entries(FONDOS_CATS).map(function(e){
+    sorted.map(function(e){
       return '<option value="'+e[0]+'">'+e[1].icon+' '+e[1].label+'</option>';
     }).join('');
   if(current&&sel.querySelector('option[value="'+current+'"]')) sel.value=current;
