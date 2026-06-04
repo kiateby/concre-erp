@@ -7804,7 +7804,8 @@ function setLiqData(subId,d){
   Object.keys(d).forEach(function(pk){
     var pd=d[pk];
     (pd.proyectos||[]).forEach(function(proj){
-      var state=JSON.parse(localStorage.getItem('cc_liq_state_'+subId+'_'+pk)||'{}');
+      var d_cache=getLiqData(subId);
+      var period_cache=d_cache[pk]||{};
       allIds.push(proj.id);
       allProjs.push({id:proj.id,sub_id:subId,period_key:pk,
         gp_reg_id:proj.gpRegId||'',nombre:proj.nombre||'',fecha:proj.fecha||'',
@@ -7814,7 +7815,9 @@ function setLiqData(subId,d){
         costos_asoc:proj.costosAsoc||0,rebajos:proj.rebajos||[],
         notas:proj.notas||'',venta_lines:proj.ventaLines||[],
         consumibles:proj.consumibles||{},
-        cerrada:state.cerrada||false,pagado:state.pagado||false});
+        // Read state from in-memory cache (cross-device safe)
+        cerrada:period_cache.cerrada||false,
+        pagado:period_cache.pagado||false});
     });
   });
   // Upsert all current projects (safe — never deletes)
@@ -7829,7 +7832,15 @@ async function loadLiqFromDB(subId){
   if(error&&error.status!==406){ console.error('loadLiq:',error); }
   var d={};
   (data||[]).forEach(function(row){
-    if(!d[row.period_key]) d[row.period_key]={proyectos:[],created:row.created_at};
+    if(!d[row.period_key]){
+      d[row.period_key]={
+        proyectos:[],created:row.created_at,
+        // Period-level state stored on each row — use first row's values
+        cerrada:row.cerrada||false,
+        pagado:row.pagado||false,
+        fechaCierre:null,monto:0,subNombre:''
+      };
+    }
     d[row.period_key].proyectos.push({id:row.id,gpRegId:row.gp_reg_id,
       nombre:row.nombre,fecha:row.fecha,tipoId:row.tipo_id,tipoNombre:row.tipo_nombre,
       cobro:row.cobro,pagoSub:row.pago_sub,adelanto:row.adelanto,vehiculo:row.vehiculo,
@@ -7976,8 +7987,18 @@ function renderLiqPeriodPills(){
   if(!el||!LIQ_SUB) return;
   var d=getLiqData(LIQ_SUB);
   var keys=Object.keys(d).sort().reverse();
+  if(!keys.length){
+    el.innerHTML='<span style="font-size:12px;color:var(--text3)">Sin quincenas creadas aún</span>';
+    return;
+  }
   el.innerHTML=keys.map(function(k){
-    return '<button class="liq-q-pill'+(k===LIQ_PERIOD?' on':'')+'" onclick="selectPeriod(\''+k+'\')">'+k+'</button>';
+    var period=d[k];
+    var cerrada=period&&period.cerrada;
+    var pagado=period&&period.pagado;
+    var badge=cerrada?(pagado?'✅':'🔒'):'🟡';
+    var cls='liq-q-pill'+(k===LIQ_PERIOD?' on':'');
+    var tip=cerrada?(pagado?'Cerrada y pagada':'Cerrada — pendiente pago'):'Abierta — en progreso';
+    return '<button class="'+cls+'" onclick="selectPeriod(\''+k+'\')" style="font-size:11px;'+(cerrada?'opacity:.75':'')+'" title="'+tip+'">'+badge+' '+k+'</button>';
   }).join('');
 }
 
@@ -9710,12 +9731,42 @@ function initAdminGastos(){
 // ══════════════════════════════════════════════
 
 function getLiqPeriodState(subId, periodKey){
+  // Read from in-memory cache (loaded from Supabase) — cross-device safe
+  var d=getLiqData(subId);
+  var period=d[periodKey];
+  if(period&&period.proyectos&&period.proyectos.length>0){
+    // State is stored on the first project row (all rows share same period state)
+    var first=period.proyectos[0];
+    return {cerrada:period.cerrada||false, pagado:period.pagado||false,
+      fechaCierre:period.fechaCierre||null, monto:period.monto||0,
+      subNombre:period.subNombre||'', subId:subId, periodKey:periodKey};
+  }
+  // Fallback to localStorage for backward compat
   var key='cc_liq_state_'+subId+'_'+periodKey.replace(/-/g,'_');
   return JSON.parse(localStorage.getItem(key)||'{}');
 }
 function setLiqPeriodState(subId, periodKey, state){
+  // Save to localStorage for backward compat
   var key='cc_liq_state_'+subId+'_'+periodKey.replace(/-/g,'_');
   localStorage.setItem(key, JSON.stringify(state));
+  // Save to Supabase — update cerrada/pagado on ALL rows for this period
+  DB.from('liq_proyectos').update({
+    cerrada:state.cerrada||false,
+    pagado:state.pagado||false
+  }).eq('sub_id',subId).eq('period_key',periodKey).then(function(r){
+    if(r.error) console.error('setLiqPeriodState Supabase:',r.error);
+  });
+  // Update in-memory cache so getLiqPeriodState reads correctly without reload
+  var d=getLiqData(subId);
+  if(d[periodKey]){
+    d[periodKey].cerrada=state.cerrada||false;
+    d[periodKey].pagado=state.pagado||false;
+    d[periodKey].fechaCierre=state.fechaCierre||null;
+    d[periodKey].monto=state.monto||0;
+    d[periodKey].subNombre=state.subNombre||'';
+    if(!window._liqDataCache) window._liqDataCache={};
+    window._liqDataCache[subId]=d;
+  }
 }
 
 function toggleCerrarQuincena(){
@@ -18282,7 +18333,7 @@ window.initCalcCONCRE=initCalcCONCRE;
 
 
 
-          <div class="page-sub">Pago quincenal a subcontratistas · Acceso: solo administrador</div>
+          <div class="page-sub">Pago quincenal a subcontratistas · Historial completo de quincenas</div>
 
           <!-- Top bar: sub selector + period selector -->
           <!-- Nav bar: subs + periods -->
