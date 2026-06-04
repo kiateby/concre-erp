@@ -3339,14 +3339,22 @@ function setVacData(uid,d){
     updated_at:new Date().toISOString()
   },{onConflict:'uid'})
     .then(function(r){ if(r.error) console.error('setVac saldo:',r.error); });
-  // Upsert solicitudes
+  // Upsert solicitudes with correct field mapping
   if(d.requests&&d.requests.length>0){
     var rows=(d.requests||[]).map(function(r){
-      return {id:r.id,uid:uid,fecha_inicio:r.fechaInicio||'',fecha_fin:r.fechaFin||'',
-        dias:r.dias||0,estado:r.estado||'pendiente',tipo:r.tipo||'',
-        motivo:r.motivo||'',aprobado_por:r.aprobadoPor||''};
+      return {
+        id:r.id,
+        uid:uid,
+        fecha_inicio:r.desde||r.fechaInicio||'',
+        fecha_fin:r.hasta||r.fechaFin||r.desde||'',
+        dias:r.dias||0,
+        estado:r.status||r.estado||'pendiente',
+        tipo:r.tipo||'full',
+        motivo:r.motivo||'',
+        aprobado_por:r.aprobadoPor||r.approvedBy||''
+      };
     });
-    if(rows.length>0) DB.from('vacaciones_solicitudes').upsert(rows,{onConflict:'id'})
+    DB.from('vacaciones_solicitudes').upsert(rows,{onConflict:'id'})
       .then(function(r){ if(r.error) console.error('setVac req:',r.error); });
   }
 }
@@ -3355,8 +3363,22 @@ async function loadVacFromDB(uid){
   var r=await DB.from('vacaciones_solicitudes').select('*').eq('uid',uid);
   var saldo=(s.data&&!s.error)?s.data.saldo:0;
   var reqs=(r.data&&!r.error)?r.data.map(function(x){
-    return {id:x.id,fechaInicio:x.fecha_inicio,fechaFin:x.fecha_fin,
-      dias:x.dias,estado:x.estado,tipo:x.tipo,motivo:x.motivo,aprobadoPor:x.aprobado_por};
+    return {
+      id:x.id,
+      uid:x.uid,
+      // UI uses desde/hasta/status — map from DB column names
+      desde:x.fecha_inicio||'',
+      hasta:x.fecha_fin||x.fecha_inicio||'',
+      fechaInicio:x.fecha_inicio||'',
+      fechaFin:x.fecha_fin||'',
+      dias:parseFloat(x.dias)||0,
+      status:x.estado||'pending',
+      estado:x.estado||'pending',
+      tipo:x.tipo||'full',
+      motivo:x.motivo||'',
+      aprobadoPor:x.aprobado_por||'',
+      created:x.created_at||new Date().toISOString()
+    };
   }):[];
   var vd={
     saldo:saldo,
@@ -3804,8 +3826,9 @@ function vacSubmitRequest(){
   };
   vd.requests.push(req);
   setVacData(uid,vd);
-  // Notify admins in-app
-  const admins=getUsers().filter(u=>u.rol==='admin');
+  // Notify admins AND superadmin in-app
+  const notifyRoles=['admin','superadmin'];
+  const admins=getUsers().filter(u=>notifyRoles.includes(u.rol));
   admins.forEach(a=>{
     addNotification(a.id,'🌴','Solicitud de vacaciones',
       SESSION.nombre+' solicita '+dias.toFixed(1)+' día(s) del '+formatDate(fromDate)+
@@ -3843,15 +3866,18 @@ function renderVacHistory(){
   body.innerHTML=filtered.map(r=>{
     const statusMap={pending:'Pendiente',approved:'Aprobada',rejected:'Rechazada',cancelled:'Cancelada'};
     const canCancel=r.status==='pending'||r.status==='approved';
+    const desde=r.desde||r.fechaInicio||'';
+    const hasta=r.hasta||r.fechaFin||desde;
+    const dias=parseFloat(r.dias)||0;
     return `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap">
       <div style="flex:1;min-width:200px">
-        <div style="font-size:13px;font-weight:700">${r.tipo==='half'?'½ día':'Días completos'} — ${formatDate(parseDate(r.desde))}${r.tipo==='full'&&r.hasta!==r.desde?' al '+formatDate(parseDate(r.hasta)):''}</div>
-        <div style="font-size:11px;color:var(--text3);margin-top:2px">${r.motivo||'Sin motivo'} · Solicitado: ${new Date(r.created).toLocaleDateString('es-CR')}</div>
+        <div style="font-size:13px;font-weight:700">${r.tipo==='half'?'½ día':'Días completos'} — ${desde?formatDate(parseDate(desde)):'—'}${r.tipo==='full'&&hasta!==desde?' al '+formatDate(parseDate(hasta)):''}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">${r.motivo||'Sin motivo'} · Solicitado: ${r.created?new Date(r.created).toLocaleDateString('es-CR'):'—'}</div>
         ${r.adminNote?'<div style="font-size:11px;color:var(--red);margin-top:2px">Nota admin: '+r.adminNote+'</div>':''}
         ${r.mandatory?'<span class="vac-badge mandatory" style="margin-top:4px;display:inline-block">Programada por admin</span>':''}
       </div>
-      <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">${r.dias.toFixed(1)}d</div>
-      <span class="vac-badge ${r.status}">${statusMap[r.status]||r.status}</span>
+      <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">${dias.toFixed(1)}d</div>
+      <span class="vac-badge ${r.status||r.estado||'pending'}">${statusMap[r.status||r.estado||'pending']||r.status||r.estado}</span>
       ${canCancel?`<button class="tbl-btn del" onclick="vacCancelRequest('${r.id}')">Cancelar</button>`:''}
     </div>`;
   }).join('');
@@ -3875,7 +3901,7 @@ function vacCancelRequest(reqId){
     adjustVacSaldo(uid,req.dias,'Cancelación de vacaciones aprobadas');
   }
   // Notify admins in-app
-  const admins=getUsers().filter(u=>u.rol==='admin');
+  const admins=getUsers().filter(u=>u.rol==='admin'||u.rol==='superadmin');
   admins.forEach(a=>addNotification(a.id,'❌','Cancelación de vacaciones',
     SESSION.nombre+' canceló su solicitud de '+req.dias.toFixed(1)+' día(s).'));
   // Push notification to admins
@@ -3970,22 +3996,26 @@ function renderAdminVacSection(){
     if(!allReqs.length){
       pendingEl.innerHTML='<div style="background:var(--green-dim);border:1px solid rgba(26,158,92,.2);border-radius:var(--r-sm);padding:12px 16px;font-size:13px;font-weight:600;color:var(--green)">✅ Sin solicitudes pendientes</div>';
     } else {
-      pendingEl.innerHTML=allReqs.map(r=>`
-        <div class="pending-card">
+      pendingEl.innerHTML=allReqs.map(r=>{
+        const desde=r.desde||r.fechaInicio||'';
+        const hasta=r.hasta||r.fechaFin||desde;
+        const dias=parseFloat(r.dias)||0;
+        return `<div class="pending-card">
           <div class="pc-info">
             <div class="pc-name">${r.uname}</div>
             <div class="pc-detail">
-              ${r.tipo==='half'?'Medio día':'Días completos'} · ${formatDate(parseDate(r.desde))}${r.tipo==='full'&&r.hasta!==r.desde?' al '+formatDate(parseDate(r.hasta)):''}
+              ${r.tipo==='half'?'Medio día':'Días completos'} · ${desde?formatDate(parseDate(desde)):'—'}${r.tipo==='full'&&hasta!==desde?' al '+formatDate(parseDate(hasta)):''}
               ${r.motivo?'<br>Motivo: '+r.motivo:''}
             </div>
           </div>
-          <div class="pc-dias">${r.dias.toFixed(1)}d</div>
+          <div class="pc-dias">${dias.toFixed(1)}d</div>
           <span class="vac-badge pending">Pendiente</span>
           <div class="pc-actions">
             <button class="pc-btn approve" onclick="vacAdminApprove('${r.uid}','${r.id}')">✓ Aprobar</button>
             <button class="pc-btn reject" onclick="vacAdminReject('${r.uid}','${r.id}')">✕ Rechazar</button>
           </div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
     }
   }
 
