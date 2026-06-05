@@ -2092,7 +2092,8 @@ function buildAgEditGrid(uid){
   let html='';
   for(let i=0;i<mesesAg;i++){
     const key='ag_mes_'+i;
-    const val=(ded[key]!==undefined)?ded[key]:mm;
+    const base=(mm)+getExtrasMontoForMonth(uid,u.salario,i);
+    const val=(ded[key]!==undefined)?ded[key]:base;
     html+='<div style="display:flex;flex-direction:column;gap:4px">'+
       '<label style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">'+mn[i]+'</label>'+
       '<input class="form-inp" id="ag-m-'+uid+'-'+i+'" type="text" value="'+(val>0?Math.round(val).toLocaleString('es-CR'):'0')+'" oninput="fmtInp(this)" style="font-size:12px;padding:6px 8px">'+
@@ -2789,13 +2790,13 @@ function buildAgDetailUser(sal,mesesAg){
   const mn=['Dic','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov'];
   const uid=SESSION?SESSION.id:'';
   const ded=getDED(uid)||{};
-  const mm=sal/12;
   let total=0;
   let rows='';
   for(let i=0;i<mesesAg;i++){
     // Admin can override individual month amounts (e.g. 0 for months before hire date)
     const overrideKey='ag_mes_'+i;
-    const val=(ded[overrideKey]!==undefined)?ded[overrideKey]:mm;
+    const base=(sal/12)+getExtrasMontoForMonth(uid,sal,i);
+    const val=(ded[overrideKey]!==undefined)?ded[overrideKey]:base;
     total+=val;
     rows+='<div class="ag-det-row"><span class="ag-det-l">'+mn[i]+'</span><span class="ag-det-v">'+fmt(val)+'</span></div>';
   }
@@ -2875,13 +2876,39 @@ body{font-family:'Barlow',sans-serif;background:#f4f4f4;display:flex;justify-con
 }
 
 // ── AGUINALDO HELPERS ──
+// Devuelve el índice [year, month(0-based)] para el slot i del período de aguinaldo
+// i=0 → Diciembre año anterior; i=1..11 → Enero..Noviembre año actual
+function agSlotYM(i){
+  const today=new Date();
+  if(i===0) return [today.getFullYear()-1, 11];
+  return [today.getFullYear(), i-1];
+}
+
+// Calcula el monto de horas extra devengadas en el mes del slot i para un usuario
+function getExtrasMontoForMonth(uid, sal, i){
+  try{
+    const reg=JSON.parse(localStorage.getItem('cc_h_'+uid)||'{}');
+    const vh=sal/(4.5*54)*1.5;
+    const [y,m]=agSlotYM(i);
+    let ext=0;
+    for(let q=1;q<=2;q++){
+      getDays(y,m,q).forEach(function(d){
+        const r=reg[dkey(d)]||{};
+        const j=r.jornada||defJornada(d,r.entrada,r.salida);
+        if(j!=='libre') ext+=calcExt(r.entrada,r.salida,j).ext;
+      });
+    }
+    return Math.round(ext*vh);
+  }catch(e){ return 0; }
+}
+
 function calcAgTotal(uid, sal, mesesAg){
   const ded = JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
-  const mm = sal/12;
   let total=0;
   for(let i=0;i<mesesAg;i++){
     const key='ag_mes_'+i;
-    const val=(ded[key]!==undefined)?ded[key]:mm;
+    const base=(sal/12)+getExtrasMontoForMonth(uid,sal,i);
+    const val=(ded[key]!==undefined)?ded[key]:base;
     total+=val;
   }
   return total;
@@ -3030,16 +3057,16 @@ function exportAguinaldoUser(uid){
   const today=new Date();
   const mesesAg=Math.min(today.getMonth()+2,12); // +2: Dec prev year + months Jan-current
   const mn=['Diciembre (año ant.)','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Setiembre','Octubre','Noviembre'];
-  const mm=u.salario/12;
   const ded=JSON.parse(localStorage.getItem('cc_d_'+u.id)||'{}');
   let filas='';let agTotal=0;
   for(let i=0;i<mesesAg;i++){
     const key='ag_mes_'+i;
-    const val=(ded[key]!==undefined)?ded[key]:mm;
+    const base=(u.salario/12)+getExtrasMontoForMonth(u.id,u.salario,i);
+    const val=(ded[key]!==undefined)?ded[key]:base;
     agTotal+=val;
     filas+=`<div class="col-row${i%2===1?' alt':''}"><span class="cr-label">${mn[i]}</span><span class="cr-value">${fmt(val)}</span></div>`;
   }
-  const html=buildColilla({titulo:`Aguinaldo ${today.getFullYear()}`,subtitulo:'Colilla oficial de aguinaldo · Ley N° 2412',usuario:u.nombre,periodo:`Dic ${today.getFullYear()-1} — Nov ${today.getFullYear()}`,emitida:today.toLocaleDateString('es-CR'),seccion1:`Desglose por mes (${fmt(u.salario)} ÷ 12 = ${fmt(mm)}/mes)`,filas1:filas,totalLabel:'🎄 TOTAL AGUINALDO',totalVal:fmt(agTotal),colorAccent:'#d97706',nota:`El aguinaldo se calcula sobre salario base mensual, sin incluir horas extra ni comisiones (Ley N° 2412). Fecha límite de pago: 20 de diciembre de ${today.getFullYear()}.`});
+  const html=buildColilla({titulo:`Aguinaldo ${today.getFullYear()}`,subtitulo:'Colilla oficial de aguinaldo · Ley N° 2412',usuario:u.nombre,periodo:`Dic ${today.getFullYear()-1} — Nov ${today.getFullYear()}`,emitida:today.toLocaleDateString('es-CR'),seccion1:`Desglose por mes (salario base + horas extra devengadas / 12)`,filas1:filas,totalLabel:'🎄 TOTAL AGUINALDO',totalVal:fmt(agTotal),colorAccent:'#d97706',nota:`El aguinaldo incluye salario base y horas extra devengadas en el período (Ley N° 2412). Comisiones excluidas. Fecha límite de pago: 20 de diciembre de ${today.getFullYear()}.`});
   openPrint(html,`Aguinaldo_${u.nombre}_${today.getFullYear()}.html`);
 }
 
@@ -5098,14 +5125,14 @@ window._fondosAprobados = {};
 
 async function loadFondosAprobados(){
   try{
-    const {data}=await _sb().from('configuracion').select('valor').eq('clave','fondos_aprobados').single();
+    const {data}=await DB.from('configuracion').select('valor').eq('clave','fondos_aprobados').single();
     window._fondosAprobados = data ? JSON.parse(data.valor||'{}') : {};
   } catch(e){ window._fondosAprobados={}; }
 }
 
 async function saveFondosAprobados(){
   try{
-    await _sb().from('configuracion').upsert({clave:'fondos_aprobados',valor:JSON.stringify(window._fondosAprobados)},{onConflict:'clave'});
+    await DB.from('configuracion').upsert({clave:'fondos_aprobados',valor:JSON.stringify(window._fondosAprobados)},{onConflict:'clave'});
   } catch(e){ console.warn('saveFondosAprobados error',e); }
 }
 
@@ -8032,10 +8059,216 @@ function initLiquidaciones(){
     } else if(LIQ_SUB){
       renderLiqPeriodPills();
     }
+    // Render new panels
+    renderLiqOpenAnchor();
+    renderLiqHistFilter();
+    renderLiqHistorial();
   }catch(e){ console.error('initLiquidaciones:',e); }
 }
 
 // ── RENDER SIDEBAR ──
+// ══════════════════════════════════════════════════════
+//  QUINCENAS ABIERTAS ANCLADAS
+// ══════════════════════════════════════════════════════
+
+function renderLiqOpenAnchor(){
+  var wrap = document.getElementById('liq-open-anchor-list');
+  if(!wrap) return;
+  var subs = getLiqSubs();
+  if(!subs.length){
+    wrap.innerHTML = '<div style="color:var(--text3);font-size:12px">Sin subcontratistas registrados.</div>';
+    return;
+  }
+  wrap.innerHTML = '';
+  sortAlpha(subs,'nombre').forEach(function(s){
+    var d = getLiqData(s.id);
+    var openKeys = Object.keys(d).filter(function(pk){ return !d[pk].cerrada; }).sort().reverse();
+    var badge = openKeys.length
+      ? '<span style="background:var(--amber);color:#fff;border-radius:100px;font-size:10px;font-weight:800;padding:1px 7px;margin-left:6px">'+openKeys.length+' abierta'+(openKeys.length>1?'s':'')+'</span>'
+      : '<span style="color:var(--text3);font-size:11px;margin-left:6px">Sin quincenas abiertas</span>';
+
+    // Build block
+    var block = document.createElement('div');
+    block.style.cssText = 'margin-bottom:10px;border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden';
+
+    // Header
+    var hdr = document.createElement('div');
+    hdr.className = 'liq-anchor-hdr';
+    hdr.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;background:var(--surface2);user-select:none';
+    hdr.innerHTML = '<span style="font-size:13px;font-weight:800;color:var(--text)">'+s.nombre+'</span>'
+      + badge
+      + '<span style="margin-left:auto;font-size:11px;color:var(--text3)" id="laq-arr-'+s.id+'">▾</span>';
+    var bodyId = 'laq-'+s.id;
+    hdr.onclick = function(){ toggleLiqAnchorBlock(bodyId); };
+    block.appendChild(hdr);
+
+    // Body
+    var body = document.createElement('div');
+    body.id = bodyId;
+    body.style.cssText = 'padding:10px 14px;display:flex;flex-direction:column;gap:8px';
+    if(!openKeys.length){
+      body.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:4px 0">No hay quincenas abiertas para este encargado.</div>';
+    } else {
+      openKeys.forEach(function(pk){
+        var period = d[pk];
+        var projs = period.proyectos||[];
+        var totals = calcPeriodTotals(projs);
+        var card = document.createElement('div');
+        card.style.cssText = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:var(--surface)';
+        var sid = s.id, spk = pk;
+        card.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+          +'<div>'
+          +'<div style="font-size:12px;font-weight:800;color:var(--text)">🟡 '+pk+'</div>'
+          +'<div style="font-size:11px;color:var(--text3);margin-top:2px">'+projs.length+' proyecto'+(projs.length!==1?'s':'')+' · A depositar: <strong style="color:var(--green)">'+fmt(totals.aDepositar)+'</strong></div>'
+          +'</div>'
+          +'<button class="laq-edit-btn" style="background:var(--red);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;font-family:var(--sans)">✏ Editar</button>'
+          +'</div>';
+        card.querySelector('.laq-edit-btn').onclick = function(){ selectSubAndPeriod(sid, spk); };
+        body.appendChild(card);
+      });
+    }
+    block.appendChild(body);
+    wrap.appendChild(block);
+  });
+}
+
+function toggleLiqAnchorBlock(id){
+  var el = document.getElementById(id);
+  var sid = id.replace('laq-','');
+  var arr = document.getElementById('laq-arr-'+sid);
+  if(!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'flex';
+  if(arr) arr.textContent = open ? '▸' : '▾';
+}
+
+function selectSubAndPeriod(subId, periodKey){
+  LIQ_SUB = subId;
+  LIQ_PERIOD = periodKey;
+  renderLiqSidebar();
+  renderLiqPeriodPills();
+  renderLiqProjects();
+  // Scroll to top of liq section
+  var el = document.getElementById('sec-liquidaciones');
+  if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// ══════════════════════════════════════════════════════
+//  HISTORIAL DE LIQUIDACIONES
+// ══════════════════════════════════════════════════════
+
+function renderLiqHistFilter(){
+  var sel = document.getElementById('liq-hist-filter');
+  if(!sel) return;
+  var subs = getLiqSubs();
+  var current = sel.value;
+  sel.innerHTML = '<option value="all">Todos</option>';
+  sortAlpha(subs,'nombre').forEach(function(s){
+    var opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.nombre;
+    if(s.id === current) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function renderLiqHistorial(){
+  var tbody = document.getElementById('liq-hist-tbody');
+  if(!tbody) return;
+  var filter = (document.getElementById('liq-hist-filter')||{}).value || 'all';
+  var closed = getClosedLiqPeriods();
+  if(filter !== 'all') closed = closed.filter(function(p){ return p.subId === filter; });
+
+  tbody.innerHTML = '';
+  if(!closed.length){
+    var msg = document.createElement('tr');
+    msg.innerHTML = '<td colspan="6" style="text-align:center;padding:20px;color:var(--text3)">Sin quincenas cerradas'+(filter!=='all'?' para este encargado':'')+'.</td>';
+    tbody.appendChild(msg);
+    return;
+  }
+
+  closed.forEach(function(p){
+    var fechaCierre = p.fechaCierre ? formatDate(parseDate(p.fechaCierre.split('T')[0])) : '—';
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td style="font-weight:800">'+p.subNombre+'</td>'
+      +'<td style="font-size:11px;color:var(--text3)">'+p.periodKey+'</td>'
+      +'<td style="text-align:right;font-family:var(--cond);font-weight:900;color:'+(p.monto>=0?'var(--green)':'var(--red)')+'">'+fmt(p.monto)+'</td>'
+      +'<td style="font-size:11px;color:var(--text3)">'+fechaCierre+'</td>'
+      +'<td>'+(p.pagado?'<span class="vac-badge approved">✓ Pagado</span>':'<span class="vac-badge pending">Pendiente</span>')+'</td>'
+      +'<td style="text-align:center"><button class="liq-hist-ver-btn" style="background:none;border:1.5px solid var(--border2);border-radius:6px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;color:var(--text)">🔍 Ver</button></td>';
+    var sid = p.subId, pk = p.periodKey;
+    tr.querySelector('.liq-hist-ver-btn').onclick = function(){ openLiqHistDetail(sid, pk); };
+    tbody.appendChild(tr);
+  });
+}
+
+function openLiqHistDetail(subId, periodKey){
+  var subs = getLiqSubs();
+  var sub = subs.find(function(s){ return s.id===subId; })||{nombre:'?'};
+  var period = getLiqPeriod(subId, periodKey);
+  var proyectos = period.proyectos||[];
+  var totals = calcPeriodTotals(proyectos);
+  var state = getLiqPeriodState(subId, periodKey);
+
+  // Set header
+  var title = document.getElementById('liq-hist-detail-title');
+  var subt  = document.getElementById('liq-hist-detail-sub');
+  if(title) title.textContent = sub.nombre+' · '+periodKey;
+  if(subt){
+    var fc = state.fechaCierre ? formatDate(parseDate(state.fechaCierre.split('T')[0])) : '—';
+    subt.textContent = 'Cerrada el '+fc+' · '+(state.pagado?'✅ Pagado':'⏳ Pago pendiente');
+  }
+
+  // KPIs
+  var k1=document.getElementById('liq-hd-kpi1'), k2=document.getElementById('liq-hd-kpi2');
+  var k3=document.getElementById('liq-hd-kpi3'), k4=document.getElementById('liq-hd-kpi4');
+  if(k1) k1.textContent=fmt(totals.totalSub);
+  if(k2) k2.textContent=fmt(totals.adelantos);
+  if(k3) k3.textContent=totals.rebajos>0?'−'+fmt(totals.rebajos):'₡0';
+  if(k4){ k4.textContent=fmt(totals.aDepositar); k4.style.color=totals.aDepositar>=0?'var(--green)':'var(--red)'; }
+
+  // Projects
+  var projEl = document.getElementById('liq-hist-detail-projects');
+  if(projEl){
+    if(!proyectos.length){
+      projEl.innerHTML='<div style="text-align:center;color:var(--text3);padding:20px">Sin proyectos registrados en esta quincena.</div>';
+    } else {
+      projEl.innerHTML = proyectos.map(function(proj){
+        var r = calcProject(proj);
+        var rebajosList = (proj.rebajos||[]).map(function(rb){
+          return '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);padding:2px 0 2px 12px">↳ '+rb.desc+' <span style="color:var(--red)">−'+fmt(rb.monto||0)+'</span></div>';
+        }).join('');
+        return '<div style="border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden">'
+          +'<div style="background:var(--gray-dark);padding:8px 14px;display:flex;justify-content:space-between;align-items:center">'
+          +'<span style="font-family:var(--cond);font-size:15px;font-weight:800;color:#fff">'+proj.nombre+'</span>'
+          +'<span style="font-size:11px;color:rgba(255,255,255,.5)">'+formatDate(parseDate(proj.fecha||''))+'</span>'
+          +'</div>'
+          +'<div style="padding:10px 14px;display:flex;flex-direction:column;gap:4px">'
+          +'<div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--text3)">Pago sub</span><span style="font-weight:700">'+fmt(r.pagoSub)+'</span></div>'
+          +(proj.vehiculo?'<div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--text3)">Vehículo</span><span style="font-weight:700">'+fmt(proj.vehiculo)+'</span></div>':'')
+          +(r.adelanto?'<div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:var(--amber)">Adelanto</span><span style="color:var(--amber);font-weight:700">−'+fmt(r.adelanto)+'</span></div>':'')
+          +rebajosList
+          +'<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:800;border-top:1px solid var(--border);margin-top:4px;padding-top:6px"><span>A depositar</span><span style="color:'+(r.aDepositar>=0?'var(--green)':'var(--red)')+'">'+fmt(r.aDepositar)+'</span></div>'
+          +'</div>'
+          +'</div>';
+      }).join('');
+    }
+  }
+
+  // Show panel and scroll to it
+  var wrap = document.getElementById('liq-hist-detail-wrap');
+  if(wrap){
+    wrap.style.display='block';
+    wrap.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+}
+
+function closeLiqHistDetail(){
+  var wrap = document.getElementById('liq-hist-detail-wrap');
+  if(wrap) wrap.style.display='none';
+}
+
+
 function renderLiqSidebar(){
   var subs=getLiqSubs();
   var el=document.getElementById('liq-sub-list');
@@ -8181,6 +8414,8 @@ function renderLiqProjects(){
   var rankGrid=document.getElementById('liq-rank-grid');
   if(rankGrid) rankGrid.style.display=proyectos.some(function(p){return p.cobro>0;})?'grid':'none';
   renderLiqRankings(proyectos);
+  // Keep open-anchor panel in sync
+  try{ renderLiqOpenAnchor(); }catch(e){}
 }
 
 function renderProjectCard(proj, idx){
@@ -9894,6 +10129,9 @@ function toggleCerrarQuincena(){
     toast('✓ Quincena reabierta — eliminada de Planillas');
     try{ buildAdminOverview(); }catch(e){}
     try{ renderSubcontratistaPlanillas(); }catch(e){}
+    try{ renderLiqOpenAnchor(); }catch(e){}
+    try{ renderLiqHistorial(); }catch(e){}
+    try{ closeLiqHistDetail(); }catch(e){}
   } else {
     // Close
     if(!totals.totalSub){ toast('No hay proyectos con monto definido en esta quincena'); return; }
@@ -9911,6 +10149,8 @@ function toggleCerrarQuincena(){
     // Refresh overview and planillas immediately
     try{ buildAdminOverview(); }catch(e){}
     try{ renderSubcontratistaPlanillas(); }catch(e){}
+    try{ renderLiqOpenAnchor(); }catch(e){}
+    try{ renderLiqHistorial(); }catch(e){}
   }
 }
 
@@ -11034,10 +11274,7 @@ function exportCRMExcel(){
   // Use TAB as separator — works in ALL Excel versions/regions without delimiter issues
   var SEP='\t';
 
-  function esc(v){
-    // For tab-separated, just clean tabs and newlines from values
-    return String(v===null||v===undefined?'':v).replace(/\t/g,' ').replace(/\r?\n/g,' ');
-  }
+  // esc() defined below
 
   var colDefs=[
     {key:'cliente',      label:'Cliente',            fn:function(cl){return cl.nombreEmpresa;}},
@@ -18636,6 +18873,61 @@ window.initCalcCONCRE=initCalcCONCRE;
             </div>
           </div>
           </div>
+
+          <!-- ══ QUINCENAS ABIERTAS ANCLADAS ══ -->
+          <div style="margin-top:24px" id="liq-open-anchor-wrap">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <div style="font-size:13px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:.6px">📋 Quincenas abiertas</div>
+              <div style="flex:1;height:1px;background:var(--border)"></div>
+            </div>
+            <div id="liq-open-anchor-list"></div>
+          </div>
+
+          <!-- ══ HISTORIAL DE LIQUIDACIONES ══ -->
+          <div style="margin-top:28px" id="liq-hist-wrap">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <div style="font-size:13px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:.6px">🗂 Historial de quincenas cerradas</div>
+              <div style="flex:1;height:1px;background:var(--border)"></div>
+            </div>
+            <!-- Filter bar -->
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+              <span style="font-size:11px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">Filtrar por encargado</span>
+              <select id="liq-hist-filter" class="form-select" style="font-size:12px;padding:5px 10px;width:auto;background:var(--surface);border:1.5px solid var(--border2);color:var(--text)" onchange="renderLiqHistorial()">
+                <option value="all">Todos</option>
+              </select>
+            </div>
+            <!-- Table -->
+            <div style="overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)">
+              <table class="atbl" style="min-width:620px">
+                <thead><tr>
+                  <th>Encargado</th><th>Quincena</th><th style="text-align:right">A depositar</th>
+                  <th>Fecha cierre</th><th>Estado pago</th><th style="text-align:center">Ver detalle</th>
+                </tr></thead>
+                <tbody id="liq-hist-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- ══ PANEL DETALLE HISTORIAL ══ -->
+          <div id="liq-hist-detail-wrap" style="display:none;margin-top:20px;background:var(--surface);border:1.5px solid var(--border2);border-radius:var(--r);overflow:hidden">
+            <div style="background:var(--gray-dark);padding:14px 20px;display:flex;align-items:center;justify-content:space-between">
+              <div>
+                <div id="liq-hist-detail-title" style="font-size:15px;font-weight:800;color:#fff"></div>
+                <div id="liq-hist-detail-sub" style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px"></div>
+              </div>
+              <button onclick="closeLiqHistDetail()" style="background:rgba(255,255,255,.1);border:none;color:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:700">✕ Cerrar</button>
+            </div>
+            <!-- KPI strip -->
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--border)">
+              <div style="padding:12px 16px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Total sub</div><div id="liq-hd-kpi1" style="font-family:var(--cond);font-size:18px;font-weight:900;color:var(--text)">₡0</div></div>
+              <div style="padding:12px 16px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Adelantos</div><div id="liq-hd-kpi2" style="font-family:var(--cond);font-size:18px;font-weight:900;color:var(--amber)">₡0</div></div>
+              <div style="padding:12px 16px;border-right:1px solid var(--border)"><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">Rebajos</div><div id="liq-hd-kpi3" style="font-family:var(--cond);font-size:18px;font-weight:900;color:var(--red)">₡0</div></div>
+              <div style="padding:12px 16px;background:rgba(26,158,92,.07)"><div style="font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.6px">🏦 A depositar</div><div id="liq-hd-kpi4" style="font-family:var(--cond);font-size:18px;font-weight:900;color:var(--green)">₡0</div></div>
+            </div>
+            <!-- Projects list -->
+            <div id="liq-hist-detail-projects" style="padding:16px"></div>
+          </div>
+
 
           <!-- GASTOS DE PROYECTO ADMIN SECTION -->
           <div id="sec-gastos-admin" class="admin-section">
