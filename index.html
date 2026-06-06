@@ -13459,6 +13459,7 @@ function renderInvList(type, searchQ){
   html+='</div>';
   body.innerHTML=html;
   _renderInvItems(type, searchQ||'', allItems);
+  if(userHasAuditDuty()) renderAuditPanel();
 }
 
 function _renderInvItems(type, searchQ, allItemsArg){
@@ -13515,10 +13516,8 @@ function _renderInvItems(type, searchQ, allItemsArg){
     });
     html+='</div>';
   }
-  body.innerHTML=html;
+  container.innerHTML=html;
   if(q){var inp=document.getElementById(searchId);if(inp){inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}}
-  // Show audit panel for users with inventory duty
-  if(userHasAuditDuty()) renderAuditPanel();
 }
 
 // ══ DETALLE DE ÍTEM ══
