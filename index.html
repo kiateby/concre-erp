@@ -8148,12 +8148,19 @@ function renderLiqVentasRef(){
   if(!tbody) return;
   tbody.innerHTML='';
 
+  // Refresh filter whenever this runs (catches cases when data loaded after init)
+  renderLiqVentasRefFilter();
+
   var dates=LIQ_PERIOD?_liqPeriodDates(LIQ_PERIOD):null;
-  if(lbl) lbl.textContent=dates?'Período: '+LIQ_PERIOD:'(selecciona una quincena arriba)';
+  // If no period selected, default to current full month so data is visible
   if(!dates){
-    var r=document.createElement('tr');
-    r.innerHTML='<td colspan="5" style="text-align:center;padding:20px;color:var(--text3)">Selecciona un subcontratista y quincena para ver las ventas del período.</td>';
-    tbody.appendChild(r); return;
+    var now=new Date();
+    var lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+    dates={from:new Date(now.getFullYear(),now.getMonth(),1), to:new Date(now.getFullYear(),now.getMonth(),lastDay)};
+    var mes=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'][now.getMonth()];
+    if(lbl) lbl.textContent='Mes actual: '+mes+' '+now.getFullYear()+' (selecciona una quincena para filtrar)';
+  } else {
+    if(lbl) lbl.textContent='Período: '+LIQ_PERIOD;
   }
 
   var filter=(document.getElementById('liq-vref-filter')||{}).value||'all';
@@ -8286,7 +8293,7 @@ function selectSubAndPeriod(subId, periodKey){
   renderLiqSidebar();
   renderLiqPeriodPills();
   renderLiqProjects();
-  try{ renderLiqVentasRef(); }catch(e){}
+  try{ renderLiqVentasRefFilter(); renderLiqVentasRef(); }catch(e){}
   // Scroll to top of liq section
   var el = document.getElementById('sec-liquidaciones');
   if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
