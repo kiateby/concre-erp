@@ -5947,11 +5947,19 @@ function toggleTercero(){
 
 function toggleMinimo(){
   var chk=document.getElementById('vf-min-chk');
+  if(chk){ chk.checked=!chk.checked; onMinimoChange(); }
+}
+function onMinimoChange(){
+  var chk=document.getElementById('vf-min-chk');
   var wrap=document.getElementById('vf-minimo-wrap');
   var row=document.getElementById('vf-min-row');
-  if(chk) chk.checked=!chk.checked;
-  if(wrap) wrap.style.display=(chk&&chk.checked)?'block':'none';
-  if(row) row.className='vf-check-row'+(chk&&chk.checked?' active':'');
+  var checked=chk&&chk.checked;
+  if(wrap) wrap.style.display=checked?'block':'none';
+  if(row) row.className='vf-check-row'+(checked?' active':'');
+  if(checked){
+    var areaInp=document.getElementById('vf-min-area');
+    if(areaInp) setTimeout(function(){ areaInp.focus(); },50);
+  }
 }
 
 function getIvaPct(){
@@ -6085,6 +6093,15 @@ function clearVentaForm(){
   document.getElementById('vf-insumos-wrap').className='vf-insumos-wrap';
   document.getElementById('vf-tercero-wrap').className='vf-tercero-wrap';
   document.getElementById('vf-iva-custom-wrap').style.display='none';
+  // Reset minimo
+  var minChk=document.getElementById('vf-min-chk');
+  var minArea=document.getElementById('vf-min-area');
+  if(minChk){ minChk.checked=false; }
+  if(minArea){ minArea.value=''; }
+  onMinimoChange();
+  // Reset subtotal-input
+  var si=document.getElementById('vf-subtotal-input');
+  if(si) si.value='';
   onIvaChange(); calcVentaPreview();
 }
 
@@ -7550,12 +7567,9 @@ function editVenta(ventaId){
   document.getElementById('vf-referido').value=found.referido||'';
   document.getElementById('vf-notas').value=found.notas||'';
   var minChk=document.getElementById('vf-min-chk');
-  var minWrap=document.getElementById('vf-minimo-wrap');
-  var minRow=document.getElementById('vf-min-row');
-  if(minChk) minChk.checked=found.tieneMinimo||false;
-  if(minWrap) minWrap.style.display=(found.tieneMinimo)?'block':'none';
-  if(minRow) minRow.className='vf-check-row'+(found.tieneMinimo?' active':'');
+  if(minChk){ minChk.checked=found.tieneMinimo||false; }
   if(found.tieneMinimo&&document.getElementById('vf-min-area')) document.getElementById('vf-min-area').value=found.minimoArea||'';
+  onMinimoChange();
 
   // Change save button text
   const btn=document.querySelector('#ventaForm button[onclick="saveVenta()"]');
@@ -8138,7 +8152,7 @@ function renderLiqVentasRef(){
   }
 
   var filter=(document.getElementById('liq-vref-filter')||{}).value||'all';
-  var users=getUsers();
+  var users=getUsers().filter(function(u){return u.rol==='user'||u.rol==='admin';});
   var allRows=[];
 
   users.forEach(function(u){
@@ -19001,9 +19015,8 @@ window.initCalcCONCRE=initCalcCONCRE;
               <div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById('costTypeModal').classList.add('hidden')">Cerrar</button></div>
             </div>
           </div>
-          </div>
-
-          <!-- ══ PANEL VENTAS REFERENCIA ══ -->
+          
+<!-- ══ PANEL VENTAS REFERENCIA ══ -->
           <div style="margin-top:20px" id="liq-ventas-ref-wrap">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
               <div style="font-size:13px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:.6px">&#128179; Ventas del período (referencia)</div>
@@ -19082,7 +19095,7 @@ window.initCalcCONCRE=initCalcCONCRE;
             <div id="liq-hist-detail-projects" style="padding:16px"></div>
           </div>
 
-
+          </div>
           <!-- GASTOS DE PROYECTO ADMIN SECTION -->
           <div id="sec-gastos-admin" class="admin-section">
             <div class="page-title">Gastos de Proyecto</div>
@@ -19971,8 +19984,8 @@ window.initCalcCONCRE=initCalcCONCRE;
           </div>
 
           <!-- Minimo -->
-          <div class="vf-check-row" onclick="toggleMinimo()" id="vf-min-row">
-            <input type="checkbox" id="vf-min-chk" onclick="event.stopPropagation()">
+          <div class="vf-check-row" id="vf-min-row" onclick="document.getElementById('vf-min-chk').click()">
+            <input type="checkbox" id="vf-min-chk" onchange="onMinimoChange()" onclick="event.stopPropagation()">
             <span class="vf-check-label">&#128208; M&#237;nimo <span style="font-size:10px;font-weight:400;color:var(--text3)">(el cobro aplica un &#225;rea m&#237;nima &#8212; solo informativo)</span></span>
           </div>
           <div id="vf-minimo-wrap" style="display:none;padding:10px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);margin-bottom:4px">
