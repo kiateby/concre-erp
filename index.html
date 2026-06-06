@@ -11309,18 +11309,30 @@ function confirmEditCRMClient(id){
 
 function confirmDeleteCRMClient(id){
   var cl=getCRMClients().find(function(c){return c.id===id;})||{};
-  if(!confirm('⚠ ¿Eliminar al cliente "'+cl.nombreEmpresa+'" y todos sus vínculos?\n\nEsta acción no se puede deshacer.')) return;
-  // Delete from Supabase FIRST, then update cache on success
+  if(!cl.id){ toast('Cliente no encontrado'); return; }
+  if(!confirm('⚠ ¿Enviar a papelera al cliente "'+cl.nombreEmpresa+'"?\n\nPodrás restaurarlo o eliminarlo definitivamente desde la papelera.')) return;
+
+  // 1. Save to papelera FIRST
+  addToTrash({
+    type: 'cliente_crm',
+    uid: cl.createdBy||SESSION.id,
+    uNombre: SESSION.nombre||SESSION.id,
+    data: cl,
+    crmLink: null,
+    liqProject: null
+  });
+
+  // 2. Delete from crm_clientes in Supabase
   DB.from('crm_clientes').delete().eq('id',id).then(function(r){
     if(r.error){
       console.error('deleteCRMClient Supabase error:',r.error);
       toast('❌ Error al eliminar en Supabase: '+r.error.message);
       return;
     }
-    // Only update local cache after confirmed Supabase delete
+    // 3. Remove from local cache
     window._crmClientsCache=(window._crmClientsCache||[]).filter(function(c){return c.id!==id;});
     window._crmLinksCache=(window._crmLinksCache||[]).filter(function(l){return l.clienteId!==id;});
-    // Also delete links from Supabase
+    // 4. Delete links from Supabase
     DB.from('crm_links').delete().eq('cliente_id',id).then(function(r2){
       if(r2.error) console.error('deleteCRMLinks:',r2.error);
     });
@@ -11329,7 +11341,7 @@ function confirmDeleteCRMClient(id){
     renderCRMTops();
     renderCRMSemestral();
     renderCRMInactiveAlert();
-    toast('✅ Cliente eliminado permanentemente');
+    toast('🗑 Cliente enviado a papelera — superadmin puede restaurarlo o eliminarlo definitivamente');
   });
 }
 
@@ -12009,6 +12021,30 @@ async function restoreFromTrash(trashId, restoreToUser){
       setTrash(trash.filter(function(t){return t.id!==trashId;}));
       renderTrashPanel();
       toast('✅ "'+invItem.nombre+'" restaurado al inventario');
+      return;
+    } else if(item.type==='cliente_crm'){
+      // Restaurar cliente CRM — re-insert en crm_clientes
+      var crmData=item.data;
+      var rows=[{id:crmData.id,nombre_empresa:crmData.nombreEmpresa,cedula:crmData.cedula||'',
+        tipo_cedula:crmData.tipoCedula||'',tipo_cliente:crmData.tipoCliente||'',
+        tipo_cliente_otro:crmData.tipoClienteOtro||'',direccion:crmData.direccion||'',
+        contactos:crmData.contactos||[],created_by:crmData.createdBy||'',
+        created_at:crmData.created||new Date().toISOString(),
+        updated_at:new Date().toISOString()}];
+      DB.from('crm_clientes').upsert(rows,{onConflict:'id'}).then(function(rr){
+        if(rr.error){ toast('❌ Error al restaurar cliente: '+rr.error.message); return; }
+        // Restore to cache
+        var clients=getCRMClients();
+        if(!clients.find(function(cc){return cc.id===crmData.id;})) clients.push(crmData);
+        window._crmClientsCache=clients;
+        // Remove from trash
+        setTrash(getTrash().filter(function(t){return t.id!==trashId;}));
+        DB.from('papelera').delete().eq('id',trashId).then(function(){});
+        renderTrashPanel();
+        try{ renderCRMDirectory(); renderCRMKPIs(); }catch(e){}
+        addNotification(item.uid,'✅','El administrador restauró tu cliente CRM: '+crmData.nombreEmpresa);
+        toast('✅ Cliente "'+crmData.nombreEmpresa+'" restaurado al CRM');
+      });
       return;
     } else if(item.type==='gasto'){
       var regs=getGastosData(item.uid);
