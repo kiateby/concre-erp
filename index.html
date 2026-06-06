@@ -8153,10 +8153,6 @@ function renderLiqVentasRef(){
   if(!tbody) return;
   tbody.innerHTML='';
 
-  // Refresh filter only if empty (only "Todos" option) — preserve selection otherwise
-  var _vrefSel=document.getElementById('liq-vref-filter');
-  if(_vrefSel&&_vrefSel.options.length<=1) renderLiqVentasRefFilter();
-
   var dates=LIQ_PERIOD?_liqPeriodDates(LIQ_PERIOD):null;
   // If no period selected, default to current full month so data is visible
   if(!dates){
@@ -8169,12 +8165,10 @@ function renderLiqVentasRef(){
     if(lbl) lbl.textContent='Período: '+LIQ_PERIOD;
   }
 
-  var filter=(document.getElementById('liq-vref-filter')||{}).value||'all';
-  var users=getUsers(); // All users — vendors can have any role
+  // ── Step 1: Collect ALL rows in the period (no filter yet) ──
+  var users=getUsers();
   var allRows=[];
-
   users.forEach(function(u){
-    if(filter!=='all'&&u.id!==filter) return;
     var vd=getVentasData(u.id);
     Object.keys(vd).forEach(function(mk){
       (vd[mk].ventas||[]).forEach(function(v){
@@ -8192,14 +8186,35 @@ function renderLiqVentasRef(){
     });
   });
 
-  if(!allRows.length){
+  // ── Step 2: Build filter from users who actually appear in allRows ──
+  var sel=document.getElementById('liq-vref-filter');
+  if(sel){
+    var prevVal=sel.value;
+    var usersInRows={};
+    allRows.forEach(function(r){ usersInRows[r.uid]=r.uname; });
+    sel.innerHTML='<option value="all">Todos</option>';
+    Object.keys(usersInRows).forEach(function(uid){
+      var opt=document.createElement('option');
+      opt.value=uid; opt.textContent=usersInRows[uid];
+      if(uid===prevVal) opt.selected=true;
+      sel.appendChild(opt);
+    });
+    // If previous selection no longer valid, reset to 'all'
+    if(prevVal!=='all'&&!usersInRows[prevVal]) sel.value='all';
+  }
+
+  // ── Step 3: Apply filter ──
+  var filter=(sel&&sel.value)||'all';
+  var filteredRows=filter==='all'?allRows:allRows.filter(function(r){return r.uid===filter;});
+
+  if(!filteredRows.length){
     var r2=document.createElement('tr');
     r2.innerHTML='<td colspan="5" style="text-align:center;padding:20px;color:var(--text3)">Sin ventas registradas en este período'+(filter!=='all'?' para este usuario':'')+'.</td>';
     tbody.appendChild(r2); return;
   }
 
-  allRows.sort(function(a,b){return a.fecha<b.fecha?-1:1;});
-  allRows.forEach(function(row){
+  filteredRows.sort(function(a,b){return a.fecha<b.fecha?-1:1;});
+  filteredRows.forEach(function(row){
     var tr=document.createElement('tr');
     tr.innerHTML='<td style="font-size:12px;font-weight:700">'+row.uname+'</td>'
       +'<td style="font-size:12px">'+row.proyecto+'</td>'
@@ -8209,7 +8224,7 @@ function renderLiqVentasRef(){
     tbody.appendChild(tr);
   });
   // Total row
-  var total=allRows.reduce(function(s,r){return s+r.subtotal;},0);
+  var total=filteredRows.reduce(function(s,r){return s+r.subtotal;},0);
   var tfoot=document.createElement('tr');
   tfoot.style.cssText='background:var(--surface2);font-weight:800;border-top:2px solid var(--border)';
   tfoot.innerHTML='<td colspan="4" style="font-size:12px;padding:8px 12px">Total período</td>'
