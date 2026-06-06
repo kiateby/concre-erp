@@ -13587,10 +13587,7 @@ async function openInvItemDetail(itemId){
     });
     html+='</tbody></table>';
   }
-  html+='<div id="inv-items-end-'+type+'"></div>';
-
-  html+='</div>';
-  container.innerHTML=html;
+  body.innerHTML=html;
 }
 
 function renderFibraLotes(item){
