@@ -8112,15 +8112,19 @@ function initLiquidaciones(){
 // ══════════════════════════════════════════════════════
 
 function _liqPeriodDates(periodKey){
-  // periodKey format: '2026-06-Q1' or '2026-06-Q2'
+  // periodKey format: 'YYYY-MM-DD' where day=15 (first half 1-15) or day=30 (second half 16-end)
   if(!periodKey) return null;
   var parts = periodKey.split('-');
   if(parts.length < 3) return null;
   var y=parseInt(parts[0]), m=parseInt(parts[1])-1;
-  var q=parts[2];
-  if(q==='Q1') return {from:new Date(y,m,1), to:new Date(y,m,15)};
-  var lastDay=new Date(y,m+1,0).getDate();
-  return {from:new Date(y,m,16), to:new Date(y,m,lastDay)};
+  var day=parseInt(parts[2]);
+  if(isNaN(y)||isNaN(m)||isNaN(day)) return null;
+  if(day<=15){
+    return {from:new Date(y,m,1), to:new Date(y,m,15)};
+  } else {
+    var lastDay=new Date(y,m+1,0).getDate();
+    return {from:new Date(y,m,16), to:new Date(y,m,lastDay)};
+  }
 }
 
 function renderLiqVentasRefFilter(){
@@ -8717,7 +8721,12 @@ function editProject(idx){
   document.getElementById('proj-fecha').value=proj.fecha||'';
   document.getElementById('proj-area').value=proj.area||'';
   document.getElementById('proj-tipo').value=proj.tipoId||'ct1';
-  document.getElementById('proj-costo-pct').value=proj.costoPct||16;
+  // Sync pct from tipo type — if no explicit saved pct, use tipo's pct
+  if(proj.costoPct!=null&&proj.costoPct!==undefined){
+    document.getElementById('proj-costo-pct').value=proj.costoPct;
+  } else {
+    onProjTipoChange(); // auto-fill from tipo
+  }
   document.getElementById('proj-cobro').value=proj.cobro?proj.cobro.toLocaleString('es-CR'):'';
   document.getElementById('proj-pago-sub').value=proj.pagoSub?proj.pagoSub.toLocaleString('es-CR'):'';
   document.getElementById('proj-adelanto').value=proj.adelanto?proj.adelanto.toLocaleString('es-CR'):'';
@@ -13129,6 +13138,14 @@ async function renderAuditPanel(){
   if(!userHasAuditDuty()) return;
   var body=_invBody();
   if(!body) return;
+  // Check if audit already exists for this week (can view any day)
+  // Only CREATE a new audit on Mondays
+  var weekKey=getAuditWeekKey();
+  var auditId='aud-'+SESSION.id+'-'+weekKey;
+  var existingR=await DB.from('inv_auditoria').select('*').eq('id',auditId);
+  var alreadyExists=(!existingR.error&&existingR.data&&existingR.data.length>0);
+  var isMonday=new Date().getDay()===1;
+  if(!alreadyExists&&!isMonday) return; // Only create on Mondays
   var audit=await getOrCreateAuditForUser(SESSION.id);
   if(!audit||audit.completado) return;
   var items=audit.items||[];
@@ -13532,8 +13549,18 @@ async function openInvItemDetail(itemId){
     });
     html+='</tbody></table>';
   }
+  html+='<div id="inv-items-end-'+type+'"></div>';
   html+='</div>';
+  // Save focused element info before update
+  var wasFocused=document.activeElement;
+  var savedVal=wasFocused&&wasFocused.id===searchId?wasFocused.value:null;
+  var savedSel=wasFocused&&wasFocused.id===searchId?[wasFocused.selectionStart,wasFocused.selectionEnd]:null;
   body.innerHTML=html;
+  // Restore focus and cursor position to search input after re-render
+  if(savedVal!==null){
+    var inp=document.getElementById(searchId);
+    if(inp){ inp.focus(); try{inp.setSelectionRange(savedSel[0],savedSel[1]);}catch(e){} }
+  }
 }
 
 // ══ FIBRA — LOTES ══
