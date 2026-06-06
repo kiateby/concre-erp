@@ -8130,14 +8130,11 @@ function _liqPeriodDates(periodKey){
 function renderLiqVentasRefFilter(){
   var sel=document.getElementById('liq-vref-filter');
   if(!sel) return;
-  var allUsers=getUsers();
-  var usersWithVentas=allUsers.filter(function(u){
-    var vd=getVentasData(u.id);
-    return Object.values(vd).some(function(mv){return (mv.ventas||[]).length>0;});
-  });
+  // Use same role filter as the ventas admin tab (proven to match sellers)
+  var sellers=getUsers().filter(function(u){ return u.rol==='user'; });
   var cur=sel.value;
   sel.innerHTML='<option value="all">Todos</option>';
-  sortAlpha(usersWithVentas,'nombre').forEach(function(u){
+  sortAlpha(sellers,'nombre').forEach(function(u){
     var opt=document.createElement('option');
     opt.value=u.id; opt.textContent=u.nombre;
     if(u.id===cur) opt.selected=true;
@@ -13433,6 +13430,7 @@ function renderInvList(type, searchQ){
   if(!body) return;
   var allItems=window._invItems.filter(function(i){return i.type===type&&i.activo!==false;});
   var searchId='inv-search-'+type;
+  var label=type==='inventario'?'Inventario':'Activo';
   // If search input already rendered, only update items — no rebuild, no flicker
   if(body.querySelector('#'+searchId)){
     _renderInvItems(type, searchQ, allItems);
@@ -13459,6 +13457,7 @@ function renderInvList(type, searchQ){
 function _renderInvItems(type, searchQ, allItemsArg){
   var body=_invBody();
   if(!body) return;
+  var label=type==='inventario'?'Inventario':'Activo';
   var container=body.querySelector('#inv-items-'+type);
   if(!container){ renderInvList(type, searchQ); return; }
   var allItems=allItemsArg||window._invItems.filter(function(i){return i.type===type&&i.activo!==false;});
