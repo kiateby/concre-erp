@@ -5908,6 +5908,11 @@ function onUsdChange(){
     var tc=document.getElementById('vf-tc-used');
     if(tc&&!tc.value) tc.value=getTCMes(SESSION.id,VY,VM)||525;
   }
+  // Update subtotal-input label for USD/CRC mode
+  var siLbl=document.getElementById('vf-subtotal-input-label');
+  if(siLbl){ siLbl.innerHTML=isUsd
+    ?'Subtotal $ USD <span style="font-size:10px;font-weight:400;color:var(--text3)">(escribe aqu&iacute;)</span>'
+    :'Subtotal s/IVA &#8353; <span style="font-size:10px;font-weight:400;color:var(--text3)">(escribe aqu&iacute;)</span>'; }
   calcVentaPreview();
 }
 
@@ -5940,6 +5945,15 @@ function toggleTercero(){
   calcVentaPreview();
 }
 
+function toggleMinimo(){
+  var chk=document.getElementById('vf-min-chk');
+  var wrap=document.getElementById('vf-minimo-wrap');
+  var row=document.getElementById('vf-min-row');
+  if(chk) chk.checked=!chk.checked;
+  if(wrap) wrap.style.display=(chk&&chk.checked)?'block':'none';
+  if(row) row.className='vf-check-row'+(chk&&chk.checked?' active':'');
+}
+
 function getIvaPct(){
   const v=document.getElementById('vf-iva').value;
   if(v==='no') return 0;
@@ -5948,73 +5962,74 @@ function getIvaPct(){
 }
 
 function calcVentaPreview(){
-  const isUsd=document.getElementById('vf-is-usd').checked;
-  let subtotal=0, usdAmt=0, tcUsed=0;
-  if(isUsd){
-    // Price entered in USD, TC converts to colones
-    const qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
-    usdAmt=(parseMon(document.getElementById('vf-precio').value)||0)*qty;
-    tcUsed=parseMon(document.getElementById('vf-tc-used').value)||525;
-    subtotal=usdAmt*tcUsed;
-    // Keep hidden vf-usd in sync for backward compat
-    var usdInp=document.getElementById('vf-usd');
-    if(usdInp) usdInp.value=usdAmt;
+  var isUsd=document.getElementById('vf-is-usd').checked;
+  var isEdit=!!editingVentaId;
+  var qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
+  var subtotal=0, usdAmt=0, tcUsed=0;
+  if(isEdit){
+    if(isUsd){
+      usdAmt=(parseMon(document.getElementById('vf-precio').value)||0)*qty;
+      tcUsed=parseMon(document.getElementById('vf-tc-used').value)||525;
+      subtotal=usdAmt*tcUsed;
+      var ui=document.getElementById('vf-usd'); if(ui) ui.value=usdAmt;
+    } else {
+      subtotal=(parseMon(document.getElementById('vf-precio').value)||0)*qty;
+    }
   } else {
-    const qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
-    const precio=parseMon(document.getElementById('vf-precio').value)||0;
-    subtotal=qty*precio;
+    var si=document.getElementById('vf-subtotal-input');
+    if(isUsd){
+      usdAmt=si?parseMon(si.value)||0:0;
+      tcUsed=parseMon(document.getElementById('vf-tc-used').value)||525;
+      subtotal=usdAmt*tcUsed;
+      var pUsd=qty>0?usdAmt/qty:0;
+      var pi=document.getElementById('vf-precio');
+      if(pi) pi.value=pUsd>0?pUsd.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'--';
+      var ui2=document.getElementById('vf-usd'); if(ui2) ui2.value=usdAmt;
+    } else {
+      subtotal=si?parseMon(si.value)||0:0;
+      var pUnit=qty>0?subtotal/qty:0;
+      var pi2=document.getElementById('vf-precio');
+      if(pi2) pi2.value=pUnit>0?Math.round(pUnit).toLocaleString('es-CR'):'--';
+    }
   }
-  const ivaPct=getIvaPct();
-  const ivaAmt=subtotal*(ivaPct/100);
-  const total=subtotal+ivaAmt;
-  const insMontoNum=parseMon(document.getElementById('vf-ins-monto').value)||0;
-  const esTercero=document.getElementById('vf-terc-chk').checked;
-
+  var ivaPct=getIvaPct();
+  var ivaAmt=subtotal*(ivaPct/100);
+  var total=subtotal+ivaAmt;
+  var insMontoNum=parseMon(document.getElementById('vf-ins-monto').value)||0;
+  var esTercero=document.getElementById('vf-terc-chk').checked;
   document.getElementById('vf-subtotal-preview').textContent=fmt(subtotal)+(isUsd&&usdAmt>0?' ($'+usdAmt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+')':'');
   document.getElementById('vf-iva-preview').textContent=fmt(ivaAmt)+(ivaPct>0?' ('+ivaPct+'%)':'');
   document.getElementById('vf-total-preview').textContent=fmt(total);
-  // USD info line below total
   var usdInfo=document.getElementById('vf-usd-info');
   if(usdInfo&&isUsd&&usdAmt>0&&tcUsed>0){
-    usdInfo.textContent='($'+usdAmt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' × ₡'+tcUsed+'/$ = '+fmt(total)+')';
-  }
-
-  // Comision preview
-  const prodId=document.getElementById('vf-prod').value;
-  const pid=normalizeProdId(prodId);
-  const cat=getCatalogo().find(function(c){return c.id===pid;})||{comis:5,tipo:'otros'};
-  const fibraCosto=getFibraCosto(VM,VY);
-  const fakeVenta={subtotal,insMontoNum,esTercero,prodId:pid,cantidad:document.getElementById('vf-cantidad').value};
-  const comis=calcComision(fakeVenta,fibraCosto);
-  let base=0;
+    usdInfo.style.display='block';
+    usdInfo.textContent='($'+usdAmt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' x TC'+tcUsed+' = '+fmt(total)+')';
+  } else if(usdInfo) usdInfo.style.display='none';
+  var prodId=document.getElementById('vf-prod').value;
+  var pid=normalizeProdId(prodId);
+  var cat=getCatalogo().find(function(x){return x.id===pid;})||{comis:5,tipo:'otros'};
+  var fibraCosto=getFibraCosto(VM,VY);
+  var fakeVenta={subtotal:subtotal,insMontoNum:insMontoNum,esTercero:esTercero,prodId:pid,cantidad:document.getElementById('vf-cantidad').value};
+  var comis=calcComision(fakeVenta,fibraCosto);
+  var base=0;
   if(!esTercero){
     if(cat.tipo==='fibra'){
-      const kg=parseFloat(document.getElementById('vf-cantidad').value)||0;
-      const costoFibra=kg*fibraCosto;
-      base=Math.max(0,subtotal-costoFibra-insMontoNum);
-    } else {
-      base=Math.max(0,subtotal-insMontoNum);
-    }
+      var kg=parseFloat(document.getElementById('vf-cantidad').value)||0;
+      base=Math.max(0,subtotal-kg*fibraCosto-insMontoNum);
+    } else { base=Math.max(0,subtotal-insMontoNum); }
   }
-
-  const prev=document.getElementById('vf-comis-preview');
+  var prev=document.getElementById('vf-comis-preview');
   if(prev){
     if(esTercero){
-      prev.innerHTML='<span style="color:var(--amber);font-weight:700">&#128100; Comisi\u00f3n a tercero \u2014 excluida del c\u00e1lculo del vendedor</span>';
+      prev.innerHTML='<span style="color:var(--amber);font-weight:700">Comision a tercero - excluida del vendedor</span>';
     } else if(subtotal>0){
-      const fibraNote=cat.tipo==='fibra'&&fibraCosto>0
-        ?' <span style="font-size:10px;color:var(--text3)">(Venta \u20a1'+fmt(subtotal)+' \u2212 costo fibra \u20a1'+fmt(parseFloat(document.getElementById('vf-cantidad').value||0)*fibraCosto)+(insMontoNum>0?' \u2212 insumos \u20a1'+fmt(insMontoNum):'')+' = base \u20a1'+fmt(base)+')</span>'
-        :(insMontoNum>0?' (insumos excluidos: \u20a1'+fmt(insMontoNum)+')':'');
-      prev.innerHTML='<strong style="color:var(--green)">Comisi\u00f3n estimada: '+fmt(comis)+'</strong>'+
-        ' &nbsp;|&nbsp; Base: '+fmt(base)+fibraNote+
-        ' &nbsp;|&nbsp; '+cat.comis+'%'+(cat.tipo==='fibra'?' \ud83e\uddf5':'');
+      var nota=insMontoNum>0?' (insumos excluidos: '+fmt(insMontoNum)+')':'';
+      prev.innerHTML='<strong style="color:var(--green)">Comision estimada: '+fmt(comis)+'</strong> &nbsp;|&nbsp; Base: '+fmt(base)+nota+' &nbsp;|&nbsp; '+cat.comis+'%';
     } else {
-      prev.innerHTML='<span style="color:var(--text3)">Ingresa cantidad y precio para ver el c\u00e1lculo</span>';
+      prev.innerHTML='<span style="color:var(--text3)">Ingresa subtotal y cantidad para ver el calculo</span>';
     }
   }
 }
-
-
 function cerrarVentaForm(){
   clearVentaForm();
   var f=document.getElementById('ventaForm');
@@ -6090,18 +6105,16 @@ function _doSaveVenta(){
   const fecha=document.getElementById('vf-fecha').value||new Date().toISOString().split('T')[0];
   const isUsd=document.getElementById('vf-is-usd').checked;
   let subtotal=0, usd=0, tcUsed=0;
+  var _qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
   if(isUsd){
-    const qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
-    const precioUsd=parseMon(document.getElementById('vf-precio').value)||0;
-    usd=precioUsd*qty; // total USD
+    usd=parseMon(document.getElementById('vf-subtotal-input').value)||0;
     tcUsed=parseMon(document.getElementById('vf-tc-used').value)||525;
     subtotal=usd*tcUsed;
   } else {
-    const qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
-    const precio=parseMon(document.getElementById('vf-precio').value)||0;
-    subtotal=qty*precio;
+    subtotal=parseMon(document.getElementById('vf-subtotal-input').value)||0;
+    const _price=_qty>0?subtotal/_qty:0;
   }
-  if(!subtotal){ alert('El subtotal es 0. Verifica cantidad y precio.'); return; }
+  if(!subtotal){ alert('El subtotal es 0. Verifica subtotal y cantidad.'); return; }
 
   const ivaPct=getIvaPct();
   const ivaAmt=subtotal*(ivaPct/100);
@@ -6118,7 +6131,7 @@ function _doSaveVenta(){
     cliente:document.getElementById('vf-cliente').value.trim(),
     factura:document.getElementById('vf-factura').value.trim(),
     cantidad:document.getElementById('vf-cantidad').value,
-    precio:parseMon(document.getElementById('vf-precio').value)||0,
+    precio:(()=>{var _q=parseFloat(document.getElementById('vf-cantidad').value)||0; var _s=isUsd?usd:subtotal; return _q>0?_s/_q:0;})(),
     subtotal, ivaPct, ivaAmt, total:subtotal+ivaAmt,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:parseInt(document.getElementById('vf-plazo').value)||0,
@@ -6133,6 +6146,8 @@ function _doSaveVenta(){
     pendCancelado:pendChk?document.getElementById('vf-pend-cancelado').value:'no',
     referido:document.getElementById('vf-referido').value.trim(),
     proyecto:document.getElementById('vf-proyecto')?.value.trim()||'',
+    tieneMinimo:document.getElementById('vf-min-chk')?.checked||false,
+    minimoArea:document.getElementById('vf-min-chk')?.checked?(parseFloat(document.getElementById('vf-min-area')?.value)||0):0,
     notas:document.getElementById('vf-notas').value.trim(),
     pagadoAdmin:false,
     cxcPagado:false,
@@ -7534,6 +7549,13 @@ function editVenta(ventaId){
   }
   document.getElementById('vf-referido').value=found.referido||'';
   document.getElementById('vf-notas').value=found.notas||'';
+  var minChk=document.getElementById('vf-min-chk');
+  var minWrap=document.getElementById('vf-minimo-wrap');
+  var minRow=document.getElementById('vf-min-row');
+  if(minChk) minChk.checked=found.tieneMinimo||false;
+  if(minWrap) minWrap.style.display=(found.tieneMinimo)?'block':'none';
+  if(minRow) minRow.className='vf-check-row'+(found.tieneMinimo?' active':'');
+  if(found.tieneMinimo&&document.getElementById('vf-min-area')) document.getElementById('vf-min-area').value=found.minimoArea||'';
 
   // Change save button text
   const btn=document.querySelector('#ventaForm button[onclick="saveVenta()"]');
@@ -7613,6 +7635,8 @@ function updateVenta(){
     referido:document.getElementById('vf-referido').value.trim(),
     proyecto:document.getElementById('vf-proyecto')?.value.trim()||'',
     notas:document.getElementById('vf-notas').value.trim(),
+    tieneMinimo:document.getElementById('vf-min-chk')?.checked||false,
+    minimoArea:document.getElementById('vf-min-chk')?.checked?(parseFloat(document.getElementById('vf-min-area')?.value)||0):0,
     updated:new Date().toISOString()
   };
 
@@ -8060,13 +8084,108 @@ function initLiquidaciones(){
       renderLiqPeriodPills();
     }
     // Render new panels
+    renderLiqVentasRefFilter();
     renderLiqOpenAnchor();
     renderLiqHistFilter();
     renderLiqHistorial();
+    renderLiqVentasRef();
   }catch(e){ console.error('initLiquidaciones:',e); }
 }
 
 // ── RENDER SIDEBAR ──
+// ══════════════════════════════════════════════════════
+//  PANEL VENTAS REFERENCIA EN LIQUIDACIONES
+// ══════════════════════════════════════════════════════
+
+function _liqPeriodDates(periodKey){
+  // periodKey format: '2026-06-Q1' or '2026-06-Q2'
+  if(!periodKey) return null;
+  var parts = periodKey.split('-');
+  if(parts.length < 3) return null;
+  var y=parseInt(parts[0]), m=parseInt(parts[1])-1;
+  var q=parts[2];
+  if(q==='Q1') return {from:new Date(y,m,1), to:new Date(y,m,15)};
+  var lastDay=new Date(y,m+1,0).getDate();
+  return {from:new Date(y,m,16), to:new Date(y,m,lastDay)};
+}
+
+function renderLiqVentasRefFilter(){
+  var sel=document.getElementById('liq-vref-filter');
+  if(!sel) return;
+  var users=getUsers().filter(function(u){return u.rol==='user'||u.rol==='admin';});
+  var cur=sel.value;
+  sel.innerHTML='<option value="all">Todos</option>';
+  sortAlpha(users,'nombre').forEach(function(u){
+    var opt=document.createElement('option');
+    opt.value=u.id; opt.textContent=u.nombre;
+    if(u.id===cur) opt.selected=true;
+    sel.appendChild(opt);
+  });
+}
+
+function renderLiqVentasRef(){
+  var tbody=document.getElementById('liq-vref-tbody');
+  var lbl=document.getElementById('liq-vref-period-label');
+  if(!tbody) return;
+  tbody.innerHTML='';
+
+  var dates=LIQ_PERIOD?_liqPeriodDates(LIQ_PERIOD):null;
+  if(lbl) lbl.textContent=dates?'Período: '+LIQ_PERIOD:'(selecciona una quincena arriba)';
+  if(!dates){
+    var r=document.createElement('tr');
+    r.innerHTML='<td colspan="5" style="text-align:center;padding:20px;color:var(--text3)">Selecciona un subcontratista y quincena para ver las ventas del período.</td>';
+    tbody.appendChild(r); return;
+  }
+
+  var filter=(document.getElementById('liq-vref-filter')||{}).value||'all';
+  var users=getUsers();
+  var allRows=[];
+
+  users.forEach(function(u){
+    if(filter!=='all'&&u.id!==filter) return;
+    var vd=getVentasData(u.id);
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(v){
+        var d=parseDate(v.fecha);
+        if(!d) return;
+        if(d<dates.from||d>dates.to) return;
+        allRows.push({
+          uid:u.id, uname:u.nombre,
+          proyecto:v.proyecto||'—',
+          area:v.minimoArea||(v.tieneMinimo?'(min)':'—'),
+          fecha:v.fecha,
+          subtotal:v.subtotal||0
+        });
+      });
+    });
+  });
+
+  if(!allRows.length){
+    var r2=document.createElement('tr');
+    r2.innerHTML='<td colspan="5" style="text-align:center;padding:20px;color:var(--text3)">Sin ventas registradas en este período'+(filter!=='all'?' para este usuario':'')+'.</td>';
+    tbody.appendChild(r2); return;
+  }
+
+  allRows.sort(function(a,b){return a.fecha<b.fecha?-1:1;});
+  allRows.forEach(function(row){
+    var tr=document.createElement('tr');
+    tr.innerHTML='<td style="font-size:12px;font-weight:700">'+row.uname+'</td>'
+      +'<td style="font-size:12px">'+row.proyecto+'</td>'
+      +'<td style="font-size:12px;text-align:center">'+(row.area!=='—'&&row.area!='(min)'?row.area+' m&sup2;':row.area)+'</td>'
+      +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(row.fecha))+'</td>'
+      +'<td style="text-align:right;font-family:var(--cond);font-weight:800;color:var(--green)">'+fmt(row.subtotal)+'</td>';
+    tbody.appendChild(tr);
+  });
+  // Total row
+  var total=allRows.reduce(function(s,r){return s+r.subtotal;},0);
+  var tfoot=document.createElement('tr');
+  tfoot.style.cssText='background:var(--surface2);font-weight:800;border-top:2px solid var(--border)';
+  tfoot.innerHTML='<td colspan="4" style="font-size:12px;padding:8px 12px">Total período</td>'
+    +'<td style="text-align:right;font-family:var(--cond);font-size:15px;color:var(--green);padding:8px 12px">'+fmt(total)+'</td>';
+  tbody.appendChild(tfoot);
+}
+
+
 // ══════════════════════════════════════════════════════
 //  QUINCENAS ABIERTAS ANCLADAS
 // ══════════════════════════════════════════════════════
@@ -8148,6 +8267,7 @@ function selectSubAndPeriod(subId, periodKey){
   renderLiqSidebar();
   renderLiqPeriodPills();
   renderLiqProjects();
+  try{ renderLiqVentasRef(); }catch(e){}
   // Scroll to top of liq section
   var el = document.getElementById('sec-liquidaciones');
   if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
@@ -8345,6 +8465,7 @@ function selectPeriod(key){
   LIQ_PERIOD=key;
   renderLiqPeriodPills();
   renderLiqProjects();
+  try{ renderLiqVentasRef(); }catch(e){}
 }
 
 function createNewPeriod(){
@@ -8629,6 +8750,8 @@ function buildProjTipoSelect(){
   if(!sel) return;
   var types=getLiqCostTypes();
   sel.innerHTML=types.map(function(t){return '<option value="'+t.id+'">'+t.nombre+' ('+t.pct+'%)</option>';}).join('');
+  // Auto-fill % only for new projects
+  if(!LIQ_EDIT_PROJ) onProjTipoChange();
 }
 
 function onProjTipoChange(){
@@ -13256,6 +13379,12 @@ function invSearchScore(item, q){
   return 0;
 }
 
+var _invSearchTimer=null;
+function _invSearchDebounce(inp, type){
+  clearTimeout(_invSearchTimer);
+  _invSearchTimer=setTimeout(function(){ renderInvList(type, inp.value); }, 300);
+}
+
 function renderInvList(type, searchQ){
   var body=_invBody();
   if(!body) return;
@@ -13268,7 +13397,7 @@ function renderInvList(type, searchQ){
   html+='</div>';
   html+='<div style="margin-bottom:14px;position:relative">';
   html+='<input id="'+searchId+'" type="text" placeholder="🔍 Buscar por nombre, código o unidad..." value="'+(searchQ||'')+'" '
-    +'oninput="renderInvList(\''+type+'\',this.value)" '
+    +'oninput="_invSearchDebounce(this,\''+type+'\')" '
     +'style="width:100%;box-sizing:border-box;padding:9px 36px 9px 14px;border:1.5px solid var(--border2);border-radius:8px;font-size:13px;background:var(--surface);color:var(--text);outline:none;font-family:var(--sans)" '
     +'onfocus="this.style.borderColor=\'var(--blue)\'" onblur="this.style.borderColor=\'var(--border2)\'">';
   if(searchQ) html+='<button onclick="renderInvList(\''+type+'\',\'\')" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px;line-height:1">✕</button>';
@@ -18874,6 +19003,31 @@ window.initCalcCONCRE=initCalcCONCRE;
           </div>
           </div>
 
+          <!-- ══ PANEL VENTAS REFERENCIA ══ -->
+          <div style="margin-top:20px" id="liq-ventas-ref-wrap">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <div style="font-size:13px;font-weight:800;color:var(--text2);text-transform:uppercase;letter-spacing:.6px">&#128179; Ventas del período (referencia)</div>
+              <div style="flex:1;height:1px;background:var(--border)"></div>
+              <button onclick="renderLiqVentasRef()" style="background:none;border:1px solid var(--border2);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;color:var(--text3)">&#8635; Actualizar</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+              <span style="font-size:11px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">Filtrar usuario</span>
+              <select id="liq-vref-filter" class="form-select" style="font-size:12px;padding:5px 10px;width:auto;background:var(--surface);border:1.5px solid var(--border2);color:var(--text)" onchange="renderLiqVentasRef()">
+                <option value="all">Todos</option>
+              </select>
+              <span id="liq-vref-period-label" style="font-size:11px;color:var(--text3)"></span>
+            </div>
+            <div style="overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)">
+              <table class="atbl" style="min-width:700px">
+                <thead><tr>
+                  <th>Usuario</th><th>Proyecto</th><th>&#193;rea m&#237;nimo</th><th>Fecha</th><th style="text-align:right">Subtotal &#8353;</th>
+                </tr></thead>
+                <tbody id="liq-vref-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+
           <!-- ══ QUINCENAS ABIERTAS ANCLADAS ══ -->
           <div style="margin-top:24px" id="liq-open-anchor-wrap">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
@@ -19695,8 +19849,12 @@ window.initCalcCONCRE=initCalcCONCRE;
               <input type="number" class="vf-inp" id="vf-cantidad" min="0" step="any" oninput="calcVentaPreview()">
             </div>
             <div>
-              <span class="vf-label" id="vf-precio-label">Precio unitario ₡</span>
-              <input type="text" class="vf-inp" id="vf-precio" placeholder="0" oninput="fmtInp(this);calcVentaPreview()">
+              <span class="vf-label">Subtotal s/IVA ₡ <span style="font-size:10px;font-weight:400;color:var(--text3)">(escríbe aquí)</span></span>
+              <input type="text" class="vf-inp" id="vf-subtotal-input" placeholder="0" oninput="fmtInp(this);calcVentaPreview()" style="border-color:var(--blue)">
+            </div>
+            <div>
+              <span class="vf-label" id="vf-precio-label">Precio unitario ₡ <span style="font-size:10px;font-weight:400;color:var(--text3)">(automático)</span></span>
+              <input type="text" class="vf-inp" id="vf-precio" placeholder="—" readonly style="background:var(--surface2);color:var(--text3);cursor:not-allowed">
             </div>
             <div>
               <span class="vf-label">IVA</span>
@@ -19810,6 +19968,19 @@ window.initCalcCONCRE=initCalcCONCRE;
               <span class="vf-label">Nombre del tercero</span>
               <input type="text" class="vf-inp" id="vf-terc-nombre" placeholder="Nombre de quien recibe la comisión">
             </div>
+          </div>
+
+          <!-- Minimo -->
+          <div class="vf-check-row" onclick="toggleMinimo()" id="vf-min-row">
+            <input type="checkbox" id="vf-min-chk" onclick="event.stopPropagation()">
+            <span class="vf-check-label">&#128208; M&#237;nimo <span style="font-size:10px;font-weight:400;color:var(--text3)">(el cobro aplica un &#225;rea m&#237;nima &#8212; solo informativo)</span></span>
+          </div>
+          <div id="vf-minimo-wrap" style="display:none;padding:10px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);margin-bottom:4px">
+            <div>
+              <span class="vf-label">&#193;rea real del m&#237;nimo (m&#178;/ml)</span>
+              <input type="number" class="vf-inp" id="vf-min-area" min="0" step="any" placeholder="Ej: 15" style="max-width:180px">
+            </div>
+            <div style="font-size:10px;color:var(--text3);margin-top:4px">Este dato es solo de referencia &#8212; no altera subtotales ni comisiones.</div>
           </div>
 
           <!-- Notas y referido -->
