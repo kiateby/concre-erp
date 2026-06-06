@@ -8098,7 +8098,7 @@ function initLiquidaciones(){
       renderLiqPeriodPills();
     }
     // Render new panels
-    renderLiqVentasRefFilter();
+    //
     renderLiqOpenAnchor();
     renderLiqHistFilter();
     renderLiqHistorial();
@@ -8127,25 +8127,7 @@ function _liqPeriodDates(periodKey){
   }
 }
 
-function renderLiqVentasRefFilter(){
-  var sel=document.getElementById('liq-vref-filter');
-  if(!sel) return;
-  // Build from _ventasCache — users who actually have ventas, regardless of role
-  var cache=window._ventasCache||{};
-  var allUsers=getUsers();
-  var sellers=allUsers.filter(function(u){
-    var vd=cache[u.id];
-    return vd&&Object.values(vd).some(function(mv){return (mv.ventas||[]).length>0;});
-  });
-  var cur=sel.value;
-  sel.innerHTML='<option value="all">Todos</option>';
-  sortAlpha(sellers,'nombre').forEach(function(u){
-    var opt=document.createElement('option');
-    opt.value=u.id; opt.textContent=u.nombre;
-    if(u.id===cur) opt.selected=true;
-    sel.appendChild(opt);
-  });
-}
+// renderLiqVentasRefFilter replaced by pills in renderLiqVentasRef
 
 function renderLiqVentasRef(){
   var tbody=document.getElementById('liq-vref-tbody');
@@ -8154,18 +8136,17 @@ function renderLiqVentasRef(){
   tbody.innerHTML='';
 
   var dates=LIQ_PERIOD?_liqPeriodDates(LIQ_PERIOD):null;
-  // If no period selected, default to current full month so data is visible
   if(!dates){
     var now=new Date();
     var lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
-    dates={from:new Date(now.getFullYear(),now.getMonth(),1), to:new Date(now.getFullYear(),now.getMonth(),lastDay)};
+    dates={from:new Date(now.getFullYear(),now.getMonth(),1),to:new Date(now.getFullYear(),now.getMonth(),lastDay)};
     var mes=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'][now.getMonth()];
     if(lbl) lbl.textContent='Mes actual: '+mes+' '+now.getFullYear()+' (selecciona una quincena para filtrar)';
   } else {
     if(lbl) lbl.textContent='Período: '+LIQ_PERIOD;
   }
 
-  // ── Step 1: Collect ALL rows in the period (no filter yet) ──
+  // ── Step 1: Collect ALL rows for the period ──
   var users=getUsers();
   var allRows=[];
   users.forEach(function(u){
@@ -8175,41 +8156,47 @@ function renderLiqVentasRef(){
         var d=parseDate(v.fecha);
         if(!d) return;
         if(d<dates.from||d>dates.to) return;
-        allRows.push({
-          uid:u.id, uname:u.nombre,
-          proyecto:v.proyecto||'—',
-          area:v.minimoArea||(v.tieneMinimo?'(min)':'—'),
-          fecha:v.fecha,
-          subtotal:v.subtotal||0
-        });
+        allRows.push({uid:u.id,uname:u.nombre,proyecto:v.proyecto||'—',
+          area:v.minimoArea||(v.tieneMinimo?'(min)':'—'),fecha:v.fecha,subtotal:v.subtotal||0});
       });
     });
   });
 
-  // ── Step 2: Build filter from users who actually appear in allRows ──
-  var sel=document.getElementById('liq-vref-filter');
-  if(sel){
-    var prevVal=sel.value;
-    var usersInRows={};
-    allRows.forEach(function(r){ usersInRows[r.uid]=r.uname; });
-    sel.innerHTML='<option value="all">Todos</option>';
-    Object.keys(usersInRows).forEach(function(uid){
-      var opt=document.createElement('option');
-      opt.value=uid; opt.textContent=usersInRows[uid];
-      if(uid===prevVal) opt.selected=true;
-      sel.appendChild(opt);
+  // ── Step 2: Build user filter pills from rows ──
+  var pillsEl=document.getElementById('liq-vref-filter-pills');
+  var activeUid=window._liqVrefActiveUid||'all';
+  // Make sure activeUid still valid
+  var uidsInRows={};
+  allRows.forEach(function(r){ uidsInRows[r.uid]=r.uname; });
+  if(activeUid!=='all'&&!uidsInRows[activeUid]) activeUid='all';
+  window._liqVrefActiveUid=activeUid;
+
+  if(pillsEl){
+    pillsEl.innerHTML='';
+    // "Todos" pill
+    var allPill=document.createElement('button');
+    allPill.textContent='Todos';
+    allPill.style.cssText='padding:4px 12px;border-radius:100px;border:1.5px solid '+(activeUid==='all'?'var(--blue)':'var(--border)')+';background:'+(activeUid==='all'?'var(--blue)':'var(--surface)')+';color:'+(activeUid==='all'?'#fff':'var(--text)')+';font-size:12px;font-weight:'+(activeUid==='all'?'800':'500')+';cursor:pointer;font-family:var(--sans)';
+    allPill.onclick=function(){ window._liqVrefActiveUid='all'; renderLiqVentasRef(); };
+    pillsEl.appendChild(allPill);
+    // User pills
+    Object.keys(uidsInRows).forEach(function(uid){
+      var pill=document.createElement('button');
+      var active=uid===activeUid;
+      pill.textContent=uidsInRows[uid].split(' ')[0]; // first name for brevity
+      pill.title=uidsInRows[uid]; // full name on hover
+      pill.style.cssText='padding:4px 12px;border-radius:100px;border:1.5px solid '+(active?'var(--blue)':'var(--border)')+';background:'+(active?'var(--blue)':'var(--surface)')+';color:'+(active?'#fff':'var(--text)')+';font-size:12px;font-weight:'+(active?'800':'500')+';cursor:pointer;font-family:var(--sans)';
+      pill.onclick=(function(u){ return function(){ window._liqVrefActiveUid=u; renderLiqVentasRef(); }; })(uid);
+      pillsEl.appendChild(pill);
     });
-    // If previous selection no longer valid, reset to 'all'
-    if(prevVal!=='all'&&!usersInRows[prevVal]) sel.value='all';
   }
 
-  // ── Step 3: Apply filter ──
-  var filter=(sel&&sel.value)||'all';
-  var filteredRows=filter==='all'?allRows:allRows.filter(function(r){return r.uid===filter;});
+  // ── Step 3: Apply filter and render ──
+  var filteredRows=activeUid==='all'?allRows:allRows.filter(function(r){return r.uid===activeUid;});
 
   if(!filteredRows.length){
     var r2=document.createElement('tr');
-    r2.innerHTML='<td colspan="5" style="text-align:center;padding:20px;color:var(--text3)">Sin ventas registradas en este período'+(filter!=='all'?' para este usuario':'')+'.</td>';
+    r2.innerHTML='<td colspan="5" style="text-align:center;padding:20px;color:var(--text3)">Sin ventas registradas en este período'+(activeUid!=='all'?' para este usuario':'')+'.</td>';
     tbody.appendChild(r2); return;
   }
 
@@ -8218,12 +8205,11 @@ function renderLiqVentasRef(){
     var tr=document.createElement('tr');
     tr.innerHTML='<td style="font-size:12px;font-weight:700">'+row.uname+'</td>'
       +'<td style="font-size:12px">'+row.proyecto+'</td>'
-      +'<td style="font-size:12px;text-align:center">'+(row.area!=='—'&&row.area!='(min)'?row.area+' m&sup2;':row.area)+'</td>'
+      +'<td style="font-size:12px;text-align:center">'+(row.area!=='—'&&row.area!=='(min)'?row.area+' m&sup2;':row.area)+'</td>'
       +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(row.fecha))+'</td>'
       +'<td style="text-align:right;font-family:var(--cond);font-weight:800;color:var(--green)">'+fmt(row.subtotal)+'</td>';
     tbody.appendChild(tr);
   });
-  // Total row
   var total=filteredRows.reduce(function(s,r){return s+r.subtotal;},0);
   var tfoot=document.createElement('tr');
   tfoot.style.cssText='background:var(--surface2);font-weight:800;border-top:2px solid var(--border)';
@@ -8231,12 +8217,6 @@ function renderLiqVentasRef(){
     +'<td style="text-align:right;font-family:var(--cond);font-size:15px;color:var(--green);padding:8px 12px">'+fmt(total)+'</td>';
   tbody.appendChild(tfoot);
 }
-
-
-// ══════════════════════════════════════════════════════
-//  QUINCENAS ABIERTAS ANCLADAS
-// ══════════════════════════════════════════════════════
-
 function renderLiqOpenAnchor(){
   var wrap = document.getElementById('liq-open-anchor-list');
   if(!wrap) return;
@@ -19101,9 +19081,7 @@ window.initCalcCONCRE=initCalcCONCRE;
             </div>
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
               <span style="font-size:11px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">Filtrar usuario</span>
-              <select id="liq-vref-filter" class="form-select" style="font-size:12px;padding:5px 10px;width:auto;background:var(--surface);border:1.5px solid var(--border2);color:var(--text)" onchange="renderLiqVentasRef()">
-                <option value="all">Todos</option>
-              </select>
+              <div id="liq-vref-filter-pills" style="display:flex;gap:6px;flex-wrap:wrap"></div>
               <span id="liq-vref-period-label" style="font-size:11px;color:var(--text3)"></span>
             </div>
             <div style="overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)">
