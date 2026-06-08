@@ -13769,6 +13769,8 @@ async function invDeleteLote(loteId){
 
 // ══ MODAL NUEVO/EDITAR ÍTEM ══
 function openInvItemModal(itemId, type){
+  // Normalize itemId — when called with null (from onclick string), treat as new item
+  if(!itemId||itemId==='null'||itemId==='undefined') itemId=null;
   var item=itemId?window._invItems.find(function(i){return i.id===itemId;}):null;
   var label=type==='inventario'?'Inventario':'Activo';
   var m=document.getElementById('invItemModal');
@@ -13842,7 +13844,7 @@ async function saveInvItem(type, itemId){
   var foto=(document.getElementById('iim-foto')?.value||'').trim();
   var notas=(document.getElementById('iim-notas')?.value||'').trim();
   if(!nombre||!codigo){ toast('Nombre y código son obligatorios'); return; }
-  var id=itemId||('item-'+Date.now());
+  var id=(itemId&&itemId!=='null'&&itemId!=='undefined')?itemId:('item-'+Date.now());
   var row={id:id,type:type,nombre:nombre,codigo:codigo,unidad:unidad,cantidad:cantidad,cantidad_minima:minimo,foto_url:foto,notas:notas,es_fibra:false,activo:true,created_by:SESSION.id,updated_at:new Date().toISOString()};
   var res=await DB.from('inv_items').upsert(row,{onConflict:'id'});
   if(res.error){ toast('Error guardando: '+res.error.message); return; }
