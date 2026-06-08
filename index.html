@@ -13844,10 +13844,18 @@ async function saveInvItem(type, itemId){
   var foto=(document.getElementById('iim-foto')?.value||'').trim();
   var notas=(document.getElementById('iim-notas')?.value||'').trim();
   if(!nombre||!codigo){ toast('Nombre y código son obligatorios'); return; }
-  var id=(itemId&&itemId!=='null'&&itemId!=='undefined')?itemId:('item-'+Date.now());
+  var isNew=(!itemId||itemId==='null'||itemId==='undefined');
+  var id=isNew?('item-'+Date.now()):itemId;
   var row={id:id,type:type,nombre:nombre,codigo:codigo,unidad:unidad,cantidad:cantidad,cantidad_minima:minimo,foto_url:foto,notas:notas,es_fibra:false,activo:true,created_by:SESSION.id,updated_at:new Date().toISOString()};
-  var res=await DB.from('inv_items').upsert(row,{onConflict:'id'});
-  if(res.error){ toast('Error guardando: '+res.error.message); return; }
+  var res;
+  if(isNew){
+    // INSERT nuevo ítem — nunca sobrescribe otro
+    res=await DB.from('inv_items').insert(row);
+  } else {
+    // UPDATE ítem existente por id
+    res=await DB.from('inv_items').update(row).eq('id',id);
+  }
+  if(res.error){ toast('❌ Error guardando: '+res.error.message); console.error('saveInvItem:',res.error); return; }
   // Update local cache
   var idx=window._invItems.findIndex(function(i){return i.id===id;});
   if(idx>=0) window._invItems[idx]=row; else window._invItems.push(row);
