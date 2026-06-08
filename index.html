@@ -11254,7 +11254,7 @@ function saveCRMClient(){
     direccion:dir,
     contactos:contactos,
     created:editId?undefined:new Date().toISOString(),
-    createdBy:SESSION.id,
+    createdBy:editId?(function(){ var orig=getCRMClients().find(function(c){return c.id===editId;}); return (orig&&orig.createdBy)||SESSION.id; }()):SESSION.id,
     updatedAt:new Date().toISOString()
   };
 
