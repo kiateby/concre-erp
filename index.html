@@ -11134,7 +11134,7 @@ function saveCRMDynClient(editId){
   var reg={id:editId||('cli'+Date.now()),nombreEmpresa:nombre,cedula:cedula,tipoCedula:tipoCed,
     tipoCliente:tipo,tipoClienteOtro:tipo==='otro'?tipoOtro:'',direccion:dir,contactos:contactos,
     updatedAt:new Date().toISOString()};
-  if(editId){var idx2=clients.findIndex(function(c){return c.id===editId;});if(idx2>=0){reg.created=clients[idx2].created;clients[idx2]=reg;}else clients.push(reg);}
+  if(editId){var idx2=clients.findIndex(function(c){return c.id===editId;});if(idx2>=0){reg.created=clients[idx2].created;reg.createdBy=clients[idx2].createdBy||'';clients[idx2]=reg;}else{reg.createdBy=SESSION?SESSION.id:'';clients.push(reg);}}
   else{reg.created=new Date().toISOString();reg.createdBy=SESSION?SESSION.id:'';clients.push(reg);}
   setCRMClients(clients);
   var modal=document.getElementById('crmDynModal');if(modal)modal.remove();
@@ -11596,7 +11596,7 @@ function renderCRMPickerResults(){
   }
   el.innerHTML=clients.map(function(cl){
     var tipoLabel=CRM_TIPOS_LABEL[cl.tipoCliente]||(cl.tipoClienteOtro||'');
-    var ctOpts=cl.contactos.map(function(ct){
+    var ctOpts=(cl.contactos||[]).map(function(ct){
       return '<option value="'+ct.id+'">'+ct.nombre+(ct.rol?' ('+ct.rol+')':'')+'</option>';
     }).join('');
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:8px">'
@@ -11621,7 +11621,7 @@ function selectCRMClient(clienteId){
   var cl=getCRMClients().find(function(c){return c.id===clienteId;}); if(!cl) return;
   var ctSel=document.getElementById('crm-picker-ct-'+clienteId);
   var contactoId=ctSel?ctSel.value:'';
-  var ct=cl.contactos.find(function(c){return c.id===contactoId;})||cl.contactos[0]||{};
+  var ct=(cl.contactos||[]).find(function(c){return c.id===contactoId;})||(cl.contactos&&cl.contactos[0])||{};
   document.getElementById('crmPickerModal').remove();
   if(window._crmPickerCallback) window._crmPickerCallback({
     clienteId:clienteId,
