@@ -11585,6 +11585,10 @@ function renderCRMPickerResults(){
   var el=document.getElementById('crm-picker-results'); if(!el) return;
   var q=(document.getElementById('crm-picker-q')||{}).value||'';
   var clients=getCRMClients();
+  // Usuarios solo ven sus propios clientes en el picker de ventas
+  if(SESSION&&SESSION.rol==='user'){
+    clients=clients.filter(function(cl){ return cl.createdBy===SESSION.id; });
+  }
   if(q.trim()) clients=clients.filter(function(cl){return fuzzyMatch(cl.nombreEmpresa,q)||fuzzyMatch(cl.cedula,q);});
   clients=clients.slice(0,15);
   if(!clients.length){
