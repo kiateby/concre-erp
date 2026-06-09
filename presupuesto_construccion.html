@@ -2080,7 +2080,7 @@ loadProjects:async function(){
   var el=document.getElementById('proj-list');
   try{
     var r=await DB2.from('presupuesto_proyectos').select('id,nombre,tipo,actualizado_en,presupuesto_total').order('actualizado_en',{ascending:false});
-    if(r.error&&r.error.code==='42P01'){
+    if(r.error&&(r.error.code==='42P01'||r.error.code==='PGRST116'||r.error.status===404||r.error.status===400)){
       el.innerHTML='<div class="wb">⚠️ Primera vez. Cree un proyecto y se guardará automáticamente.<br><br>Si persiste el error, ejecute en Supabase SQL:<br><code style="font-size:10px;background:var(--surf3);padding:3px 7px;border-radius:3px;display:block;margin-top:5px;">CREATE TABLE presupuesto_proyectos (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), nombre TEXT, tipo TEXT, datos JSONB, presupuesto_total BIGINT, actualizado_en TIMESTAMPTZ DEFAULT NOW(), creado_en TIMESTAMPTZ DEFAULT NOW()); ALTER TABLE presupuesto_proyectos ENABLE ROW LEVEL SECURITY; CREATE POLICY "pres_open" ON presupuesto_proyectos FOR ALL USING (true);</code></div>';
       return;
     }
@@ -2167,7 +2167,14 @@ confirmSave:async function(){
     var r;
     if(ST.id) r=await DB2.from('presupuesto_proyectos').update(payload).eq('id',ST.id);
     else{payload.creado_en=new Date().toISOString();r=await DB2.from('presupuesto_proyectos').insert([payload]).select().single();if(r.data) ST.id=r.data.id;}
-    if(r.error) throw r.error;
+        if(r.error){
+      // If table doesn't exist, show SQL to create it
+      if(r.error.code==='42P01'||r.error.status===404){
+        P.toast('❌ Tabla no existe en Supabase. Ejecute el SQL de creación desde la consola de Supabase.','err',6000);
+        console.error('CREAR TABLA EN SUPABASE:\nCREATE TABLE presupuesto_proyectos (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), nombre TEXT, tipo TEXT, datos JSONB, presupuesto_total BIGINT, actualizado_en TIMESTAMPTZ DEFAULT NOW(), creado_en TIMESTAMPTZ DEFAULT NOW());\nALTER TABLE presupuesto_proyectos ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "pres_open" ON presupuesto_proyectos FOR ALL USING (true);');
+      } else { throw r.error; }
+      return;
+    }
     document.getElementById('mo-save').classList.add('hid');
     this.toast('✅ Guardado en línea: '+nom);this.loadProjects();
   }catch(e){this.toast('❌ Error: '+e.message,'err');}

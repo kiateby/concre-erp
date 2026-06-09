@@ -1552,20 +1552,35 @@ function initPresupuesto(){
       '<div style="padding:40px;text-align:center;color:var(--text3)">Módulo exclusivo para SuperAdmin</div>';
     return;
   }
-  if(_presupuestoLoaded) return;
-  _presupuestoLoaded=true;
   var root=document.getElementById('presupuesto-root');
   if(!root) return;
-  // Load presupuesto HTML content via fetch from same origin,
-  // or inject inline — using iframe approach for full isolation
-  var iframe=document.createElement('iframe');
-  // Use absolute path from current origin to ensure it works on Vercel
-  iframe.src=window.location.origin+'/presupuesto_construccion.html';
-  iframe.style.cssText='width:100%;height:calc(100vh - 56px);border:none;background:#0f1117;';
-  iframe.title='Módulo de Presupuesto Construcción';
-  iframe.allow='same-origin';
-  root.style.cssText='height:calc(100vh - 56px);overflow:hidden;';
-  root.appendChild(iframe);
+  // Already loaded — just show
+  if(_presupuestoLoaded) return;
+  _presupuestoLoaded=true;
+  var src=window.location.origin+'/presupuesto_construccion.html';
+  // Verify file exists before creating iframe
+  fetch(src,{method:'HEAD'}).then(function(res){
+    if(res.ok){
+      var iframe=document.createElement('iframe');
+      iframe.src=src;
+      iframe.style.cssText='width:100%;height:calc(100vh - 56px);border:none;background:#0f1117;display:block;';
+      iframe.title='Presupuesto Construcción CR';
+      root.style.cssText='height:calc(100vh - 56px);overflow:hidden;display:block;';
+      root.appendChild(iframe);
+    } else {
+      _presupuestoLoaded=false; // allow retry
+      root.innerHTML='<div style="padding:40px;text-align:center;font-family:sans-serif;">'
+        +'<div style="font-size:32px;margin-bottom:12px;">⚠️</div>'
+        +'<div style="font-size:16px;font-weight:700;color:#f4a30a;margin-bottom:8px;">Archivo no encontrado</div>'
+        +'<div style="font-size:13px;color:#9aa3cc;max-width:480px;margin:0 auto;line-height:1.6;">'
+        +'El archivo <code style="background:#22263a;padding:2px 6px;border-radius:4px;">presupuesto_construccion.html</code> '
+        +'debe estar en la raíz del repositorio de GitHub, junto al <code style="background:#22263a;padding:2px 6px;border-radius:4px;">index.html</code>.'
+        +'</div></div>';
+    }
+  }).catch(function(){
+    _presupuestoLoaded=false;
+    root.innerHTML='<div style="padding:40px;text-align:center;color:#9aa3cc;">Error de red al cargar el módulo.</div>';
+  });
 }
 
 function doLogin(){
