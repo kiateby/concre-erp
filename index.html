@@ -10704,9 +10704,14 @@ function initPagosUsuarios(){
   // Show planilla historica section only for superadmin
   var histSec=document.getElementById('planilla-historica-section');
   if(histSec) histSec.style.display=(SESSION&&SESSION.rol==='superadmin')?'block':'none';
-  // Load historical planilla data from Supabase then render
+  // Load all user DED+REG fresh from Supabase then render
   if(SESSION&&(SESSION.rol==='superadmin'||SESSION.rol==='admin')){
-    loadPlanillaHist().then(function(){
+    var dedPromises=[loadPlanillaHist()];
+    // Reload DED/REG for all users to ensure latest data
+    getUsers().filter(function(u){return u.estado==='activo'&&u.id!==SESSION.id;}).forEach(function(u){
+      dedPromises.push(_loadUserDEDForAdmin(u.id));
+    });
+    Promise.all(dedPromises).then(function(){
       renderPagosUsuarios();
       if(SESSION.rol==='superadmin') renderPlanillaHistorica();
     });
@@ -10739,8 +10744,11 @@ function renderPagosUsuarios(){
     var montoExtraQ=q===2 ? montoExtra : 0;
     // Comisiones from DED
     var ded=getDED(u.id)||{};
+    // Commission keyed by period (user-set) OR by month (admin-set via 'YYYY-MM-1')
     var comisKey='comis_'+y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
-    var comisRaw=ded[comisKey]||0;
+    var comisMonthKey='comis_'+y+'-'+pad(m+1)+'-1';
+    // Period key takes priority; fall back to month key (set by superadmin)
+    var comisRaw=(ded[comisKey]||0)||(ded[comisMonthKey]||0);
     var isAnual=(u.comisType||'mensual')==='anual';
     var esDiciembre=m===11;
     var comisVal=isAnual?(esDiciembre&&q===2?comisRaw:0):comisRaw;
