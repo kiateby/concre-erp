@@ -10586,16 +10586,43 @@ function renderPlanillaHistoricaTable(){
     +'</tr></thead>'
     +'<tbody>';
 
+  // Pre-load: get REG and DED from localStorage (loaded by _loadUserDEDForAdmin at startup)
+  var regUser=getREG(uid)||{};
+  var dedUser=getDED(uid)||{};
+  // DED deducciones are flat: ccss_monto, rb_monto, extra_monto
+  var dedUserTotal=(dedUser.ccss_monto||0)+(dedUser.rb_monto||0)+(dedUser.extra_monto||0);
+
   months.forEach(function(mo){
     var hist=getPlanillaHist(uid, mo.key)||{};
     var hasData=!!(hist&&(hist.salario_override||hist.monto_extra||hist.deduccion_total));
+
+    // Calculate horas extra from REG for this month if no hist data
+    var calcMontoExtra=0;
+    if(!hasData){
+      var vh=salBase/30/8; // hourly rate
+      Object.keys(regUser).forEach(function(dateKey){
+        if(dateKey.substring(0,7)!==mo.key) return;
+        var d2=regUser[dateKey];
+        if(!d2||!d2.entrada||!d2.salida) return;
+        var ext=calcExt(d2.entrada,d2.salida,d2.jornada||'diurna').ext;
+        calcMontoExtra+=ext*vh*1.5;
+      });
+      calcMontoExtra=Math.round(calcMontoExtra);
+    }
+
     var salOvr=hist.salario_override||0;
-    var montoExt=hist.monto_extra||0;
-    var dedTotal=hist.deduccion_total||0;
+    var montoExt=hasData?(hist.monto_extra||0):calcMontoExtra;
+    var dedTotal=hasData?(hist.deduccion_total||0):dedUserTotal;
     var nota=hist.nota||'';
+    // Is this row pre-filled from user data (not manually saved)?
+    var isPreFilled=!hasData&&(calcMontoExtra>0||dedUserTotal>0);
     var rowId='hr_'+uid+'_'+mo.key.replace('-','_');
-    html+='<tr style="'+(hasData?'background:rgba(244,163,10,.04)':'')+'">'
-      +'<td style="font-weight:700;white-space:nowrap;font-size:12px">'+mo.label+(hasData?' <span style="font-size:9px;color:#f4a30a">●</span>':'')+'</td>'
+    var rowBg=hasData?'background:rgba(244,163,10,.04);':isPreFilled?'background:rgba(74,124,255,.03);':'';
+    html+='<tr style="'+rowBg+'">'
+      +'<td style="font-weight:700;white-space:nowrap;font-size:12px">'+mo.label
+      +(hasData?' <span title="Guardado" style="font-size:9px;color:#f4a30a">●</span>'
+        :isPreFilled?' <span title="Pre-llenado del registro del usuario (no guardado)" style="font-size:9px;color:#60a5fa">◌</span>':'')
+      +'</td>'
       // Salario override input
       +'<td style="text-align:right;padding:6px 8px">'
       +'<input id="'+rowId+'_sal" type="number" step="1000" min="0" value="'+(salOvr||'')+'" placeholder="'+fmt(salBase)+'"'
@@ -10604,13 +10631,15 @@ function renderPlanillaHistoricaTable(){
       +'</td>'
       // Monto horas extra
       +'<td style="text-align:right;padding:6px 8px">'
-      +'<input id="'+rowId+'_ext" type="number" step="1000" min="0" value="'+(montoExt||'')+'" placeholder="0"'
-      +' style="width:110px;text-align:right;font-size:12px;padding:4px 6px;border:1.5px solid var(--border);border-radius:5px;background:var(--surface2);color:#f59e0b;font-family:var(--cond)">'
+      +'<input id="'+rowId+'_ext" type="number" step="1000" min="0" value="'+(montoExt>0?montoExt:'')+'" placeholder="0"'
+      +' title="'+(isPreFilled?'Calculado del registro diario del usuario (puede editar)':'Monto de horas extra en colones')+'"'
+      +' style="width:110px;text-align:right;font-size:12px;padding:4px 6px;border:1.5px solid '+(isPreFilled&&!hasData?'#60a5fa':'var(--border)')+';border-radius:5px;background:var(--surface2);color:#f59e0b;font-family:var(--cond)">'
       +'</td>'
       // Deducción total
       +'<td style="text-align:right;padding:6px 8px">'
-      +'<input id="'+rowId+'_ded" type="number" step="1000" min="0" value="'+(dedTotal||'')+'" placeholder="0"'
-      +' style="width:110px;text-align:right;font-size:12px;padding:4px 6px;border:1.5px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--red);font-family:var(--cond)">'
+      +'<input id="'+rowId+'_ded" type="number" step="1000" min="0" value="'+(dedTotal>0?dedTotal:'')+'" placeholder="0"'
+      +' title="'+(isPreFilled?'Calculado de deducciones del usuario (CCSS+rebajos). Puede editar.':'Deducción total del mes en colones')+'"'
+      +' style="width:110px;text-align:right;font-size:12px;padding:4px 6px;border:1.5px solid '+(isPreFilled&&!hasData?'#60a5fa':'var(--border)')+';border-radius:5px;background:var(--surface2);color:var(--red);font-family:var(--cond)">'
       +'</td>'
       // Nota
       +'<td style="padding:6px 8px">'
@@ -10626,9 +10655,11 @@ function renderPlanillaHistoricaTable(){
   });
 
   html+='</tbody></table></div>'
-    +'<div style="padding:10px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);">'
-    +'⚡ Los cambios guardados actualizan el resumen de planilla en tiempo real. '
-    +'Salario en blanco = usa el del perfil. H.Extra se paga en Q2. Deducciones se aplican en Q2.'
+    +'<div style="padding:10px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);display:flex;gap:16px;flex-wrap:wrap;">'
+    +'<span><span style="color:#f4a30a">●</span> Guardado en nube</span>'
+    +'<span><span style="color:#60a5fa">◌</span> Pre-llenado del registro del usuario (borde azul) — debe guardar para que aplique al resumen</span>'
+    +'<span>Sin indicador = sin datos</span>'
+    +'<span style="margin-left:auto">Salario vacío = usa el del perfil · H.Extra y deducciones aplican en Q2</span>'
     +'</div></div>';
 
   el.innerHTML=html;
