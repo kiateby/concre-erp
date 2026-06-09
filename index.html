@@ -12349,7 +12349,10 @@ function collectUserVentas(uid){
 
 function collectUserHoras(uid){
   var rows=[];
-  var stored=(window._horasCache&&window._horasCache[uid]?window._horasCache[uid]:{});
+  // Use _exportRegCache (pre-loaded from Supabase during export) for all users
+  var stored=window._exportRegCache&&window._exportRegCache[uid]
+    ? window._exportRegCache[uid]
+    : (window._horasCache&&window._horasCache[uid]?window._horasCache[uid]:{});
   Object.keys(stored).sort().forEach(function(dateKey){
     var dayData=stored[dateKey];
     if(!dayData) return;
@@ -12374,13 +12377,14 @@ function collectUserHoras(uid){
 
 function collectUserVacaciones(uid){
   var rows=[];
-  var vd=JSON.parse(localStorage.getItem('cc_vac_'+uid)||'{}');
+  // Use _vacCache (loaded from Supabase) as source of truth
+  var vd=getVacData(uid);
   var saldo=vd.saldo||0;
   rows.push(['SALDO ACTUAL','','','','',saldo,'','','']);
   (vd.requests||[]).forEach(function(r){
-    rows.push([r.fechaInicio||'', r.fechaFin||'',
-      r.dias||'', r.estado||'', r.tipo||'',
-      '', r.motivo||'', r.aprobadoPor||'', r.id||'']);
+    rows.push([r.fechaInicio||r.desde||'', r.fechaFin||r.hasta||'',
+      r.dias||'', r.estado||r.status||'', r.tipo||'',
+      saldo, r.motivo||'', r.aprobadoPor||'', r.id||'']);
   });
   return {
     headers:['Fecha Inicio','Fecha Fin','Días','Estado','Tipo','Saldo Días','Motivo','Aprobado Por','ID'],
@@ -12390,16 +12394,53 @@ function collectUserVacaciones(uid){
 
 function collectUserFondos(uid){
   var rows=[];
-  var fd=JSON.parse(localStorage.getItem('cc_fondos_'+uid)||'{}');
   var lim=(window._fondosLimCache||{});
-  rows.push(['LÍMITE CAJA','','','','',lim[uid]||0,'','']);
-  (fd.gastos||[]).forEach(function(g){
-    var mes=g.fecha?g.fecha.substring(0,7):'';
-    rows.push([g.fecha||'', mes, g.descripcion||'', g.monto||0,
-      g.tipo||'', g.factura||'', g.estado||'', g.id||'']);
-  });
+  // Use _fondosCache (loaded from Supabase) as source of truth
+  var fd=getFondosData(uid);
+
+  // Header row with limit
+  rows.push(['=== LÍMITE CAJA ===','','','',lim[uid]||0,'','','','']);
+
+  // Collect all months
+  var allGastos=[];
+  var allDepositos=[];
+
+  // fd can be flat {gastos,depositos} OR month-keyed {'2026-06':{gastos,depositos}}
+  if(fd.gastos||fd.depositos){
+    // Flat structure
+    (fd.gastos||[]).forEach(function(g){ allGastos.push(g); });
+    (fd.depositos||[]).forEach(function(d){ allDepositos.push(d); });
+  } else {
+    // Month-keyed structure
+    Object.keys(fd).sort().forEach(function(mk){
+      var m=fd[mk]||{};
+      (m.gastos||[]).forEach(function(g){ allGastos.push(g); });
+      (m.depositos||[]).forEach(function(d){ allDepositos.push(d); });
+    });
+  }
+
+  // Depositos section
+  if(allDepositos.length){
+    rows.push(['=== DEPÓSITOS/INGRESOS ===','','','','','','','','']);
+    rows.push(['Fecha','Mes','Descripcion','Monto','','','','ID','']);
+    allDepositos.sort(function(a,b){return (a.fecha||'')<(b.fecha||'')?-1:1;}).forEach(function(d){
+      rows.push([d.fecha||'', (d.fecha||'').substring(0,7), d.desc||d.descripcion||'',
+        d.monto||0,'','','', d.id||'','']);
+    });
+  }
+
+  // Gastos section
+  if(allGastos.length){
+    rows.push(['=== GASTOS ===','','','','','','','','']);
+    rows.push(['Fecha','Mes','Descripcion','Monto','Tipo','Factura','Estado','ID','Aprobado']);
+    allGastos.sort(function(a,b){return (a.fecha||'')<(b.fecha||'')?-1:1;}).forEach(function(g){
+      rows.push([g.fecha||'', (g.fecha||'').substring(0,7), g.descripcion||'',
+        g.monto||0, g.tipo||'', g.factura||'', g.estado||'', g.id||'', g.aprobado?'Sí':'No']);
+    });
+  }
+
   return {
-    headers:['Fecha','Mes','Descripción','Monto','Tipo','Factura','Estado','ID'],
+    headers:['Fecha','Mes','Descripcion','Monto','Tipo/Extra','Factura','Estado','ID','Aprobado'],
     rows:rows
   };
 }
@@ -12552,12 +12593,12 @@ function collectInventarioMovs(){
 function collectLiquidaciones(){
   var rows=[];
   var subs=getLiqSubs();
-  var costTypes=JSON.parse(JSON.stringify(window._liqCostTypesCache||[]));
   subs.forEach(function(sub){
-    var liqData=JSON.parse(localStorage.getItem('cc_liq_'+sub.id)||'{}');
+    // Use _liqDataCache (loaded from Supabase) as source of truth
+    var liqData=getLiqData(sub.id);
     Object.keys(liqData).sort().forEach(function(pk){
       var pd=liqData[pk];
-      var state=JSON.parse(localStorage.getItem('cc_liq_state_'+sub.id+'_'+pk)||'{}');
+      var state={cerrada:pd.cerrada||false, pagado:pd.pagado||false};
       (pd.proyectos||[]).forEach(function(proj){
         var mes=pk.substring(0,7);
         rows.push([
