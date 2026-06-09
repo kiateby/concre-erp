@@ -143,10 +143,16 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 
 /* Admin main content */
 .admin-main{flex:1;padding:24px;overflow-y:auto;background:var(--bg)}
+.admin-main.pres-active{padding:0!important;overflow:hidden!important;}
 
 /* Section cards */
 .admin-section{display:none;padding:16px 20px;width:100%;max-width:1280px;margin:0 auto;box-sizing:border-box}
 .admin-section.on{display:block}
+/* Presupuesto section — full viewport, no constraints */
+#sec-presupuesto{padding:0!important;max-width:none!important;margin:0!important;width:100%!important;position:static;}
+#sec-presupuesto.on{display:flex!important;flex-direction:column;}
+#presupuesto-root{width:100%;flex:1;}
+#presupuesto-root iframe{display:block;width:100%;border:none;}
 
 /* Page title */
 .page-title{
@@ -1561,12 +1567,40 @@ function initPresupuesto(){
   // Verify file exists before creating iframe
   fetch(src,{method:'HEAD'}).then(function(res){
     if(res.ok){
+      // Measure real header height for precise sizing
+      var hdr=document.querySelector('.hdr')||document.querySelector('header');
+      var hdrH=hdr?hdr.getBoundingClientRect().height:56;
+      var availH=window.innerHeight-hdrH;
       var iframe=document.createElement('iframe');
       iframe.src=src;
-      iframe.style.cssText='width:100%;height:calc(100vh - 56px);border:none;background:#0f1117;display:block;';
+      iframe.style.cssText='width:100%;height:'+availH+'px;border:none;background:#0f1117;display:block;';
       iframe.title='Presupuesto Construcción CR';
-      root.style.cssText='height:calc(100vh - 56px);overflow:hidden;display:block;';
+      // Make admin-main not scroll/constrain when presupuesto is shown
+      var adminMain=document.querySelector('.admin-main');
+      if(adminMain){
+        adminMain._origOverflow=adminMain.style.overflow;
+        adminMain._origPadding=adminMain.style.padding;
+        adminMain.style.overflow='hidden';
+        adminMain.style.padding='0';
+        adminMain.classList.add('pres-active');
+      }
+      root.style.cssText='width:100%;overflow:hidden;display:block;';
       root.appendChild(iframe);
+      // Restore admin-main when leaving presupuesto tab
+      document.querySelectorAll('.htab').forEach(function(btn){
+        btn.addEventListener('click',function(){
+          if(adminMain&&this.getAttribute('onclick')&&!this.getAttribute('onclick').includes('presupuesto')){
+            adminMain.style.overflow=adminMain._origOverflow||'';
+            adminMain.style.padding=adminMain._origPadding||'';
+            adminMain.classList.remove('pres-active');
+          }
+        });
+      });
+      // Resize iframe on window resize
+      window.addEventListener('resize',function(){
+        var h2=hdr?hdr.getBoundingClientRect().height:56;
+        iframe.style.height=(window.innerHeight-h2)+'px';
+      });
     } else {
       _presupuestoLoaded=false; // allow retry
       root.innerHTML='<div style="padding:40px;text-align:center;font-family:sans-serif;">'
