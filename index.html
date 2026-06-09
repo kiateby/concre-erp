@@ -12419,24 +12419,127 @@ function collectUserGastos(uid){
 
 function collectUserComisiones(uid){
   var rows=[];
-  var base=JSON.parse(localStorage.getItem('cc_comis_base_'+uid)||'{}');
-  var verif=JSON.parse(localStorage.getItem('cc_comis_verif_'+uid)||'{}');
-  Object.keys(base).sort().forEach(function(mk){
-    var b=base[mk]||{};
-    var v=verif[mk]||{};
-    rows.push([mk, b.totalVentas||0, b.insumos||0, b.baseNeta||0,
-      b.dedAdmin||0, b.baseComis||0, b.comisEstimada||0,
-      v.verificado?'Sí':'No', v.comisVerif||0, v.pagado?'Sí':'No',
-      v.fechaPago||'', v.notas||'']);
+  var vd=getVentasData(uid);
+  Object.keys(vd).sort().forEach(function(mk){
+    var monthData=vd[mk]||{};
+    var ventas=monthData.ventas||[];
+    if(!ventas.length) return;
+    var totalVentas=ventas.reduce(function(s,v){return s+(v.subtotal||0);},0);
+    var comisiones=ventas.reduce(function(s,v){return s+(v.comision||0);},0);
+    rows.push([mk, totalVentas, ventas.length, comisiones,
+      monthData.comisVerif||0, monthData.comisVerifFecha||'', monthData.notas||'']);
   });
   return {
-    headers:['Mes','Total Ventas','Insumos','Base Neta','Ded.Admin','Base Comisionable',
-             'Comisión Est.','Verificado','Comisión Verif.','Pagado','Fecha Pago','Notas'],
+    headers:['Mes','Total Ventas','Num.Ventas','Comisión Calculada','Comisión Verificada','Fecha Pago','Notas'],
     rows:rows
   };
 }
 
 // ── Admin/Superadmin extra modules ──
+
+function collectUserPlanilla(uid){
+  var rows=[];
+  var u=getUsers().find(function(x){return x.id===uid;})||{};
+  var salario=u.salario||0;
+  var reg=window._exportRegCache&&window._exportRegCache[uid]?window._exportRegCache[uid]:{};
+  var ded=window._exportDedCache&&window._exportDedCache[uid]?window._exportDedCache[uid]:{};
+  var months={};
+  Object.keys(reg).forEach(function(dateKey){
+    var mk=dateKey.substring(0,7);
+    if(!months[mk]) months[mk]={horasNorm:0,horasExt:0,dedCCSS:0,dedOtros:0,dias:0,ccss_monto:0,rb_monto:0,rb_desc:'',extra_monto:0,extra_desc:''};
+    var d=reg[dateKey]||{};
+    months[mk].horasNorm+=(d.horasNorm||0);
+    months[mk].horasExt+=(d.horasExt||0);
+    months[mk].dedCCSS+=(d.dedCCSS||0);
+    months[mk].dedOtros+=(d.dedOtros||0);
+    if(d.entrada||d.salida) months[mk].dias++;
+  });
+  Object.keys(ded).forEach(function(dedKey){
+    var mk=dedKey.substring(0,7);
+    if(!months[mk]) months[mk]={horasNorm:0,horasExt:0,dedCCSS:0,dedOtros:0,dias:0,ccss_monto:0,rb_monto:0,rb_desc:'',extra_monto:0,extra_desc:''};
+    var d=ded[dedKey]||{};
+    months[mk].ccss_monto+=(d.ccss_monto||0);
+    months[mk].rb_monto+=(d.rb_monto||0);
+    months[mk].extra_monto+=(d.extra_monto||0);
+    if(d.rb_desc) months[mk].rb_desc=d.rb_desc;
+    if(d.extra_desc) months[mk].extra_desc=d.extra_desc;
+  });
+  Object.keys(months).sort().forEach(function(mk){
+    var m=months[mk];
+    var montoExtra=Math.round(m.horasExt*((salario/30/8)*1.5));
+    var totalBruto=salario+montoExtra+(m.extra_monto||0);
+    var totalDed=(m.ccss_monto||m.dedCCSS||0)+(m.rb_monto||0)+(m.dedOtros||0);
+    rows.push([mk,salario,m.horasNorm,m.horasExt,montoExtra,
+      m.extra_monto||0,m.extra_desc||'',
+      m.ccss_monto||m.dedCCSS||0,m.rb_monto||0,m.rb_desc||'',m.dedOtros||0,
+      Math.round(totalBruto),Math.round(totalDed),Math.round(totalBruto-totalDed)]);
+  });
+  return {
+    headers:['Mes','Salario Base','Horas Norm.','Horas Extra','Monto Extras',
+             'Otros Ingresos','Desc.Ingreso','Ded.CCSS','Ded.Rebajos','Desc.Rebajo',
+             'Ded.Otros','Total Bruto','Total Deducciones','Total Liquido'],
+    rows:rows
+  };
+}
+
+function collectUserAguinaldo(uid){
+  var rows=[];
+  var u=getUsers().find(function(x){return x.id===uid;})||{};
+  var salario=u.salario||0;
+  var vd=getVentasData(uid);
+  var now=new Date();
+  var mesesAg=Math.min(now.getMonth()+1,12);
+  var totalAg=0;
+  for(var i=0;i<mesesAg;i++){
+    var mk=now.getFullYear()+'-'+String(i+1).padStart(2,'0');
+    var monthVentas=vd[mk]?vd[mk].ventas||[]:[]; 
+    var extrasTotal=monthVentas.reduce(function(s,v){return s+(v.comision||0);},0);
+    var baseAg=Math.round((salario/12)+extrasTotal);
+    totalAg+=baseAg;
+    rows.push([mk,i+1,salario,Math.round(extrasTotal),baseAg,totalAg]);
+  }
+  return {
+    headers:['Mes','Num.Mes','Salario Base','Extras/Comisiones','Aguinaldo Mes','Aguinaldo Acumulado'],
+    rows:rows
+  };
+}
+
+function collectInventario(){
+  var rows=[];
+  (window._invItems||[]).filter(function(i){return i.activo!==false;}).forEach(function(item){
+    rows.push([item.id,item.type==='inventario'?'Inventario':'Activo',
+      item.nombre,item.codigo,item.unidad||'',
+      item.cantidad||0,item.cantidad_minima||0,
+      item.notas||'',item.created_by||'',
+      (item.created_at||'').substring(0,10)]);
+  });
+  return {
+    headers:['ID','Tipo','Nombre','Codigo','Unidad','Stock Actual','Stock Minimo',
+             'Notas','Creado Por','Fecha Creacion'],
+    rows:rows
+  };
+}
+
+function collectInventarioMovs(){
+  var itemMap={};
+  (window._invItems||[]).forEach(function(i){itemMap[i.id]=i.nombre;});
+  var rows=[];
+  (window._invMovs||[]).forEach(function(m){
+    rows.push([m.id,m.item_id,itemMap[m.item_id]||'',
+      m.tipo,m.categoria||'',m.cantidad||0,
+      m.cantidad_antes||0,m.cantidad_despues||0,
+      m.boleta_salida||'',m.nota||'',
+      m.nombre_responsable||m.uid_responsable||'',
+      m.nombre_vendedor||'',(m.created_at||'').substring(0,10)]);
+  });
+  return {
+    headers:['ID Mov','ID Item','Nombre Item','Tipo','Categoria','Cantidad',
+             'Stock Antes','Stock Despues','Boleta','Nota',
+             'Responsable','Vendedor','Fecha'],
+    rows:rows
+  };
+}
+
 function collectLiquidaciones(){
   var rows=[];
   var subs=getLiqSubs();
@@ -12598,23 +12701,45 @@ async function generateGlobalZip(){
       if(prog) prog.innerHTML='⏳ '+msg+' ('+done+'/'+total+' usuarios)...';
     }
 
+    // Pre-cargar horas y deducciones de todos los usuarios desde Supabase
+    if(!window._exportRegCache) window._exportRegCache={};
+    if(!window._exportDedCache) window._exportDedCache={};
+    for(var pi=0;pi<users.length;pi++){
+      var pu=users[pi];
+      updateProg('Cargando horas de '+pu.nombre+' ('+(pi+1)+'/'+total+')');
+      try{
+        window._exportRegCache[pu.id]=await _loadFromSupabase('user_horas_'+pu.id,'cc_h_'+pu.id)||{};
+        window._exportDedCache[pu.id]=await _loadFromSupabase('user_ded_'+pu.id,'cc_d_'+pu.id)||{};
+      }catch(ex){ window._exportRegCache[pu.id]={}; window._exportDedCache[pu.id]={}; }
+    }
+
     for(var i=0;i<users.length;i++){
       var u=users[i];
       done=i+1;
-      updateProg('Procesando '+u.nombre);
+      updateProg('Exportando '+u.nombre+' ('+done+'/'+total+')');
 
       var folder=zip.folder(u.nombre);
       var isAdmin=u.rol==='admin'||u.rol==='superadmin';
 
-      // ── Ventas ──
-      if(!isAdmin||u.rol==='superadmin'){
-        var v=collectUserVentas(u.id);
-        if(v.rows.length) folder.file('Ventas.csv', tsvToBlob('sep=\t\r\n'+buildTSV(v.headers,v.rows)));
-      }
+      // ── Ventas (todos) ──
+      var v=collectUserVentas(u.id);
+      if(v.rows.length) folder.file('Ventas.csv', tsvToBlob('sep=\t\r\n'+buildTSV(v.headers,v.rows)));
 
-      // ── Horas ──
+      // ── Horas (registro diario) ──
       var h=collectUserHoras(u.id);
-      if(h.rows.length) folder.file('Horas_Planilla.csv', tsvToBlob('sep=\t\r\n'+buildTSV(h.headers,h.rows)));
+      if(h.rows.length) folder.file('Horas_Registro.csv', tsvToBlob('sep=\t\r\n'+buildTSV(h.headers,h.rows)));
+
+      // ── Planilla mensual ──
+      var plan=collectUserPlanilla(u.id);
+      if(plan.rows.length) folder.file('Planilla_Mensual.csv', tsvToBlob('sep=\t\r\n'+buildTSV(plan.headers,plan.rows)));
+
+      // ── Aguinaldo ──
+      var ag=collectUserAguinaldo(u.id);
+      if(ag.rows.length) folder.file('Aguinaldo.csv', tsvToBlob('sep=\t\r\n'+buildTSV(ag.headers,ag.rows)));
+
+      // ── Comisiones ──
+      var com=collectUserComisiones(u.id);
+      if(com.rows.length) folder.file('Comisiones.csv', tsvToBlob('sep=\t\r\n'+buildTSV(com.headers,com.rows)));
 
       // ── Vacaciones ──
       var vac=collectUserVacaciones(u.id);
@@ -12624,15 +12749,11 @@ async function generateGlobalZip(){
       var fond=collectUserFondos(u.id);
       if(fond.rows.length) folder.file('Fondos_Caja.csv', tsvToBlob('sep=\t\r\n'+buildTSV(fond.headers,fond.rows)));
 
-      // ── Gastos ──
+      // ── Gastos Proyecto ──
       var gas=collectUserGastos(u.id);
       if(gas.rows.length) folder.file('Gastos_Proyecto.csv', tsvToBlob('sep=\t\r\n'+buildTSV(gas.headers,gas.rows)));
 
-      // ── Comisiones ──
-      var com=collectUserComisiones(u.id);
-      if(com.rows.length) folder.file('Comisiones.csv', tsvToBlob('sep=\t\r\n'+buildTSV(com.headers,com.rows)));
-
-      // ── Admin/Superadmin extra modules ──
+      // ── Admin/Superadmin extra ──
       if(isAdmin){
         var liq=collectLiquidaciones();
         if(liq.rows.length) folder.file('Liquidaciones.csv', tsvToBlob('sep=\t\r\n'+buildTSV(liq.headers,liq.rows)));
@@ -12645,6 +12766,13 @@ async function generateGlobalZip(){
 
         var usrs=collectUsuarios();
         folder.file('Usuarios_Sistema.csv', tsvToBlob('sep=\t\r\n'+buildTSV(usrs.headers,usrs.rows)));
+
+        // ── Inventario ──
+        var inv=collectInventario();
+        if(inv.rows.length) folder.file('Inventario_Items.csv', tsvToBlob('sep=\t\r\n'+buildTSV(inv.headers,inv.rows)));
+
+        var invMovs=collectInventarioMovs();
+        if(invMovs.rows.length) folder.file('Inventario_Movimientos.csv', tsvToBlob('sep=\t\r\n'+buildTSV(invMovs.headers,invMovs.rows)));
       }
     }
 
