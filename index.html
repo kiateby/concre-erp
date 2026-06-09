@@ -10730,51 +10730,63 @@ function renderPagosUsuarios(){
   var y=new Date().getFullYear();
   var periodKey=y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
   var qLabel='Q'+(q)+' '+MES[m]+' '+y;
-
-  var users=sortAlpha(getUsers().filter(function(u){return u.estado==='activo';}),'nombre');
-  var fibraCosto=getFibraCosto(m,y);
   var monthKey=y+'-'+pad(m+1);
+  // Days for this quincena — same logic as user view
+  var days=getDays(y,m,q);
+
+  var users=sortAlpha(getUsers().filter(function(u){return u.estado==='activo';}), 'nombre');
 
   tbody.innerHTML=users.map(function(u){
+    // ── 1. SALARY ─────────────────────────────────────────
     var hist=getPlanillaHist(u.id, monthKey);
     var sal=hist&&hist.salario_override>0 ? hist.salario_override : (u.salario||0);
     var salQ=Math.round(sal/2);
-    // Horas extra monto (solo se paga en Q2)
-    var montoExtra=hist ? (hist.monto_extra||0) : 0;
-    var montoExtraQ=q===2 ? montoExtra : 0;
-    // Comisiones from DED
+
+    // ── 2. HORAS EXTRA — calculated from REG exactly like user view ──
+    var reg=getREG(u.id)||{};
+    var vh=sal/(4.5*54)*1.5; // same formula as buildAdminOverview and recalcQ
+    var totExt=0;
+    days.forEach(function(d){
+      var r=reg[dkey(d)]||{};
+      var j=r.jornada||defJornada(d,r.entrada,r.salida);
+      if(j==='libre') return;
+      totExt+=calcExt(r.entrada,r.salida,j).ext;
+    });
+    var montoExt=Math.round(totExt*vh);
+    // If hist has a manual override for horas extra, use it instead
+    if(hist&&hist.monto_extra>0) montoExt=hist.monto_extra;
+
+    // ── 3. COMISIONES — correct key: 'comis_YYYY-MM-1' or 'comis_YYYY-MM-2' ──
     var ded=getDED(u.id)||{};
-    // Commission keyed by period (user-set) OR by month (admin-set via 'YYYY-MM-1')
-    var comisKey='comis_'+y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
-    var comisMonthKey='comis_'+y+'-'+pad(m+1)+'-1';
-    // Period key takes priority; fall back to month key (set by superadmin)
-    var comisRaw=(ded[comisKey]||0)||(ded[comisMonthKey]||0);
+    var comisKey='comis_'+y+'-'+pad(m+1)+'-'+q; // Q1→'-1', Q2→'-2'
+    var comisRaw=ded[comisKey]||0;
     var isAnual=(u.comisType||'mensual')==='anual';
     var esDiciembre=m===11;
     var comisVal=isAnual?(esDiciembre&&q===2?comisRaw:0):comisRaw;
-    // Deducciones: historica (split 50/50 por quincena) o DED normal (ambas quincenas)
+
+    // ── 4. DEDUCCIONES — ccss+rb apply both quincenas, extra only Q1 ──
     var dedTotal;
     if(hist&&(hist.deduccion_total||0)>0){
-      // Deducción histórica mensual → dividir entre 2 quincenas
       dedTotal=Math.round((hist.deduccion_total||0)/2);
     } else {
-      // DED normal: CCSS y préstamo aplican AMBAS quincenas; extra solo Q1
       var ccss=ded.ccss_monto||0;
       var rb=ded.rb_monto||0;
       var extraReb=ded.extra_monto||0;
       dedTotal=ccss+rb+(q===1?extraReb:0);
     }
-    var bruto=salQ+montoExtraQ+comisVal;
+
+    // ── 5. TOTALS ──────────────────────────────────────────
+    var bruto=salQ+montoExt+comisVal;
     var total=bruto-dedTotal;
     var hasHist=!!hist;
     var state=getPagoState(u.id, periodKey);
     var pagado=state.pagado||false;
 
     return '<tr style="'+(pagado?'background:rgba(26,158,92,.06)':'')+'">'
-      +'<td style="font-weight:700">'+u.nombre+(hasHist?'<span title="Datos históricos editados" style="font-size:9px;background:rgba(244,163,10,.2);color:#f4a30a;padding:1px 4px;border-radius:3px;margin-left:4px;vertical-align:middle">HIST</span>':'')+'</td>'
+      +'<td style="font-weight:700">'+u.nombre+(hasHist?'<span title="Datos históricos" style="font-size:9px;background:rgba(244,163,10,.2);color:#f4a30a;padding:1px 4px;border-radius:3px;margin-left:4px;vertical-align:middle">HIST</span>':'')+'</td>'
       +'<td style="font-size:11px;color:var(--text3)">'+qLabel+'</td>'
       +'<td style="text-align:right;font-family:var(--cond)">'+fmt(salQ)+'</td>'
-      +'<td style="text-align:right;font-family:var(--cond);color:#f59e0b">'+(montoExtraQ>0?'+'+fmt(montoExtraQ):'—')+'</td>'
+      +'<td style="text-align:right;font-family:var(--cond);color:#f59e0b">'+(montoExt>0?'+'+fmt(montoExt):'—')+'</td>'
       +'<td style="text-align:right;font-family:var(--cond);color:var(--green)">'+(comisVal>0?'+'+fmt(comisVal):'—')+'</td>'
       +'<td style="text-align:right;font-family:var(--cond);color:var(--red)">'+(dedTotal>0?'−'+fmt(dedTotal):'—')+'</td>'
       +'<td style="text-align:right;font-family:var(--cond);font-size:16px;font-weight:900;color:'+(total>=0?'var(--green)':'var(--red)')+'">'+fmt(total)+'</td>'
