@@ -12286,6 +12286,13 @@ function buildTSV(headers, rows){
 
 
 function tsvToBlob(content){
+  // UTF-16 LE encoding for Excel — handles all Spanish characters correctly
+  function strToUTF16LE(str){
+    var buf=new ArrayBuffer(str.length*2);
+    var view=new Uint16Array(buf);
+    for(var i=0;i<str.length;i++) view[i]=str.charCodeAt(i);
+    return new Uint8Array(buf);
+  }
   var bom=new Uint8Array([0xFF,0xFE]);
   var encoded=strToUTF16LE(content);
   var combined=new Uint8Array(2+encoded.length);
