@@ -12255,9 +12255,14 @@ function renderExportReminderBanner(){
   if(!banner) return;
   var info=getLastExportInfo();
   var now=new Date();
-  if(!info||Math.floor((now-new Date(info.at))/(1000*60*60*24))>=30){
-    var days=info?Math.floor((now-new Date(info.at))/(1000*60*60*24)):null;
-    banner.style.display='block';
+  var needsAlert=!info||Math.floor((now-new Date(info.at))/(1000*60*60*24))>=30;
+  var days=info?Math.floor((now-new Date(info.at))/(1000*60*60*24)):null;
+  var lastText=info?'Último respaldo: '+new Date(info.at).toLocaleDateString('es-CR'):'Sin respaldos previos';
+
+  // Always show the banner for superadmin — just change style based on urgency
+  banner.style.display='block';
+  if(needsAlert){
+    // RED ALERT: no backup or >30 days
     banner.innerHTML='<div style="background:rgba(227,24,55,.08);border:2px solid rgba(227,24,55,.4);border-radius:10px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">'
       +'<div>'
         +'<div style="font-family:var(--cond);font-size:16px;font-weight:900;color:var(--red)">🔴 '
@@ -12268,7 +12273,11 @@ function renderExportReminderBanner(){
       +'<button onclick="generateGlobalZip()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:800;white-space:nowrap">⬇ Exportar ahora</button>'
     +'</div>';
   } else {
-    banner.style.display='none';
+    // CALM: recent backup done — show small button only
+    banner.innerHTML='<div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+      +'<div style="font-size:12px;color:var(--text3)">✅ Respaldo al día — '+lastText+'</div>'
+      +'<button onclick="generateGlobalZip()" style="background:var(--surface);color:var(--text);border:1.5px solid var(--border2);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:700">⬇ Nuevo respaldo</button>'
+    +'</div>';
   }
 }
 
