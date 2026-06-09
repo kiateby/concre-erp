@@ -12353,24 +12353,41 @@ function collectUserHoras(uid){
   var stored=window._exportRegCache&&window._exportRegCache[uid]
     ? window._exportRegCache[uid]
     : (window._horasCache&&window._horasCache[uid]?window._horasCache[uid]:{});
+
+  // Helper: parse 'HH:MM' to decimal hours
+  function _pT(t){ if(!t)return null; var p=t.split(':').map(Number); return p[0]+p[1]/60; }
+
+  // Helper: calculate ord/ext hours from entrada, salida, jornada
+  function _calcH(entrada, salida, jornada){
+    if(jornada==='libre'||!entrada||!salida) return {ord:0,ext:0};
+    var ei=_pT(entrada), si=_pT(salida);
+    if(si!==null&&si<=ei) si+=24;
+    var w=si-ei;
+    if(jornada==='sabado') return {ord:Math.min(w,4), ext:Math.max(0,w-4)};
+    if(jornada==='domingo'||jornada==='feriado') return {ord:0, ext:w};
+    var lim={diurna:8,mixta:7,nocturna:6}[jornada]||8;
+    return {ord:Math.min(w,lim+1), ext:Math.max(0,w-(lim+1))};
+  }
+
   Object.keys(stored).sort().forEach(function(dateKey){
-    var dayData=stored[dateKey];
-    if(!dayData) return;
+    var d=stored[dateKey];
+    if(!d) return;
+    var entrada=d.entrada||'';
+    var salida=d.salida||'';
+    var jornada=d.jornada||'';
+    if(!entrada&&!salida) return; // skip empty days
+    var calc=_calcH(entrada,salida,jornada||'diurna');
     var mes=dateKey.substring(0,7);
-    var entrada=dayData.entrada||'';
-    var salida=dayData.salida||'';
-    var horasNorm=dayData.horasNorm||0;
-    var horasExt=dayData.horasExt||0;
-    var dedCCSS=dayData.dedCCSS||0;
-    var dedOtros=dayData.dedOtros||0;
-    var notas=dayData.notas||'';
-    rows.push([dateKey, mes, entrada, salida,
-      horasNorm, horasExt, horasNorm+horasExt,
-      dedCCSS, dedOtros, notas]);
+    rows.push([
+      dateKey, mes, entrada, salida, jornada||'diurna',
+      Math.round(calc.ord*100)/100,
+      Math.round(calc.ext*100)/100,
+      Math.round((calc.ord+calc.ext)*100)/100,
+      d.nota||d.notas||''
+    ]);
   });
   return {
-    headers:['Fecha','Mes','Entrada','Salida','Horas Norm.','Horas Extra','Total Horas',
-             'Ded. CCSS','Ded. Otros','Notas'],
+    headers:['Fecha','Mes','Entrada','Salida','Jornada','Horas Norm.','Horas Extra','Total Horas','Notas'],
     rows:rows
   };
 }
@@ -12493,41 +12510,72 @@ function collectUserPlanilla(uid){
   var salario=u.salario||0;
   var reg=window._exportRegCache&&window._exportRegCache[uid]?window._exportRegCache[uid]:{};
   var ded=window._exportDedCache&&window._exportDedCache[uid]?window._exportDedCache[uid]:{};
+
+  // Helper: calculate horas from entrada/salida/jornada (same as UI)
+  function _pT(t){ if(!t)return null; var p=t.split(':').map(Number); return p[0]+p[1]/60; }
+  function _calcH(entrada,salida,jornada){
+    if(jornada==='libre'||!entrada||!salida) return {ord:0,ext:0};
+    var ei=_pT(entrada),si=_pT(salida);
+    if(si!==null&&si<=ei) si+=24;
+    var w=si-ei;
+    if(jornada==='sabado') return {ord:Math.min(w,4),ext:Math.max(0,w-4)};
+    if(jornada==='domingo'||jornada==='feriado') return {ord:0,ext:w};
+    var lim={diurna:8,mixta:7,nocturna:6}[jornada]||8;
+    return {ord:Math.min(w,lim+1),ext:Math.max(0,w-(lim+1))};
+  }
+
   var months={};
+  var blank={horasNorm:0,horasExt:0,dias:0,ccss_monto:0,rb_monto:0,rb_desc:'',extra_monto:0,extra_desc:''};
+
+  // Build month totals from REG — calculate horas from entrada/salida
   Object.keys(reg).forEach(function(dateKey){
     var mk=dateKey.substring(0,7);
-    if(!months[mk]) months[mk]={horasNorm:0,horasExt:0,dedCCSS:0,dedOtros:0,dias:0,ccss_monto:0,rb_monto:0,rb_desc:'',extra_monto:0,extra_desc:''};
+    if(!months[mk]) months[mk]=JSON.parse(JSON.stringify(blank));
     var d=reg[dateKey]||{};
-    months[mk].horasNorm+=(d.horasNorm||0);
-    months[mk].horasExt+=(d.horasExt||0);
-    months[mk].dedCCSS+=(d.dedCCSS||0);
-    months[mk].dedOtros+=(d.dedOtros||0);
-    if(d.entrada||d.salida) months[mk].dias++;
+    if(!d.entrada&&!d.salida) return;
+    var calc=_calcH(d.entrada,d.salida,d.jornada||'diurna');
+    months[mk].horasNorm+=calc.ord;
+    months[mk].horasExt+=calc.ext;
+    months[mk].dias++;
   });
+
+  // Apply DED values — key format: 'YYYY-MM-1' (one per month)
   Object.keys(ded).forEach(function(dedKey){
-    var mk=dedKey.substring(0,7);
-    if(!months[mk]) months[mk]={horasNorm:0,horasExt:0,dedCCSS:0,dedOtros:0,dias:0,ccss_monto:0,rb_monto:0,rb_desc:'',extra_monto:0,extra_desc:''};
+    // dedKey like '2026-06-1' → month '2026-06'
+    var mk=dedKey.length>=7?dedKey.substring(0,7):'';
+    if(!mk) return;
+    if(!months[mk]) months[mk]=JSON.parse(JSON.stringify(blank));
     var d=ded[dedKey]||{};
-    months[mk].ccss_monto+=(d.ccss_monto||0);
-    months[mk].rb_monto+=(d.rb_monto||0);
-    months[mk].extra_monto+=(d.extra_monto||0);
-    if(d.rb_desc) months[mk].rb_desc=d.rb_desc;
+    if(d.ccss_monto) months[mk].ccss_monto+=d.ccss_monto;
+    if(d.rb_monto)   months[mk].rb_monto+=d.rb_monto;
+    if(d.extra_monto)months[mk].extra_monto+=d.extra_monto;
+    if(d.rb_desc)    months[mk].rb_desc=d.rb_desc;
     if(d.extra_desc) months[mk].extra_desc=d.extra_desc;
   });
+
   Object.keys(months).sort().forEach(function(mk){
     var m=months[mk];
-    var montoExtra=Math.round(m.horasExt*((salario/30/8)*1.5));
-    var totalBruto=salario+montoExtra+(m.extra_monto||0);
-    var totalDed=(m.ccss_monto||m.dedCCSS||0)+(m.rb_monto||0)+(m.dedOtros||0);
-    rows.push([mk,salario,m.horasNorm,m.horasExt,montoExtra,
-      m.extra_monto||0,m.extra_desc||'',
-      m.ccss_monto||m.dedCCSS||0,m.rb_monto||0,m.rb_desc||'',m.dedOtros||0,
-      Math.round(totalBruto),Math.round(totalDed),Math.round(totalBruto-totalDed)]);
+    var hExt=Math.round(m.horasExt*100)/100;
+    var hNorm=Math.round(m.horasNorm*100)/100;
+    // Hourly rate: salary / 30 days / 8 hours; extra = 1.5x
+    var vh=salario/30/8;
+    var montoExtra=Math.round(hExt*vh*1.5);
+    var otrosIngresos=m.extra_monto||0;
+    var totalBruto=salario+montoExtra+otrosIngresos;
+    var totalDed=(m.ccss_monto||0)+(m.rb_monto||0);
+    var totalLiquido=totalBruto-totalDed;
+    rows.push([
+      mk, salario, m.dias, hNorm, hExt, montoExtra,
+      otrosIngresos, m.extra_desc||'',
+      m.ccss_monto||0, m.rb_monto||0, m.rb_desc||'',
+      Math.round(totalBruto), Math.round(totalDed), Math.round(totalLiquido)
+    ]);
   });
   return {
-    headers:['Mes','Salario Base','Horas Norm.','Horas Extra','Monto Extras',
-             'Otros Ingresos','Desc.Ingreso','Ded.CCSS','Ded.Rebajos','Desc.Rebajo',
-             'Ded.Otros','Total Bruto','Total Deducciones','Total Liquido'],
+    headers:['Mes','Salario Base','Dias Trab.','Horas Norm.','Horas Extra','Monto Extras',
+             'Otros Ingresos','Desc.Ingreso',
+             'Ded.CCSS','Ded.Rebajos','Desc.Rebajo',
+             'Total Bruto','Total Deducciones','Total Liquido'],
     rows:rows
   };
 }
