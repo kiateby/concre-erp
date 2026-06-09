@@ -12245,9 +12245,9 @@ function checkExportReminder(){
       ?'⚠️ PRECAUCIÓN: Han pasado '+days2+' días desde el último respaldo global. Realiza la exportación ahora.'
       :'🔴 PELIGRO: Nunca se ha realizado un respaldo global del sistema. Hazlo ahora.';
     showInAppNotification(msg);
-    // Also show in overview if visible
-    renderExportReminderBanner();
   }
+  // Always render banner for superadmin — button must always be visible
+  renderExportReminderBanner();
 }
 
 function renderExportReminderBanner(){
