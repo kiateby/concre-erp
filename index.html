@@ -10659,7 +10659,7 @@ function renderPlanillaHistoricaTable(){
     +'<span><span style="color:#f4a30a">●</span> Guardado en nube</span>'
     +'<span><span style="color:#60a5fa">◌</span> Pre-llenado del registro del usuario (borde azul) — debe guardar para que aplique al resumen</span>'
     +'<span>Sin indicador = sin datos</span>'
-    +'<span style="margin-left:auto">Salario vacío = usa el del perfil · H.Extra y deducciones aplican en Q2</span>'
+    +'<span style="margin-left:auto">Salario vacío = usa el del perfil · H.Extra aplica en Q2 · Deducciones se dividen 50/50 en Q1 y Q2</span>'
     +'</div></div>';
 
   el.innerHTML=html;
@@ -10752,11 +10752,13 @@ function renderPagosUsuarios(){
     var isAnual=(u.comisType||'mensual')==='anual';
     var esDiciembre=m===11;
     var comisVal=isAnual?(esDiciembre&&q===2?comisRaw:0):comisRaw;
-    // Deducciones: historica (Q2) o DED normal
+    // Deducciones: historica (split 50/50 por quincena) o DED normal (ambas quincenas)
     var dedTotal;
     if(hist&&(hist.deduccion_total||0)>0){
-      dedTotal=q===2?(hist.deduccion_total||0):0;
+      // Deducción histórica mensual → dividir entre 2 quincenas
+      dedTotal=Math.round((hist.deduccion_total||0)/2);
     } else {
+      // DED normal: CCSS y préstamo aplican AMBAS quincenas; extra solo Q1
       var ccss=ded.ccss_monto||0;
       var rb=ded.rb_monto||0;
       var extraReb=ded.extra_monto||0;
@@ -18982,7 +18984,7 @@ window.initCalcCONCRE=initCalcCONCRE;
           <div class="ib" style="margin-bottom:14px;font-size:12px">
             <strong>ℹ️ Cómo funciona:</strong> Ingrese el salario base (si difiere del perfil), el monto total de horas extra del mes en colones, y la deducción total (CCSS + otros) para cada mes. 
             Al guardar, el resumen de planilla se actualiza automáticamente. Los datos marcados con <span style="color:#f4a30a">● HIST</span> en el resumen de pagos provienen de aquí.
-            Las horas extra y deducciones se aplican en la <strong>Quincena 2</strong>.
+            Las horas extra se pagan en <strong>Quincena 2</strong>. Las deducciones se dividen automáticamente entre Q1 y Q2 (50/50).
           </div>
           <div id="planilla-historica-root"></div>
         </div>
