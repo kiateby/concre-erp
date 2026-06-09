@@ -14102,7 +14102,10 @@ async function invGenerarVentaIncompleta(vendedorId, item, cantidad, movId){
   };
   vd[mk].ventas.push(nuevaVenta);
   setVentasData(vendedorId, vd);
-  toast('📝 Línea de venta incompleta generada para '+getUsers().find(function(u){return u.id===vendedorId;})?.nombre);
+  // Persistir en Supabase para que sobreviva recargas
+  _saveSingleVenta(vendedorId, nuevaVenta, mk);
+  var vendedorNombre=(getUsers().find(function(u){return u.id===vendedorId;})||{}).nombre||vendedorId;
+  toast('📝 Línea de venta incompleta generada para '+vendedorNombre+' — completar en pestaña Ventas');
 }
 
 // ── Ver detalle de movimiento (desde número de movimiento) ──
