@@ -10467,6 +10467,195 @@ function setPagoState(uid, periodKey, state){
   _saveToSupabase('user_pago_'+uid+'_'+periodKey.replace(/-/g,'_'), state, 'cc_pago_'+uid+'_'+periodKey.replace(/-/g,'_'));
 }
 
+// ── PLANILLA HISTÓRICA ────────────────────────────────────────
+// Clave Supabase: 'planilla_hist_UID_YYYY-MM'
+// Valor: {salario_override, monto_extra, deduccion_total, nota}
+window._planillaHistCache = {}; // {uid: {'YYYY-MM': {salario_override, monto_extra, deduccion_total, nota}}}
+
+async function loadPlanillaHist(){
+  // Load historical planilla data for ALL users from Supabase
+  try {
+    var r = await DB.from('configuracion').select('clave,valor').like('clave','planilla_hist_%');
+    if(r.error){ console.error('loadPlanillaHist:', r.error); return; }
+    window._planillaHistCache = {};
+    (r.data||[]).forEach(function(row){
+      // clave format: planilla_hist_UID_YYYY-MM
+      var parts = row.clave.split('_');
+      // parts: ['planilla','hist','UID','YYYY-MM'] — UID may have underscores?
+      // Better: strip prefix 'planilla_hist_' and split remaining by last _YYYY-MM
+      var rest = row.clave.replace('planilla_hist_','');
+      // rest = 'UID_YYYY-MM', split at last '-' pattern: last 7 chars are YYYY-MM
+      var monthKey = rest.slice(-7); // 'YYYY-MM'
+      var uid = rest.slice(0, rest.length - 8); // remove '_YYYY-MM'
+      if(!window._planillaHistCache[uid]) window._planillaHistCache[uid] = {};
+      window._planillaHistCache[uid][monthKey] = row.valor;
+    });
+    console.log('Planilla histórica cargada:', Object.keys(window._planillaHistCache).length, 'usuarios');
+  } catch(e) { console.error('loadPlanillaHist error:', e); }
+}
+
+function getPlanillaHist(uid, monthKey){
+  return (window._planillaHistCache[uid] && window._planillaHistCache[uid][monthKey]) || null;
+}
+
+function savePlanillaHist(uid, monthKey, data){
+  if(!window._planillaHistCache[uid]) window._planillaHistCache[uid] = {};
+  window._planillaHistCache[uid][monthKey] = data;
+  var clave = 'planilla_hist_'+uid+'_'+monthKey;
+  DB.from('configuracion').upsert(
+    {clave: clave, valor: data, updated_at: new Date().toISOString()},
+    {onConflict: 'clave'}
+  ).then(function(r){
+    if(r.error) console.error('savePlanillaHist:', r.error);
+    else toast('✅ Planilla histórica guardada — '+monthKey);
+  });
+}
+
+function deletePlanillaHist(uid, monthKey){
+  if(window._planillaHistCache[uid]) delete window._planillaHistCache[uid][monthKey];
+  var clave = 'planilla_hist_'+uid+'_'+monthKey;
+  DB.from('configuracion').delete().eq('clave', clave).then(function(r){
+    if(r.error) console.error('deletePlanillaHist:', r.error);
+  });
+}
+
+function renderPlanillaHistorica(){
+  // Only for superadmin
+  if(!SESSION||SESSION.rol!=='superadmin') return;
+  var el=document.getElementById('planilla-historica-root');
+  if(!el) return;
+
+  var users=sortAlpha(getUsers().filter(function(u){return u.estado==='activo';}),'nombre');
+  // Months: Nov 2025 to current month
+  var months=[];
+  var d=new Date(2025,10,1); // Nov 2025
+  var now=new Date();
+  var limit=new Date(now.getFullYear(),now.getMonth()+1,1);
+  while(d<limit){
+    months.push({y:d.getFullYear(),m:d.getMonth(),key:d.getFullYear()+'-'+pad(d.getMonth()+1)});
+    d.setMonth(d.getMonth()+1);
+  }
+  months.reverse(); // most recent first
+
+  // Render user selector
+  var selHtml='<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">'
+    +'<label style="font-size:12px;font-weight:700;color:var(--text2)">Colaborador:</label>'
+    +'<select id="hist-user-sel" class="form-select" style="font-size:12px;padding:5px 10px;" onchange="renderPlanillaHistoricaTable()">'
+    +users.map(function(u){return '<option value="'+u.id+'">'+u.nombre+'</option>';}).join('')
+    +'</select>'
+    +'</div>';
+
+  el.innerHTML=selHtml+'<div id="hist-table-root"></div>';
+  renderPlanillaHistoricaTable();
+}
+
+function renderPlanillaHistoricaTable(){
+  var el=document.getElementById('hist-table-root');
+  if(!el) return;
+  var sel=document.getElementById('hist-user-sel');
+  if(!sel) return;
+  var uid=sel.value;
+  var user=getUsers().find(function(u){return u.id===uid;})||{};
+  var salBase=user.salario||0;
+
+  // Months Nov 2025 → current
+  var months=[];
+  var d=new Date(2025,10,1);
+  var now=new Date();
+  var limit=new Date(now.getFullYear(),now.getMonth()+1,1);
+  while(d<limit){
+    months.push({y:d.getFullYear(),m:d.getMonth(),key:d.getFullYear()+'-'+pad(d.getMonth()+1),
+      label:MES[d.getMonth()]+' '+d.getFullYear()});
+    d.setMonth(d.getMonth()+1);
+  }
+  months.reverse();
+
+  var html='<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;">'
+    +'<div style="background:var(--gray-dark);padding:10px 16px;border-bottom:2px solid var(--red);display:flex;justify-content:space-between;align-items:center;">'
+    +'<span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">📋 Planilla histórica — '+user.nombre+'</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Salario base perfil: ₡'+fmt(salBase)+' | Nov 2025 → presente</span>'
+    +'</div>'
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:700px">'
+    +'<thead><tr>'
+    +'<th>Mes</th>'
+    +'<th style="text-align:right">Salario base<br><span style="font-size:9px;font-weight:400;opacity:.6">(override o perfil)</span></th>'
+    +'<th style="text-align:right;color:#f59e0b">Monto H.Extra ₡<br><span style="font-size:9px;font-weight:400;opacity:.6">(total del mes)</span></th>'
+    +'<th style="text-align:right;color:var(--red)">Deducción total ₡<br><span style="font-size:9px;font-weight:400;opacity:.6">(CCSS + otros)</span></th>'
+    +'<th>Nota</th>'
+    +'<th style="text-align:center">Acción</th>'
+    +'</tr></thead>'
+    +'<tbody>';
+
+  months.forEach(function(mo){
+    var hist=getPlanillaHist(uid, mo.key)||{};
+    var hasData=!!(hist&&(hist.salario_override||hist.monto_extra||hist.deduccion_total));
+    var salOvr=hist.salario_override||0;
+    var montoExt=hist.monto_extra||0;
+    var dedTotal=hist.deduccion_total||0;
+    var nota=hist.nota||'';
+    var rowId='hr_'+uid+'_'+mo.key.replace('-','_');
+    html+='<tr style="'+(hasData?'background:rgba(244,163,10,.04)':'')+'">'
+      +'<td style="font-weight:700;white-space:nowrap;font-size:12px">'+mo.label+(hasData?' <span style="font-size:9px;color:#f4a30a">●</span>':'')+'</td>'
+      // Salario override input
+      +'<td style="text-align:right;padding:6px 8px">'
+      +'<input id="'+rowId+'_sal" type="number" step="1000" min="0" value="'+(salOvr||'')+'" placeholder="'+fmt(salBase)+'"'
+      +' style="width:110px;text-align:right;font-size:12px;padding:4px 6px;border:1.5px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text);font-family:var(--cond)" '
+      +' title="Dejar en blanco = usa salario del perfil (₡'+fmt(salBase)+')">'
+      +'</td>'
+      // Monto horas extra
+      +'<td style="text-align:right;padding:6px 8px">'
+      +'<input id="'+rowId+'_ext" type="number" step="1000" min="0" value="'+(montoExt||'')+'" placeholder="0"'
+      +' style="width:110px;text-align:right;font-size:12px;padding:4px 6px;border:1.5px solid var(--border);border-radius:5px;background:var(--surface2);color:#f59e0b;font-family:var(--cond)">'
+      +'</td>'
+      // Deducción total
+      +'<td style="text-align:right;padding:6px 8px">'
+      +'<input id="'+rowId+'_ded" type="number" step="1000" min="0" value="'+(dedTotal||'')+'" placeholder="0"'
+      +' style="width:110px;text-align:right;font-size:12px;padding:4px 6px;border:1.5px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--red);font-family:var(--cond)">'
+      +'</td>'
+      // Nota
+      +'<td style="padding:6px 8px">'
+      +'<input id="'+rowId+'_nota" type="text" value="'+nota+'" placeholder="Nota opcional..."'
+      +' style="width:160px;font-size:11px;padding:4px 6px;border:1.5px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2)">'
+      +'</td>'
+      // Actions
+      +'<td style="text-align:center;padding:6px 8px;white-space:nowrap">'
+      +'<button onclick="guardarHistRow(this.dataset.uid,this.dataset.mk,this.dataset.rid)" data-uid="'+uid+'" data-mk="'+mo.key+'" data-rid="'+rowId+'" style="font-size:11px;padding:4px 10px;border-radius:5px;border:none;background:var(--green);color:#fff;cursor:pointer;font-weight:700;margin-right:4px">💾 Guardar</button>'
+      +(hasData?'<button onclick="borrarHistRow(this.dataset.uid,this.dataset.mk)" data-uid="'+uid+'" data-mk="'+mo.key+'" style="font-size:11px;padding:4px 8px;border-radius:5px;border:none;background:rgba(239,68,68,.15);color:var(--red);cursor:pointer;font-weight:700">✕</button>':'')
+      +'</td>'
+      +'</tr>';
+  });
+
+  html+='</tbody></table></div>'
+    +'<div style="padding:10px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);">'
+    +'⚡ Los cambios guardados actualizan el resumen de planilla en tiempo real. '
+    +'Salario en blanco = usa el del perfil. H.Extra se paga en Q2. Deducciones se aplican en Q2.'
+    +'</div></div>';
+
+  el.innerHTML=html;
+}
+
+function guardarHistRow(uid, monthKey, rowId){
+  var salOvrEl=document.getElementById(rowId+'_sal');
+  var montoExtEl=document.getElementById(rowId+'_ext');
+  var dedTotalEl=document.getElementById(rowId+'_ded');
+  var notaEl=document.getElementById(rowId+'_nota');
+  var salOvr=salOvrEl?parseInt(salOvrEl.value)||0:0;
+  var montoExt=montoExtEl?parseInt(montoExtEl.value)||0:0;
+  var dedTotal=dedTotalEl?parseInt(dedTotalEl.value)||0:0;
+  var nota=notaEl?(notaEl.value||'').trim():'';
+  var data={salario_override:salOvr, monto_extra:montoExt, deduccion_total:dedTotal, nota:nota};
+  savePlanillaHist(uid, monthKey, data);
+  // Refresh table and planilla summary
+  setTimeout(function(){ renderPlanillaHistoricaTable(); renderPagosUsuarios(); }, 600);
+}
+
+function borrarHistRow(uid, monthKey){
+  if(!confirm('¿Eliminar datos históricos de '+monthKey+' para este colaborador?')) return;
+  deletePlanillaHist(uid, monthKey);
+  setTimeout(function(){ renderPlanillaHistoricaTable(); renderPagosUsuarios(); }, 300);
+  toast('🗑 Datos históricos eliminados');
+}
+
 function initPagosUsuarios(){
   // Populate month selector
   var msel=document.getElementById('pago-month-sel');
@@ -10481,7 +10670,18 @@ function initPagosUsuarios(){
   // Default quincena based on today
   var qsel=document.getElementById('pago-period-sel');
   if(qsel) qsel.value=new Date().getDate()<=15?'1':'2';
-  renderPagosUsuarios();
+  // Show planilla historica section only for superadmin
+  var histSec=document.getElementById('planilla-historica-section');
+  if(histSec) histSec.style.display=(SESSION&&SESSION.rol==='superadmin')?'block':'none';
+  // Load historical planilla data from Supabase then render
+  if(SESSION&&(SESSION.rol==='superadmin'||SESSION.rol==='admin')){
+    loadPlanillaHist().then(function(){
+      renderPagosUsuarios();
+      if(SESSION.rol==='superadmin') renderPlanillaHistorica();
+    });
+  } else {
+    renderPagosUsuarios();
+  }
 }
 
 function renderPagosUsuarios(){
@@ -10497,36 +10697,45 @@ function renderPagosUsuarios(){
 
   var users=sortAlpha(getUsers().filter(function(u){return u.estado==='activo';}),'nombre');
   var fibraCosto=getFibraCosto(m,y);
+  var monthKey=y+'-'+pad(m+1);
 
   tbody.innerHTML=users.map(function(u){
-    var sal=u.salario||0;
+    var hist=getPlanillaHist(u.id, monthKey);
+    var sal=hist&&hist.salario_override>0 ? hist.salario_override : (u.salario||0);
     var salQ=Math.round(sal/2);
-    // Get comision for this month (synced to next month q2)
-    var payM=m-1; var payY=y; if(payM<0){payM=11;payY--;}
+    // Horas extra monto (solo se paga en Q2)
+    var montoExtra=hist ? (hist.monto_extra||0) : 0;
+    var montoExtraQ=q===2 ? montoExtra : 0;
+    // Comisiones from DED
     var ded=getDED(u.id)||{};
     var comisKey='comis_'+y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
     var comisRaw=ded[comisKey]||0;
-    // Usuarios con comisión anual: NO incluir en planilla mensual (solo en diciembre Q2)
     var isAnual=(u.comisType||'mensual')==='anual';
     var esDiciembre=m===11;
     var comisVal=isAnual?(esDiciembre&&q===2?comisRaw:0):comisRaw;
-    // Deductions
-    var ccss=ded.ccss_monto||0;
-    var rb=ded.rb_monto||0;
-    var extraReb=ded.extra_monto||0;
-    // CCSS y préstamo aplican en ambas quincenas; extra solo Q1
-    var dedTotal=ccss+rb+(q===1?extraReb:0);
-    var total=salQ+comisVal-dedTotal;
-
+    // Deducciones: historica (Q2) o DED normal
+    var dedTotal;
+    if(hist&&(hist.deduccion_total||0)>0){
+      dedTotal=q===2?(hist.deduccion_total||0):0;
+    } else {
+      var ccss=ded.ccss_monto||0;
+      var rb=ded.rb_monto||0;
+      var extraReb=ded.extra_monto||0;
+      dedTotal=ccss+rb+(q===1?extraReb:0);
+    }
+    var bruto=salQ+montoExtraQ+comisVal;
+    var total=bruto-dedTotal;
+    var hasHist=!!hist;
     var state=getPagoState(u.id, periodKey);
     var pagado=state.pagado||false;
 
     return '<tr style="'+(pagado?'background:rgba(26,158,92,.06)':'')+'">'
-      +'<td style="font-weight:700">'+u.nombre+'</td>'
+      +'<td style="font-weight:700">'+u.nombre+(hasHist?'<span title="Datos históricos editados" style="font-size:9px;background:rgba(244,163,10,.2);color:#f4a30a;padding:1px 4px;border-radius:3px;margin-left:4px;vertical-align:middle">HIST</span>':'')+'</td>'
       +'<td style="font-size:11px;color:var(--text3)">'+qLabel+'</td>'
       +'<td style="text-align:right;font-family:var(--cond)">'+fmt(salQ)+'</td>'
-      +'<td style="text-align:right;font-family:var(--cond);color:var(--green)">'+( comisVal>0?'+'+fmt(comisVal):'—')+'</td>'
-      +'<td style="text-align:right;font-family:var(--cond);color:var(--red)">'+( dedTotal>0?'−'+fmt(dedTotal):'—')+'</td>'
+      +'<td style="text-align:right;font-family:var(--cond);color:#f59e0b">'+(montoExtraQ>0?'+'+fmt(montoExtraQ):'—')+'</td>'
+      +'<td style="text-align:right;font-family:var(--cond);color:var(--green)">'+(comisVal>0?'+'+fmt(comisVal):'—')+'</td>'
+      +'<td style="text-align:right;font-family:var(--cond);color:var(--red)">'+(dedTotal>0?'−'+fmt(dedTotal):'—')+'</td>'
       +'<td style="text-align:right;font-family:var(--cond);font-size:16px;font-weight:900;color:'+(total>=0?'var(--green)':'var(--red)')+'">'+fmt(total)+'</td>'
       +'<td>'+(pagado?'<span class="vac-badge approved">✓ Pagado</span>':'<span class="vac-badge pending">Pendiente</span>')+'</td>'
       +'<td style="text-align:center">'
@@ -18710,7 +18919,8 @@ window.initCalcCONCRE=initCalcCONCRE;
                   <table class="atbl" style="min-width:650px">
                     <thead><tr>
                       <th>Colaborador</th><th>Quincena</th>
-                      <th style="text-align:right">Salario</th>
+                      <th style="text-align:right">Salario Q</th>
+                      <th style="text-align:right;color:#f59e0b">H.Extra ₡</th>
                       <th style="text-align:right">Comisión</th>
                       <th style="text-align:right">Deducciones</th>
                       <th style="text-align:right">Total a pagar</th>
@@ -18723,6 +18933,20 @@ window.initCalcCONCRE=initCalcCONCRE;
               </div>
             </div>
 
+
+        <!-- PLANILLA HISTÓRICA — solo superadmin -->
+        <div id="planilla-historica-section" style="margin-top:24px;display:none">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+            <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">📋 Planilla histórica por colaborador</div>
+            <span style="font-size:11px;color:var(--text3);background:rgba(244,163,10,.1);border:1px solid rgba(244,163,10,.3);padding:2px 8px;border-radius:4px">Solo SuperAdmin · Nov 2025 → presente</span>
+          </div>
+          <div class="ib" style="margin-bottom:14px;font-size:12px">
+            <strong>ℹ️ Cómo funciona:</strong> Ingrese el salario base (si difiere del perfil), el monto total de horas extra del mes en colones, y la deducción total (CCSS + otros) para cada mes. 
+            Al guardar, el resumen de planilla se actualiza automáticamente. Los datos marcados con <span style="color:#f4a30a">● HIST</span> en el resumen de pagos provienen de aquí.
+            Las horas extra y deducciones se aplican en la <strong>Quincena 2</strong>.
+          </div>
+          <div id="planilla-historica-root"></div>
+        </div>
 
         <div style="margin-top:24px">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
