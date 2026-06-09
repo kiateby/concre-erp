@@ -88,40 +88,42 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 /* HEADER */
 .hdr{
   background:#ffffff;border-bottom:3px solid var(--red);
-  padding:0 16px;display:flex;align-items:center;gap:10px;height:56px;
+  padding:4px 16px;display:flex;align-items:center;gap:6px;
+  min-height:50px;flex-wrap:wrap;
   position:sticky;top:0;z-index:200;box-shadow:0 2px 10px rgba(0,0,0,.3);
 }
-.hdr-logo .lc{font-family:var(--cond);font-size:26px;font-weight:900;color:var(--gray-dark);letter-spacing:-1px}
+.hdr-logo .lc{font-family:var(--cond);font-size:20px;font-weight:900;color:var(--gray-dark);letter-spacing:-1px}
 .hdr-logo .lr{color:var(--red)}
-.hdr-sep{width:1px;height:24px;background:rgba(0,0,0,.12)}
-.hdr-tabs{display:flex;gap:2pxoverflow-x:auto;}
+.hdr-sep{width:1px;height:20px;background:rgba(0,0,0,.12);margin:0 2px;}
+.hdr-tabs{display:flex;gap:2px;flex-wrap:wrap;align-items:center;flex:1;min-width:0;}
 .htab{
-  padding:6px 10px;border-radius:6px;font-size:12px;font-weight:700;
+  padding:4px 8px;border-radius:5px;font-size:11px;font-weight:700;
   color:var(--gray-dark);cursor:pointer;transition:all .15s;
-  border:none;background:none;font-family:var(--sans);letter-spacing:.2px;
+  border:none;background:none;font-family:var(--sans);letter-spacing:.1px;white-space:nowrap;
 }
 .htab:hover{color:var(--red);background:rgba(227,24,55,.06)}
 .htab.on{color:#fff;background:var(--red)}
-.hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:7px;flex-shrink:0;}
 .upill{
   display:flex;align-items:center;gap:8px;
   background:var(--surface2);border:1px solid var(--border);
-  padding:5px 13px 5px 7px;border-radius:100px;
-  font-size:13px;font-weight:700;color:var(--gray-dark);
+  padding:3px 10px 3px 6px;border-radius:100px;
+  font-size:11px;font-weight:700;color:var(--gray-dark);
 }
 .uav{
-  width:26px;height:26px;border-radius:50%;
+  width:22px;height:22px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
-  font-size:10px;font-weight:800;color:#fff;letter-spacing:.5px;
+  font-size:9px;font-weight:800;color:#fff;letter-spacing:.5px;
 }
 .uav.admin{background:var(--red)}
 .uav.user{background:var(--gray)}
 .logout-btn{
-  padding:5px 12px;border-radius:100px;font-size:11px;font-weight:800;
-  cursor:pointer;border:1.5px solid rgba(255,255,255,.2);
-  background:transparent;color:var(--gray);font-family:var(--sans);
-  transition:all .15s;
+  padding:4px 11px;border-radius:100px;font-size:11px;font-weight:800;
+  cursor:pointer;border:1.5px solid var(--red);
+  background:transparent;color:var(--red);font-family:var(--sans);
+  transition:all .15s;white-space:nowrap;
 }
+.logout-btn:hover{background:var(--red);color:#fff;}
 .logout-btn:hover{border-color:rgba(255,255,255,.5);color:#fff}
 
 /* ════════════════════════════════
@@ -1557,10 +1559,12 @@ function initPresupuesto(){
   // Load presupuesto HTML content via fetch from same origin,
   // or inject inline — using iframe approach for full isolation
   var iframe=document.createElement('iframe');
-  iframe.src='presupuesto_construccion.html';
-  iframe.style.cssText='width:100%;height:100%;border:none;background:var(--bg)';
+  // Use absolute path from current origin to ensure it works on Vercel
+  iframe.src=window.location.origin+'/presupuesto_construccion.html';
+  iframe.style.cssText='width:100%;height:calc(100vh - 56px);border:none;background:#0f1117;';
   iframe.title='Módulo de Presupuesto Construcción';
-  root.style.height='calc(100vh - 57px)';
+  iframe.allow='same-origin';
+  root.style.cssText='height:calc(100vh - 56px);overflow:hidden;';
   root.appendChild(iframe);
 }
 
@@ -1625,22 +1629,22 @@ function buildAdminTabs(){
   var isSuperAdmin=SESSION&&(SESSION.rol==='superadmin');
   var adminTabPerms=SESSION&&SESSION.tabPerms?SESSION.tabPerms:null;
   var btns=[
+    {id:'overview',      label:'📊 Resumen',       extra:''},
+    {id:'users',         label:'👥 Usuarios',       extra:''},
+    {id:'horas-admin',   label:'⏱ Planilla',        extra:'try{initPagosUsuarios();renderSubcontratistaPlanillas();}catch(e){}'},
+    {id:'comisiones',    label:'💵 Comisiones',      extra:''},
+    {id:'aguinaldo-admin',label:'🎄 Aguinaldo',      extra:''},
+    {id:'vacaciones',    label:'🌴 Vacaciones',      extra:'try{renderAdminVacSection();}catch(e){}'},
+    {id:'fondos',        label:'📦 Fondos',          extra:'try{initAdminFondos();}catch(e){}'},
+    {id:'ventas',        label:'📈 Ventas',          extra:'try{initAdminVentas();}catch(e){}'},
+    {id:'liquidaciones', label:'📋 Liquidaciones',   extra:'try{initLiquidaciones();}catch(e){}'},
+    {id:'gastos-admin',  label:'🏗 Gastos',          extra:'try{initAdminGastos();}catch(e){}'},
+    {id:'crm',           label:'👥 CRM',             extra:'try{initCRM();}catch(e){}'},
+    {id:'papelera',      label:'🗑 Papelera',        extra:'try{renderTrashPanel();checkTrashReminder();}catch(e){}'},
+    {id:'inventario',    label:'📦 Inventario',      extra:'try{initInventario();}catch(e){}'},
+    {id:'fibraplus',     label:'🧮 FibraPlus',       extra:'try{initFibraPlus54();}catch(e){}', saOnly:true},
+    {id:'calculos',      label:'🏗 Cálculos',        extra:'try{initCalcCONCRE();}catch(e){}',  saOnly:true},
     {id:'presupuesto',   label:'🏗 Presupuesto',     extra:'try{initPresupuesto();}catch(e){console.error(e);}', superadmin_only:true},
-    {id:'overview',      label:'📊 Resumen',        extra:''},
-    {id:'users',         label:'👥 Usuarios',        extra:''},
-    {id:'horas-admin',   label:'⏱ Horas/Planilla',  extra:'try{initPagosUsuarios();renderSubcontratistaPlanillas();}catch(e){}'},
-    {id:'comisiones',    label:'💵 Comisiones',       extra:''},
-    {id:'aguinaldo-admin',label:'🎄 Aguinaldo',       extra:''},
-    {id:'vacaciones',    label:'🌴 Vacaciones',       extra:'try{renderAdminVacSection();}catch(e){}'},
-    {id:'fondos',        label:'📦 Fondos',           extra:'try{initAdminFondos();}catch(e){}'},
-    {id:'ventas',        label:'📈 Ventas',           extra:'try{initAdminVentas();}catch(e){}'},
-    {id:'liquidaciones', label:'📋 Liquidaciones',    extra:'try{initLiquidaciones();}catch(e){}'},
-    {id:'gastos-admin',  label:'🏗 Gastos Proyecto',  extra:'try{initAdminGastos();}catch(e){}'},
-    {id:'crm',           label:'👥 CRM Clientes',      extra:'try{initCRM();}catch(e){}'},
-    {id:'papelera',      label:'🗑 Papelera',           extra:'try{renderTrashPanel();checkTrashReminder();}catch(e){}'},
-    {id:'inventario',    label:'📦 Inventario',          extra:'try{initInventario();}catch(e){}'},
-    {id:'fibraplus',     label:'🧮 FibraPlus54',          extra:'try{initFibraPlus54();}catch(e){}', saOnly:true},
-    {id:'calculos',     label:'🏗 Cálculos',              extra:'try{initCalcCONCRE();}catch(e){}',  saOnly:true},
   ];
   // Filter tabs based on admin permissions (superadmin sees all)
   var allowedBtns=btns.filter(function(b){
@@ -20925,7 +20929,7 @@ function getLastExportI
 </div>
 
 <!-- PRESUPUESTO SECTION -->
-<div id="sec-presupuesto" class="admin-section" style="padding:0;height:calc(100vh - 57px);overflow:hidden;"><div id="presupuesto-root" style="height:100%;overflow-y:auto;"></div></div>
+<div id="sec-presupuesto" class="admin-section" style="padding:0;height:calc(100vh - 60px);overflow:hidden;"><div id="presupuesto-root" style="height:100%;overflow-y:auto;"></div></div>
 
 <!-- RESTORE MODAL -->
 <div id="restoreModal" class="modal-overlay hidden">

@@ -100,6 +100,43 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--tx
 .ctb-btn.on{background:rgba(244,163,10,.12);border-color:var(--acc);color:var(--acc);}
 .csep{width:1px;height:16px;background:var(--brd);margin:0 2px;}
 .cinf{padding:5px 10px;background:var(--surf);border-top:1px solid var(--brd);display:flex;gap:12px;font-size:10px;color:var(--txt3);flex-wrap:wrap;}
+/* PRICE PANEL */
+.prow{display:flex;align-items:center;gap:5px;padding:5px 0;border-bottom:1px solid var(--brd);}
+.prow:last-child{border-bottom:none;}
+.pl{flex:1;font-size:11px;color:var(--txt2);}
+.pu{font-size:10px;color:var(--txt3);width:50px;text-align:right;}
+.pi{width:96px;background:var(--surf3);border:1.5px solid var(--brd2);border-radius:5px;padding:3px 6px;color:var(--txt);font-size:11px;text-align:right;outline:none;}
+.pi:focus{border-color:var(--acc);}
+.pbadge{font-size:9px;padding:1px 4px;border-radius:2px;font-weight:700;}
+.psys{background:rgba(74,124,255,.15);color:#60a5fa;}
+.pusr{background:rgba(244,163,10,.15);color:var(--acc);}
+/* BUDGET */
+.bsum{background:var(--surf2);border:1.5px solid var(--brd);border-radius:9px;padding:16px;margin-bottom:14px;}
+.btot{font-family:var(--cond);font-size:30px;font-weight:900;color:var(--acc);}
+.bsub{font-size:11px;color:var(--txt3);}
+.br{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--brd);}
+.br:last-child{border-bottom:none;}
+.bc{font-size:12px;color:var(--txt2);}
+.ba{font-size:12px;font-weight:700;}
+.bpct{font-size:10px;color:var(--txt3);margin-left:5px;}
+/* ROOMS */
+.ri{display:flex;align-items:center;justify-content:space-between;padding:6px 9px;background:var(--surf2);border-radius:6px;margin-bottom:4px;border:1px solid var(--brd);cursor:pointer;transition:.15s;}
+.ri:hover,.ri.on{border-color:var(--acc);}
+.rl{display:flex;align-items:center;gap:7px;}
+.rc{width:10px;height:10px;border-radius:2px;flex-shrink:0;}
+.rn{font-size:12px;font-weight:600;}
+.rd{font-size:10px;color:var(--txt3);}
+.ra{font-size:11px;font-weight:700;color:var(--acc);}
+.rib{background:none;border:none;color:var(--txt3);cursor:pointer;font-size:12px;padding:2px 4px;border-radius:3px;}
+.rib:hover{background:var(--surf3);color:var(--txt);}
+/* PROJ */
+.pcard{padding:8px 10px;border-radius:7px;cursor:pointer;border:1px solid var(--brd);margin-bottom:5px;transition:.15s;}
+.pcard:hover{border-color:var(--acc);background:var(--surf2);}
+.pcn{font-size:11px;font-weight:700;}
+.pcm{font-size:10px;color:var(--txt3);margin-top:1px;}
+/* WIZARD */
+.wq{font-size:14px;font-weight:700;color:var(--txt);margin-bottom:10px;line-height:1.5;}
+.wh{font-size:11px;color:var(--txt3);margin-bottom:12px;line-height:1.4;}
 /* PROP PANEL */
 #pp{background:var(--surf);border:1.5px solid var(--acc);border-radius:9px;padding:13px;margin-bottom:12px;display:none;animation:fadein .2s;}
 #pp h4{font-size:12px;font-weight:800;color:var(--acc);margin-bottom:9px;}
@@ -725,6 +762,7 @@ const PX={
   break2:{lbl:'Breaker 2 polos 30A',unit:'und',p:7500,cat:'electrico'},
   cable12:{lbl:'Cable #12 THHN metro',unit:'m',p:680,cat:'electrico'},
   toma2:{lbl:'Tomacorriente doble',unit:'und',p:2800,cat:'electrico'},
+  piso_madera:{lbl:'Piso madera/bambú (m²)',unit:'m²',p:28000,cat:'acabados'},
   apagador:{lbl:'Apagador sencillo',unit:'und',p:2200,cat:'electrico'},
   conduit12:{lbl:'Conduit EMT ½" × 3m',unit:'und',p:2400,cat:'electrico'},
   // DEMOLICIÓN
@@ -1378,8 +1416,8 @@ liveResize:function(id){
   var r=ST.rooms.find(r=>r.id===id);if(!r) return;
   var nw=parseFloat(document.getElementById('pr-w')?.value)||r.w;
   var nh=parseFloat(document.getElementById('pr-h')?.value)||r.h;
-  var sx=r.x||0,sy=r.y||0,pw=nw*20,ph=nh*20;
-  r.poly=[{x:sx,y:sy},{x:sx+pw,y:sy},{x:sx+pw,y:sy+ph},{x:sx,y:sy+ph}];
+  var sx=r.x||0,sy=r.y||0;
+  r.poly=[{x:sx,y:sy},{x:sx+nw,y:sy},{x:sx+nw,y:sy+nh},{x:sx,y:sy+nh}];
   r.w=nw;r.h=nh;this.draw();
 },
 
@@ -1581,11 +1619,12 @@ confirmRoom:function(){
   if(mn&&(w<mn.a||h<mn.l)){
     if(!confirm('⚠️ Reglamento Construcciones CR: '+nom+' debería tener al menos '+mn.a+'m × '+mn.l+'m. ¿Continuar de todas formas?')) return;
   }
-  var offX=(ST.rooms.length%4)*(w*20+40)+40;
-  var offY=Math.floor(ST.rooms.length/4)*(h*20+40)+40;
+  // Position in meters: 2m gap between rooms, max 4 per row
+  var offX=(ST.rooms.length%4)*(w+2)+2;
+  var offY=Math.floor(ST.rooms.length/4)*(h+2)+2;
   this.pushH();
   ST.rooms.push({id:'r'+Date.now(),name:nom,type:tipo,
-    poly:[{x:offX,y:offY},{x:offX+w*20,y:offY},{x:offX+w*20,y:offY+h*20},{x:offX,y:offY+h*20}],
+    poly:[{x:offX,y:offY},{x:offX+w,y:offY},{x:offX+w,y:offY+h},{x:offX,y:offY+h}],
     x:offX,y:offY,w,h,floor:CS.floor,
     color:COLS[ST.rooms.length%COLS.length],isExisting:P._mrex||false});
   document.getElementById('mo-room').classList.add('hid');
@@ -1730,6 +1769,7 @@ renderPrices:function(){
 calcBudget:function(){
   this.collect();
   var newR=ST.rooms.filter(r=>!r.isExisting);
+  if(newR.length===0&&ST.rooms.length===0){ST.presupuesto=null;return;}
   var aNew=newR.reduce((s,r)=>s+r.w*r.h,0);
   var aTot=ST.rooms.reduce((s,r)=>s+r.w*r.h,0);
   var perim=newR.reduce((s,r)=>s+2*(r.w+r.h),0);
@@ -1746,14 +1786,31 @@ calcBudget:function(){
     BQ.bloque_15=Math.ceil(aPared*12.5*1.05);BQ.cemento=Math.ceil(aPared*1.0*1.05);
     BQ.arena=Math.ceil(aPared*0.04*1.05*10)/10;
     var nC=Math.ceil(perim/3)+newR.length;
-    BQ.var38=Math.ceil(nC*(h1/6)*4*1.10);BQ.var14=Math.ceil(nC*(h1/0.15)*0.35*4/6*1.10);
+    BQ.var38=Math.ceil(nC*(h1/6)*4*1.10);BQ.var14=Math.ceil(nC*(h1/0.15)*0.65/6*1.10);// 0.65m perímetro estribo 15×15cm + ganchos
     BQ.alambre=Math.ceil(BQ.var38*0.2);BQ.mo_bloque=parseFloat(aPared.toFixed(1));
   } else if(ST.mats.pared==='durock'){
     BQ.durock_48=Math.ceil(aPared/2.88*1.10);BQ.cemento=Math.ceil(aPared*0.5);
     BQ.malla_rep=Math.ceil(aPared*2*1.05);BQ.mo_durock=parseFloat(aPared.toFixed(1));
+  } else if(ST.mats.pared==='prefabricado'){
+    // Panel prefabricado: ~1 panel/1.2m² + cemento para juntas
+    BQ.cemento=Math.ceil(aPared*0.3*1.05);
+    BQ.var38=Math.ceil((Math.ceil(perim/3)+newR.length)*(h1/6)*4*1.10);
+    BQ.alambre=Math.ceil(BQ.var38*0.2);
+    BQ.mo_bloque=parseFloat((aPared*0.6).toFixed(1)); // MO menor que bloque
+  } else if(ST.mats.pared==='mixto'){
+    // Mixto: exterior en bloque (50%), interior liviano (50%)
+    var aParBloq=aPared*0.5, aParDur=aPared*0.5;
+    BQ.bloque_15=Math.ceil(aParBloq*12.5*1.05);
+    BQ.cemento=Math.ceil(aParBloq*1.0*1.05+aParDur*0.5);
+    BQ.arena=Math.ceil(aParBloq*0.04*1.05*10)/10;
+    BQ.durock_48=Math.ceil(aParDur/2.88*1.10);
+    BQ.malla_rep=Math.ceil(aParDur*2*1.05);
+    var nC2=Math.ceil(perim/3)+newR.length;
+    BQ.var38=Math.ceil(nC2*(h1/6)*4*1.10);BQ.alambre=Math.ceil(BQ.var38*0.2);
+    BQ.mo_bloque=parseFloat(aParBloq.toFixed(1));BQ.mo_durock=parseFloat(aParDur.toFixed(1));
   }
   BQ.sabieta=Math.ceil(aPared*2*0.15);
-  BQ.pint_int=Math.ceil(aNew*0.09*2);BQ.pint_ext=Math.ceil(aPared*0.5*0.08*2);
+  BQ.pint_int=Math.ceil(perim*ST.h.cielo*0.09*2);// paredes interiores área real × 2 manosBQ.pint_ext=Math.ceil(aPared*0.5*0.08*2);
   BQ.sellador=Math.ceil((aPared*2+aCielo)*0.09);
   BQ.mo_repello=parseFloat((aPared*2).toFixed(1));
   BQ.mo_pintura=parseFloat(((aPared*2+aCielo)*2).toFixed(1));
@@ -1763,12 +1820,35 @@ calcBudget:function(){
   else if(ST.mats.techo==='zinc_liso'){BQ.zinc24=Math.ceil(aTecho/2.59*1.10);BQ.tornillo_t=Math.ceil((BQ.zinc24*12)/100);}
   else if(ST.mats.techo==='teja_barro') BQ.teja_barro=Math.ceil(aTecho*16*1.10);
   else if(ST.mats.techo==='teja_plas') BQ.teja_plas=Math.ceil(aTecho*16*1.10);
-  BQ.angular2=Math.ceil(aTecho/10*4);BQ.madera24=Math.ceil(aTecho/8);
+  if(ST.mats.techo!=='losa'){
+    BQ.angular2=Math.ceil(aTecho/10*4);
+    // Madera para cabríos: 1 cabrío cada 0.60m, longitud ≈ sqrt(área/2), barras de 4m
+    var cabrioLong=Math.sqrt(aTecho/2)||4;
+    var nCabrios=Math.ceil(Math.sqrt(aTecho)/0.60)*2;
+    BQ.madera24=Math.ceil(nCabrios*cabrioLong/4*1.10);
+  } else {
+    // Losa concreto: cemento + varilla + arena + piedra
+    BQ.cemento=(BQ.cemento||0)+Math.ceil(aTot*4.5); // ~4.5 sacos/m² losa e=0.12m
+    BQ.var12=Math.ceil(aTot*0.9*2/6); // malla #4 a cada 20cm dos direcciones
+    BQ.var38=(BQ.var38||0)+Math.ceil(aTot*0.4*2/6); // refuerzo negativo
+    BQ.arena=(BQ.arena||0)+Math.ceil(aTot*0.05);
+    BQ.piedra=Math.ceil(aTot*0.07);
+  }
   BQ.mo_techo=parseFloat(aTecho.toFixed(1));
 
   // PISOS
   if(ST.mats.piso==='ceramica'){BQ.ceramica=Math.ceil(aNew*1.10);BQ.bondex=Math.ceil(aNew/4);BQ.fragua=Math.ceil(aNew*0.5);BQ.mo_piso=parseFloat(aNew.toFixed(1));}
   else if(ST.mats.piso==='porcelanato'){BQ.porcelanato=Math.ceil(aNew*1.12);BQ.bondex=Math.ceil(aNew/3.5);BQ.fragua=Math.ceil(aNew*0.4);BQ.mo_porc=parseFloat(aNew.toFixed(1));}
+  else if(ST.mats.piso==='madera'){
+    // Piso madera: ~1.15m² material por m² útil + adhesivo + sellador
+    BQ.piso_madera=parseFloat((aNew*1.15).toFixed(1));
+    BQ.sellador=(BQ.sellador||0)+Math.ceil(aNew*0.06); // 1 gal por 16m² sellador madera
+    BQ.mo_piso=parseFloat(aNew.toFixed(1));
+  } else if(ST.mats.piso==='concreto'){
+    // Concreto pulido: sello + pulido, MO incluye acabado
+    BQ.sellador=(BQ.sellador||0)+Math.ceil(aNew*0.05);
+    BQ.mo_piso=parseFloat((aNew*0.6).toFixed(1)); // MO menor (solo pulido, losa ya existe)
+  }
 
   // CIELOS
   if(ST.cielo==='gypsum'){BQ.gypsum=Math.ceil(aCielo/2.88*1.10);BQ.p_omega=Math.ceil(aCielo/2.4*1.15);BQ.p_canal=Math.ceil(aCielo/1.2*1.15);BQ.mo_cielo=parseFloat(aCielo.toFixed(1));}
@@ -1811,13 +1891,17 @@ calcBudget:function(){
       var nPts=inst.circ>0?inst.circ*8:Math.ceil(aNew*1.8);
       var tabKey={16:'tab_16',24:'tab_24',32:'tab_32',tri:'tab_32'}[inst.tab]||'tab_24';
       BQ[tabKey]=1;BQ.break1=Math.ceil(nPts*0.7);BQ.break2=Math.ceil(nPts*0.15);
-      BQ.cable12=Math.ceil(aNew*12);BQ.toma2=Math.ceil(aNew*0.8);
+      BQ.cable12=Math.ceil(aNew*18);// 10m/punto × 1.8pts/m²BQ.toma2=Math.ceil(aNew*0.8);
       BQ.apagador=Math.ceil(aNew*0.3);BQ.conduit12=Math.ceil(aNew*1.5);
       BQ.mo_elec_m2=parseFloat(aNew.toFixed(1));
     } else if(inst.elec==='parcial'){
       var nPts2=(inst.tomas||0)+(inst.luces||0);
       BQ.cable12=Math.ceil(nPts2*15);BQ.toma2=inst.tomas||0;BQ.apagador=inst.luces||0;
       BQ.conduit12=Math.ceil(nPts2*3);BQ.mo_elec_pt=nPts2;
+    } else if(inst.elec==='solo_tablero'){
+      // Solo reemplazo de tablero + breakers principales
+      var tabKey2={16:'tab_16',24:'tab_24',32:'tab_32',tri:'tab_32'}[inst.tab]||'tab_24';
+      BQ[tabKey2]=1;BQ.break1=8;BQ.break2=4; // tablero básico
     }
   }
 
@@ -1912,7 +1996,7 @@ calcBudget:function(){
 
 renderBudget:function(){
   var el=document.getElementById('budget-result');if(!el) return;
-  if(!ST.presupuesto){el.innerHTML='<div class="eb">Error al calcular.</div>';return;}
+  if(!ST.presupuesto){el.innerHTML='<div class="wb">⚠️ No hay espacios dibujados. Regrese al Paso 2 y dibuje al menos un cuarto.</div>';return;}
   var b=ST.presupuesto,C=b.costos;
   var f=function(n){return Math.round(n).toLocaleString('es-CR');};
   var pct=function(n){return b.total_crc>0?Math.round(n/b.total_crc*100)+'%':'0%';};
@@ -1930,7 +2014,7 @@ renderBudget:function(){
     +'<div class="bsub">≈ USD $'+f(b.total_usd)+' (TC ₡510)</div></div>'
     +'<div style="text-align:right;"><div class="bsub">Área nueva</div>'
     +'<div style="font-size:20px;font-weight:900;color:var(--blue);">'+b.areas.aNew.toFixed(1)+'m²</div>'
-    +'<div class="bsub">₡'+f(Math.round(b.total_crc/b.areas.aNew))+'/m²</div></div></div>'
+    +'<div class="bsub">₡'+(b.areas.aNew>0?f(Math.round(b.total_crc/b.areas.aNew)):'—')+'/m²</div></div></div>'
     +rows.map(function(r){
       return '<div class="br"><div class="bc">'+r[0]+'</div>'
         +'<div style="display:flex;align-items:center;"><div class="ba">₡'+f(r[1])+'</div>'
@@ -1972,7 +2056,7 @@ renderFinal:function(){
     +'<div style="border-top:1px solid var(--brd);padding-top:12px;">'
     +'<div class="bsub">COSTO TOTAL ESTIMADO</div>'
     +'<div class="btot" style="font-size:32px;">₡'+f(b.total_crc)+'</div>'
-    +'<div class="bsub">≈ USD $'+f(b.total_usd)+' · ₡'+f(Math.round(b.total_crc/b.areas.aNew))+'/m²</div>'
+    +'<div class="bsub">≈ USD $'+f(b.total_usd)+(b.areas.aNew>0?' · ₡'+f(Math.round(b.total_crc/b.areas.aNew))+'/m²':'')+' </div>'
     +'<div class="gb" style="margin-top:8px;">⏱ '+b.dur.dias+' días hábiles ('+b.dur.sem+' semanas)</div>'
     +'</div></div>'
     +'<div class="wb"><strong>⚠️ Nota:</strong> Estimado basado en precios de mercado CR. Solicite cotizaciones a proveedores antes de iniciar obra. Precios actualizados: '+(localStorage.getItem('px_cr_date')||'Jun 2026')+'.</div>';
@@ -2010,6 +2094,7 @@ loadProjects:async function(){
 
 renderProjList:function(projs){
   var el=document.getElementById('proj-list');if(!el) return;
+  var f=function(n){return Math.round(n).toLocaleString('es-CR');};
   var ico={casa:'🏠',apartamento:'🏢',bodega:'🏭',remodelacion:'🔨',oficina:'💼'};
   if(!projs.length){el.innerHTML='<div style="text-align:center;padding:40px 20px;color:var(--txt3);"><div style="font-size:40px;margin-bottom:10px;">📋</div><div style="font-size:14px;font-weight:700;margin-bottom:6px;color:var(--txt2);">Sin proyectos aún</div><button class="btn btn-p" onclick="P.newProject()" style="margin-top:8px;">+ Crear proyecto</button></div>';return;}
   el.innerHTML=projs.map(function(p){
