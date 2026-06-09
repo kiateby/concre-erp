@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="#E31837">
 <meta name="apple-mobile-web-app-title" content="CONCRE">
 <meta name="mobile-web-app-capable" content="yes">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <title>CONCRE — Sistema de Gestión</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
@@ -224,7 +224,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 
 /* MODAL */
 .modal-overlay{
-  position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;
+  position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:8000;
   display:flex;align-items:flex-start;justify-content:center;
   padding:20px 16px;overflow-y:auto;
   backdrop-filter:blur(2px);
@@ -12574,10 +12574,15 @@ function openGlobalExportModal(){
 async function generateGlobalZip(){
   var btn=document.getElementById('btn-generate-zip');
   var prog=document.getElementById('zip-progress');
-  if(btn) btn.disabled=true;
-  if(prog){ prog.style.display='block'; prog.innerHTML='⏳ Preparando exportación...'; }
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Generando...'; }
+  if(prog){ prog.style.display='block'; prog.innerHTML='⏳ Preparando exportación — esto puede tomar unos segundos...'; }
+  // Small delay to let UI update before heavy work
+  await new Promise(function(r){ setTimeout(r, 100); });
 
   try{
+    if(typeof JSZip === 'undefined'){
+      throw new Error('Librería JSZip no disponible. Verifica tu conexión a internet e intenta de nuevo.');
+    }
     var zip=new JSZip();
     var users=getUsers();
     var total=users.length; var done=0;
@@ -20635,7 +20640,7 @@ function getLastExportI
           </div>
 
 <!-- GLOBAL EXPORT MODAL -->
-<div id="globalExportModal" class="modal-overlay hidden">
+<div id="globalExportModal" class="modal-overlay hidden" style="z-index:9999">
   <div class="modal" style="width:580px;max-width:96vw">
     <div class="modal-hdr">
       <span class="modal-title">⬇ Exportación Global del Sistema</span>
