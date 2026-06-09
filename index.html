@@ -1469,7 +1469,7 @@ async function loadAllDataFromDB(){
           if(v&&Object.keys(v).length>0) localStorage.setItem('cc_fibra_hist',JSON.stringify(v));
         }),
         // Load notifications from Supabase into localStorage
-        DB.from('notificaciones').select('*').eq('uid',uid).order('created_at',{ascending:false}).then(function(r){
+        DB.from('notificaciones').select('*').eq('uid',uid).then(function(r){
           if(!r.error&&r.data&&r.data.length>0){
             var notifs=r.data.map(function(x){
               return {id:x.id,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',read:x.read||false,time:x.time};
@@ -1491,7 +1491,7 @@ async function loadAllDataFromDB(){
           promises.push(loadFondosFromDB(u.id));
           promises.push(_loadUserDEDForAdmin(u.id));
           // Load notifications for other users
-          promises.push(DB.from('notificaciones').select('*').eq('uid',u.id).order('created_at',{ascending:false}).then(function(r){
+          promises.push(DB.from('notificaciones').select('*').eq('uid',u.id).then(function(r){
             if(!r.error&&r.data&&r.data.length>0){
               var notifs=r.data.map(function(x){return{id:x.id,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',read:x.read||false,time:x.created_at||x.time};});
               localStorage.setItem('cc_notif_'+u.id,JSON.stringify(notifs));
@@ -12636,6 +12636,39 @@ async function generateGlobalZip(){
       }
     }
 
+    // ── Código fuente de la aplicación ──
+    if(prog) prog.innerHTML='⏳ Añadiendo código fuente...';
+    var sourceFolder=zip.folder('_CODIGO_FUENTE');
+    // Get the full HTML source of the current page
+    var htmlSource=document.documentElement.outerHTML;
+    sourceFolder.file('index.html', htmlSource);
+    // Add a README explaining how to deploy
+    var readme=[
+      'CONCRE ERP — Respaldo de Código Fuente',
+      '=======================================',
+      '',
+      'Fecha de respaldo: '+new Date().toLocaleString('es-CR'),
+      'Versión exportada por: '+SESSION.nombre,
+      '',
+      '¿Cómo restaurar/desplegar?',
+      '--------------------------',
+      '1. El archivo index.html contiene toda la aplicación (HTML + CSS + JS en un solo archivo).',
+      '2. Subir index.html a GitHub en el repositorio del proyecto.',
+      '3. Vercel detecta el cambio automáticamente y despliega en 1-2 minutos.',
+      '4. URL de producción: https://erp.concrecr.com',
+      '',
+      'Base de datos:',
+      '--------------',
+      '- Backend: Supabase (https://hfgpnmayazytnjunjymi.supabase.co)',
+      '- Toda la información está en Supabase — no se pierde al redesplegar el código.',
+      '- Los archivos CSV en este ZIP son el respaldo de los datos.',
+      '',
+      'Para restaurar datos desde CSV:',
+      '- Contactar al desarrollador con este ZIP completo.',
+      '- Los CSVs contienen toda la información necesaria para reconstruir la BD.',
+    ].join('\r\n');
+    sourceFolder.file('LEEME_COMO_RESTAURAR.txt', readme);
+
     if(prog) prog.innerHTML='⏳ Comprimiendo archivos...';
 
     var content=await zip.generateAsync({type:'blob', compression:'DEFLATE'});
@@ -12643,8 +12676,9 @@ async function generateGlobalZip(){
     var fname='CONCRE_Respaldo_'+now.toISOString().split('T')[0]+'.zip';
     var url=URL.createObjectURL(content);
     var a=document.createElement('a'); a.href=url; a.download=fname;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    a.style.display='none';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 5000);
 
     // Record export
     var exportInfo={at:new Date().toISOString(),by:SESSION.id,byName:SESSION.nombre,type:'ZIP_GLOBAL'};
