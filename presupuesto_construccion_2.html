@@ -1,0 +1,2184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Presupuesto Construcción CR</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{
+  --bg:#0f1117;--surf:#1a1d27;--surf2:#22263a;--surf3:#2a2f48;
+  --brd:#2e3350;--brd2:#3d4470;
+  --acc:#f4a30a;--acc2:#e8820a;
+  --blue:#4a7cff;--green:#22c55e;--red:#ef4444;--purple:#8b5cf6;
+  --txt:#f0f2ff;--txt2:#9aa3cc;--txt3:#5a6490;
+  --cond:'Arial Narrow',Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--txt);font-size:14px;height:100vh;overflow:hidden;display:flex;flex-direction:column;}
+#ph{background:var(--surf);border-bottom:2px solid var(--acc);padding:10px 18px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+#ph h1{font-family:var(--cond);font-size:20px;font-weight:900;color:var(--acc);}
+#ph .sub{font-size:10px;color:var(--txt3);}
+.hrow{display:flex;gap:7px;}
+.btn{padding:6px 14px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;transition:.15s;}
+.btn-p{background:var(--acc);color:#000;}
+.btn-p:hover{background:var(--acc2);}
+.btn-s{background:var(--surf2);color:var(--txt);border:1px solid var(--brd2);}
+.btn-s:hover{background:var(--surf3);}
+.btn-b{background:var(--blue);color:#fff;}
+.btn-g{background:var(--green);color:#fff;}
+.btn-sm{padding:4px 10px;font-size:11px;}
+.btn-del{background:rgba(239,68,68,.12);color:#f87171;border:1px solid rgba(239,68,68,.25);}
+#shell{display:flex;flex:1;overflow:hidden;}
+#sidebar{width:220px;background:var(--surf);border-right:1px solid var(--brd);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;}
+.sb{padding:12px 14px;border-bottom:1px solid var(--brd);}
+.sb h3{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--txt3);margin-bottom:8px;}
+.sli{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;transition:.15s;margin-bottom:2px;}
+.sli:hover{background:var(--surf2);}
+.sli.on{background:rgba(244,163,10,.1);border-left:3px solid var(--acc);padding-left:5px;}
+.sli.done .sn{background:var(--green);color:#fff;}
+.sli.on .sn{background:var(--acc);color:#000;}
+.sn{width:20px;height:20px;border-radius:50%;background:var(--surf3);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;flex-shrink:0;}
+.sl{font-size:11px;font-weight:600;color:var(--txt2);}
+.sli.on .sl,.sli.done .sl{color:var(--txt);}
+#main{flex:1;overflow-y:auto;}
+.pnl{display:none;padding:20px;max-width:920px;margin:0 auto;}
+.pnl.on{display:block;}
+.prog{height:3px;background:var(--surf3);border-radius:2px;margin-bottom:18px;}
+.pf{height:100%;background:var(--acc);border-radius:2px;transition:width .4s;}
+.pt{font-family:var(--cond);font-size:18px;font-weight:900;color:var(--acc);margin-bottom:3px;}
+.ps{color:var(--txt2);font-size:12px;margin-bottom:18px;}
+.fg{margin-bottom:14px;}
+.fl{display:block;font-size:11px;font-weight:700;color:var(--txt2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;}
+.req{color:var(--acc);}
+.fi{width:100%;background:var(--surf2);border:1.5px solid var(--brd);border-radius:7px;padding:8px 11px;color:var(--txt);font-size:13px;outline:none;transition:.15s;}
+.fi:focus{border-color:var(--acc);}
+.fh{font-size:10px;color:var(--txt3);margin-top:3px;line-height:1.4;}
+.fw{color:var(--acc);}
+.fr{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
+.cg{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:9px;margin-bottom:16px;}
+.oc{background:var(--surf2);border:2px solid var(--brd);border-radius:9px;padding:13px 10px;cursor:pointer;text-align:center;transition:.15s;}
+.oc:hover{border-color:var(--blue);background:var(--surf3);}
+.oc.on{border-color:var(--acc);background:rgba(244,163,10,.08);}
+.oci{font-size:24px;margin-bottom:5px;}
+.ocn{font-size:12px;font-weight:700;}
+.ocs{font-size:10px;color:var(--txt3);margin-top:2px;line-height:1.3;}
+.tg{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px;}
+.tb{padding:5px 13px;border-radius:18px;border:1.5px solid var(--brd);background:var(--surf2);color:var(--txt2);font-size:12px;font-weight:600;cursor:pointer;transition:.15s;}
+.tb:hover{border-color:var(--blue);color:var(--txt);}
+.tb.on{background:rgba(244,163,10,.12);border-color:var(--acc);color:var(--acc);}
+.ib{background:rgba(74,124,255,.07);border:1px solid rgba(74,124,255,.25);border-radius:7px;padding:10px 13px;margin-bottom:12px;font-size:11px;color:var(--txt2);line-height:1.5;}
+.ib strong{color:var(--blue);}
+.wb{background:rgba(244,163,10,.07);border:1px solid rgba(244,163,10,.25);border-radius:7px;padding:10px 13px;margin-bottom:12px;font-size:11px;color:var(--txt2);line-height:1.5;}
+.wb strong{color:var(--acc);}
+.eb{background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.25);border-radius:7px;padding:10px 13px;margin-bottom:12px;font-size:11px;color:#fca5a5;line-height:1.5;}
+.gb{background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.25);border-radius:7px;padding:10px 13px;margin-bottom:12px;font-size:11px;color:#4ade80;line-height:1.5;}
+.nav{display:flex;justify-content:space-between;align-items:center;padding-top:18px;border-top:1px solid var(--brd);margin-top:22px;}
+.nt{font-size:11px;color:var(--txt3);}
+.nr{display:flex;gap:8px;}
+.blk{background:var(--surf2);border:1px solid var(--brd);border-radius:9px;padding:14px;margin-bottom:12px;}
+.blkt{font-size:12px;font-weight:800;color:var(--txt);margin-bottom:10px;display:flex;align-items:center;gap:6px;}
+.vm{font-size:10px;padding:5px 9px;border-radius:5px;margin-top:4px;}
+.vok{background:rgba(34,197,94,.08);color:#4ade80;border:1px solid rgba(34,197,94,.25);}
+.vwn{background:rgba(244,163,10,.08);color:var(--acc);border:1px solid rgba(244,163,10,.25);}
+.ver{background:rgba(239,68,68,.08);color:#f87171;border:1px solid rgba(239,68,68,.25);}
+.mo{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:1000;display:flex;align-items:center;justify-content:center;}
+.mo.hid{display:none;}
+.mb{background:var(--surf);border:1.5px solid var(--brd2);border-radius:11px;padding:22px;width:500px;max-width:95vw;max-height:85vh;overflow-y:auto;}
+.mbt{font-family:var(--cond);font-size:17px;font-weight:900;color:var(--acc);margin-bottom:14px;}
+.mf{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:14px;border-top:1px solid var(--brd);}
+/* CANVAS */
+#cw{background:var(--surf2);border:1.5px solid var(--brd);border-radius:9px;overflow:hidden;margin-bottom:12px;position:relative;}
+#plan-canvas{display:block;cursor:crosshair;}
+.ctabs{display:flex;background:var(--surf);border-bottom:1px solid var(--brd);}
+.ctab{padding:7px 14px;font-size:11px;font-weight:700;color:var(--txt3);cursor:pointer;border-bottom:2px solid transparent;transition:.15s;}
+.ctab.on{color:var(--acc);border-bottom-color:var(--acc);}
+.ctb{display:flex;gap:4px;align-items:center;flex-wrap:wrap;padding:7px 10px;background:var(--surf);border-bottom:1px solid var(--brd);}
+.ctb-btn{padding:4px 9px;border-radius:5px;border:1.5px solid var(--brd);background:var(--surf2);color:var(--txt2);font-size:11px;font-weight:600;cursor:pointer;transition:.15s;}
+.ctb-btn:hover{border-color:var(--blue);color:var(--txt);}
+.ctb-btn.on{background:rgba(244,163,10,.12);border-color:var(--acc);color:var(--acc);}
+.csep{width:1px;height:16px;background:var(--brd);margin:0 2px;}
+.cinf{padding:5px 10px;background:var(--surf);border-top:1px solid var(--brd);display:flex;gap:12px;font-size:10px;color:var(--txt3);flex-wrap:wrap;}
+/* PROP PANEL */
+#pp{background:var(--surf);border:1.5px solid var(--acc);border-radius:9px;padding:13px;margin-bottom:12px;display:none;animation:fadein .2s;}
+#pp h4{font-size:12px;font-weight:800;color:var(--acc);margin-bottom:9px;}
+/* ROOMS */
+.ri{display:flex;align-items:center;justify-content:space-between;padding:6px 9px;background:var(--surf2);border-radius:6px;margin-bottom:4px;border:1px solid var(--brd);cursor:pointer;transition:.15s;}
+.ri:hover,.ri.on{border-color:var(--acc);}
+.rl{display:flex;align-items:center;gap:7px;}
+.rc{width:10px;height:10px;border-radius:2px;flex-shrink:0;}
+.rn{font-size:12px;font-weight:600;}
+.rd{font-size:10px;color:var(--txt3);}
+.ra{font-size:11px;font-weight:700;color:var(--acc);}
+.rib{background:none;border:none;color:var(--txt3);cursor:pointer;font-size:12px;padding:2px 4px;border-radius:3px;}
+.rib:hover{background:var(--surf3);color:var(--txt);}
+/* BUDGET */
+.bsum{background:var(--surf2);border:1.5px solid var(--brd);border-radius:9px;padding:16px;margin-bottom:14px;}
+.btot{font-family:var(--cond);font-size:30px;font-weight:900;color:var(--acc);}
+.bsub{font-size:11px;color:var(--txt3);}
+.br{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--brd);}
+.br:last-child{border-bottom:none;}
+.bc{font-size:12px;color:var(--txt2);}
+.ba{font-size:12px;font-weight:700;}
+.bpct{font-size:10px;color:var(--txt3);margin-left:5px;}
+/* PRICE ROW */
+.prow{display:flex;align-items:center;gap:5px;padding:5px 0;border-bottom:1px solid var(--brd);}
+.prow:last-child{border-bottom:none;}
+.pl{flex:1;font-size:11px;color:var(--txt2);}
+.pu{font-size:10px;color:var(--txt3);width:50px;text-align:right;}
+.pi{width:96px;background:var(--surf3);border:1.5px solid var(--brd2);border-radius:5px;padding:3px 6px;color:var(--txt);font-size:11px;text-align:right;outline:none;}
+.pi:focus{border-color:var(--acc);}
+.pbadge{font-size:9px;padding:1px 4px;border-radius:2px;font-weight:700;}
+.psys{background:rgba(74,124,255,.15);color:#60a5fa;}
+.pusr{background:rgba(244,163,10,.15);color:var(--acc);}
+/* PROJ CARDS */
+.pcard{padding:8px 10px;border-radius:7px;cursor:pointer;border:1px solid var(--brd);margin-bottom:5px;transition:.15s;}
+.pcard:hover{border-color:var(--acc);background:var(--surf2);}
+.pcn{font-size:11px;font-weight:700;}
+.pcm{font-size:10px;color:var(--txt3);margin-top:1px;}
+/* WIZARD */
+.wq{font-size:14px;font-weight:700;color:var(--txt);margin-bottom:10px;line-height:1.5;}
+.wh{font-size:11px;color:var(--txt3);margin-bottom:12px;line-height:1.4;}
+@keyframes fadein{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@keyframes spin{to{transform:rotate(360deg);}}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(244,163,10,.3);border-top-color:var(--acc);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:4px;}
+@media(max-width:680px){#sidebar{display:none;}.fr,.fr3{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div id="ph">
+  <div>
+    <h1>🏗 PRESUPUESTO CONSTRUCCIÓN CR</h1>
+    <div class="sub">Sistema avanzado — SuperAdmin · Normativa CFIA / Código Sísmico CR 2014</div>
+  </div>
+  <div class="hrow">
+    <button class="btn btn-s" onclick="P.showPanel('proyectos')">📁 Proyectos</button>
+    <button class="btn btn-b" id="btn-upd" onclick="P.updatePrices()">🔄 Precios</button>
+    <button class="btn btn-g" onclick="P.saveProject()">💾 Guardar</button>
+    <button class="btn btn-p" onclick="P.exportExcel()">📊 Excel</button>
+  </div>
+</div>
+<div id="shell">
+  <div id="sidebar">
+    <div class="sb"><h3>Pasos</h3><div id="steps-nav"></div></div>
+    <div class="sb"><h3>Resumen parcial</h3><div id="live-sum"><div style="font-size:10px;color:var(--txt3);text-align:center;padding:8px 0">Inicie un proyecto</div></div></div>
+    <div class="sb"><h3>Proyectos recientes</h3><div id="proj-recent"></div></div>
+  </div>
+  <div id="main">
+
+<!-- PANEL PROYECTOS -->
+<div id="panel-proyectos" class="pnl on" style="max-width:740px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+    <div><div class="pt">📁 Proyectos</div><div class="ps">Guardados en línea — accesibles desde cualquier dispositivo</div></div>
+    <button class="btn btn-p" onclick="P.newProject()">+ Nuevo proyecto</button>
+  </div>
+  <div id="proj-list"><div style="text-align:center;padding:40px;color:var(--txt3);"><span class="spin"></span> Cargando...</div></div>
+</div>
+
+<!-- PANEL PASO 1: INFO BÁSICA -->
+<div id="panel-step1" class="pnl">
+  <div class="prog"><div class="pf" style="width:12%"></div></div>
+  <div class="pt">Paso 1 — Tipo y alcance del proyecto</div>
+  <div class="ps">El sistema configura todas las preguntas y cálculos según el tipo de obra.</div>
+  <div class="fg"><label class="fl">Nombre del proyecto <span class="req">*</span></label>
+    <input class="fi" id="p1-nom" placeholder="Ej: Casa Familia García, Ampliación Bodega Norte..." maxlength="80"></div>
+  <div class="fg"><label class="fl">Tipo de proyecto <span class="req">*</span></label>
+    <div class="cg" id="cg-tipo">
+      <div class="oc" data-v="casa" onclick="P.selCard('tipo',this)"><div class="oci">🏠</div><div class="ocn">Casa nueva</div><div class="ocs">Vivienda familiar desde cero</div></div>
+      <div class="oc" data-v="apartamento" onclick="P.selCard('tipo',this)"><div class="oci">🏢</div><div class="ocn">Apartamento</div><div class="ocs">Unidad en edificio</div></div>
+      <div class="oc" data-v="bodega" onclick="P.selCard('tipo',this)"><div class="oci">🏭</div><div class="ocn">Bodega / Nave</div><div class="ocs">Industrial o comercial</div></div>
+      <div class="oc" data-v="remodelacion" onclick="P.selCard('tipo',this)"><div class="oci">🔨</div><div class="ocn">Remodelación</div><div class="ocs">Reforma, ampliación, mezzanine</div></div>
+      <div class="oc" data-v="oficina" onclick="P.selCard('tipo',this)"><div class="oci">💼</div><div class="ocn">Oficinas</div><div class="ocs">Comercial o institucional</div></div>
+    </div>
+  </div>
+  <div id="blk-remod" style="display:none;">
+    <div class="wb"><strong>⚠️ Remodelación:</strong> El siguiente paso será un cuestionario detallado sobre el estado actual — demolición requerida, refuerzos, redirección eléctrica, etc. El sistema lo guiará sin suponer nada.</div>
+  </div>
+  <div class="fr">
+    <div class="fg"><label class="fl">Número de pisos <span class="req">*</span></label>
+      <select class="fi" id="p1-pisos" onchange="P.onPisos()">
+        <option value="">-- Seleccione --</option>
+        <option value="1">1 piso</option><option value="2">2 pisos</option><option value="3">3 pisos o más</option>
+      </select></div>
+    <div class="fg"><label class="fl">Nivel de acabados <span class="req">*</span></label>
+      <select class="fi" id="p1-acab">
+        <option value="">-- Seleccione --</option>
+        <option value="economico">🪨 Económico (~₡430-610k/m²)</option>
+        <option value="estandar">🏗 Estándar (~₡610-920k/m²)</option>
+        <option value="alto">✨ Alto (~₡920k-1.1M/m²)</option>
+        <option value="lujo">💎 Lujo (₡1.1M+/m²)</option>
+      </select></div>
+  </div>
+  <div class="fg"><label class="fl">Ubicación</label>
+    <select class="fi" id="p1-ubic">
+      <option value="sj">San José (referencia)</option>
+      <option value="alajuela">Alajuela (+2%)</option><option value="cartago">Cartago (+2%)</option>
+      <option value="heredia">Heredia (+1%)</option><option value="guanacaste">Guanacaste (+8%)</option>
+      <option value="puntarenas">Puntarenas (+7%)</option><option value="limon">Limón (+10%)</option>
+    </select></div>
+  <div class="nav"><div class="nt">Paso 1 de 8</div>
+    <div class="nr"><button class="btn btn-p" onclick="P.goNext(2)">Siguiente →</button></div></div>
+</div>
+
+<!-- PANEL PASO 1B: WIZARD REMODELACIÓN -->
+<div id="panel-step1b" class="pnl">
+  <div class="prog"><div class="pf" style="width:18%"></div></div>
+  <div class="pt">Diagnóstico de remodelación</div>
+  <div class="ps">El sistema necesita entender exactamente qué existe antes de calcular. Responda con la mayor precisión posible.</div>
+  <div id="wiz-body"></div>
+  <div style="display:flex;gap:8px;margin-top:18px;">
+    <button class="btn btn-s" onclick="P.wizPrev()">← Anterior</button>
+    <button class="btn btn-p" id="wiz-next" onclick="P.wizNext()">Siguiente →</button>
+  </div>
+</div>
+
+<!-- PANEL PASO 2: DIBUJO -->
+<div id="panel-step2" class="pnl" style="max-width:980px;">
+  <div class="prog"><div class="pf" style="width:28%"></div></div>
+  <div class="pt">Paso 2 — Dibujo en planta</div>
+  <div class="ps">Dibuje los espacios con el mouse O agregue medidas manualmente. Seleccione cualquier elemento para editar sus propiedades.</div>
+  <div class="ib">
+    <strong>🖊 Pared:</strong> click para puntos, doble-click o click en ● inicial para cerrar el cuarto.
+    <strong>✂ Borrar:</strong> click en elemento o en punto individual.
+    <strong>↖ Seleccionar:</strong> click para seleccionar, arrastrar para mover. Edite medidas exactas en el panel que aparece arriba.
+    <strong>Esc</strong> cancela la operación. <strong>Ctrl+Z</strong> deshace.
+  </div>
+  <!-- Property panel -->
+  <div id="pp"><h4 id="pp-title">Propiedades</h4><div id="pp-body"></div></div>
+  <!-- Floor tabs -->
+  <div class="ctabs" id="canvas-tabs"><div class="ctab on" onclick="P.setFloor(1,this)">Planta baja</div></div>
+  <!-- Toolbar -->
+  <div class="ctb">
+    <button class="ctb-btn on" id="t-wall" onclick="P.setTool('wall',this)">🖊 Pared</button>
+    <button class="ctb-btn" id="t-door" onclick="P.setTool('door',this)">🚪 Puerta</button>
+    <button class="ctb-btn" id="t-win" onclick="P.setTool('window',this)">🪟 Ventana</button>
+    <button class="ctb-btn" id="t-stair" onclick="P.setTool('stair',this)">🪜 Escalera</button>
+    <button class="ctb-btn" id="t-exist" onclick="P.setTool('existing',this)" style="display:none">🔲 Existente</button>
+    <div class="csep"></div>
+    <button class="ctb-btn" id="t-sel" onclick="P.setTool('select',this)">↖ Seleccionar</button>
+    <button class="ctb-btn" id="t-era" onclick="P.setTool('erase',this)">✂ Borrar</button>
+    <div class="csep"></div>
+    <button class="ctb-btn" onclick="P.undo()" title="Ctrl+Z">↩ Deshacer</button>
+    <button class="ctb-btn" onclick="P.redo()">↪ Rehacer</button>
+    <div class="csep"></div>
+    <button class="ctb-btn" onclick="P.zIn()">🔍+</button>
+    <button class="ctb-btn" onclick="P.zOut()">🔍−</button>
+    <button class="ctb-btn" onclick="P.zFit()">⊡ Ajustar</button>
+    <div class="csep"></div>
+    <select class="fi" id="snap-sel" style="width:110px;padding:3px 7px;font-size:11px;" onchange="CS.snap=parseInt(this.value)||0">
+      <option value="100">Snap 1m</option>
+      <option value="50" selected>Snap 50cm</option>
+      <option value="25">Snap 25cm</option>
+      <option value="10">Snap 10cm</option>
+      <option value="0">Sin snap</option>
+    </select>
+  </div>
+  <!-- Canvas -->
+  <div id="cw">
+    <canvas id="plan-canvas" width="940" height="520"></canvas>
+    <div class="cinf">
+      <span id="c-tip">Click para colocar punto · Doble-click o ● inicial para cerrar cuarto · Esc cancela</span>
+      <span id="c-pos">—</span>
+      <span>1 cuadro = 1m</span>
+    </div>
+  </div>
+  <!-- Panels below canvas -->
+  <div style="display:grid;grid-template-columns:1fr 270px;gap:12px;">
+    <div>
+      <div style="font-size:11px;font-weight:800;color:var(--txt2);margin-bottom:7px;text-transform:uppercase;letter-spacing:.4px;">Espacios definidos</div>
+      <div id="rooms-list"><div style="font-size:11px;color:var(--txt3);text-align:center;padding:14px;">Dibuje su primer cuarto</div></div>
+      <button class="btn btn-s btn-sm" onclick="P.addManual()" style="width:100%;margin-top:7px;">+ Agregar espacio con medidas</button>
+    </div>
+    <div>
+      <div style="font-size:11px;font-weight:800;color:var(--txt2);margin-bottom:7px;text-transform:uppercase;letter-spacing:.4px;">Puertas y ventanas</div>
+      <div id="openings-list" style="font-size:11px;color:var(--txt3);">Sin puertas ni ventanas.</div>
+      <div style="font-size:11px;font-weight:800;color:var(--txt2);margin:12px 0 7px;text-transform:uppercase;letter-spacing:.4px;">Escaleras</div>
+      <div id="stairs-list" style="font-size:11px;color:var(--txt3);">Sin escaleras.</div>
+    </div>
+  </div>
+  <div class="nav"><div class="nt">Paso 2 de 8</div>
+    <div class="nr">
+      <button class="btn btn-s" id="btn-back2" onclick="P.goStep(ST.tipo==='remodelacion'?'step1b':'step1')">← Anterior</button>
+      <button class="btn btn-p" onclick="P.goNext(3)">Siguiente →</button>
+    </div></div>
+</div>
+
+<!-- PANEL PASO 3: ALTURAS Y TECHO -->
+<div id="panel-step3" class="pnl">
+  <div class="prog"><div class="pf" style="width:42%"></div></div>
+  <div class="pt">Paso 3 — Alturas y techo</div>
+  <div class="ps">Datos críticos para calcular materiales de paredes, techo y cielos correctamente.</div>
+  <div class="blk"><div class="blkt">📏 Alturas</div>
+    <div class="fr">
+      <div class="fg"><label class="fl">Altura pared piso 1 <span class="req">*</span></label>
+        <div style="display:flex;gap:6px;align-items:center;"><input class="fi" id="p3-h1" type="number" step="0.01" min="2.20" max="7" placeholder="2.60" oninput="P.valH1()"><span style="color:var(--txt3);font-size:12px;white-space:nowrap;">m</span></div>
+        <div class="fh">Mínimo CFIA vivienda: <strong>2.20m</strong>. Estándar CR: 2.60m.</div>
+        <div id="v-h1" class="vm" style="display:none"></div></div>
+      <div class="fg" id="blk-h2" style="display:none;"><label class="fl">Altura pared piso 2</label>
+        <div style="display:flex;gap:6px;align-items:center;"><input class="fi" id="p3-h2" type="number" step="0.01" min="2.20" max="5" placeholder="2.50"><span style="color:var(--txt3);font-size:12px;white-space:nowrap;">m</span></div></div>
+    </div>
+    <div class="fr">
+      <div class="fg"><label class="fl">Altura cielo raso <span class="req">*</span></label>
+        <div style="display:flex;gap:6px;align-items:center;"><input class="fi" id="p3-cielo" type="number" step="0.01" min="2.10" max="6" placeholder="2.40" oninput="P.valCielo()"><span style="color:var(--txt3);font-size:12px;white-space:nowrap;">m</span></div>
+        <div class="fh">Debe ser menor que la pared. Mín. reglamentario INVU: <strong>2.10m</strong>.</div>
+        <div id="v-cielo" class="vm" style="display:none"></div></div>
+      <div class="fg"><label class="fl">Vuelo del alero</label>
+        <div style="display:flex;gap:6px;align-items:center;"><input class="fi" id="p3-alero" type="number" step="0.05" min="0" max="2" placeholder="0.60"><span style="color:var(--txt3);font-size:12px;white-space:nowrap;">m</span></div>
+        <div class="fh">Cuánto sobresale el techo. Recom. mín. 0.40m (Código Sísmico CR).</div></div>
+    </div>
+  </div>
+  <div class="blk"><div class="blkt">🏠 Techo</div>
+    <div class="fr">
+      <div class="fg"><label class="fl">Aguas del techo <span class="req">*</span></label>
+        <div class="tg" id="tg-aguas">
+          <div class="tb" data-v="1" onclick="P.tog('aguas',this)">1 agua</div>
+          <div class="tb" data-v="2" onclick="P.tog('aguas',this)">2 aguas</div>
+          <div class="tb" data-v="4" onclick="P.tog('aguas',this)">4 aguas</div>
+          <div class="tb" data-v="plano" onclick="P.tog('aguas',this)">Plano/losa</div>
+        </div>
+        <div class="ib" style="margin-top:6px;"><strong>💡</strong> <strong>2 aguas</strong>: el más común en CR (triángulo de frente). <strong>4 aguas</strong>: tipo pirámide. <strong>1 agua</strong>: inclinado a un lado.</div></div>
+      <div class="fg"><label class="fl">Pendiente <span class="req">*</span></label>
+        <select class="fi" id="p3-pend">
+          <option value="">-- Seleccione --</option>
+          <option value="15">15% — Mínimo para zinc</option>
+          <option value="20">20% — Bajo</option>
+          <option value="30">30% — Normal CR (más común)</option>
+          <option value="40">40% — Pronunciado</option>
+          <option value="50">50% — Muy pronunciado</option>
+        </select></div>
+    </div>
+  </div>
+  <div class="blk"><div class="blkt">☁️ Cielo raso</div>
+    <div class="fg"><label class="fl">Tipo <span class="req">*</span></label>
+      <div class="tg" id="tg-cielo">
+        <div class="tb" data-v="no" onclick="P.tog('cielo',this)">Sin cielo</div>
+        <div class="tb" data-v="gypsum" onclick="P.tog('cielo',this)">Gypsum</div>
+        <div class="tb" data-v="tablilla" onclick="P.tog('cielo',this)">Tablilla plástica</div>
+        <div class="tb" data-v="fibrocel" onclick="P.tog('cielo',this)">Fibrocel</div>
+        <div class="tb" data-v="madera" onclick="P.tog('cielo',this)">Madera</div>
+      </div>
+      <div id="cielo-hint" class="fh" style="margin-top:5px;"></div></div>
+  </div>
+  <div class="nav"><div class="nt">Paso 3 de 8</div>
+    <div class="nr">
+      <button class="btn btn-s" onclick="P.goStep('step2')">← Anterior</button>
+      <button class="btn btn-p" onclick="P.goNext(4)">Siguiente →</button>
+    </div></div>
+</div>
+
+<!-- PANEL PASO 4: MATERIALES -->
+<div id="panel-step4" class="pnl">
+  <div class="prog"><div class="pf" style="width:56%"></div></div>
+  <div class="pt">Paso 4 — Sistemas constructivos</div>
+  <div class="ps">Seleccione los materiales. El sistema calcula cantidades y mano de obra según normas CR.</div>
+  <div class="blk"><div class="blkt">🧱 Paredes</div>
+    <div class="cg">
+      <div class="oc" data-v="bloque" onclick="P.selMat('pared',this)"><div class="oci">🧱</div><div class="ocn">Bloque cemento</div><div class="ocs">15×20×40cm. El más común en CR.</div></div>
+      <div class="oc" data-v="durock" onclick="P.selMat('pared',this)"><div class="oci">📋</div><div class="ocn">Durock/Covintec</div><div class="ocs">Liviano. Más rápido y económico.</div></div>
+      <div class="oc" data-v="prefabricado" onclick="P.selMat('pared',this)"><div class="oci">🏗</div><div class="ocn">Prefabricado</div><div class="ocs">Paneles concreto. Muy rápido.</div></div>
+      <div class="oc" data-v="mixto" onclick="P.selMat('pared',this)"><div class="oci">🔀</div><div class="ocn">Mixto</div><div class="ocs">Bloque exterior, liviano interior.</div></div>
+    </div>
+    <div class="fg"><label class="fl">Columnas <span class="req">*</span></label>
+      <div class="tg" id="tg-col">
+        <div class="tb" data-v="concreto" onclick="P.tog('col',this)">Concreto armado</div>
+        <div class="tb" data-v="metalico" onclick="P.tog('col',this)">Metálicas</div>
+        <div class="tb" data-v="madera" onclick="P.tog('col',this)">Madera</div>
+      </div>
+      <div class="fh">Para bloque de cemento: columnas de concreto armado obligatorias (Código Sísmico CR 2014).</div></div>
+  </div>
+  <div class="blk"><div class="blkt">🏘 Cubierta techo</div>
+    <div class="cg">
+      <div class="oc" data-v="zinc" onclick="P.selMat('techo',this)"><div class="oci">🌊</div><div class="ocn">Zinc corrugado</div><div class="ocs">Cal 26. Más económico y común.</div></div>
+      <div class="oc" data-v="zinc_liso" onclick="P.selMat('techo',this)"><div class="oci">▬</div><div class="ocn">Zinc liso</div><div class="ocs">Mejor estética. Cal 24.</div></div>
+      <div class="oc" data-v="teja_barro" onclick="P.selMat('techo',this)"><div class="oci">🏛</div><div class="ocn">Teja de barro</div><div class="ocs">Alta estética. Mayor costo.</div></div>
+      <div class="oc" data-v="teja_plas" onclick="P.selMat('techo',this)"><div class="oci">🔷</div><div class="ocn">Teja plástica</div><div class="ocs">Liviana. Popular en CR.</div></div>
+      <div class="oc" data-v="losa" onclick="P.selMat('techo',this)"><div class="oci">⬛</div><div class="ocn">Losa concreto</div><div class="ocs">Para azotea o techo plano.</div></div>
+    </div>
+  </div>
+  <div class="blk"><div class="blkt">🔲 Pisos</div>
+    <div class="cg">
+      <div class="oc" data-v="ceramica" onclick="P.selMat('piso',this)"><div class="oci">🔲</div><div class="ocn">Cerámica</div><div class="ocs">45×45cm. Muy usado en CR.</div></div>
+      <div class="oc" data-v="porcelanato" onclick="P.selMat('piso',this)"><div class="oci">✨</div><div class="ocn">Porcelanato</div><div class="ocs">60×60. Mayor calidad.</div></div>
+      <div class="oc" data-v="madera" onclick="P.selMat('piso',this)"><div class="oci">🪵</div><div class="ocn">Madera</div><div class="ocs">Piso de madera o bambú.</div></div>
+      <div class="oc" data-v="concreto" onclick="P.selMat('piso',this)"><div class="oci">⬜</div><div class="ocn">Concreto pulido</div><div class="ocs">Económico. Sin recubrimiento.</div></div>
+    </div>
+  </div>
+  <div class="nav"><div class="nt">Paso 4 de 8</div>
+    <div class="nr">
+      <button class="btn btn-s" onclick="P.goStep('step3')">← Anterior</button>
+      <button class="btn btn-p" onclick="P.goNext(5)">Siguiente →</button>
+    </div></div>
+</div>
+
+<!-- PANEL PASO 5: INSTALACIONES -->
+<div id="panel-step5" class="pnl">
+  <div class="prog"><div class="pf" style="width:70%"></div></div>
+  <div class="pt">Paso 5 — Instalaciones</div>
+  <div class="ps">Eléctrico, hidráulico y acabados especiales. Defina exactamente qué incluye el proyecto.</div>
+  <div class="blk"><div class="blkt">💡 Instalación eléctrica</div>
+    <div class="ib"><strong>💡 Nota:</strong> Si es remodelación parcial o usa circuitos existentes, puede reducir o eliminar secciones. Elija "Parcial" para indicar solo los puntos nuevos necesarios.</div>
+    <div class="fg"><label class="fl">¿Qué incluye? <span class="req">*</span></label>
+      <div class="tg" id="tg-elec">
+        <div class="tb" data-v="completa" onclick="P.tog('elec',this);P.showElec('completa')">Nueva completa</div>
+        <div class="tb" data-v="parcial" onclick="P.tog('elec',this);P.showElec('parcial')">Parcial (pocos puntos)</div>
+        <div class="tb" data-v="solo_tablero" onclick="P.tog('elec',this);P.showElec('tablero')">Solo tablero</div>
+        <div class="tb" data-v="no" onclick="P.tog('elec',this);P.showElec('no')">No incluir</div>
+      </div></div>
+    <div id="elec-det" style="display:none;">
+      <div id="elec-comp">
+        <div class="fr">
+          <div class="fg"><label class="fl">Tablero</label>
+            <select class="fi" id="p5-tab">
+              <option value="16">16 espacios 120V (vivienda pequeña)</option>
+              <option value="24" selected>24 espacios 120/240V (estándar)</option>
+              <option value="32">32 espacios 120/240V (grande)</option>
+              <option value="tri">Trifásico (comercial)</option>
+            </select></div>
+          <div class="fg"><label class="fl">Circuitos</label>
+            <input class="fi" id="p5-circ" type="number" min="1" max="60" placeholder="En blanco = automático según área">
+            <div class="fh">Si deja en blanco, el sistema estima ~1.8 puntos por m².</div></div>
+        </div>
+      </div>
+      <div id="elec-parc" style="display:none;">
+        <div class="fr">
+          <div class="fg"><label class="fl">Tomacorrientes nuevos</label><input class="fi" id="p5-tomas" type="number" min="0" placeholder="0"></div>
+          <div class="fg"><label class="fl">Puntos de luz / apagadores</label><input class="fi" id="p5-luces" type="number" min="0" placeholder="0"></div>
+        </div>
+        <div class="fh">Incluye cable, conduit, breaker y mano de obra por cada punto.</div>
+      </div>
+    </div>
+    <div class="fg" style="margin-top:12px;"><label class="fl">¿Incluye cargas sociales CCSS en mano de obra?</label>
+      <div class="tg" id="tg-ccss">
+        <div class="tb on" data-v="si" onclick="P.tog('ccss',this)">Sí — incluir 42% sobre MO</div>
+        <div class="tb" data-v="no" onclick="P.tog('ccss',this)">No — solo mano de obra directa</div>
+      </div>
+      <div class="fh">El 42% cubre CCSS (26.17%) + INS + otros patronales. Obligatorio si hay planilla formal.</div></div>
+  </div>
+  <div class="blk"><div class="blkt">🚿 Instalación hidráulica</div>
+    <div class="fr">
+      <div class="fg"><label class="fl">Baños completos</label><input class="fi" id="p5-ban" type="number" min="0" max="15" placeholder="1"><div class="fh">Baño completo = inodoro + lavatorio + ducha</div></div>
+      <div class="fg"><label class="fl">Medios baños</label><input class="fi" id="p5-mban" type="number" min="0" max="10" placeholder="0"><div class="fh">Medio baño = inodoro + lavatorio</div></div>
+    </div>
+    <div class="fg"><label class="fl">Calentador</label>
+      <div class="tg" id="tg-cal">
+        <div class="tb" data-v="no" onclick="P.tog('cal',this)">Sin calentador</div>
+        <div class="tb" data-v="ducha" onclick="P.tog('cal',this)">Ducha eléctrica</div>
+        <div class="tb" data-v="tanque" onclick="P.tog('cal',this)">Tanque eléctrico</div>
+        <div class="tb" data-v="solar" onclick="P.tog('cal',this)">Solar</div>
+        <div class="tb" data-v="gas" onclick="P.tog('cal',this)">Gas paso a paso</div>
+      </div></div>
+    <div class="fg"><label class="fl">Aguas negras</label>
+      <div class="tg" id="tg-agn">
+        <div class="tb" data-v="septimo" onclick="P.tog('agn',this)">Tanque séptico + drenaje</div>
+        <div class="tb" data-v="red" onclick="P.tog('agn',this)">Red pública</div>
+      </div>
+      <div class="fh">⚠️ Tuberías incluidas hasta 10m fuera del borde de la construcción.</div></div>
+  </div>
+  <div class="blk"><div class="blkt">🍳 Cocina y closets</div>
+    <div class="fr">
+      <div class="fg"><label class="fl">Muebles de cocina</label>
+        <div class="tg" id="tg-coc">
+          <div class="tb" data-v="no" onclick="P.tog('coc',this)">Solo instalaciones</div>
+          <div class="tb" data-v="eco" onclick="P.tog('coc',this)">Económicos</div>
+          <div class="tb" data-v="est" onclick="P.tog('coc',this)">Estándar</div>
+          <div class="tb" data-v="luj" onclick="P.tog('coc',this)">Premium</div>
+        </div></div>
+      <div class="fg">
+        <div class="fr">
+          <div><label class="fl">Closets</label><input class="fi" id="p5-ncl" type="number" min="0" max="20" placeholder="0"></div>
+          <div><label class="fl">Tipo</label>
+            <select class="fi" id="p5-tcl">
+              <option value="no">Sin closets</option>
+              <option value="basico">Básico (MDF)</option>
+              <option value="est">Estándar (melamina)</option>
+              <option value="luj">Premium (madera)</option>
+            </select></div>
+        </div></div>
+    </div>
+  </div>
+  <div class="nav"><div class="nt">Paso 5 de 8</div>
+    <div class="nr">
+      <button class="btn btn-s" onclick="P.goStep('step4')">← Anterior</button>
+      <button class="btn btn-p" onclick="P.goNext(6)">Siguiente →</button>
+    </div></div>
+</div>
+
+<!-- PANEL PASO 6: PRECIOS -->
+<div id="panel-step6" class="pnl">
+  <div class="prog"><div class="pf" style="width:84%"></div></div>
+  <div class="pt">Paso 6 — Verificación de precios</div>
+  <div class="ps">Precios de mercado CR actualizados. Edite cualquiera con cotizaciones más recientes.</div>
+  <div class="wb"><strong>🔵 sistema</strong> (Jun 2026) · <strong>⭐ editado por usted</strong> — sus precios tienen prioridad en el cálculo.</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="font-size:11px;color:var(--txt3);">Última actualización: <span id="px-date" style="color:var(--acc);font-weight:700;">Jun 2026 (base)</span></div>
+    <button class="btn btn-s btn-sm" onclick="P.updatePrices()">🔄 Actualizar desde mercado</button>
+  </div>
+  <div id="prices-panel"></div>
+  <div class="nav"><div class="nt">Paso 6 de 8</div>
+    <div class="nr">
+      <button class="btn btn-s" onclick="P.goStep('step5')">← Anterior</button>
+      <button class="btn btn-p" onclick="P.goNext(7)">Calcular presupuesto →</button>
+    </div></div>
+</div>
+
+<!-- PANEL PASO 7: PRESUPUESTO -->
+<div id="panel-step7" class="pnl" style="max-width:860px;">
+  <div class="prog"><div class="pf" style="width:94%"></div></div>
+  <div class="pt">Paso 7 — Presupuesto detallado</div>
+  <div class="ps">Cálculo basado en normas CFIA, Código Sísmico CR 2014 y precios de mercado.</div>
+  <div id="budget-result"></div>
+  <div class="nav"><div class="nt">Paso 7 de 8</div>
+    <div class="nr">
+      <button class="btn btn-s" onclick="P.goStep('step6')">← Ajustar precios</button>
+      <button class="btn btn-p" onclick="P.goNext(8)">Ver resumen →</button>
+    </div></div>
+</div>
+
+<!-- PANEL PASO 8: EXPORTAR -->
+<div id="panel-step8" class="pnl">
+  <div class="prog"><div class="pf" style="width:100%"></div></div>
+  <div class="pt">Paso 8 — Resumen y exportación</div>
+  <div class="ps">Proyecto calculado. Guárdelo en línea y exporte el Excel.</div>
+  <div id="final-sum"></div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
+    <button class="btn btn-p" onclick="P.exportExcel()" style="flex:1">📊 Exportar Excel (.xlsx)</button>
+    <button class="btn btn-g" onclick="P.saveProject()" style="flex:1">💾 Guardar proyecto</button>
+    <button class="btn btn-s" onclick="P.newProject()" style="flex:1">➕ Nuevo proyecto</button>
+  </div>
+</div>
+
+  </div><!-- /main -->
+</div><!-- /shell -->
+
+<!-- MODAL AGREGAR CUARTO -->
+<div id="mo-room" class="mo hid">
+  <div class="mb">
+    <div class="mbt">📐 Agregar espacio con medidas</div>
+    <div class="fg"><label class="fl">Nombre <span class="req">*</span></label><input class="fi" id="mr-nom" placeholder="Sala, Cocina, Cuarto 1, Baño..."></div>
+    <div class="fr">
+      <div class="fg"><label class="fl">Ancho (m) <span class="req">*</span></label><input class="fi" id="mr-w" type="number" step="0.01" min="0.5" placeholder="3.50"></div>
+      <div class="fg"><label class="fl">Largo (m) <span class="req">*</span></label><input class="fi" id="mr-h" type="number" step="0.01" min="0.5" placeholder="4.00"></div>
+    </div>
+    <div class="fg"><label class="fl">Tipo</label>
+      <select class="fi" id="mr-tipo">
+        <option value="sala">Sala</option><option value="comedor">Comedor</option>
+        <option value="cocina">Cocina</option><option value="cuarto">Cuarto</option>
+        <option value="bano">Baño</option><option value="garage">Garaje</option>
+        <option value="pasillo">Pasillo</option><option value="terraza">Terraza / Porche</option>
+        <option value="otro">Otro</option>
+      </select></div>
+    <div class="fg"><label class="fl" style="text-transform:none;font-size:10px;">¿Es área existente? (remodelación)</label>
+      <div class="tg" id="tg-mrex">
+        <div class="tb on" data-v="no" onclick="P.tog('mrex',this)">No — es nueva</div>
+        <div class="tb" data-v="si" onclick="P.tog('mrex',this)">Sí — ya existe</div>
+      </div></div>
+    <div id="mr-val" class="fh" style="color:var(--acc);margin-top:5px;"></div>
+    <div class="mf">
+      <button class="btn btn-s" onclick="document.getElementById('mo-room').classList.add('hid')">Cancelar</button>
+      <button class="btn btn-p" onclick="P.confirmRoom()">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL GUARDAR -->
+<div id="mo-save" class="mo hid">
+  <div class="mb">
+    <div class="mbt">💾 Guardar proyecto en línea</div>
+    <div class="fg"><label class="fl">Nombre del proyecto</label><input class="fi" id="sv-nom" placeholder="Nombre..."></div>
+    <div class="fg"><label class="fl">Notas</label><textarea class="fi" id="sv-not" rows="3" style="resize:vertical" placeholder="Observaciones, datos del cliente..."></textarea></div>
+    <div class="mf">
+      <button class="btn btn-s" onclick="document.getElementById('mo-save').classList.add('hid')">Cancelar</button>
+      <button class="btn btn-p" onclick="P.confirmSave()">💾 Guardar</button>
+    </div>
+  </div>
+</div>
+<script>
+const SURL='https://hfgpnmayazytnjunjymi.supabase.co';
+const SKEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmZ3BubWF5YXp5dG5qdW5qeW1pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0NDM5NjMsImV4cCI6MjA5NDAxOTk2M30.HQUndNKjlbLu907zGG50KmMfFHCHvb_pFYGwr9NBoRk';
+const DB2=supabase.createClient(SURL,SKEY);
+
+const STEPS=[
+  {id:'proyectos',lbl:'Proyectos',ico:'📁'},
+  {id:'step1',lbl:'Tipo de obra',ico:'📝'},
+  {id:'step1b',lbl:'Diagnóstico',ico:'🔍'},
+  {id:'step2',lbl:'Plano / Dibujo',ico:'✏️'},
+  {id:'step3',lbl:'Alturas y techo',ico:'📏'},
+  {id:'step4',lbl:'Materiales',ico:'🧱'},
+  {id:'step5',lbl:'Instalaciones',ico:'💡'},
+  {id:'step6',lbl:'Precios',ico:'💰'},
+  {id:'step7',lbl:'Presupuesto',ico:'📊'},
+  {id:'step8',lbl:'Exportar',ico:'📤'},
+];
+
+// WIZARD REMODELACIÓN
+const WIZ=[
+  {id:'tipo_rem',q:'¿Qué tipo de intervención es?',hint:'Seleccione una o más — esto define los capítulos del presupuesto.',multi:true,opts:[
+    {v:'ampliacion',lbl:'Ampliación de área',ico:'➕',desc:'Nuevos cuartos o extensión de estructura'},
+    {v:'mezzanine',lbl:'Mezzanine / entrepiso',ico:'🏗',desc:'Nivel intermedio dentro de espacio existente'},
+    {v:'cerramiento',lbl:'Cerramiento de espacio',ico:'🔲',desc:'Cerrar terraza, garaje o área abierta'},
+    {v:'cambio_mat',lbl:'Cambio de materiales',ico:'🔄',desc:'Reemplazo de pisos, paredes, techo, cielos'},
+    {v:'redistrib',lbl:'Redistribución interna',ico:'🔀',desc:'Mover o eliminar paredes internas'},
+    {v:'elec_hidro',lbl:'Mejora eléctrica/hidráulica',ico:'💡',desc:'Actualización de instalaciones'},
+  ]},
+  {id:'est_paredes',q:'¿Estado actual de las paredes en la zona de trabajo?',hint:'Sea preciso — define si se deben demoler, reforzar o simplemente extender.',multi:false,opts:[
+    {v:'bloque_ok',lbl:'Bloque en buen estado',ico:'🧱',desc:'Sin fisuras ni daños visibles'},
+    {v:'bloque_mal',lbl:'Bloque con daños o fisuras',ico:'⚠️',desc:'Requiere evaluación de ingeniero'},
+    {v:'liviano_ok',lbl:'Sistema liviano (Durock) en buen estado',ico:'📋'},
+    {v:'madera',lbl:'Paredes de madera',ico:'🪵'},
+    {v:'mixto',lbl:'Mixto (varios materiales)',ico:'🔀'},
+    {v:'no_aplica',lbl:'Sin paredes en esa zona',ico:'☁️',desc:'Área libre para construir'},
+  ]},
+  {id:'est_techo',q:'¿Estado del techo en la zona de intervención?',hint:'Si hay mezzanine, esto determina si hay que romper, cortar cerchas y reforzar.',multi:false,opts:[
+    {v:'zinc_ok',lbl:'Zinc en buen estado (no se toca)',ico:'✅'},
+    {v:'zinc_demo',lbl:'Zinc a demoler / reemplazar',ico:'🔨',desc:'Incluye desmontaje y disposición'},
+    {v:'losa_ok',lbl:'Losa concreto que se mantiene',ico:'⬛'},
+    {v:'losa_abrir',lbl:'Losa concreto que debe abrirse',ico:'⚒️',desc:'Corte de concreto armado'},
+    {v:'sin_techo',lbl:'Sin techo actualmente',ico:'☁️'},
+    {v:'cerchas',lbl:'Tiene cerchas que deben cortarse',ico:'✂️',desc:'Requiere refuerzo estructural obligatorio — Código Sísmico CR'},
+  ]},
+  {id:'est_cielo',q:'¿Qué hay de cielo raso en la zona?',multi:false,opts:[
+    {v:'gypsum_demo',lbl:'Gypsum a desmontar',ico:'☁️'},
+    {v:'tablilla_demo',lbl:'Tablilla plástica a desmontar',ico:'🔷'},
+    {v:'sin_cielo',lbl:'No hay cielo raso',ico:'—'},
+    {v:'mantener',lbl:'Cielo existente que se mantiene',ico:'✅',desc:'No se incluye en el cálculo'},
+  ]},
+  {id:'est_piso',q:'¿Estado actual del piso en la zona?',multi:false,opts:[
+    {v:'cer_demo',lbl:'Cerámica / porcelanato a demoler',ico:'🔨'},
+    {v:'conc_expuesto',lbl:'Concreto sin acabado',ico:'⬜'},
+    {v:'piso_ok',lbl:'Piso existente que se mantiene',ico:'✅'},
+    {v:'tierra',lbl:'Tierra / sin piso',ico:'🌿'},
+  ]},
+  {id:'est_elec',q:'¿Qué hay de instalación eléctrica existente?',multi:false,opts:[
+    {v:'redirigir',lbl:'Circuitos que deben redirigirse',ico:'🔌',desc:'Mover tuberías, cables y puntos'},
+    {v:'ampliar',lbl:'Agregar puntos a circuitos existentes',ico:'➕'},
+    {v:'nueva',lbl:'Instalación nueva en esa zona',ico:'💡'},
+    {v:'sin_cambio',lbl:'Sin cambios eléctricos',ico:'—'},
+  ]},
+  {id:'mez_det',q:'(Solo mezzanine) Defina el entrepiso y escalera:',hint:'Mínimos según Reglamento INVU: altura libre ≥2.10m arriba y abajo del entrepiso. Escalera: ancho ≥0.90m, huella ≥0.25m, contrahuella ≤0.21m. El Código Sísmico CR excluye mezzanines (<30% del área inferior) de requisitos de regularidad sísmica.',detail:true,cond:s=>s.tipo_rem&&s.tipo_rem.includes('mezzanine'),
+    fields:[
+      {id:'mez_tipo',lbl:'Tipo de entrepiso',type:'select',opts:[{v:'madera',lbl:'Estructura+piso de madera (más económico)'},{v:'met_madera',lbl:'Estructura metálica + piso madera'},{v:'concreto',lbl:'Losa de concreto armado (más resistente)'}]},
+      {id:'mez_area',lbl:'Área del entrepiso (m²)',type:'number',ph:'Ej: 12'},
+      {id:'mez_h_bajo',lbl:'Altura libre DEBAJO del entrepiso (m) — mín. 2.10m',type:'number',ph:'2.40'},
+      {id:'mez_h_arriba',lbl:'Altura libre ARRIBA del entrepiso (m) — mín. 2.10m',type:'number',ph:'2.20'},
+      {id:'mez_esc',lbl:'Tipo de escalera',type:'select',opts:[{v:'madera',lbl:'Madera recta (más económica)'},{v:'metal_recta',lbl:'Metálica recta'},{v:'metal_caracol',lbl:'Metálica en caracol (ahorra espacio)'},{v:'concreto',lbl:'Concreto armado'}]},
+      {id:'mez_ancho',lbl:'Ancho de escalera (m) — mín. 0.90m (Reglamento INVU Art. XI.8)',type:'number',ph:'0.90'},
+      {id:'mez_peldan',lbl:'Número de peldaños (en blanco = automático)',type:'number',ph:''},
+    ]},
+  {id:'area_rem',q:'¿Cuánta área tiene la zona de intervención?',detail:true,
+    fields:[
+      {id:'rem_area_total',lbl:'Área total donde se trabaja (m²)',type:'number',ph:'Ej: 25'},
+      {id:'rem_area_nueva',lbl:'De esa área, ¿cuánto m² es construcción nueva?',type:'number',ph:'Ej: 15'},
+    ]},
+];
+
+// PRICES BASE CR JUN 2026
+const PX={
+  bloque_15:{lbl:'Bloque cemento 15×20×40cm',unit:'und',p:850,cat:'obra_gris'},
+  cemento:{lbl:'Cemento Portland saco 42kg',unit:'saco',p:9800,cat:'obra_gris'},
+  arena:{lbl:'Arena de río m³',unit:'m³',p:22000,cat:'obra_gris'},
+  piedra:{lbl:'Piedra cuarta m³',unit:'m³',p:19000,cat:'obra_gris'},
+  var38:{lbl:'Varilla 3/8" × 6m',unit:'und',p:3200,cat:'obra_gris'},
+  var14:{lbl:'Varilla 1/4" × 6m',unit:'und',p:1400,cat:'obra_gris'},
+  var12:{lbl:'Varilla 1/2" × 6m',unit:'und',p:6500,cat:'obra_gris'},
+  alambre:{lbl:'Alambre amarre kg',unit:'kg',p:1200,cat:'obra_gris'},
+  durock_48:{lbl:'Lámina Durock 4×8',unit:'lám',p:18500,cat:'obra_gris'},
+  malla_rep:{lbl:'Malla para repello m²',unit:'m²',p:1200,cat:'obra_gris'},
+  zinc26:{lbl:'Zinc corrugado Cal26 × 3.05m',unit:'lám',p:8500,cat:'techo'},
+  zinc24:{lbl:'Zinc liso Cal24 × 3.05m',unit:'lám',p:11500,cat:'techo'},
+  teja_barro:{lbl:'Teja de barro',unit:'und',p:950,cat:'techo'},
+  teja_plas:{lbl:'Teja plástica',unit:'und',p:1100,cat:'techo'},
+  tornillo_t:{lbl:'Tornillo techo 2.5" (caja 100u)',unit:'caja',p:3500,cat:'techo'},
+  canaleta:{lbl:'Canaleta zinc 3m',unit:'und',p:5800,cat:'techo'},
+  angular2:{lbl:'Angular metálico 2"×2"×3m',unit:'und',p:7200,cat:'estructura'},
+  tubo2:{lbl:'Tubo cuadrado 2"×2"×6m',unit:'und',p:18500,cat:'estructura'},
+  madera24:{lbl:'Madera 2×4" × 4m',unit:'und',p:3800,cat:'estructura'},
+  madera26:{lbl:'Madera 2×6" × 4m',unit:'und',p:5500,cat:'estructura'},
+  ceramica:{lbl:'Cerámica piso 45×45cm m²',unit:'m²',p:9500,cat:'acabados'},
+  porcelanato:{lbl:'Porcelanato 60×60cm m²',unit:'m²',p:22000,cat:'acabados'},
+  bondex:{lbl:'Bondex saco',unit:'saco',p:4800,cat:'acabados'},
+  fragua:{lbl:'Fragua kg',unit:'kg',p:1800,cat:'acabados'},
+  sabieta:{lbl:'Sabieta repello saco',unit:'saco',p:3200,cat:'acabados'},
+  pint_ext:{lbl:'Pintura exterior galón',unit:'gal',p:19500,cat:'acabados'},
+  pint_int:{lbl:'Pintura interior galón',unit:'gal',p:14500,cat:'acabados'},
+  sellador:{lbl:'Sellador galón',unit:'gal',p:9500,cat:'acabados'},
+  gypsum:{lbl:'Lámina gypsum 4×8 ½"',unit:'lám',p:7200,cat:'cielos'},
+  tablilla:{lbl:'Tablilla plástica m²',unit:'m²',p:4500,cat:'cielos'},
+  p_omega:{lbl:'Perfil omega gypsum 3m',unit:'und',p:1800,cat:'cielos'},
+  p_canal:{lbl:'Perfil canal gypsum 3m',unit:'und',p:1600,cat:'cielos'},
+  inodoro:{lbl:'Inodoro estándar',unit:'und',p:85000,cat:'sanitarios'},
+  inodoro_luj:{lbl:'Inodoro alta gama',unit:'und',p:180000,cat:'sanitarios'},
+  lavatorio:{lbl:'Lavatorio + llave',unit:'und',p:65000,cat:'sanitarios'},
+  ducha_elec:{lbl:'Ducha eléctrica',unit:'und',p:35000,cat:'sanitarios'},
+  ducha_luj:{lbl:'Ducha lluvia + mezcladora',unit:'und',p:180000,cat:'sanitarios'},
+  tanque_cal:{lbl:'Tanque calentador eléctrico',unit:'und',p:185000,cat:'sanitarios'},
+  tanque_sep:{lbl:'Tanque séptico 1000L instalado',unit:'und',p:680000,cat:'sanitarios'},
+  p_madera:{lbl:'Puerta madera 0.90m c/marco',unit:'und',p:185000,cat:'puertas'},
+  p_metal:{lbl:'Puerta metálica 0.90m c/marco',unit:'und',p:155000,cat:'puertas'},
+  p_vidrio:{lbl:'Puerta vidrio templado 0.90m',unit:'und',p:280000,cat:'puertas'},
+  v_alum:{lbl:'Ventana aluminio+vidrio m²',unit:'m²',p:145000,cat:'puertas'},
+  v_pvc:{lbl:'Ventana PVC+vidrio m²',unit:'m²',p:185000,cat:'puertas'},
+  tab_16:{lbl:'Tablero 16 esp. 120V',unit:'und',p:45000,cat:'electrico'},
+  tab_24:{lbl:'Tablero 24 esp. 120/240V',unit:'und',p:68000,cat:'electrico'},
+  tab_32:{lbl:'Tablero 32 esp. 120/240V',unit:'und',p:95000,cat:'electrico'},
+  break1:{lbl:'Breaker 1 polo 15A',unit:'und',p:3800,cat:'electrico'},
+  break2:{lbl:'Breaker 2 polos 30A',unit:'und',p:7500,cat:'electrico'},
+  cable12:{lbl:'Cable #12 THHN metro',unit:'m',p:680,cat:'electrico'},
+  toma2:{lbl:'Tomacorriente doble',unit:'und',p:2800,cat:'electrico'},
+  apagador:{lbl:'Apagador sencillo',unit:'und',p:2200,cat:'electrico'},
+  conduit12:{lbl:'Conduit EMT ½" × 3m',unit:'und',p:2400,cat:'electrico'},
+  // DEMOLICIÓN
+  demo_pared:{lbl:'Demolición pared bloque m²',unit:'m²',p:8500,cat:'demolicion'},
+  demo_cielo:{lbl:'Desmontaje cielo raso m²',unit:'m²',p:4500,cat:'demolicion'},
+  demo_techo:{lbl:'Desmontaje techo zinc m²',unit:'m²',p:5500,cat:'demolicion'},
+  demo_piso:{lbl:'Demolición piso cerámico m²',unit:'m²',p:6000,cat:'demolicion'},
+  escombros:{lbl:'Acarreo escombros m³',unit:'m³',p:18000,cat:'demolicion'},
+  // ESTRUCTURA / REFUERZOS
+  ref_col:{lbl:'Refuerzo columna existente',unit:'und',p:120000,cat:'estructura'},
+  ref_viga:{lbl:'Refuerzo viga corona m lineal',unit:'m',p:45000,cat:'estructura'},
+  entrepiso_mad:{lbl:'Entrepiso madera m² (inc.estructura)',unit:'m²',p:125000,cat:'estructura'},
+  entrepiso_con:{lbl:'Entrepiso concreto armado m²',unit:'m²',p:185000,cat:'estructura'},
+  corte_cercha:{lbl:'Corte y refuerzo cercha',unit:'und',p:85000,cat:'estructura'},
+  // MANO DE OBRA
+  mo_bloque:{lbl:'M.O. pared bloque m²',unit:'m²',p:18000,cat:'mano_obra'},
+  mo_durock:{lbl:'M.O. pared Durock m²',unit:'m²',p:14000,cat:'mano_obra'},
+  mo_techo:{lbl:'M.O. cubierta techo m²',unit:'m²',p:12000,cat:'mano_obra'},
+  mo_piso:{lbl:'M.O. piso cerámico m²',unit:'m²',p:9500,cat:'mano_obra'},
+  mo_porc:{lbl:'M.O. porcelanato m²',unit:'m²',p:12000,cat:'mano_obra'},
+  mo_cielo:{lbl:'M.O. cielo raso m²',unit:'m²',p:10500,cat:'mano_obra'},
+  mo_repello:{lbl:'M.O. repello fino m²',unit:'m²',p:8500,cat:'mano_obra'},
+  mo_pintura:{lbl:'M.O. pintura 2 manos m²',unit:'m²',p:4500,cat:'mano_obra'},
+  mo_elec_pt:{lbl:'M.O. punto eléctrico',unit:'pto',p:25000,cat:'mano_obra'},
+  mo_elec_m2:{lbl:'M.O. eléctrico general m²',unit:'m²',p:8500,cat:'mano_obra'},
+  mo_hidro:{lbl:'M.O. punto hidráulico',unit:'pto',p:35000,cat:'mano_obra'},
+  mo_puerta:{lbl:'M.O. instalación puerta',unit:'und',p:25000,cat:'mano_obra'},
+  mo_ventana:{lbl:'M.O. instalación ventana m²',unit:'m²',p:18000,cat:'mano_obra'},
+  mo_bano:{lbl:'M.O. baño completo instalado',unit:'baño',p:120000,cat:'mano_obra'},
+  mo_escalera:{lbl:'M.O. fabricación escalera',unit:'und',p:380000,cat:'mano_obra'},
+};
+
+const REND={bloque:25,durock:40,techo:50,piso_cer:20,piso_porc:15,cielo:30,repello:20,pintura:50,elec:8,hidro:5};
+const COLS=['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#84cc16','#06b6d4'];
+
+// ── PROJECT STATE ─────────────────────────────────────────────
+var ST={
+  id:null,nom:'',tipo:'',pisos:1,acab:'',ubic:'sj',
+  rooms:[],openings:[],stairs:[],
+  h:{h1:2.60,h2:2.50,cielo:2.40,alero:0.60},
+  roof:{aguas:2,pend:30},
+  cielo:'gypsum',
+  mats:{pared:'bloque',techo:'zinc',piso:'ceramica',col:'concreto'},
+  inst:{elec:'completa',tab:'24',circ:0,tomas:0,luces:0,ccss:true,ban:1,mban:0,cal:'no',agn:'septimo',coc:'no',ncl:0,tcl:'no'},
+  rem:{},
+  prices:{},presupuesto:null,notas:''
+};
+
+// ── CANVAS STATE ──────────────────────────────────────────────
+var CS={
+  zoom:1,px:50,py:50,
+  tool:'wall',floor:1,snap:50,
+  pts:[],selId:null,selType:null,
+  drag:null,panStart:null,
+  hist:[],redo:[],
+  mx:0,my:0,
+};
+// ── MAIN P OBJECT ─────────────────────────────────────────────
+var P={
+init:function(){
+  this.buildNav();this.loadProjects();this.initCanvas();this.loadPrices();
+  // set ccss on by default
+  var ccssOn=document.querySelector('#tg-ccss .tb[data-v="si"]');
+  if(ccssOn) ccssOn.classList.add('on');
+  // set mrex default
+  var mrexNo=document.querySelector('#tg-mrex .tb[data-v="no"]');
+  if(mrexNo) mrexNo.classList.add('on');
+},
+
+buildNav:function(){
+  var nav=document.getElementById('steps-nav');
+  nav.innerHTML=STEPS.map(function(s,i){
+    return '<div class="sli" data-p="'+s.id+'" onclick="P.showPanel(\''+s.id+'\')"><div class="sn">'+(i===0?s.ico:i)+'</div><div class="sl">'+s.lbl+'</div></div>';
+  }).join('');
+},
+
+showPanel:function(id){
+  document.querySelectorAll('.pnl').forEach(p=>p.classList.remove('on'));
+  var el=document.getElementById('panel-'+id);
+  if(el) el.classList.add('on');
+  document.querySelectorAll('.sli').forEach(s=>s.classList.remove('on'));
+  var si=document.querySelector('[data-p="'+id+'"]');
+  if(si) si.classList.add('on');
+  document.getElementById('main').scrollTop=0;
+  if(id==='step6') this.renderPrices();
+  if(id==='step7'){this.calcBudget();this.renderBudget();}
+  if(id==='step8') this.renderFinal();
+},
+
+goStep:function(id){this.showPanel(id);},
+
+goNext:function(n){
+  if(!this.validate()) return;
+  this.collect();
+  if(ST.tipo==='remodelacion'&&n===2){this.startWiz();return;}
+  this.showPanel('step'+n);
+  this.markDone(n);
+  this.updateSum();
+},
+
+validate:function(){
+  var on=document.querySelector('.pnl.on');if(!on) return true;
+  var id=on.id;
+  if(id==='panel-step1'){
+    if(!document.getElementById('p1-nom').value.trim()){this.toast('⚠️ Ingrese el nombre del proyecto','warn');return false;}
+    if(!ST.tipo){this.toast('⚠️ Seleccione el tipo de proyecto','warn');return false;}
+    if(!document.getElementById('p1-pisos').value){this.toast('⚠️ Seleccione el número de pisos','warn');return false;}
+    if(!document.getElementById('p1-acab').value){this.toast('⚠️ Seleccione el nivel de acabados','warn');return false;}
+  }
+  if(id==='panel-step2'&&ST.rooms.length===0){this.toast('⚠️ Dibuje al menos un espacio','warn');return false;}
+  if(id==='panel-step3'){
+    var h1=parseFloat(document.getElementById('p3-h1').value);
+    if(!h1||h1<2.20){this.toast('⚠️ Altura mínima de pared: 2.20m (CFIA)','warn');return false;}
+    var c=parseFloat(document.getElementById('p3-cielo').value);
+    if(!c||c<2.10){this.toast('⚠️ Altura mínima de cielo: 2.10m (INVU)','warn');return false;}
+    if(c>=h1){this.toast('⚠️ El cielo debe ser menor que la altura de pared','warn');return false;}
+  }
+  return true;
+},
+
+collect:function(){
+  var fv=function(id){var e=document.getElementById(id);return e?e.value:null;};
+  var fn=function(id){var v=fv(id);return v?parseFloat(v)||0:0;};
+  ST.nom=fv('p1-nom')||ST.nom;
+  ST.pisos=parseInt(fv('p1-pisos'))||ST.pisos;
+  ST.acab=fv('p1-acab')||ST.acab;
+  ST.ubic=fv('p1-ubic')||ST.ubic;
+  if(fv('p3-h1')) ST.h.h1=fn('p3-h1')||2.60;
+  if(fv('p3-h2')) ST.h.h2=fn('p3-h2')||2.50;
+  if(fv('p3-cielo')) ST.h.cielo=fn('p3-cielo')||2.40;
+  if(fv('p3-alero')) ST.h.alero=fn('p3-alero')||0.60;
+  if(fv('p3-pend')) ST.roof.pend=parseInt(fv('p3-pend'))||30;
+  if(fv('p5-tab')) ST.inst.tab=fv('p5-tab');
+  if(fv('p5-circ')) ST.inst.circ=parseInt(fv('p5-circ'))||0;
+  if(fv('p5-tomas')) ST.inst.tomas=parseInt(fv('p5-tomas'))||0;
+  if(fv('p5-luces')) ST.inst.luces=parseInt(fv('p5-luces'))||0;
+  if(fv('p5-ban')) ST.inst.ban=parseInt(fv('p5-ban'))||0;
+  if(fv('p5-mban')) ST.inst.mban=parseInt(fv('p5-mban'))||0;
+  if(fv('p5-ncl')) ST.inst.ncl=parseInt(fv('p5-ncl'))||0;
+  if(fv('p5-tcl')) ST.inst.tcl=fv('p5-tcl');
+},
+
+markDone:function(n){
+  document.querySelectorAll('.sli').forEach(function(el,i){
+    el.classList.remove('done');
+    if(i>0&&i<n) el.classList.add('done');
+  });
+},
+
+// ── CARDS & TOGGLES ──────────────────────────────────────────
+selCard:function(type,card){
+  card.closest('.cg').querySelectorAll('.oc').forEach(c=>c.classList.remove('on'));
+  card.classList.add('on');
+  ST[type]=card.dataset.v;
+  if(type==='tipo'){
+    document.getElementById('blk-remod').style.display=(card.dataset.v==='remodelacion')?'block':'none';
+    document.getElementById('t-exist').style.display=(card.dataset.v==='remodelacion')?'':'none';
+  }
+},
+
+selMat:function(type,card){
+  card.closest('.blk').querySelectorAll('.oc').forEach(c=>c.classList.remove('on'));
+  card.classList.add('on');
+  ST.mats[type]=card.dataset.v;
+  this.updateSum();
+},
+
+tog:function(key,btn){
+  if(!btn) return;
+  var grp=btn.closest('.tg');if(!grp) return;
+  grp.querySelectorAll('.tb').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  var v=btn.dataset.v;
+  if(key==='aguas') ST.roof.aguas=v;
+  if(key==='cielo'){
+    ST.cielo=v;
+    var h={gypsum:'Gypsum: el más usado en vivienda CR. Se pinta. Requiere estructura aluminio.',tablilla:'Tablilla plástica: muy durable, fácil limpiar. Ideal baños y cocinas.',fibrocel:'Fibrocel/Duralita: económico. Difícil de pintar.',madera:'Madera: acabado premium. Requiere madera tratada por humedad.',no:''};
+    var el=document.getElementById('cielo-hint');if(el) el.textContent=h[v]||'';
+  }
+  if(key==='col') ST.mats.col=v;
+  if(key==='elec') ST.inst.elec=v;
+  if(key==='ccss') ST.inst.ccss=(v==='si');
+  if(key==='cal') ST.inst.cal=v;
+  if(key==='agn') ST.inst.agn=v;
+  if(key==='coc') ST.inst.coc=v;
+  if(key==='mrex') ST._mrex=(v==='si');
+},
+
+showElec:function(mode){
+  var d=document.getElementById('elec-det');if(d) d.style.display=(mode==='no')?'none':'block';
+  var c=document.getElementById('elec-comp');if(c) c.style.display=(mode==='completa')?'grid':'none';
+  var pa=document.getElementById('elec-parc');if(pa) pa.style.display=(mode==='parcial')?'block':'none';
+  ST.inst.elec=mode;
+},
+
+onPisos:function(){
+  var v=parseInt(document.getElementById('p1-pisos').value)||1;ST.pisos=v;
+  var tabs=document.getElementById('canvas-tabs');
+  if(tabs){
+    tabs.innerHTML='<div class="ctab on" onclick="P.setFloor(1,this)">Planta baja</div>';
+    if(v>=2) tabs.innerHTML+='<div class="ctab" onclick="P.setFloor(2,this)">2do piso</div>';
+    if(v>=3) tabs.innerHTML+='<div class="ctab" onclick="P.setFloor(3,this)">3er piso</div>';
+  }
+  document.getElementById('blk-h2').style.display=(v>=2)?'block':'none';
+},
+
+valH1:function(){
+  var h=parseFloat(document.getElementById('p3-h1').value)||0;
+  var el=document.getElementById('v-h1');el.style.display='block';
+  if(h<2.20){el.className='vm ver';el.textContent='❌ Mínimo CFIA vivienda: 2.20m';}
+  else if(h<2.40){el.className='vm vwn';el.textContent='⚠️ Aceptable pero puede sentirse bajo. Estándar CR: 2.60m';}
+  else if(h>4.5){el.className='vm vwn';el.textContent='⚠️ Altura inusual. ¿Espacio comercial o diseño especial?';}
+  else{el.className='vm vok';el.textContent='✅ Correcto según normas CR';}
+},
+
+valCielo:function(){
+  var c=parseFloat(document.getElementById('p3-cielo').value)||0;
+  var h=parseFloat(document.getElementById('p3-h1').value)||2.60;
+  var el=document.getElementById('v-cielo');el.style.display='block';
+  if(c>=h){el.className='vm ver';el.textContent='❌ El cielo debe ser menor que la altura de pared';}
+  else if(h-c<0.20){el.className='vm vwn';el.textContent='⚠️ Poco espacio para estructura. Mínimo 0.20m.';}
+  else{el.className='vm vok';el.textContent='✅ Correcto. Espacio disponible: '+(h-c).toFixed(2)+'m';}
+},
+
+// ── WIZARD REMODELACIÓN ───────────────────────────────────────
+_wi:0,_ws:[],
+
+startWiz:function(){
+  this._ws=WIZ.filter(s=>!s.cond||(s.cond&&s.cond(ST.rem)));
+  this._wi=0;this.renderWiz();this.showPanel('step1b');
+},
+
+renderWiz:function(){
+  var steps=this._ws;var i=this._wi;
+  if(i>=steps.length){this.showPanel('step2');return;}
+  var s=steps[i];
+  var prog=Math.round((i/steps.length)*100);
+  var html='<div class="wb" style="margin-bottom:12px;">🔍 Diagnóstico remodelación — pregunta '+(i+1)+' de '+steps.length
+    +'<div class="prog" style="margin-top:6px;"><div class="pf" style="width:'+prog+'%"></div></div></div>';
+  html+='<div class="wq">'+s.q+'</div>';
+  if(s.hint) html+='<div class="wh">ℹ️ '+s.hint+'</div>';
+  if(s.multi||(!s.detail)){
+    html+='<div class="cg" id="wiz-opts">';
+    s.opts.forEach(function(o){
+      var on=ST.rem[s.id]&&(Array.isArray(ST.rem[s.id])?ST.rem[s.id].includes(o.v):(ST.rem[s.id]===o.v));
+      html+='<div class="oc'+(on?' on':'')+'" data-v="'+o.v+'" onclick="P.wizSel(this,\''+s.id+'\','+(s.multi?'true':'false')+')">'
+        +'<div class="oci">'+(o.ico||'▪')+'</div>'
+        +'<div class="ocn">'+o.lbl+'</div>'
+        +(o.desc?'<div class="ocs">'+o.desc+'</div>':'')
+        +'</div>';
+    });
+    html+='</div>';
+  } else if(s.detail){
+    s.fields.forEach(function(f){
+      html+='<div class="fg"><label class="fl">'+f.lbl+'</label>';
+      if(f.type==='select'){
+        html+='<select class="fi" id="wf-'+f.id+'">';
+        f.opts.forEach(function(o){html+='<option value="'+o.v+'">'+o.lbl+'</option>';});
+        html+='</select>';
+      } else {
+        html+='<input class="fi" id="wf-'+f.id+'" type="number" step="0.01" placeholder="'+(f.ph||'')+'">';
+      }
+      html+='</div>';
+    });
+  }
+  html+='<div id="wiz-val"></div>';
+  document.getElementById('wiz-body').innerHTML=html;
+  // Restore saved values
+  if(s.detail&&s.fields){
+    s.fields.forEach(function(f){
+      var el=document.getElementById('wf-'+f.id);
+      if(el&&ST.rem[f.id]!==undefined) el.value=ST.rem[f.id];
+    });
+  }
+  // Mezzanine live validation
+  if(s.id==='mez_det'){
+    ['wf-mez_h_bajo','wf-mez_h_arriba','wf-mez_ancho','wf-mez_peldan'].forEach(function(fid){
+      var el=document.getElementById(fid);
+      if(el) el.addEventListener('input',P.valMez);
+    });
+  }
+},
+
+wizSel:function(card,key,multi){
+  var grp=document.getElementById('wiz-opts');
+  if(!multi) grp.querySelectorAll('.oc').forEach(c=>c.classList.remove('on'));
+  card.classList.toggle('on');
+  var sel=[];grp.querySelectorAll('.oc.on').forEach(c=>sel.push(c.dataset.v));
+  ST.rem[key]=multi?sel:sel[0]||'';
+  this._ws=WIZ.filter(s=>!s.cond||(s.cond&&s.cond(ST.rem)));
+},
+
+valMez:function(){
+  var hb=parseFloat(document.getElementById('wf-mez_h_bajo')?.value)||0;
+  var ha=parseFloat(document.getElementById('wf-mez_h_arriba')?.value)||0;
+  var an=parseFloat(document.getElementById('wf-mez_ancho')?.value)||0;
+  var warns=[];
+  if(hb>0&&hb<2.10) warns.push('⚠️ Altura libre BAJO el entrepiso: '+hb+'m — mínimo 2.10m (Reglamento INVU).');
+  if(ha>0&&ha<2.10) warns.push('⚠️ Altura libre ARRIBA del entrepiso: '+ha+'m — mínimo 2.10m (Reglamento INVU).');
+  if(an>0&&an<0.90) warns.push('⚠️ Ancho escalera: '+an+'m — mínimo 0.90m (INVU Art. XI.8).');
+  var total=ST.h.h1||2.60;
+  if(hb>0&&ha>0&&(hb+ha+0.20)>total) warns.push('⚠️ Las alturas ('+hb+'m + '+ha+'m + ~0.20m entrepiso) superan la pared actual de '+total+'m. Debe aumentar la pared existente.');
+  var el=document.getElementById('wiz-val');
+  if(el) el.innerHTML=warns.map(w=>'<div class="vm vwn">'+w+'</div>').join('');
+},
+
+wizNext:function(){
+  var s=this._ws[this._wi];
+  if(s&&s.detail&&s.fields){
+    s.fields.forEach(function(f){
+      var el=document.getElementById('wf-'+f.id);
+      if(el) ST.rem[f.id]=el.value;
+    });
+    if(s.id==='mez_det') P.valMez();
+  }
+  if(s&&!s.multi&&!s.detail&&!ST.rem[s.id]){this.toast('⚠️ Seleccione una opción para continuar','warn');return;}
+  this._wi++;
+  this._ws=WIZ.filter(s=>!s.cond||(s.cond&&s.cond(ST.rem)));
+  if(this._wi>=this._ws.length){this.showPanel('step2');return;}
+  this.renderWiz();
+},
+
+wizPrev:function(){
+  if(this._wi<=0){this.showPanel('step1');return;}
+  this._wi--;this.renderWiz();
+},
+// ── CANVAS ───────────────────────────────────────────────────
+initCanvas:function(){
+  var cv=document.getElementById('plan-canvas');if(!cv) return;
+  cv.addEventListener('mousedown',this.cvDn.bind(this));
+  cv.addEventListener('mousemove',this.cvMv.bind(this));
+  cv.addEventListener('mouseup',this.cvUp.bind(this));
+  cv.addEventListener('dblclick',this.cvDbl.bind(this));
+  cv.addEventListener('contextmenu',function(e){e.preventDefault();P.cvRight(e);});
+  cv.addEventListener('wheel',function(e){e.preventDefault();P.cvWh(e);},{passive:false});
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){CS.pts=[];CS.selId=null;document.getElementById('pp').style.display='none';P.draw();}
+    if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key==='z'){e.preventDefault();P.undo();}
+    if((e.ctrlKey||e.metaKey)&&(e.shiftKey&&e.key==='Z'||e.key==='y')){e.preventDefault();P.redo();}
+    if(e.key==='Delete'&&CS.selId) P.delSel();
+  });
+  this.draw();
+},
+
+snapW:function(wx,wy){
+  var s=CS.snap/100;if(!s) return{x:wx,y:wy};
+  return{x:Math.round(wx/s)*s,y:Math.round(wy/s)*s};
+},
+w2s:function(wx,wy){return{x:wx*CS.zoom*20+CS.px,y:wy*CS.zoom*20+CS.py};},
+s2w:function(sx,sy){return{x:(sx-CS.px)/(CS.zoom*20),y:(sy-CS.py)/(CS.zoom*20)};},
+
+getEv:function(e){
+  var rect=document.getElementById('plan-canvas').getBoundingClientRect();
+  var sx=e.clientX-rect.left,sy=e.clientY-rect.top;
+  var w=this.s2w(sx,sy);
+  return{sx,sy,wx:w.x,wy:w.y,...this.snapW(w.x,w.y)};
+},
+
+cvDn:function(e){
+  if(e.button===1||(e.button===0&&e.altKey)){
+    var rect=document.getElementById('plan-canvas').getBoundingClientRect();
+    CS.panStart={sx:e.clientX-rect.left,sy:e.clientY-rect.top,px:CS.px,py:CS.py};return;
+  }
+  var ev=this.getEv(e);
+  if(CS.tool==='wall'||CS.tool==='existing'){
+    if(CS.pts.length>=3){
+      var fp=CS.pts[0];
+      var fs=this.w2s(fp.x,fp.y);
+      if(Math.hypot(ev.sx-fs.x,ev.sy-fs.y)<14){this.closeRoom();return;}
+    }
+    CS.pts.push({x:ev.x,y:ev.y});this.draw();
+  } else if(CS.tool==='select'){
+    var hit=this.hitTest(ev.x,ev.y);
+    if(hit){
+      CS.selId=hit.id;CS.selType=hit.type;
+      CS.drag={id:hit.id,type:hit.type,sx0:ev.x,sy0:ev.y,ex0:hit.el.x||0,ey0:hit.el.y||0};
+      this.showPP(hit);
+    } else {CS.selId=null;CS.selType=null;document.getElementById('pp').style.display='none';}
+    this.renderRooms();this.draw();
+  } else if(CS.tool==='erase'){
+    var hit2=this.hitTest(ev.x,ev.y);
+    if(hit2){
+      if(hit2.type==='room') this.delRoom(hit2.id);
+      else if(hit2.type==='opening') this.delOpening(hit2.id);
+      else if(hit2.type==='stair') this.delStair(hit2.id);
+    } else {
+      // Erase nearest point from current drawing
+      if(CS.pts.length>0){
+        var thresh=0.4;
+        var idx=CS.pts.findIndex(p=>Math.hypot(p.x-ev.x,p.y-ev.y)<thresh);
+        if(idx>=0){CS.pts.splice(idx,1);this.draw();}
+      }
+    }
+  } else if(CS.tool==='door'||CS.tool==='window'){
+    var rm=this.roomAt(ev.x,ev.y);
+    if(rm){
+      this.pushH();
+      ST.openings.push({id:'op'+Date.now(),type:CS.tool,roomId:rm.id,x:ev.x,y:ev.y,
+        w:(CS.tool==='door'?0.90:1.20),h:(CS.tool==='door'?2.10:1.20)});
+      this.renderOpenings();this.draw();
+      this.toast((CS.tool==='door'?'🚪':'🪟')+' agregado. Selecciónelo para editar medidas.','ok',2500);
+    } else this.toast('⚠️ Haga clic dentro de un cuarto','warn');
+  } else if(CS.tool==='stair'){
+    this.pushH();
+    ST.stairs.push({id:'st'+Date.now(),x:ev.x,y:ev.y,w:1.0,l:3.0,risers:14,floor:CS.floor,tipo:'metal_recta'});
+    this.renderStairs();this.draw();
+    this.toast('🪜 Escalera colocada. Selecciónela para editar medidas y tipo.','ok',3000);
+  }
+},
+
+cvMv:function(e){
+  var rect=document.getElementById('plan-canvas').getBoundingClientRect();
+  var sx=e.clientX-rect.left,sy=e.clientY-rect.top;
+  CS.mx=sx;CS.my=sy;
+  var w=this.s2w(sx,sy),wsp=this.snapW(w.x,w.y);
+  var pel=document.getElementById('c-pos');
+  if(pel) pel.textContent='Pos: '+wsp.x.toFixed(2)+'m, '+wsp.y.toFixed(2)+'m';
+  if(CS.panStart&&(e.buttons===4||(e.buttons===1&&e.altKey))){
+    CS.px=CS.panStart.px+(sx-CS.panStart.sx);CS.py=CS.panStart.py+(sy-CS.panStart.sy);
+    this.draw();return;
+  }
+  if(CS.drag&&e.buttons===1&&CS.tool==='select'){
+    var ev2=this.getEv(e);
+    var dx=ev2.x-CS.drag.sx0,dy=ev2.y-CS.drag.sy0;
+    var el=this.findEl(CS.drag.id,CS.drag.type);
+    if(el){
+      el.x=CS.drag.ex0+dx;el.y=CS.drag.ey0+dy;
+      if(el.poly) el.poly=el.poly.map(p=>({x:p.x+dx,y:p.y+dy}));
+      CS.drag.sx0=ev2.x;CS.drag.sy0=ev2.y;CS.drag.ex0=el.x;CS.drag.ey0=el.y;
+      this.updPP(el);
+    }
+  }
+  this.draw();
+},
+
+cvUp:function(){CS.panStart=null;if(CS.drag){this.pushH();CS.drag=null;}},
+
+cvDbl:function(e){if(CS.pts.length>=3) this.closeRoom();},
+
+cvRight:function(){CS.pts=[];this.draw();this.toast('Dibujado cancelado','warn',1500);},
+
+cvWh:function(e){
+  var f=e.deltaY<0?1.1:0.9;
+  CS.zoom=Math.max(0.15,Math.min(10,CS.zoom*f));this.draw();
+},
+
+setTool:function(t,btn){
+  CS.tool=t;CS.pts=[];
+  document.querySelectorAll('.ctb-btn').forEach(b=>b.classList.remove('on'));
+  if(btn) btn.classList.add('on');
+  var cv=document.getElementById('plan-canvas');
+  if(cv) cv.style.cursor=(t==='select'?'default':t==='erase'?'crosshair':'crosshair');
+  var tips={
+    wall:'Click: colocar puntos — Doble-click o click en ● inicial para cerrar — Esc cancela',
+    door:'Click DENTRO de un cuarto para colocar puerta',
+    window:'Click DENTRO de un cuarto para colocar ventana',
+    stair:'Click para colocar escalera — luego selecciónela para editar',
+    select:'Click: seleccionar — Arrastrar: mover — Delete: eliminar seleccionado',
+    erase:'Click en elemento para eliminarlo — Click en punto del dibujo para borrarlo',
+    existing:'Click para colocar puntos de paredes EXISTENTES (remodelación) — se muestran en gris'
+  };
+  var tel=document.getElementById('c-tip');if(tel) tel.textContent=tips[t]||'';
+},
+
+setFloor:function(f,tab){
+  CS.pts=[];CS.floor=f;
+  document.querySelectorAll('.ctab').forEach(t=>t.classList.remove('on'));
+  if(tab) tab.classList.add('on');
+  this.renderRooms();this.draw();
+},
+
+zIn:function(){CS.zoom=Math.min(10,CS.zoom*1.2);this.draw();},
+zOut:function(){CS.zoom=Math.max(0.15,CS.zoom/1.2);this.draw();},
+zFit:function(){
+  var rms=ST.rooms;if(!rms.length){CS.zoom=1;CS.px=50;CS.py=50;this.draw();return;}
+  var all=[];rms.forEach(r=>{if(r.poly) all.push(...r.poly);});
+  if(!all.length) return;
+  var xs=all.map(p=>p.x),ys=all.map(p=>p.y);
+  var W=900,H=500;
+  var rW=(Math.max(...xs)-Math.min(...xs))||10;
+  var rH=(Math.max(...ys)-Math.min(...ys))||10;
+  CS.zoom=Math.min((W-80)/(rW*20),(H-60)/(rH*20),4)*0.85;
+  CS.px=40-Math.min(...xs)*CS.zoom*20;
+  CS.py=40-Math.min(...ys)*CS.zoom*20;
+  this.draw();
+},
+
+closeRoom:function(){
+  var poly=CS.pts.slice();if(poly.length<3) return;
+  var xs=poly.map(p=>p.x),ys=poly.map(p=>p.y);
+  var w=parseFloat((Math.max(...xs)-Math.min(...xs)).toFixed(2));
+  var h=parseFloat((Math.max(...ys)-Math.min(...ys)).toFixed(2));
+  this.pushH();
+  ST.rooms.push({id:'r'+Date.now(),name:'Espacio '+(ST.rooms.length+1),type:'otro',
+    poly:[...poly],x:Math.min(...xs),y:Math.min(...ys),w,h,
+    floor:CS.floor,color:COLS[ST.rooms.length%COLS.length],
+    isExisting:(CS.tool==='existing')});
+  CS.pts=[];
+  this.renderRooms();this.updateSum();this.draw();
+  this.toast('✅ Espacio creado ('+w.toFixed(1)+'m × '+h.toFixed(1)+'m). Renómbrelo en el panel.','ok',2500);
+},
+
+hitTest:function(wx,wy){
+  for(var s of ST.stairs.filter(s=>s.floor===CS.floor)){
+    if(wx>=s.x&&wx<=s.x+s.w&&wy>=s.y&&wy<=s.y+s.l) return{id:s.id,type:'stair',el:s};
+  }
+  for(var op of ST.openings){
+    var rm=ST.rooms.find(r=>r.id===op.roomId);
+    if(!rm||rm.floor!==CS.floor) continue;
+    if(Math.hypot(wx-op.x,wy-op.y)<0.5) return{id:op.id,type:'opening',el:op};
+  }
+  for(var i=ST.rooms.length-1;i>=0;i--){
+    var r=ST.rooms[i];
+    if(r.floor===CS.floor&&r.poly&&this.inPoly({x:wx,y:wy},r.poly)) return{id:r.id,type:'room',el:r};
+  }
+  return null;
+},
+
+roomAt:function(wx,wy){
+  for(var i=ST.rooms.length-1;i>=0;i--){
+    var r=ST.rooms[i];
+    if(r.floor===CS.floor&&r.poly&&this.inPoly({x:wx,y:wy},r.poly)) return r;
+  }
+  return null;
+},
+
+findEl:function(id,type){
+  if(type==='room') return ST.rooms.find(r=>r.id===id);
+  if(type==='opening') return ST.openings.find(o=>o.id===id);
+  if(type==='stair') return ST.stairs.find(s=>s.id===id);
+  return null;
+},
+
+inPoly:function(pt,poly){
+  var inside=false;
+  for(var i=0,j=poly.length-1;i<poly.length;j=i++){
+    var xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+    if(((yi>pt.y)!==(yj>pt.y))&&(pt.x<(xj-xi)*(pt.y-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+},
+
+delSel:function(){
+  if(!CS.selId) return;
+  if(CS.selType==='room') this.delRoom(CS.selId);
+  else if(CS.selType==='opening') this.delOpening(CS.selId);
+  else if(CS.selType==='stair') this.delStair(CS.selId);
+},
+
+delRoom:function(id){
+  if(!confirm('¿Eliminar este espacio?')) return;
+  this.pushH();
+  ST.rooms=ST.rooms.filter(r=>r.id!==id);
+  ST.openings=ST.openings.filter(o=>o.roomId!==id);
+  CS.selId=null;document.getElementById('pp').style.display='none';
+  this.renderRooms();this.renderOpenings();this.updateSum();this.draw();
+},
+
+delOpening:function(id){
+  this.pushH();ST.openings=ST.openings.filter(o=>o.id!==id);
+  CS.selId=null;document.getElementById('pp').style.display='none';
+  this.renderOpenings();this.draw();
+},
+
+delStair:function(id){
+  if(!confirm('¿Eliminar escalera?')) return;
+  this.pushH();ST.stairs=ST.stairs.filter(s=>s.id!==id);
+  CS.selId=null;document.getElementById('pp').style.display='none';
+  this.renderStairs();this.draw();
+},
+
+// ── PROPERTY PANEL ────────────────────────────────────────────
+showPP:function(hit){
+  var pp=document.getElementById('pp');
+  var title=document.getElementById('pp-title');
+  var body=document.getElementById('pp-body');
+  pp.style.display='block';
+
+  if(hit.type==='room'){
+    var r=hit.el;
+    title.textContent='✏️ '+r.name;
+    body.innerHTML='<div class="fr">'
+      +'<div class="fg"><label class="fl">Nombre</label><input class="fi" id="pr-nm" value="'+r.name+'"></div>'
+      +'<div class="fg"><label class="fl">Tipo</label><select class="fi" id="pr-tp">'
+      +['sala','comedor','cocina','cuarto','bano','garage','pasillo','terraza','otro'].map(t=>'<option value="'+t+'"'+(r.type===t?' selected':'')+'>'+t.charAt(0).toUpperCase()+t.slice(1)+'</option>').join('')
+      +'</select></div></div>'
+      +'<div class="fr">'
+      +'<div class="fg"><label class="fl">Ancho (m)</label><input class="fi" id="pr-w" type="number" step="0.01" value="'+(r.w||0).toFixed(2)+'" oninput="P.liveResize(\''+r.id+'\')"></div>'
+      +'<div class="fg"><label class="fl">Largo (m)</label><input class="fi" id="pr-h" type="number" step="0.01" value="'+(r.h||0).toFixed(2)+'" oninput="P.liveResize(\''+r.id+'\')"></div>'
+      +'</div>'
+      +'<div class="fg"><label class="fl" style="text-transform:none;font-size:10px;">¿Área existente? (remodelación)</label>'
+      +'<div class="tg" id="tg-pr-ex">'
+      +'<div class="tb'+(r.isExisting?'':' on')+'" data-v="no" onclick="P.tog(\'pr_ex\',this)">Nueva</div>'
+      +'<div class="tb'+(r.isExisting?' on':'')+'" data-v="si" onclick="P.tog(\'pr_ex\',this)">Existente</div>'
+      +'</div></div>'
+      +'<div style="display:flex;gap:7px;">'
+      +'<button class="btn btn-p btn-sm" onclick="P.applyRoom(\''+r.id+'\')">✓ Aplicar</button>'
+      +'<button class="btn btn-del btn-sm" onclick="P.delRoom(\''+r.id+'\')">🗑 Eliminar</button>'
+      +'</div>';
+  } else if(hit.type==='opening'){
+    var op=hit.el;
+    title.textContent=(op.type==='door'?'🚪 Puerta':'🪟 Ventana');
+    body.innerHTML='<div class="fr">'
+      +'<div class="fg"><label class="fl">Ancho (m)</label><input class="fi" id="pr-ow" type="number" step="0.01" value="'+op.w+'"></div>'
+      +'<div class="fg"><label class="fl">Alto (m)</label><input class="fi" id="pr-oh" type="number" step="0.01" value="'+op.h+'"></div>'
+      +'</div>'
+      +(op.type==='door'?'<div class="fg"><label class="fl">Tipo de puerta</label><select class="fi" id="pr-dt">'
+        +'<option value="madera"'+(op.doorTipo==='madera'?' selected':'')+'>Madera</option>'
+        +'<option value="metal"'+(op.doorTipo==='metal'?' selected':'')+'>Metálica</option>'
+        +'<option value="vidrio"'+(op.doorTipo==='vidrio'?' selected':'')+'>Vidrio templado</option>'
+        +'</select></div>':'')
+      +(op.type==='window'?'<div class="fg"><label class="fl">Tipo de ventana</label><select class="fi" id="pr-wt">'
+        +'<option value="alum"'+(op.winTipo==='alum'?' selected':'')+'>Aluminio y vidrio</option>'
+        +'<option value="pvc"'+(op.winTipo==='pvc'?' selected':'')+'>PVC y vidrio</option>'
+        +'</select></div>':'')
+      +'<div style="display:flex;gap:7px;">'
+      +'<button class="btn btn-p btn-sm" onclick="P.applyOpening(\''+op.id+'\')">✓ Aplicar</button>'
+      +'<button class="btn btn-del btn-sm" onclick="P.delOpening(\''+op.id+'\')">🗑 Eliminar</button>'
+      +'</div>';
+  } else if(hit.type==='stair'){
+    var st=hit.el;
+    title.textContent='🪜 Escalera';
+    body.innerHTML='<div class="ib">Reglamento INVU: ancho mín. <strong>0.90m</strong>, huella mín. <strong>0.25m</strong>, contrahuella máx. <strong>0.21m</strong>.</div>'
+      +'<div class="fr3">'
+      +'<div class="fg"><label class="fl">Ancho (m)</label><input class="fi" id="pr-sw" type="number" step="0.01" value="'+st.w+'" min="0.90" oninput="P.valStair()"></div>'
+      +'<div class="fg"><label class="fl">Largo/proy. (m)</label><input class="fi" id="pr-sl" type="number" step="0.01" value="'+st.l+'" oninput="P.valStair()"></div>'
+      +'<div class="fg"><label class="fl">Peldaños</label><input class="fi" id="pr-sr" type="number" min="3" max="25" value="'+st.risers+'" oninput="P.valStair()"></div>'
+      +'</div>'
+      +'<div class="fg"><label class="fl">Tipo</label><select class="fi" id="pr-sti">'
+      +'<option value="madera"'+(st.tipo==='madera'?' selected':'')+'>Madera recta</option>'
+      +'<option value="metal_recta"'+(st.tipo==='metal_recta'?' selected':'')+'>Metálica recta</option>'
+      +'<option value="metal_caracol"'+(st.tipo==='metal_caracol'?' selected':'')+'>Metálica en caracol</option>'
+      +'<option value="concreto"'+(st.tipo==='concreto'?' selected':'')+'>Concreto armado</option>'
+      +'</select></div>'
+      +'<div id="stval"></div>'
+      +'<div style="display:flex;gap:7px;">'
+      +'<button class="btn btn-p btn-sm" onclick="P.applyStair(\''+st.id+'\')">✓ Aplicar</button>'
+      +'<button class="btn btn-del btn-sm" onclick="P.delStair(\''+st.id+'\')">🗑 Eliminar</button>'
+      +'</div>';
+    this.valStair();
+  }
+},
+
+updPP:function(el){
+  var pw=document.getElementById('pr-w');var ph=document.getElementById('pr-h');
+  if(pw&&el.w) pw.value=el.w.toFixed(2);
+  if(ph&&el.h) ph.value=el.h.toFixed(2);
+},
+
+liveResize:function(id){
+  var r=ST.rooms.find(r=>r.id===id);if(!r) return;
+  var nw=parseFloat(document.getElementById('pr-w')?.value)||r.w;
+  var nh=parseFloat(document.getElementById('pr-h')?.value)||r.h;
+  var sx=r.x||0,sy=r.y||0,pw=nw*20,ph=nh*20;
+  r.poly=[{x:sx,y:sy},{x:sx+pw,y:sy},{x:sx+pw,y:sy+ph},{x:sx,y:sy+ph}];
+  r.w=nw;r.h=nh;this.draw();
+},
+
+applyRoom:function(id){
+  var r=ST.rooms.find(r=>r.id===id);if(!r) return;
+  r.name=document.getElementById('pr-nm')?.value||r.name;
+  r.type=document.getElementById('pr-tp')?.value||r.type;
+  var isEx=document.querySelector('#tg-pr-ex .tb.on')?.dataset.v==='si';
+  r.isExisting=isEx;
+  this.renderRooms();this.updateSum();this.draw();
+  this.toast('✅ Cambios aplicados','ok',1500);
+},
+
+applyOpening:function(id){
+  var op=ST.openings.find(o=>o.id===id);if(!op) return;
+  op.w=parseFloat(document.getElementById('pr-ow')?.value)||op.w;
+  op.h=parseFloat(document.getElementById('pr-oh')?.value)||op.h;
+  if(op.type==='door') op.doorTipo=document.getElementById('pr-dt')?.value;
+  if(op.type==='window') op.winTipo=document.getElementById('pr-wt')?.value;
+  this.renderOpenings();this.draw();this.toast('✅ Aplicado','ok',1500);
+},
+
+valStair:function(){
+  var w=parseFloat(document.getElementById('pr-sw')?.value)||0;
+  var l=parseFloat(document.getElementById('pr-sl')?.value)||0;
+  var r=parseInt(document.getElementById('pr-sr')?.value)||0;
+  var warns=[];
+  if(w<0.90) warns.push('⚠️ Ancho '+w+'m — mínimo 0.90m (INVU Art. XI.8)');
+  if(r>0&&l>0){
+    var hue=l/r;var con=(ST.h.h1||2.60)/r;
+    if(hue<0.25) warns.push('⚠️ Huella calculada: '+hue.toFixed(2)+'m — mínimo 0.25m. Reduzca peldaños o aumente largo.');
+    if(con>0.21) warns.push('⚠️ Contrahuella calculada: '+con.toFixed(2)+'m — máximo 0.21m. Aumente peldaños o reduzca largo.');
+    else if(r>0) warns.push('✅ Huella: '+hue.toFixed(2)+'m · Contrahuella: '+con.toFixed(2)+'m — cumple normativa INVU');
+  }
+  var el=document.getElementById('stval');
+  if(el) el.innerHTML=warns.map(function(w){var cls=w.startsWith('✅')?'vok':w.startsWith('⚠')?'vwn':'ver';return'<div class="vm '+cls+'">'+w+'</div>';}).join('');
+},
+
+applyStair:function(id){
+  var st=ST.stairs.find(s=>s.id===id);if(!st) return;
+  var w=parseFloat(document.getElementById('pr-sw')?.value)||st.w;
+  if(w<0.90){this.toast('⚠️ Ancho mínimo 0.90m','warn');return;}
+  st.w=w;
+  st.l=parseFloat(document.getElementById('pr-sl')?.value)||st.l;
+  st.risers=parseInt(document.getElementById('pr-sr')?.value)||st.risers;
+  st.tipo=document.getElementById('pr-sti')?.value||st.tipo;
+  this.renderStairs();this.draw();this.toast('✅ Escalera actualizada','ok',1500);
+},
+
+// ── DRAW CANVAS ───────────────────────────────────────────────
+draw:function(){
+  var cv=document.getElementById('plan-canvas');if(!cv) return;
+  var ctx=cv.getContext('2d');
+  var W=cv.width,H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#1a1d27';ctx.fillRect(0,0,W,H);
+  // Grid
+  var gs=CS.zoom*20;
+  ctx.strokeStyle='rgba(60,70,120,0.3)';ctx.lineWidth=0.5;
+  for(var gx=(CS.px%gs+gs)%gs;gx<W;gx+=gs){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke();}
+  for(var gy=(CS.py%gs+gs)%gs;gy<H;gy+=gs){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}
+  // Labels
+  ctx.fillStyle='rgba(90,100,144,0.45)';ctx.font='8px Arial';
+  for(var m=0;m<=80;m+=5){
+    var lx=m*gs+CS.px;if(lx>5&&lx<W) ctx.fillText(m+'m',lx+2,10);
+    var ly=m*gs+CS.py;if(ly>5&&ly<H) ctx.fillText(m+'m',3,ly-1);
+  }
+
+  var S=this;
+
+  // Rooms
+  ST.rooms.filter(r=>r.floor===CS.floor).forEach(function(room){
+    if(!room.poly||room.poly.length<2) return;
+    ctx.save();
+    ctx.beginPath();
+    var fp=S.w2s(room.poly[0].x,room.poly[0].y);ctx.moveTo(fp.x,fp.y);
+    room.poly.forEach(function(pt,i){if(i>0){var s=S.w2s(pt.x,pt.y);ctx.lineTo(s.x,s.y);}});
+    ctx.closePath();
+    ctx.fillStyle=room.isExisting?'rgba(160,160,160,0.1)':room.color+'30';ctx.fill();
+    var isSel=(room.id===CS.selId);
+    ctx.strokeStyle=room.isExisting?'#777':room.color;
+    ctx.lineWidth=isSel?3:(room.isExisting?1.5:2);
+    if(room.isExisting) ctx.setLineDash([7,4]);
+    ctx.stroke();ctx.setLineDash([]);
+    // Label
+    var xs=room.poly.map(p=>p.x),ys=room.poly.map(p=>p.y);
+    var cx=(Math.min(...xs)+Math.max(...xs))/2,cy=(Math.min(...ys)+Math.max(...ys))/2;
+    var sc=S.w2s(cx,cy);
+    ctx.fillStyle='#f0f2ff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+    ctx.fillText(room.name,sc.x,sc.y-4);
+    ctx.font='10px Arial';ctx.fillStyle='rgba(154,163,204,0.85)';
+    ctx.fillText((room.w*room.h).toFixed(1)+'m²',sc.x,sc.y+10);
+    ctx.textAlign='left';
+    // Vertex dots when selected or erase mode
+    if(isSel||CS.tool==='erase'){
+      room.poly.forEach(function(pt){
+        var s=S.w2s(pt.x,pt.y);
+        ctx.fillStyle=isSel?'#f4a30a':'#ef4444';
+        ctx.beginPath();ctx.arc(s.x,s.y,4,0,Math.PI*2);ctx.fill();
+      });
+    }
+    ctx.restore();
+  });
+
+  // Openings
+  ST.openings.forEach(function(op){
+    var rm=ST.rooms.find(r=>r.id===op.roomId);
+    if(!rm||rm.floor!==CS.floor) return;
+    var s=S.w2s(op.x,op.y);
+    var isSel=(op.id===CS.selId);
+    ctx.fillStyle=op.type==='door'?'#f97316':'#38bdf8';
+    ctx.beginPath();ctx.arc(s.x,s.y,isSel?8:5,0,Math.PI*2);ctx.fill();
+    var wp=op.w*CS.zoom*20;
+    ctx.strokeStyle=op.type==='door'?'#f97316':'#38bdf8';
+    ctx.lineWidth=2;ctx.setLineDash([3,2]);
+    ctx.beginPath();ctx.moveTo(s.x-wp/2,s.y);ctx.lineTo(s.x+wp/2,s.y);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='#f0f2ff';ctx.font='9px Arial';ctx.textAlign='center';
+    ctx.fillText((op.type==='door'?'🚪':'🪟')+op.w+'m',s.x,s.y-10);
+    ctx.textAlign='left';
+  });
+
+  // Stairs
+  ST.stairs.filter(s=>s.floor===CS.floor).forEach(function(st){
+    var s0=S.w2s(st.x,st.y);
+    var sw=st.w*CS.zoom*20,sl=st.l*CS.zoom*20;
+    var isSel=(st.id===CS.selId);
+    ctx.fillStyle='rgba(139,92,246,0.15)';
+    ctx.strokeStyle=isSel?'#f4a30a':'#8b5cf6';
+    ctx.lineWidth=isSel?3:1.5;
+    ctx.fillRect(s0.x,s0.y,sw,sl);ctx.strokeRect(s0.x,s0.y,sw,sl);
+    var ns=st.risers||12;
+    for(var si=1;si<ns;si++){
+      ctx.strokeStyle='rgba(139,92,246,0.35)';ctx.lineWidth=0.5;
+      ctx.beginPath();ctx.moveTo(s0.x,s0.y+si*sl/ns);ctx.lineTo(s0.x+sw,s0.y+si*sl/ns);ctx.stroke();
+    }
+    ctx.fillStyle='#8b5cf6';ctx.font='9px Arial';
+    ctx.fillText('🪜 '+st.risers+' esc.',s0.x+2,s0.y+12);
+  });
+
+  // Drawing polygon
+  if(CS.pts.length>0){
+    ctx.strokeStyle='#f4a30a';ctx.lineWidth=2;ctx.setLineDash([5,3]);
+    ctx.beginPath();
+    var fp2=S.w2s(CS.pts[0].x,CS.pts[0].y);ctx.moveTo(fp2.x,fp2.y);
+    CS.pts.forEach(function(pt){var sp=S.w2s(pt.x,pt.y);ctx.lineTo(sp.x,sp.y);});
+    var mw=S.snapW(S.s2w(CS.mx,CS.my).x,S.s2w(CS.mx,CS.my).y);
+    var ms=S.w2s(mw.x,mw.y);ctx.lineTo(ms.x,ms.y);
+    ctx.stroke();ctx.setLineDash([]);
+    // Points
+    CS.pts.forEach(function(pt,i){
+      var sp=S.w2s(pt.x,pt.y);
+      ctx.fillStyle=i===0?'#f4a30a':'#fff';
+      ctx.beginPath();ctx.arc(sp.x,sp.y,i===0?7:4,0,Math.PI*2);ctx.fill();
+      if(i===0){ctx.strokeStyle='#f4a30a';ctx.lineWidth=2;ctx.beginPath();ctx.arc(sp.x,sp.y,11,0,Math.PI*2);ctx.stroke();}
+    });
+    // Live dimension
+    if(CS.pts.length>=1){
+      var last=CS.pts[CS.pts.length-1];
+      var dx=mw.x-last.x,dy=mw.y-last.y;
+      var dist=Math.sqrt(dx*dx+dy*dy);
+      var mc=S.w2s((last.x+mw.x)/2,(last.y+mw.y)/2);
+      ctx.fillStyle='#f4a30a';ctx.font='bold 10px Arial';ctx.textAlign='center';
+      ctx.fillText(dist.toFixed(2)+'m',mc.x,mc.y-8);ctx.textAlign='left';
+    }
+  }
+
+  // Scale bar
+  var sbm=5,sbp=sbm*CS.zoom*20;
+  ctx.strokeStyle='rgba(244,163,10,0.8)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(W-sbp-16,H-14);ctx.lineTo(W-16,H-14);ctx.stroke();
+  ctx.fillStyle='rgba(244,163,10,0.9)';ctx.font='bold 9px Arial';ctx.textAlign='center';
+  ctx.fillText(sbm+'m',W-sbp/2-16,H-3);ctx.textAlign='left';
+},
+
+// ── ROOMS / OPENINGS / STAIRS PANELS ─────────────────────────
+addManual:function(){
+  P._mrex=false;
+  document.getElementById('mo-room').classList.remove('hid');
+  document.getElementById('mr-nom').value='';
+  document.getElementById('mr-w').value='';
+  document.getElementById('mr-h').value='';
+  document.getElementById('mr-val').textContent='';
+  var noBtn=document.querySelector('#tg-mrex .tb[data-v="no"]');
+  if(noBtn){document.querySelectorAll('#tg-mrex .tb').forEach(b=>b.classList.remove('on'));noBtn.classList.add('on');}
+},
+
+confirmRoom:function(){
+  var nom=document.getElementById('mr-nom').value.trim();
+  var w=parseFloat(document.getElementById('mr-w').value);
+  var h=parseFloat(document.getElementById('mr-h').value);
+  var tipo=document.getElementById('mr-tipo').value;
+  var val=document.getElementById('mr-val');
+  if(!nom){val.textContent='⚠️ Ingrese un nombre';return;}
+  if(!w||w<0.5){val.textContent='⚠️ Ancho mínimo 0.5m';return;}
+  if(!h||h<0.5){val.textContent='⚠️ Largo mínimo 0.5m';return;}
+  var mins={bano:{a:1.5,l:1.5},cocina:{a:2.0,l:2.0},cuarto:{a:2.5,l:3.0},sala:{a:3.0,l:3.5}};
+  var mn=mins[tipo];
+  if(mn&&(w<mn.a||h<mn.l)){
+    if(!confirm('⚠️ Reglamento Construcciones CR: '+nom+' debería tener al menos '+mn.a+'m × '+mn.l+'m. ¿Continuar de todas formas?')) return;
+  }
+  var offX=(ST.rooms.length%4)*(w*20+40)+40;
+  var offY=Math.floor(ST.rooms.length/4)*(h*20+40)+40;
+  this.pushH();
+  ST.rooms.push({id:'r'+Date.now(),name:nom,type:tipo,
+    poly:[{x:offX,y:offY},{x:offX+w*20,y:offY},{x:offX+w*20,y:offY+h*20},{x:offX,y:offY+h*20}],
+    x:offX,y:offY,w,h,floor:CS.floor,
+    color:COLS[ST.rooms.length%COLS.length],isExisting:P._mrex||false});
+  document.getElementById('mo-room').classList.add('hid');
+  this.renderRooms();this.updateSum();this.draw();
+  this.toast('✅ '+nom+' ('+w+'m × '+h+'m = '+(w*h).toFixed(1)+'m²) agregado');
+},
+
+renderRooms:function(){
+  var el=document.getElementById('rooms-list');if(!el) return;
+  var rooms=ST.rooms.filter(r=>r.floor===CS.floor);
+  if(!rooms.length){el.innerHTML='<div style="font-size:11px;color:var(--txt3);text-align:center;padding:14px;">Dibuje su primer cuarto</div>';return;}
+  el.innerHTML=rooms.map(function(r){
+    return '<div class="ri'+(r.id===CS.selId?' on':'')+'" onclick="P.selRoom(\''+r.id+'\')"><div class="rl">'
+      +'<div class="rc" style="background:'+r.color+';'+(r.isExisting?'opacity:.35':'')+';"></div>'
+      +'<div><div class="rn">'+r.name+(r.isExisting?' <span style="font-size:9px;color:var(--txt3)">[exist.]</span>':' <span style="font-size:9px;color:var(--green)">[nuevo]</span>')+'</div>'
+      +'<div class="rd">'+r.w+'m × '+r.h+'m</div></div></div>'
+      +'<div style="display:flex;align-items:center;gap:4px;"><div class="ra">'+(r.w*r.h).toFixed(1)+'m²</div>'
+      +'<button class="rib" onclick="event.stopPropagation();P.selRoom(\''+r.id+'\')">✏</button>'
+      +'<button class="rib" onclick="event.stopPropagation();P.delRoom(\''+r.id+'\')">✕</button>'
+      +'</div></div>';
+  }).join('');
+},
+
+selRoom:function(id){
+  CS.selId=id;CS.selType='room';
+  var r=ST.rooms.find(r=>r.id===id);
+  if(r) this.showPP({id,type:'room',el:r});
+  this.renderRooms();this.draw();
+},
+
+renderOpenings:function(){
+  var el=document.getElementById('openings-list');if(!el) return;
+  if(!ST.openings.length){el.innerHTML='<div style="font-size:11px;color:var(--txt3);">Sin puertas ni ventanas.</div>';return;}
+  el.innerHTML=ST.openings.map(function(op){
+    var rm=ST.rooms.find(r=>r.id===op.roomId);
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid var(--brd);font-size:10px;">'
+      +'<span>'+(op.type==='door'?'🚪':'🪟')+' '+(rm?rm.name:'')+'</span>'
+      +'<span style="color:var(--txt3);">'+op.w+'×'+op.h+'m</span>'
+      +'<button class="rib" onclick="P.delOpening(\''+op.id+'\')">✕</button></div>';
+  }).join('');
+},
+
+renderStairs:function(){
+  var el=document.getElementById('stairs-list');if(!el) return;
+  if(!ST.stairs.length){el.innerHTML='<div style="font-size:11px;color:var(--txt3);">Sin escaleras.</div>';return;}
+  el.innerHTML=ST.stairs.map(function(st){
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid var(--brd);font-size:10px;">'
+      +'<span>🪜 P'+st.floor+' — '+st.risers+' peld.</span>'
+      +'<span style="color:var(--txt3);">'+st.w+'m ancho</span>'
+      +'<button class="rib" onclick="P.delStair(\''+st.id+'\')">✕</button></div>';
+  }).join('');
+},
+
+// ── HISTORY ───────────────────────────────────────────────────
+pushH:function(){
+  CS.hist.push(JSON.stringify({rooms:ST.rooms,openings:ST.openings,stairs:ST.stairs}));
+  if(CS.hist.length>60) CS.hist.shift();CS.redo=[];
+},
+undo:function(){
+  if(!CS.hist.length) return;
+  CS.redo.push(JSON.stringify({rooms:ST.rooms,openings:ST.openings,stairs:ST.stairs}));
+  var prev=JSON.parse(CS.hist.pop());
+  ST.rooms=prev.rooms||[];ST.openings=prev.openings||[];ST.stairs=prev.stairs||[];
+  this.renderRooms();this.renderOpenings();this.renderStairs();this.draw();
+},
+redo:function(){
+  if(!CS.redo.length) return;
+  this.pushH();
+  var next=JSON.parse(CS.redo.pop());
+  ST.rooms=next.rooms||[];ST.openings=next.openings||[];ST.stairs=next.stairs||[];
+  this.renderRooms();this.renderOpenings();this.renderStairs();this.draw();
+},
+// ── PRICES ────────────────────────────────────────────────────
+loadPrices:function(){
+  try{
+    var s=localStorage.getItem('px_cr_v3');
+    var d=localStorage.getItem('px_cr_date');
+    if(s) ST.prices=JSON.parse(s);
+    var el=document.getElementById('px-date');
+    if(el) el.textContent=d||'Jun 2026 (base)';
+  }catch(e){ST.prices={};}
+},
+getP:function(k){
+  if(ST.prices&&ST.prices[k]!==undefined) return ST.prices[k];
+  return PX[k]?PX[k].p:0;
+},
+overrideP:function(k,val){
+  var n=parseInt(val);
+  if(!n||n<=0){delete ST.prices[k];return;}
+  if(PX[k]&&n!==PX[k].p) ST.prices[k]=n;
+  else delete ST.prices[k];
+},
+updatePrices:async function(){
+  var btn=document.getElementById('btn-upd');if(btn) btn.textContent='⏳';
+  try{
+    var resp=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,
+        tools:[{type:'web_search_20250305',name:'web_search'}],
+        messages:[{role:'user',content:'Busca precios actuales 2026 en colones costarricenses de materiales construcción Costa Rica en Construplaza o EPA Costa Rica. Necesito: bloque_15 (bloque 15x20x40cm por unidad), cemento (saco cemento Portland 42kg), var38 (varilla 3/8" 6m), zinc26 (lamina zinc corrugado cal26 3.05m), ceramica (ceramica piso m2), mo_bloque (mano obra pared bloque m2), mo_techo (mano obra techo m2). Responde SOLO JSON sin backticks: {"bloque_15":850,"cemento":9800,"var38":3200,"zinc26":8500,"ceramica":9500,"mo_bloque":18000,"mo_techo":12000,"fecha":"DD-Mon-YYYY"}'}]
+      })
+    });
+    var data=await resp.json();
+    var text=(data.content||[]).filter(x=>x.type==='text').map(x=>x.text).join('');
+    var clean=text.replace(/```json|```/g,'').trim();
+    var upd=JSON.parse(clean);
+    var fecha=upd.fecha||new Date().toLocaleDateString('es-CR');delete upd.fecha;
+    Object.keys(upd).forEach(k=>{if(PX[k]) ST.prices[k]=upd[k];});
+    localStorage.setItem('px_cr_v3',JSON.stringify(ST.prices));
+    localStorage.setItem('px_cr_date',fecha);
+    var el=document.getElementById('px-date');if(el) el.textContent=fecha;
+    this.renderPrices();this.toast('✅ Precios actualizados — '+fecha);
+  }catch(e){
+    this.toast('⚠️ Usando precios base Jun 2026 (sin conexión)','warn');
+  }
+  if(btn) btn.textContent='🔄 Precios';
+},
+renderPrices:function(){
+  var el=document.getElementById('prices-panel');if(!el) return;
+  var cats={'obra_gris':'🧱 Obra gris','techo':'🏠 Techo','estructura':'⚙️ Estructura',
+    'acabados':'✨ Acabados','cielos':'☁️ Cielos','sanitarios':'🚿 Sanitarios',
+    'puertas':'🚪 Puertas y ventanas','electrico':'💡 Eléctrico',
+    'demolicion':'🔨 Demolición','mano_obra':'👷 Mano de obra'};
+  var html='';
+  Object.keys(cats).forEach(function(cat){
+    var items=Object.entries(PX).filter(([k,v])=>v.cat===cat);
+    if(!items.length) return;
+    html+='<div class="blk" style="margin-bottom:9px;"><div class="blkt">'+cats[cat]+'</div>';
+    items.forEach(function([k,v]){
+      var isOvr=(ST.prices[k]!==undefined);
+      var cur=isOvr?ST.prices[k]:v.p;
+      html+='<div class="prow"><div class="pl">'+v.lbl+' <span class="pbadge '+(isOvr?'pusr':'psys')+'">'+(isOvr?'⭐':'🔵')+'</span></div>'
+        +'<div class="pu">'+v.unit+'</div>'
+        +'<input class="pi" type="number" value="'+cur+'" onchange="P.overrideP(\''+k+'\',this.value)"> ₡</div>';
+    });
+    html+='</div>';
+  });
+  el.innerHTML=html;
+},
+
+// ── BUDGET CALCULATION ────────────────────────────────────────
+calcBudget:function(){
+  this.collect();
+  var newR=ST.rooms.filter(r=>!r.isExisting);
+  var aNew=newR.reduce((s,r)=>s+r.w*r.h,0);
+  var aTot=ST.rooms.reduce((s,r)=>s+r.w*r.h,0);
+  var perim=newR.reduce((s,r)=>s+2*(r.w+r.h),0);
+  var h1=ST.h.h1,cielo=ST.h.cielo,alero=ST.h.alero,pend=ST.roof.pend;
+  var slope=1/Math.cos(Math.atan(pend/100));
+  var aPared=perim*h1-ST.openings.reduce((s,op)=>s+op.w*op.h,0);
+  var aTecho=(aTot+perim*alero)*slope;
+  var aCielo=ST.cielo!=='no'?aNew:0;
+  var inst=ST.inst;
+  var BQ={};
+
+  // PAREDES
+  if(ST.mats.pared==='bloque'){
+    BQ.bloque_15=Math.ceil(aPared*12.5*1.05);BQ.cemento=Math.ceil(aPared*1.0*1.05);
+    BQ.arena=Math.ceil(aPared*0.04*1.05*10)/10;
+    var nC=Math.ceil(perim/3)+newR.length;
+    BQ.var38=Math.ceil(nC*(h1/6)*4*1.10);BQ.var14=Math.ceil(nC*(h1/0.15)*0.35*4/6*1.10);
+    BQ.alambre=Math.ceil(BQ.var38*0.2);BQ.mo_bloque=parseFloat(aPared.toFixed(1));
+  } else if(ST.mats.pared==='durock'){
+    BQ.durock_48=Math.ceil(aPared/2.88*1.10);BQ.cemento=Math.ceil(aPared*0.5);
+    BQ.malla_rep=Math.ceil(aPared*2*1.05);BQ.mo_durock=parseFloat(aPared.toFixed(1));
+  }
+  BQ.sabieta=Math.ceil(aPared*2*0.15);
+  BQ.pint_int=Math.ceil(aNew*0.09*2);BQ.pint_ext=Math.ceil(aPared*0.5*0.08*2);
+  BQ.sellador=Math.ceil((aPared*2+aCielo)*0.09);
+  BQ.mo_repello=parseFloat((aPared*2).toFixed(1));
+  BQ.mo_pintura=parseFloat(((aPared*2+aCielo)*2).toFixed(1));
+
+  // TECHO
+  if(ST.mats.techo==='zinc'){BQ.zinc26=Math.ceil(aTecho/2.59*1.10);BQ.tornillo_t=Math.ceil((BQ.zinc26*12)/100);BQ.canaleta=Math.ceil(perim/3/2);}
+  else if(ST.mats.techo==='zinc_liso'){BQ.zinc24=Math.ceil(aTecho/2.59*1.10);BQ.tornillo_t=Math.ceil((BQ.zinc24*12)/100);}
+  else if(ST.mats.techo==='teja_barro') BQ.teja_barro=Math.ceil(aTecho*16*1.10);
+  else if(ST.mats.techo==='teja_plas') BQ.teja_plas=Math.ceil(aTecho*16*1.10);
+  BQ.angular2=Math.ceil(aTecho/10*4);BQ.madera24=Math.ceil(aTecho/8);
+  BQ.mo_techo=parseFloat(aTecho.toFixed(1));
+
+  // PISOS
+  if(ST.mats.piso==='ceramica'){BQ.ceramica=Math.ceil(aNew*1.10);BQ.bondex=Math.ceil(aNew/4);BQ.fragua=Math.ceil(aNew*0.5);BQ.mo_piso=parseFloat(aNew.toFixed(1));}
+  else if(ST.mats.piso==='porcelanato'){BQ.porcelanato=Math.ceil(aNew*1.12);BQ.bondex=Math.ceil(aNew/3.5);BQ.fragua=Math.ceil(aNew*0.4);BQ.mo_porc=parseFloat(aNew.toFixed(1));}
+
+  // CIELOS
+  if(ST.cielo==='gypsum'){BQ.gypsum=Math.ceil(aCielo/2.88*1.10);BQ.p_omega=Math.ceil(aCielo/2.4*1.15);BQ.p_canal=Math.ceil(aCielo/1.2*1.15);BQ.mo_cielo=parseFloat(aCielo.toFixed(1));}
+  else if(ST.cielo==='tablilla'){BQ.tablilla=Math.ceil(aCielo*1.10);BQ.mo_cielo=parseFloat(aCielo.toFixed(1));}
+
+  // SANITARIOS
+  var nB=inst.ban||0,nMB=inst.mban||0;
+  var isLuj=ST.acab==='lujo';
+  if(nB>0||nMB>0){
+    BQ[isLuj?'inodoro_luj':'inodoro']=nB+nMB;BQ.lavatorio=nB+nMB;
+    if(nB>0) BQ[isLuj?'ducha_luj':'ducha_elec']=nB;
+    if(inst.cal==='tanque') BQ.tanque_cal=1;
+    if(inst.agn==='septimo') BQ.tanque_sep=1;
+    BQ.mo_bano=nB+nMB*0.5;
+  }
+
+  // PUERTAS Y VENTANAS
+  var doors=ST.openings.filter(o=>o.type==='door');
+  var wins=ST.openings.filter(o=>o.type==='window');
+  if(doors.length>0){
+    var dtypes={madera:'p_madera',metal:'p_metal',vidrio:'p_vidrio'};
+    doors.forEach(function(d){
+      var key=dtypes[d.doorTipo]||(isLuj?'p_vidrio':(ST.acab==='economico'?'p_metal':'p_madera'));
+      BQ[key]=(BQ[key]||0)+1;
+    });
+    BQ.mo_puerta=doors.length;
+  }
+  if(wins.length>0){
+    var wArea=parseFloat(wins.reduce((s,w)=>s+w.w*w.h,0).toFixed(1));
+    var wtypes={alum:'v_alum',pvc:'v_pvc'};
+    var winGroups={v_alum:0,v_pvc:0};
+    wins.forEach(function(w){var key=wtypes[w.winTipo]||'v_alum';winGroups[key]+=(w.w*w.h);});
+    Object.keys(winGroups).forEach(k=>{if(winGroups[k]>0) BQ[k]=parseFloat(winGroups[k].toFixed(1));});
+    BQ.mo_ventana=wArea;
+  }
+
+  // ELÉCTRICO
+  if(inst.elec!=='no'){
+    if(inst.elec==='completa'){
+      var nPts=inst.circ>0?inst.circ*8:Math.ceil(aNew*1.8);
+      var tabKey={16:'tab_16',24:'tab_24',32:'tab_32',tri:'tab_32'}[inst.tab]||'tab_24';
+      BQ[tabKey]=1;BQ.break1=Math.ceil(nPts*0.7);BQ.break2=Math.ceil(nPts*0.15);
+      BQ.cable12=Math.ceil(aNew*12);BQ.toma2=Math.ceil(aNew*0.8);
+      BQ.apagador=Math.ceil(aNew*0.3);BQ.conduit12=Math.ceil(aNew*1.5);
+      BQ.mo_elec_m2=parseFloat(aNew.toFixed(1));
+    } else if(inst.elec==='parcial'){
+      var nPts2=(inst.tomas||0)+(inst.luces||0);
+      BQ.cable12=Math.ceil(nPts2*15);BQ.toma2=inst.tomas||0;BQ.apagador=inst.luces||0;
+      BQ.conduit12=Math.ceil(nPts2*3);BQ.mo_elec_pt=nPts2;
+    }
+  }
+
+  // ESCALERAS
+  ST.stairs.forEach(function(st){
+    BQ.mo_escalera=(BQ.mo_escalera||0)+1;
+    if(st.tipo==='madera'||st.tipo==='metal_recta'||st.tipo==='metal_caracol'){
+      BQ.angular2=(BQ.angular2||0)+Math.ceil(st.w*4);
+      BQ.madera24=(BQ.madera24||0)+Math.ceil(st.l*2);
+    }
+  });
+
+  // DEMOLICIÓN (remodelación)
+  if(ST.tipo==='remodelacion'){
+    var rem=ST.rem;
+    var aEx=ST.rooms.filter(r=>r.isExisting).reduce((s,r)=>s+r.w*r.h,0)||aNew;
+    if(rem.est_techo&&(rem.est_techo==='zinc_demo'||rem.est_techo==='losa_abrir')){
+      BQ.demo_techo=Math.ceil(aEx*1.1);BQ.escombros=(BQ.escombros||0)+Math.ceil(aEx*0.05);
+    }
+    if(rem.est_techo==='cerchas'){
+      BQ.corte_cercha=Math.ceil(perim/4);BQ.ref_viga=Math.ceil(perim);
+    }
+    if(rem.est_cielo&&rem.est_cielo!=='sin_cielo'&&rem.est_cielo!=='mantener'){
+      BQ.demo_cielo=Math.ceil(aEx);
+    }
+    if(rem.est_piso&&rem.est_piso==='cer_demo'){
+      BQ.demo_piso=Math.ceil(aEx);BQ.escombros=(BQ.escombros||0)+Math.ceil(aEx*0.03);
+    }
+    if(rem.est_paredes&&(rem.est_paredes==='bloque_mal'||rem.est_paredes==='redistrib')){
+      BQ.demo_pared=Math.ceil(perim*h1*0.3);BQ.escombros=(BQ.escombros||0)+Math.ceil(perim*h1*0.3*0.15);
+    }
+    // MEZZANINE
+    if(rem.tipo_rem&&rem.tipo_rem.includes('mezzanine')){
+      var mArea=parseFloat(rem.mez_area)||aNew*0.5;
+      if(rem.mez_tipo==='concreto') BQ.entrepiso_con=parseFloat(mArea.toFixed(1));
+      else BQ.entrepiso_mad=parseFloat(mArea.toFixed(1));
+      if(rem.est_paredes&&rem.est_paredes!=='no_aplica'&&rem.est_paredes!=='sin_cielo'){
+        BQ.ref_col=Math.ceil(perim/4);BQ.ref_viga=(BQ.ref_viga||0)+Math.ceil(perim);
+      }
+    }
+  }
+
+  // COCINA / CLOSETS
+  var cocP={eco:1200000,est:2800000,luj:6500000};
+  var cosKitch=inst.coc!=='no'?(cocP[inst.coc]||0)*(aTot>100?1.5:1):0;
+  var closP={basico:180000,est:350000,luj:750000};
+  var cosClos=(inst.ncl||0)*(closP[inst.tcl]||0);
+
+  // COSTO TOTAL
+  var flete={sj:1,alajuela:1.02,cartago:1.02,heredia:1.01,guanacaste:1.08,puntarenas:1.07,limon:1.10}[ST.ubic]||1;
+  var totMat=0,totMO=0;var lines=[];
+  Object.entries(BQ).forEach(function([k,qty]){
+    var px=PX[k];if(!px||!qty||qty<=0) return;
+    var up=P.getP(k);var tot=qty*up;
+    if(px.cat==='mano_obra') totMO+=tot;
+    else totMat+=tot;
+    lines.push({k,lbl:px.lbl,unit:px.unit,qty,up,tot,cat:px.cat});
+  });
+  totMat=totMat*flete;
+  var ccssAmt=inst.ccss?totMO*0.42:0;
+  var imprev=(totMat+totMO)*0.10;
+
+  // Duración
+  var dur={};
+  dur.paredes=Math.ceil(aPared/(ST.mats.pared==='bloque'?REND.bloque:REND.durock));
+  dur.techo=Math.ceil(aTecho/REND.techo);
+  dur.piso=Math.ceil(aNew/(ST.mats.piso==='porcelanato'?REND.piso_porc:REND.piso_cer));
+  dur.cielo=aCielo>0?Math.ceil(aCielo/REND.cielo):0;
+  dur.repello=Math.ceil(aPared*2/REND.repello);
+  dur.pintura=Math.ceil((aPared*2+aCielo)/REND.pintura);
+  dur.elec=inst.elec!=='no'?Math.ceil((BQ.mo_elec_pt||Math.ceil(aNew*1.5))/REND.elec):0;
+  dur.hidro=(nB||0)>0?Math.ceil((nB+nMB)*5/REND.hidro):0;
+  var totalDays=Object.values(dur).reduce((s,d)=>s+d,0);
+  var dias=Math.ceil(totalDays*0.65);
+
+  var totSan=lines.filter(i=>i.cat==='sanitarios').reduce((s,i)=>s+i.tot,0);
+  var totPV=lines.filter(i=>i.cat==='puertas').reduce((s,i)=>s+i.tot,0);
+  var totDemo=lines.filter(i=>i.cat==='demolicion').reduce((s,i)=>s+i.tot,0);
+  var totEst=lines.filter(i=>i.cat==='estructura').reduce((s,i)=>s+i.tot,0);
+
+  var total=totMat+totMO+ccssAmt+imprev+cosKitch+cosClos;
+  var totalUSD=Math.round(total/510);
+
+  ST.presupuesto={
+    areas:{aNew,aPared,aTecho,aCielo},bq:BQ,lines,
+    costos:{mat:totMat-totSan-totPV-totDemo-totEst,mo:totMO,ccss:ccssAmt,
+      san:totSan,pv:totPV,demo:totDemo,est:totEst,kitchen:cosKitch,clos:cosClos,imprev},
+    dur:{dias,sem:Math.ceil(dias/5),mes:Math.ceil(dias/22)},
+    total_crc:total,total_usd:totalUSD,fecha:new Date().toISOString()
+  };
+},
+
+renderBudget:function(){
+  var el=document.getElementById('budget-result');if(!el) return;
+  if(!ST.presupuesto){el.innerHTML='<div class="eb">Error al calcular.</div>';return;}
+  var b=ST.presupuesto,C=b.costos;
+  var f=function(n){return Math.round(n).toLocaleString('es-CR');};
+  var pct=function(n){return b.total_crc>0?Math.round(n/b.total_crc*100)+'%':'0%';};
+
+  var rows=[['🧱 Materiales obra gris',C.mat],['👷 Mano de obra directa',C.mo],
+    ['📋 Cargas sociales (42% MO)',C.ccss],['🚿 Sanitarios y plomería',C.san],
+    ['🚪 Puertas y ventanas',C.pv],['🔨 Demolición y desmontaje',C.demo],
+    ['⚙️ Refuerzos estructurales',C.est],['🍳 Muebles cocina',C.kitchen],
+    ['🗄 Closets',C.clos],['⚠️ Imprevistos 10%',C.imprev]
+  ].filter(r=>r[1]>0);
+
+  el.innerHTML='<div class="bsum">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">'
+    +'<div><div class="bsub">Costo total estimado</div><div class="btot">₡'+f(b.total_crc)+'</div>'
+    +'<div class="bsub">≈ USD $'+f(b.total_usd)+' (TC ₡510)</div></div>'
+    +'<div style="text-align:right;"><div class="bsub">Área nueva</div>'
+    +'<div style="font-size:20px;font-weight:900;color:var(--blue);">'+b.areas.aNew.toFixed(1)+'m²</div>'
+    +'<div class="bsub">₡'+f(Math.round(b.total_crc/b.areas.aNew))+'/m²</div></div></div>'
+    +rows.map(function(r){
+      return '<div class="br"><div class="bc">'+r[0]+'</div>'
+        +'<div style="display:flex;align-items:center;"><div class="ba">₡'+f(r[1])+'</div>'
+        +'<div class="bpct">('+pct(r[1])+')</div></div></div>';
+    }).join('')
+    +'</div>'
+    +'<div class="gb" style="margin-bottom:12px;">⏱ Duración estimada: <strong>'+b.dur.dias+' días hábiles</strong> ('+b.dur.sem+' sem. / '+b.dur.mes+' mes'+(b.dur.mes>1?'es':'')+')</div>'
+    +'<div class="blk"><div class="blkt">📋 Lista completa de materiales y M.O.</div>'
+    +'<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:11px;">'
+    +'<thead><tr style="background:var(--surf3);"><th style="padding:6px;text-align:left;">Descripción</th>'
+    +'<th style="padding:6px;text-align:center;">Unidad</th><th style="padding:6px;text-align:right;">Cant.</th>'
+    +'<th style="padding:6px;text-align:right;">P.Unit ₡</th><th style="padding:6px;text-align:right;">Total ₡</th></tr></thead>'
+    +'<tbody>'+b.lines.sort((a,x)=>x.tot-a.tot).map(function(i){
+      return '<tr style="border-bottom:1px solid var(--brd);">'
+        +'<td style="padding:5px 6px;color:var(--txt2);">'+i.lbl+'</td>'
+        +'<td style="padding:5px 6px;text-align:center;color:var(--txt3);">'+i.unit+'</td>'
+        +'<td style="padding:5px 6px;text-align:right;">'+(Number.isInteger(i.qty)?i.qty:parseFloat(i.qty.toFixed?i.qty.toFixed(1):i.qty))+'</td>'
+        +'<td style="padding:5px 6px;text-align:right;color:var(--txt3);">'+f(i.up)+'</td>'
+        +'<td style="padding:5px 6px;text-align:right;font-weight:700;color:var(--acc);">'+f(i.tot)+'</td></tr>';
+    }).join('')
+    +'</tbody></table></div></div>';
+},
+
+renderFinal:function(){
+  var el=document.getElementById('final-sum');if(!el) return;
+  if(!ST.presupuesto){el.innerHTML='<div class="wb">⚠️ Calcule el presupuesto en el Paso 7 primero.</div>';return;}
+  var b=ST.presupuesto;
+  var f=function(n){return Math.round(n).toLocaleString('es-CR');};
+  var tL={casa:'Casa habitación',apartamento:'Apartamento',bodega:'Bodega/Nave',remodelacion:'Remodelación',oficina:'Oficinas'};
+  var aL={economico:'Económico',estandar:'Estándar',alto:'Alto',lujo:'Lujo'};
+  el.innerHTML='<div class="bsum">'
+    +'<div style="font-size:13px;font-weight:800;margin-bottom:10px;">📋 '+ST.nom+'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:12px;">'
+    +'<div style="font-size:11px;color:var(--txt2);"><span style="color:var(--txt3);">Tipo:</span> '+(tL[ST.tipo]||ST.tipo)+'</div>'
+    +'<div style="font-size:11px;color:var(--txt2);"><span style="color:var(--txt3);">Acabados:</span> '+(aL[ST.acab]||ST.acab)+'</div>'
+    +'<div style="font-size:11px;color:var(--txt2);"><span style="color:var(--txt3);">Área nueva:</span> '+b.areas.aNew.toFixed(1)+'m²</div>'
+    +'<div style="font-size:11px;color:var(--txt2);"><span style="color:var(--txt3);">Pisos:</span> '+ST.pisos+'</div>'
+    +'</div>'
+    +'<div style="border-top:1px solid var(--brd);padding-top:12px;">'
+    +'<div class="bsub">COSTO TOTAL ESTIMADO</div>'
+    +'<div class="btot" style="font-size:32px;">₡'+f(b.total_crc)+'</div>'
+    +'<div class="bsub">≈ USD $'+f(b.total_usd)+' · ₡'+f(Math.round(b.total_crc/b.areas.aNew))+'/m²</div>'
+    +'<div class="gb" style="margin-top:8px;">⏱ '+b.dur.dias+' días hábiles ('+b.dur.sem+' semanas)</div>'
+    +'</div></div>'
+    +'<div class="wb"><strong>⚠️ Nota:</strong> Estimado basado en precios de mercado CR. Solicite cotizaciones a proveedores antes de iniciar obra. Precios actualizados: '+(localStorage.getItem('px_cr_date')||'Jun 2026')+'.</div>';
+},
+
+// ── LIVE SUMMARY ─────────────────────────────────────────────
+updateSum:function(){
+  var el=document.getElementById('live-sum');if(!el) return;
+  var nR=ST.rooms.filter(r=>!r.isExisting);
+  var area=nR.reduce((s,r)=>s+r.w*r.h,0);
+  var b=ST.presupuesto;var html='';
+  if(ST.nom) html+='<div style="font-size:11px;font-weight:700;margin-bottom:5px;">'+ST.nom+'</div>';
+  if(area>0) html+='<div class="br" style="padding:2px 0;"><div style="font-size:10px;color:var(--txt3);">Área nueva</div><div style="font-size:11px;font-weight:700;color:var(--blue);">'+area.toFixed(1)+'m²</div></div>';
+  if(ST.rooms.length) html+='<div class="br" style="padding:2px 0;"><div style="font-size:10px;color:var(--txt3);">Espacios</div><div style="font-size:11px;font-weight:700;">'+ST.rooms.length+'</div></div>';
+  if(b) html+='<div class="br" style="padding:2px 0;border-top:1px solid var(--brd);margin-top:3px;"><div style="font-size:10px;color:var(--txt3);">Total est.</div><div style="font-size:11px;font-weight:700;color:var(--acc);">₡'+Math.round(b.total_crc).toLocaleString('es-CR')+'</div></div>';
+  el.innerHTML=html||'<div style="font-size:10px;color:var(--txt3);text-align:center;padding:6px 0">Complete los pasos</div>';
+},
+
+// ── PROJECTS ─────────────────────────────────────────────────
+loadProjects:async function(){
+  var el=document.getElementById('proj-list');
+  try{
+    var r=await DB2.from('presupuesto_proyectos').select('id,nombre,tipo,actualizado_en,presupuesto_total').order('actualizado_en',{ascending:false});
+    if(r.error&&r.error.code==='42P01'){
+      el.innerHTML='<div class="wb">⚠️ Primera vez. Cree un proyecto y se guardará automáticamente.<br><br>Si persiste el error, ejecute en Supabase SQL:<br><code style="font-size:10px;background:var(--surf3);padding:3px 7px;border-radius:3px;display:block;margin-top:5px;">CREATE TABLE presupuesto_proyectos (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), nombre TEXT, tipo TEXT, datos JSONB, presupuesto_total BIGINT, actualizado_en TIMESTAMPTZ DEFAULT NOW(), creado_en TIMESTAMPTZ DEFAULT NOW()); ALTER TABLE presupuesto_proyectos ENABLE ROW LEVEL SECURITY; CREATE POLICY "pres_open" ON presupuesto_proyectos FOR ALL USING (true);</code></div>';
+      return;
+    }
+    if(r.error) throw r.error;
+    this.renderProjList(r.data||[]);
+    this.renderProjRecent((r.data||[]).slice(0,5));
+  }catch(e){
+    el.innerHTML='<div class="eb">Error cargando: '+e.message+'</div>';
+  }
+},
+
+renderProjList:function(projs){
+  var el=document.getElementById('proj-list');if(!el) return;
+  var ico={casa:'🏠',apartamento:'🏢',bodega:'🏭',remodelacion:'🔨',oficina:'💼'};
+  if(!projs.length){el.innerHTML='<div style="text-align:center;padding:40px 20px;color:var(--txt3);"><div style="font-size:40px;margin-bottom:10px;">📋</div><div style="font-size:14px;font-weight:700;margin-bottom:6px;color:var(--txt2);">Sin proyectos aún</div><button class="btn btn-p" onclick="P.newProject()" style="margin-top:8px;">+ Crear proyecto</button></div>';return;}
+  el.innerHTML=projs.map(function(p){
+    return '<div class="pcard" onclick="P.loadProject(\''+p.id+'\')"><div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+      +'<div><div class="pcn">'+(ico[p.tipo]||'🏗')+' '+p.nombre+'</div>'
+      +'<div class="pcm">'+new Date(p.actualizado_en).toLocaleDateString('es-CR')+'</div></div>'
+      +'<div style="text-align:right;">'+(p.presupuesto_total?'<div style="font-size:12px;font-weight:700;color:var(--acc);">₡'+f(p.presupuesto_total)+'</div>':'<div style="font-size:10px;color:var(--txt3);">Sin calcular</div>')
+      +'<div style="display:flex;gap:4px;margin-top:4px;">'
+      +'<button class="btn btn-s btn-sm" onclick="event.stopPropagation();P.loadProject(\''+p.id+'\')">📂 Abrir</button>'
+      +'<button class="btn btn-del btn-sm" onclick="event.stopPropagation();P.delProject(\''+p.id+'\')">🗑</button>'
+      +'</div></div></div></div>';
+  }).join('');
+},
+
+renderProjRecent:function(projs){
+  var el=document.getElementById('proj-recent');if(!el) return;
+  if(!projs.length){el.innerHTML='<div style="font-size:10px;color:var(--txt3);">Sin proyectos</div>';return;}
+  el.innerHTML=projs.map(function(p){
+    return '<div class="pcard" onclick="P.loadProject(\''+p.id+'\')"><div class="pcn" style="font-size:11px;">'+p.nombre+'</div><div class="pcm">'+new Date(p.actualizado_en).toLocaleDateString('es-CR')+'</div></div>';
+  }).join('');
+},
+
+newProject:function(){
+  ST={id:null,nom:'',tipo:'',pisos:1,acab:'',ubic:'sj',
+    rooms:[],openings:[],stairs:[],
+    h:{h1:2.60,h2:2.50,cielo:2.40,alero:0.60},
+    roof:{aguas:2,pend:30},cielo:'gypsum',
+    mats:{pared:'bloque',techo:'zinc',piso:'ceramica',col:'concreto'},
+    inst:{elec:'completa',tab:'24',circ:0,tomas:0,luces:0,ccss:true,ban:1,mban:0,cal:'no',agn:'septimo',coc:'no',ncl:0,tcl:'no'},
+    rem:{},prices:{},presupuesto:null,notas:''};
+  CS.hist=[];CS.redo=[];CS.pts=[];CS.selId=null;
+  ['p1-nom','p3-h1','p3-h2','p3-cielo','p3-alero'].forEach(function(id){var e=document.getElementById(id);if(e)e.value='';});
+  document.querySelectorAll('.oc').forEach(c=>c.classList.remove('on'));
+  document.querySelectorAll('.tb').forEach(b=>b.classList.remove('on'));
+  var ccssOn=document.querySelector('#tg-ccss .tb[data-v="si"]');if(ccssOn) ccssOn.classList.add('on');
+  document.getElementById('pp').style.display='none';
+  this.renderRooms();this.renderOpenings();this.renderStairs();this.draw();this.showPanel('step1');
+},
+
+loadProject:async function(id){
+  try{
+    var r=await DB2.from('presupuesto_proyectos').select('*').eq('id',id).single();
+    if(r.error) throw r.error;
+    var datos=r.data.datos||{};
+    Object.assign(ST,datos);ST.id=r.data.id;
+    // Populate form
+    var set=function(eid,val){var e=document.getElementById(eid);if(e)e.value=val||'';};
+    set('p1-nom',ST.nom);set('p1-pisos',ST.pisos);set('p1-acab',ST.acab);set('p1-ubic',ST.ubic);
+    if(ST.tipo){var c=document.querySelector('#cg-tipo .oc[data-v="'+ST.tipo+'"]');if(c){c.classList.add('on');document.getElementById('blk-remod').style.display=(ST.tipo==='remodelacion')?'block':'none';}}
+    if(ST.h){set('p3-h1',ST.h.h1);set('p3-h2',ST.h.h2);set('p3-cielo',ST.h.cielo);set('p3-alero',ST.h.alero);}
+    this.renderRooms();this.renderOpenings();this.renderStairs();this.draw();this.updateSum();
+    this.showPanel('step1');this.toast('✅ Proyecto cargado: '+ST.nom);
+  }catch(e){this.toast('❌ Error cargando: '+e.message,'err');}
+},
+
+saveProject:function(){
+  document.getElementById('sv-nom').value=ST.nom||'';
+  document.getElementById('sv-not').value=ST.notas||'';
+  document.getElementById('mo-save').classList.remove('hid');
+},
+
+confirmSave:async function(){
+  var nom=document.getElementById('sv-nom').value.trim();
+  if(!nom){this.toast('⚠️ Ingrese un nombre','warn');return;}
+  ST.nom=nom;ST.notas=document.getElementById('sv-not').value.trim();
+  var payload={nombre:nom,tipo:ST.tipo,datos:JSON.parse(JSON.stringify(ST)),
+    presupuesto_total:ST.presupuesto?Math.round(ST.presupuesto.total_crc):null,
+    actualizado_en:new Date().toISOString()};
+  try{
+    var r;
+    if(ST.id) r=await DB2.from('presupuesto_proyectos').update(payload).eq('id',ST.id);
+    else{payload.creado_en=new Date().toISOString();r=await DB2.from('presupuesto_proyectos').insert([payload]).select().single();if(r.data) ST.id=r.data.id;}
+    if(r.error) throw r.error;
+    document.getElementById('mo-save').classList.add('hid');
+    this.toast('✅ Guardado en línea: '+nom);this.loadProjects();
+  }catch(e){this.toast('❌ Error: '+e.message,'err');}
+},
+
+delProject:async function(id){
+  if(!confirm('¿Eliminar este proyecto?')) return;
+  try{
+    var r=await DB2.from('presupuesto_proyectos').delete().eq('id',id);
+    if(r.error) throw r.error;this.toast('🗑 Eliminado');this.loadProjects();
+  }catch(e){this.toast('❌ Error: '+e.message,'err');}
+},
+
+// ── EXCEL ────────────────────────────────────────────────────
+exportExcel:async function(){
+  if(!ST.presupuesto){this.toast('⚠️ Calcule el presupuesto en el Paso 7 primero','warn');return;}
+  this.toast('⏳ Generando Excel...','ok',3000);
+  try{
+    var XLSX=await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+    var wb=XLSX.utils.book_new();
+    var b=ST.presupuesto,C=b.costos;
+    var f=function(n){return Math.round(n);};
+    var res=[
+      ['PRESUPUESTO DE OBRA — CONCRE CR'],[''],
+      ['Proyecto:',ST.nom],['Tipo:',ST.tipo],['Fecha:',new Date().toLocaleDateString('es-CR')],
+      ['Área nueva (m²):',b.areas.aNew.toFixed(1)],['Pisos:',ST.pisos],['Acabados:',ST.acab],
+      ['Paredes:',ST.mats.pared],['Techo:',ST.mats.techo],['Piso:',ST.mats.piso],
+      ['Altura pared (m):',ST.h.h1],['Cielo raso (m):',ST.h.cielo],[''],
+      ['COSTO TOTAL (₡)',f(b.total_crc)],['COSTO TOTAL (USD)',f(b.total_usd)],
+      ['Costo/m² (₡)',f(b.total_crc/b.areas.aNew)],[''],
+      ['DESGLOSE'],['Categoría','Monto (₡)','%'],
+      ['Materiales obra gris',f(C.mat),(C.mat/b.total_crc*100).toFixed(1)+'%'],
+      ['Mano de obra',f(C.mo),(C.mo/b.total_crc*100).toFixed(1)+'%'],
+      ['Cargas sociales 42%',f(C.ccss),(C.ccss/b.total_crc*100).toFixed(1)+'%'],
+      ['Sanitarios',f(C.san),(C.san/b.total_crc*100).toFixed(1)+'%'],
+      ['Puertas y ventanas',f(C.pv),(C.pv/b.total_crc*100).toFixed(1)+'%'],
+      ['Demolición',f(C.demo),(C.demo/b.total_crc*100).toFixed(1)+'%'],
+      ['Refuerzos estructurales',f(C.est),(C.est/b.total_crc*100).toFixed(1)+'%'],
+      ['Cocina',f(C.kitchen),(C.kitchen/b.total_crc*100).toFixed(1)+'%'],
+      ['Closets',f(C.clos),(C.clos/b.total_crc*100).toFixed(1)+'%'],
+      ['Imprevistos 10%',f(C.imprev),(C.imprev/b.total_crc*100).toFixed(1)+'%'],
+      [''],['DURACIÓN'],
+      ['Días hábiles:',b.dur.dias],['Semanas:',b.dur.sem],['Meses aprox.:',b.dur.mes],
+      [''],['Notas:',ST.notas||''],['Normativa: Reglamento INVU, Código Sísmico CR 2014, CFIA'],
+    ];
+    var ws1=XLSX.utils.aoa_to_sheet(res);ws1['!cols']=[{wch:30},{wch:16},{wch:10}];
+    XLSX.utils.book_append_sheet(wb,ws1,'Resumen');
+
+    var mat=[['LISTA DE MATERIALES — '+ST.nom],
+      ['Categoría','Descripción','Unidad','Cantidad','P.Unit ₡','Total ₡']];
+    b.lines.sort((a,x)=>a.cat.localeCompare(x.cat)).forEach(i=>{
+      mat.push([i.cat,i.lbl,i.unit,typeof i.qty==='number'?parseFloat(i.qty.toFixed?i.qty.toFixed(2):i.qty):i.qty,f(i.up),f(i.tot)]);
+    });
+    var ws2=XLSX.utils.aoa_to_sheet(mat);ws2['!cols']=[{wch:14},{wch:42},{wch:9},{wch:9},{wch:16},{wch:14}];
+    XLSX.utils.book_append_sheet(wb,ws2,'Materiales');
+
+    var mo=[['MANO DE OBRA — '+ST.nom],
+      ['Actividad','Unidad','Cantidad','P.Unit ₡','Subtotal ₡','CCSS 42% ₡','Total ₡']];
+    b.lines.filter(i=>i.cat==='mano_obra').forEach(i=>{
+      var cc=ST.inst.ccss?f(i.tot*0.42):0;
+      mo.push([i.lbl,i.unit,i.qty,f(i.up),f(i.tot),cc,f(i.tot+cc)]);
+    });
+    mo.push(['','','','','','TOTAL MO+CCSS:',f(C.mo+C.ccss)]);
+    var ws3=XLSX.utils.aoa_to_sheet(mo);ws3['!cols']=[{wch:40},{wch:9},{wch:9},{wch:14},{wch:14},{wch:14},{wch:14}];
+    XLSX.utils.book_append_sheet(wb,ws3,'Mano de Obra');
+
+    var esp=[['ESPACIOS — '+ST.nom],['Nombre','Tipo','Ancho m','Largo m','Área m²','Piso','Estado']];
+    ST.rooms.forEach(r=>{esp.push([r.name,r.type,r.w,r.h,(r.w*r.h).toFixed(2),r.floor,r.isExisting?'Existente':'Nuevo']);});
+    esp.push(['TOTAL NUEVO','','','',b.areas.aNew.toFixed(1),'','']);
+    var ws4=XLSX.utils.aoa_to_sheet(esp);ws4['!cols']=[{wch:20},{wch:12},{wch:9},{wch:9},{wch:9},{wch:7},{wch:12}];
+    XLSX.utils.book_append_sheet(wb,ws4,'Espacios');
+
+    if(ST.openings.length){
+      var pv=[['PUERTAS Y VENTANAS — '+ST.nom],['Tipo','Cuarto','Ancho m','Alto m','Área m²','Material']];
+      ST.openings.forEach(op=>{
+        var rm=ST.rooms.find(r=>r.id===op.roomId);
+        pv.push([op.type==='door'?'Puerta':'Ventana',rm?rm.name:'',op.w,op.h,(op.w*op.h).toFixed(2),op.doorTipo||op.winTipo||'Estándar']);
+      });
+      var ws5=XLSX.utils.aoa_to_sheet(pv);XLSX.utils.book_append_sheet(wb,ws5,'Puertas y Ventanas');
+    }
+
+    var fn='Presupuesto_'+ST.nom.replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_]/g,'')+'_'+new Date().toISOString().split('T')[0]+'.xlsx';
+    XLSX.writeFile(wb,fn);this.toast('✅ Excel generado: '+fn);
+  }catch(e){this.toast('❌ Error: '+e.message,'err');console.error(e);}
+},
+
+// ── UTILS ─────────────────────────────────────────────────────
+toast:function(msg,type,dur){
+  var ex=document.getElementById('_toast');if(ex) ex.remove();
+  var el=document.createElement('div');el.id='_toast';
+  var clr={ok:'var(--green)',warn:'var(--acc)',err:'var(--red)'}[type]||'var(--green)';
+  el.style.cssText='position:fixed;bottom:18px;right:18px;background:var(--surf);border:1.5px solid '+clr+';border-radius:9px;padding:9px 14px;font-size:12px;font-weight:600;color:var(--txt);z-index:9999;box-shadow:0 8px 26px rgba(0,0,0,.5);max-width:320px;animation:fadein .2s;';
+  el.textContent=msg;document.body.appendChild(el);
+  setTimeout(function(){if(el.parentNode)el.remove();},dur||3000);
+},
+};
+
+document.addEventListener('DOMContentLoaded',function(){P.init();});
+</script></body></html>

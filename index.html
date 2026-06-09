@@ -1539,6 +1539,31 @@ function dbRowToUser(row){
   };
 }
 
+
+// ══════════════════════════════════════════════════════
+//  PRESUPUESTO CONSTRUCCIÓN — módulo independiente
+// ══════════════════════════════════════════════════════
+var _presupuestoLoaded = false;
+function initPresupuesto(){
+  if(!SESSION||SESSION.rol!=='superadmin'){
+    document.getElementById('sec-presupuesto').innerHTML=
+      '<div style="padding:40px;text-align:center;color:var(--text3)">Módulo exclusivo para SuperAdmin</div>';
+    return;
+  }
+  if(_presupuestoLoaded) return;
+  _presupuestoLoaded=true;
+  var root=document.getElementById('presupuesto-root');
+  if(!root) return;
+  // Load presupuesto HTML content via fetch from same origin,
+  // or inject inline — using iframe approach for full isolation
+  var iframe=document.createElement('iframe');
+  iframe.src='presupuesto_construccion.html';
+  iframe.style.cssText='width:100%;height:100%;border:none;background:var(--bg)';
+  iframe.title='Módulo de Presupuesto Construcción';
+  root.style.height='calc(100vh - 57px)';
+  root.appendChild(iframe);
+}
+
 function doLogin(){
   const u=document.getElementById('loginUser').value.trim().toLowerCase();
   const p=document.getElementById('loginPass').value;
@@ -1600,6 +1625,7 @@ function buildAdminTabs(){
   var isSuperAdmin=SESSION&&(SESSION.rol==='superadmin');
   var adminTabPerms=SESSION&&SESSION.tabPerms?SESSION.tabPerms:null;
   var btns=[
+    {id:'presupuesto',   label:'🏗 Presupuesto',     extra:'try{initPresupuesto();}catch(e){console.error(e);}', superadmin_only:true},
     {id:'overview',      label:'📊 Resumen',        extra:''},
     {id:'users',         label:'👥 Usuarios',        extra:''},
     {id:'horas-admin',   label:'⏱ Horas/Planilla',  extra:'try{initPagosUsuarios();renderSubcontratistaPlanillas();}catch(e){}'},
@@ -1624,9 +1650,10 @@ function buildAdminTabs(){
     return adminTabPerms[b.id]!==false;
   });
   tabs.innerHTML='';
-  allowedBtns.forEach(function(b,i){
+  allowedBtns.forEach(function(b){
+    if(b.superadmin_only && !isSuperAdmin) return;
     var btn=document.createElement('button');
-    btn.className='htab'+(i===0?' on':'');
+    btn.className='htab';
     btn.textContent=b.label;
     btn.onclick=function(){
       showAdminSec(b.id,btn);
@@ -1634,6 +1661,8 @@ function buildAdminTabs(){
     };
     tabs.appendChild(btn);
   });
+  var firstTab=tabs.querySelector('.htab');
+  if(firstTab) firstTab.classList.add('on');
 }
 
 function buildUserTabs(){
@@ -20894,6 +20923,9 @@ function getLastExportI
     </div>
   </div>
 </div>
+
+<!-- PRESUPUESTO SECTION -->
+<div id="sec-presupuesto" class="admin-section" style="padding:0;height:calc(100vh - 57px);overflow:hidden;"><div id="presupuesto-root" style="height:100%;overflow-y:auto;"></div></div>
 
 <!-- RESTORE MODAL -->
 <div id="restoreModal" class="modal-overlay hidden">
