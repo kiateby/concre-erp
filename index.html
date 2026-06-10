@@ -2092,10 +2092,30 @@ function saveUser(){
   toast('✓ Usuario guardado correctamente');
 }
 function delUser(idx){
-  if(!confirm('¿Eliminar este usuario?'))return;
-  const users=getUsers();users.splice(idx,1);setUsers(users);
-  buildUsersTable();buildAdminOverview();buildAgGlobal();
-  toast('Usuario eliminado');
+  const users=getUsers();
+  const u=users[idx];
+  if(!u) return;
+  if(!confirm('¿Eliminar a '+u.nombre+'? Esta acción no se puede deshacer.')) return;
+  // Delete from Supabase FIRST — only update cache on success
+  DB.from('usuarios').delete().eq('id', u.id).then(function(r){
+    if(r.error){
+      toast('❌ Error eliminando usuario: '+r.error.message);
+      console.error('delUser:', r.error);
+      return;
+    }
+    // Remove from cache
+    window._usersCache = window._usersCache.filter(function(x){ return x.id !== u.id; });
+    buildUsersTable();
+    buildAdminOverview();
+    buildAgGlobal();
+    // Refresh planilla if visible
+    if(document.getElementById('sec-horas-admin') &&
+       document.getElementById('sec-horas-admin').classList.contains('on')){
+      renderPagosUsuarios();
+      if(typeof renderPlanillaHistorica==='function') renderPlanillaHistorica();
+    }
+    toast('✅ Usuario '+u.nombre+' eliminado correctamente');
+  });
 }
 
 // ── LOAD USER HORAS IN ADMIN ──
@@ -10676,6 +10696,9 @@ function guardarHistRow(uid, monthKey, rowId){
   var nota=notaEl?(notaEl.value||'').trim():'';
   var data={salario_override:salOvr, monto_extra:montoExt, deduccion_total:dedTotal, nota:nota};
   savePlanillaHist(uid, monthKey, data);
+  // Sync the year-month selector to the saved month so control de pagos reflects it
+  var ymsel=document.getElementById('pago-yearmonth-sel');
+  if(ymsel) ymsel.value=monthKey;
   // Refresh table and planilla summary
   setTimeout(function(){ renderPlanillaHistoricaTable(); renderPagosUsuarios(); }, 600);
 }
@@ -10688,15 +10711,21 @@ function borrarHistRow(uid, monthKey){
 }
 
 function initPagosUsuarios(){
-  // Populate month selector
-  var msel=document.getElementById('pago-month-sel');
-  if(msel&&msel.options.length===0){
-    MES.forEach(function(m,i){
+  // Populate year-month selector: Nov 2025 → current month
+  var ymsel=document.getElementById('pago-yearmonth-sel');
+  if(ymsel&&ymsel.options.length===0){
+    var now=new Date();
+    var cur=new Date(now.getFullYear(),now.getMonth(),1);
+    var start=new Date(2025,10,1); // Nov 2025
+    var d=new Date(cur);
+    while(d>=start){
       var o=document.createElement('option');
-      o.value=i; o.textContent=m;
-      if(i===new Date().getMonth()) o.selected=true;
-      msel.appendChild(o);
-    });
+      o.value=d.getFullYear()+'-'+pad(d.getMonth()+1);
+      o.textContent=MES[d.getMonth()]+' '+d.getFullYear();
+      if(d.getFullYear()===now.getFullYear()&&d.getMonth()===now.getMonth()) o.selected=true;
+      ymsel.appendChild(o);
+      d.setMonth(d.getMonth()-1);
+    }
   }
   // Default quincena based on today
   var qsel=document.getElementById('pago-period-sel');
@@ -10724,10 +10753,14 @@ function renderPagosUsuarios(){
   var tbody=document.getElementById('pagos-usuarios-tbody');
   if(!tbody) return;
   var qsel=document.getElementById('pago-period-sel');
-  var msel=document.getElementById('pago-month-sel');
+  var ymsel=document.getElementById('pago-yearmonth-sel');
   var q=qsel?parseInt(qsel.value):1;
-  var m=msel?parseInt(msel.value):new Date().getMonth();
-  var y=new Date().getFullYear();
+  // Parse year-month from selector value 'YYYY-MM'
+  var now=new Date();
+  var ymVal=ymsel?ymsel.value:(now.getFullYear()+'-'+pad(now.getMonth()+1));
+  var ymParts=ymVal.split('-');
+  var y=parseInt(ymParts[0])||now.getFullYear();
+  var m=parseInt(ymParts[1])-1; // 0-indexed month
   var periodKey=y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
   var qLabel='Q'+(q)+' '+MES[m]+' '+y;
   var monthKey=y+'-'+pad(m+1);
@@ -18958,7 +18991,7 @@ window.initCalcCONCRE=initCalcCONCRE;
                   <option value="1">Quincena 1 (1-15)</option>
                   <option value="2">Quincena 2 (16-fin)</option>
                 </select>
-                <select id="pago-month-sel" class="form-select" style="font-size:11px;padding:4px 8px;width:auto" onchange="renderPagosUsuarios()"></select>
+                <select id="pago-yearmonth-sel" class="form-select" style="font-size:11px;padding:4px 8px;width:auto" onchange="renderPagosUsuarios()"></select>
               </div>
               <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden">
                 <div style="background:var(--gray-dark);padding:10px 16px;border-bottom:2px solid var(--red);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
