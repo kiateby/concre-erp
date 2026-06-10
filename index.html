@@ -1672,7 +1672,7 @@ function buildAdminTabs(){
     {id:'users',         label:'👥 Usuarios',       extra:''},
     {id:'horas-admin',   label:'⏱ Planilla',        extra:'try{initPagosUsuarios();renderSubcontratistaPlanillas();}catch(e){}'},
     {id:'comisiones',    label:'💵 Comisiones',      extra:''},
-    {id:'aguinaldo-admin',label:'🎄 Aguinaldo',      extra:''},
+    {id:'aguinaldo-admin',label:'🎄 Aguinaldo',      extra:'try{loadPlanillaHist().then(function(){buildAgGlobal();});}catch(e){}'},
     {id:'vacaciones',    label:'🌴 Vacaciones',      extra:'try{renderAdminVacSection();}catch(e){}'},
     {id:'fondos',        label:'📦 Fondos',          extra:'try{initAdminFondos();}catch(e){}'},
     {id:'ventas',        label:'📈 Ventas',          extra:'try{initAdminVentas();}catch(e){}'},
@@ -1826,7 +1826,10 @@ function initApp(){
     try{ checkTrashReminder(); }catch(e){}
     buildAdminOverview();
     buildUsersTable();
-    buildAgGlobal();
+    // Load planilla hist first so aguinaldo uses correct data from start
+    loadPlanillaHist().then(function(){
+      buildAgGlobal();
+    });
     populateAdminSelectors();
     // Build admin header tabs
     buildAdminTabs();
@@ -2168,7 +2171,11 @@ function loadAdminUserHoras(uid){
     horasWrap.appendChild(tableDiv);
   }
   ADMIN_VIEW_UID=uid;
-  renderAdminHorasTable(uid);
+  // Reload fresh DED+REG from Supabase for this user to ensure latest data
+  _loadUserDEDForAdmin(uid).then(function(){
+    renderAdminHorasTable(uid);
+    buildAgEditGrid(uid);
+  });
 }
 function buildAgEditGrid(uid){
   const users=getUsers();
@@ -2199,12 +2206,17 @@ function buildAgEditGrid(uid){
       :hist&&(hist.monto_extra>0||hist.salario_override>0)
         ?'<span title="Calculado con datos de planilla histórica" style="font-size:8px;color:#60a5fa;font-weight:800">◌HIST</span>'
         :'<span title="Calculado del registro diario" style="font-size:8px;color:var(--text3)">≈REG</span>';
-    html+='<div style="display:flex;flex-direction:column;gap:3px">'+
+    // Month label with year (e.g. "Dic 2025", "Ene 2026")
+    const fullLabel=mn[i]+' '+y;
+    const breakdown='₡'+Math.round(salMonth/12).toLocaleString('es-CR')+'/12'
+      +(extMonto>0?' +H.Extra ₡'+extMonto.toLocaleString('es-CR'):'');
+    html+='<div style="display:flex;flex-direction:column;gap:2px">'+
       '<div style="display:flex;align-items:center;justify-content:space-between">'+
-        '<label style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">'+mn[i]+'</label>'+
+        '<label style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">'+fullLabel+'</label>'+
         srcLabel+
       '</div>'+
-      '<input class="form-inp" id="ag-m-'+uid+'-'+i+'" type="text" value="'+(val>0?Math.round(val).toLocaleString('es-CR'):'0')+'" oninput="fmtInp(this)" style="font-size:12px;padding:6px 8px;border-color:'+(isManual?'var(--amber)':'var(--border)')+'" title="Base: ₡'+Math.round(base).toLocaleString('es-CR')+' | Salario mes: ₡'+Math.round(salMonth/12).toLocaleString('es-CR')+' + H.Extra: ₡'+extMonto.toLocaleString('es-CR')+'">'+
+      '<input class="form-inp" id="ag-m-'+uid+'-'+i+'" type="text" value="'+(val>0?Math.round(val).toLocaleString('es-CR'):'0')+'" oninput="fmtInp(this)" style="font-size:12px;padding:6px 8px;border-color:'+(isManual?'var(--amber)':'var(--border)')+'" title="'+fullLabel+': '+breakdown+'">'+
+      '<div style="font-size:9px;color:var(--text3);line-height:1.3">'+breakdown+'</div>'+
       '</div>';
   }
   el.innerHTML=html;
@@ -2281,7 +2293,7 @@ function renderAdminHorasTable(uid){
   const users=getUsers();
   const u=users.find(x=>x.id===uid);
   if(!u)return;
-  const regU=(window._horasCache&&window._horasCache[uid]?window._horasCache[uid]:{});
+  const regU=getREG(uid)||{}; // getREG reads localStorage('cc_h_'+uid) loaded by _loadUserDEDForAdmin
   const y=new Date().getFullYear();
   // Admin always shows main quincena days + any extra days the USER filled
   const mainDays=getDays(y,ADMIN_CM,ADMIN_CQ,false);
@@ -2323,17 +2335,31 @@ function renderAdminHorasTable(uid){
       '</tr>';
   }).join('');
 
-  // Summary
-  const sal=u.salario,salQ=sal/2,mExt=totExt*vh;
-  const dedU=JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
-  const ccss=dedU.ccss_monto||0,rb=dedU.rb_monto||0,ex=dedU.extra_monto||0;
+  // Summary — use getDED (correct for all users) + hist override if available
+  const monthKeyAdmin=y+'-'+pad(ADMIN_CM+1);
+  const histAdmin=getPlanillaHist(uid, monthKeyAdmin);
+  const salAdmin=histAdmin&&histAdmin.salario_override>0?histAdmin.salario_override:u.salario;
+  const salQ=Math.round(salAdmin/2);
+  // horas extra: if hist has manual monto_extra, use it; else use calculated
+  const mExt=histAdmin&&histAdmin.monto_extra>0?histAdmin.monto_extra:totExt*(salAdmin/(4.5*54)*1.5);
+  const dedU=getDED(uid)||{};
+  // Deducciones: hist total (÷2 per quincena) or DED normal
+  let ccss,rb,ex;
+  if(histAdmin&&(histAdmin.deduccion_total||0)>0){
+    const half=Math.round(histAdmin.deduccion_total/2);
+    ccss=half; rb=0; ex=0;
+  } else {
+    ccss=dedU.ccss_monto||0; rb=dedU.rb_monto||0; ex=dedU.extra_monto||0;
+  }
   const tot=salQ+mExt-ccss-rb-ex;
 
   const sumEl=document.getElementById('admin-horas-summary');
+  const histBadge=histAdmin?'<span title="Datos de Planilla Histórica" style="font-size:9px;color:#f4a30a;font-weight:800;margin-left:4px">HIST</span>':'';
+  const diasReg=days.filter(function(d){const r=regU[dkey(d)]||{};return r.entrada;}).length;
   if(sumEl)sumEl.innerHTML=
-    '<div class="sc grt" style="min-width:120px"><div class="sclbl">Días reg.</div><div class="scval">'+days.filter(d=>{const r=regU[dkey(d)]||{};return r.entrada;}).length+'</div></div>'+
-    '<div class="sc"><div class="sclbl">H. Extra</div><div class="scval red">'+totExt.toFixed(1)+'h</div></div>'+
-    '<div class="sc at"><div class="sclbl">Base Q</div><div class="scval amber">'+fmt(salQ)+'</div></div>'+
+    '<div class="sc grt" style="min-width:120px"><div class="sclbl">Días reg.</div><div class="scval">'+diasReg+'</div></div>'+
+    '<div class="sc"><div class="sclbl">H. Extra</div><div class="scval red">'+(histAdmin&&histAdmin.monto_extra>0?fmt(histAdmin.monto_extra)+histBadge:totExt.toFixed(1)+'h')+'</div></div>'+
+    '<div class="sc at"><div class="sclbl">Base Q'+histBadge+'</div><div class="scval amber">'+fmt(salQ)+'</div></div>'+
     '<div class="sc gt"><div class="sclbl">Total liq.</div><div class="scval green">'+fmt(tot)+'</div></div>';
 
   const tbody=document.getElementById('admin-horas-tbody');
@@ -2923,7 +2949,8 @@ function buildAgDetailUser(sal,mesesAg){
     const hasHist=hist&&(hist.monto_extra>0||hist.salario_override>0);
     const badge=isManual?'<span style="font-size:8px;color:var(--amber)">✎</span>'
       :hasHist?'<span style="font-size:8px;color:#60a5fa">◌</span>':'';
-    rows+='<div class="ag-det-row"><span class="ag-det-l">'+mn[i]+badge+'</span><span class="ag-det-v">'+fmt(val)+'</span></div>';
+    const fullLbl=mn[i]+' '+y;
+    rows+='<div class="ag-det-row"><span class="ag-det-l">'+fullLbl+badge+'</span><span class="ag-det-v">'+fmt(val)+'</span></div>';
   }
   rows+='<div class="ag-det-row"><span class="ag-det-l">TOTAL</span><span class="ag-det-v">'+fmt(total)+'</span></div>';
   document.getElementById('agDetail').innerHTML=rows;
