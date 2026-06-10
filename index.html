@@ -2196,7 +2196,8 @@ function buildAgEditGrid(uid){
     // Use hist salario_override if available, else profile salary
     const salMonth=hist&&hist.salario_override>0?hist.salario_override:u.salario;
     const extMonto=getExtrasMontoForMonth(uid,u.salario,i); // already checks hist inside
-    const base=Math.round(salMonth/12)+extMonto;
+    // Ley 2412 CR: (salario_mes + horas_extra_mes) / 12
+    const base=Math.round((salMonth+extMonto)/12);
     // Priority: manual override (ag_mes_i) > calculated base
     const isManual=(ded[key]!==undefined);
     const val=isManual?ded[key]:base;
@@ -2208,8 +2209,10 @@ function buildAgEditGrid(uid){
         :'<span title="Calculado del registro diario" style="font-size:8px;color:var(--text3)">≈REG</span>';
     // Month label with year (e.g. "Dic 2025", "Ene 2026")
     const fullLabel=mn[i]+' '+y;
-    const breakdown='₡'+Math.round(salMonth/12).toLocaleString('es-CR')+'/12'
-      +(extMonto>0?' +H.Extra ₡'+extMonto.toLocaleString('es-CR'):'');
+    // Show formula breakdown: (sal + hex) / 12
+    const breakdown=extMonto>0
+      ?'(₡'+salMonth.toLocaleString('es-CR')+' + ₡'+extMonto.toLocaleString('es-CR')+') ÷ 12'
+      :'₡'+salMonth.toLocaleString('es-CR')+' ÷ 12';
     html+='<div style="display:flex;flex-direction:column;gap:2px">'+
       '<div style="display:flex;align-items:center;justify-content:space-between">'+
         '<label style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">'+fullLabel+'</label>'+
@@ -2942,7 +2945,9 @@ function buildAgDetailUser(sal,mesesAg){
     const monthKey=y+'-'+pad(m+1);
     const hist=getPlanillaHist(uid, monthKey);
     const salMonth=hist&&hist.salario_override>0?hist.salario_override:sal;
-    const base=Math.round(salMonth/12)+getExtrasMontoForMonth(uid,sal,i);
+    const hexU=getExtrasMontoForMonth(uid,sal,i);
+    // Ley 2412 CR: (salario_mes + horas_extra_mes) / 12
+    const base=Math.round((salMonth+hexU)/12);
     const val=(ded[overrideKey]!==undefined)?ded[overrideKey]:base;
     total+=val;
     const isManual=(ded[overrideKey]!==undefined);
@@ -3075,7 +3080,9 @@ function calcAgTotal(uid, sal, mesesAg){
     const monthKey=y+'-'+pad(m+1);
     const hist=getPlanillaHist(uid, monthKey);
     const salMonth=hist&&hist.salario_override>0?hist.salario_override:sal;
-    const base=(salMonth/12)+getExtrasMontoForMonth(uid,sal,i);
+    const hexMonth=getExtrasMontoForMonth(uid,sal,i);
+    // Ley 2412 CR: (salario_mes + horas_extra_mes) / 12
+    const base=Math.round((salMonth+hexMonth)/12);
     total+=base;
   }
   return total;
@@ -3224,14 +3231,22 @@ function exportAguinaldoUser(uid){
   const today=new Date();
   const mesesAg=Math.min(today.getMonth()+2,12); // +2: Dec prev year + months Jan-current
   const mn=['Diciembre (año ant.)','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Setiembre','Octubre','Noviembre'];
-  const ded=JSON.parse(localStorage.getItem('cc_d_'+u.id)||'{}');
+  const ded=getDED(u.id)||{};
   let filas='';let agTotal=0;
   for(let i=0;i<mesesAg;i++){
     const key='ag_mes_'+i;
-    const base=(u.salario/12)+getExtrasMontoForMonth(u.id,u.salario,i);
+    // Use hist salario_override if available
+    const [ey,em]=agSlotYM(i);
+    const eMonthKey=ey+'-'+pad(em+1);
+    const eHist=getPlanillaHist(u.id, eMonthKey);
+    const eSal=eHist&&eHist.salario_override>0?eHist.salario_override:u.salario;
+    const eHex=getExtrasMontoForMonth(u.id,u.salario,i);
+    // Ley 2412 CR: (salario_mes + horas_extra_mes) / 12
+    const base=Math.round((eSal+eHex)/12);
     const val=(ded[key]!==undefined)?ded[key]:base;
     agTotal+=val;
-    filas+=`<div class="col-row${i%2===1?' alt':''}"><span class="cr-label">${mn[i]}</span><span class="cr-value">${fmt(val)}</span></div>`;
+    const hexLabel=eHex>0?' + H.Extra ₡'+eHex.toLocaleString('es-CR'):'';
+    filas+=`<div class="col-row${i%2===1?' alt':''}"><span class="cr-label">${mn[i]}</span><span class="cr-value">${fmt(val)}<span style="font-size:9px;color:#aaa;margin-left:4px">(₡${eSal.toLocaleString('es-CR')}${hexLabel}) ÷ 12</span></span></div>`;
   }
   const html=buildColilla({titulo:`Aguinaldo ${today.getFullYear()}`,subtitulo:'Colilla oficial de aguinaldo · Ley N° 2412',usuario:u.nombre,periodo:`Dic ${today.getFullYear()-1} — Nov ${today.getFullYear()}`,emitida:today.toLocaleDateString('es-CR'),seccion1:`Desglose por mes (salario base + horas extra devengadas / 12)`,filas1:filas,totalLabel:'🎄 TOTAL AGUINALDO',totalVal:fmt(agTotal),colorAccent:'#d97706',nota:`El aguinaldo incluye salario base y horas extra devengadas en el período (Ley N° 2412). Comisiones excluidas. Fecha límite de pago: 20 de diciembre de ${today.getFullYear()}.`});
   openPrint(html,`Aguinaldo_${u.nombre}_${today.getFullYear()}.html`);
