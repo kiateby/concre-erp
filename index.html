@@ -15459,7 +15459,8 @@ function applySearchableSelects(){
     'vac-admin-filter','af-period-type','af-cat-filter',
     'avf-iva','proj-tipo','ag-user-filter','ag-tipo-filter',
     'crm-top-freq-period','crm-top-monto-period',
-    'vac-tipo','vac-hist-filter','g-cat','vf-iva','v-filter-cat','lim-user-sel'];
+    'vac-tipo','vac-hist-filter','g-cat','vf-iva','v-filter-cat','lim-user-sel',
+    'vac-prog-user'];
   document.querySelectorAll('select').forEach(function(sel){
     if(sel.id&&!sel.dataset.srch&&SKIP.indexOf(sel.id)<0) makeSearchable(sel);
   });
@@ -19117,21 +19118,6 @@ window.initCalcCONCRE=initCalcCONCRE;
               </div>
             </div>
 
-
-        <!-- PLANILLA HISTÓRICA — solo superadmin -->
-        <div id="planilla-historica-section" style="margin-top:24px;display:none">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-            <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">📋 Planilla histórica por colaborador</div>
-            <span style="font-size:11px;color:var(--text3);background:rgba(244,163,10,.1);border:1px solid rgba(244,163,10,.3);padding:2px 8px;border-radius:4px">Solo SuperAdmin · Nov 2025 → presente</span>
-          </div>
-          <div class="ib" style="margin-bottom:14px;font-size:12px">
-            <strong>ℹ️ Cómo funciona:</strong> Ingrese el salario base (si difiere del perfil), el monto total de horas extra del mes en colones, y la deducción total (CCSS + otros) para cada mes. 
-            Al guardar, el resumen de planilla se actualiza automáticamente. Los datos marcados con <span style="color:#f4a30a">● HIST</span> en el resumen de pagos provienen de aquí.
-            Las horas extra se pagan en <strong>Quincena 2</strong>. Las deducciones se dividen automáticamente entre Q1 y Q2 (50/50).
-          </div>
-          <div id="planilla-historica-root"></div>
-        </div>
-
         <div style="margin-top:24px">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
             <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">🏗 Pagos a Subcontratistas</div>
@@ -19156,6 +19142,21 @@ window.initCalcCONCRE=initCalcCONCRE;
               </table>
             </div>
           </div>
+        </div>
+
+
+        <!-- PLANILLA HISTÓRICA — solo superadmin -->
+        <div id="planilla-historica-section" style="margin-top:24px;display:none">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+            <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">📋 Planilla histórica por colaborador</div>
+            <span style="font-size:11px;color:var(--text3);background:rgba(244,163,10,.1);border:1px solid rgba(244,163,10,.3);padding:2px 8px;border-radius:4px">Solo SuperAdmin · Nov 2025 → presente</span>
+          </div>
+          <div class="ib" style="margin-bottom:14px;font-size:12px">
+            <strong>ℹ️ Cómo funciona:</strong> Ingrese el salario base (si difiere del perfil), el monto total de horas extra del mes en colones, y la deducción total (CCSS + otros) para cada mes. 
+            Al guardar, el resumen de planilla se actualiza automáticamente. Los datos marcados con <span style="color:#f4a30a">● HIST</span> en el resumen de pagos provienen de aquí.
+            Las horas extra se pagan en <strong>Quincena 2</strong>. Las deducciones se dividen automáticamente entre Q1 y Q2 (50/50).
+          </div>
+          <div id="planilla-historica-root"></div>
         </div>
 
           <div class="aub" style="margin-bottom:18px">
