@@ -3235,20 +3235,17 @@ function exportAguinaldoUser(uid){
   let filas='';let agTotal=0;
   for(let i=0;i<mesesAg;i++){
     const key='ag_mes_'+i;
-    // Use hist salario_override if available
     const [ey,em]=agSlotYM(i);
     const eMonthKey=ey+'-'+pad(em+1);
     const eHist=getPlanillaHist(u.id, eMonthKey);
     const eSal=eHist&&eHist.salario_override>0?eHist.salario_override:u.salario;
     const eHex=getExtrasMontoForMonth(u.id,u.salario,i);
-    // Ley 2412 CR: (salario_mes + horas_extra_mes) / 12
     const base=Math.round((eSal+eHex)/12);
     const val=(ded[key]!==undefined)?ded[key]:base;
     agTotal+=val;
-    const hexLabel=eHex>0?' + H.Extra ₡'+eHex.toLocaleString('es-CR'):'';
-    filas+=`<div class="col-row${i%2===1?' alt':''}"><span class="cr-label">${mn[i]}</span><span class="cr-value">${fmt(val)}<span style="font-size:9px;color:#aaa;margin-left:4px">(₡${eSal.toLocaleString('es-CR')}${hexLabel}) ÷ 12</span></span></div>`;
+    filas+=`<div class="col-row${i%2===1?' alt':''}"><span class="cr-label">${mn[i]}</span><span class="cr-value">${fmt(val)}</span></div>`;
   }
-  const html=buildColilla({titulo:`Aguinaldo ${today.getFullYear()}`,subtitulo:'Colilla oficial de aguinaldo · Ley N° 2412',usuario:u.nombre,periodo:`Dic ${today.getFullYear()-1} — Nov ${today.getFullYear()}`,emitida:today.toLocaleDateString('es-CR'),seccion1:`Desglose por mes (salario base + horas extra devengadas / 12)`,filas1:filas,totalLabel:'🎄 TOTAL AGUINALDO',totalVal:fmt(agTotal),colorAccent:'#d97706',nota:`El aguinaldo incluye salario base y horas extra devengadas en el período (Ley N° 2412). Comisiones excluidas. Fecha límite de pago: 20 de diciembre de ${today.getFullYear()}.`});
+  const html=buildColilla({titulo:`Aguinaldo ${today.getFullYear()}`,subtitulo:'Colilla de aguinaldo',usuario:u.nombre,periodo:`Dic ${today.getFullYear()-1} — Nov ${today.getFullYear()}`,emitida:today.toLocaleDateString('es-CR'),seccion1:'Desglose mensual',filas1:filas,totalLabel:'🎄 TOTAL AGUINALDO',totalVal:fmt(agTotal),colorAccent:'#d97706',nota:null});
   openPrint(html,`Aguinaldo_${u.nombre}_${today.getFullYear()}.html`);
 }
 
@@ -13047,20 +13044,25 @@ function collectUserAguinaldo(uid){
   var rows=[];
   var u=getUsers().find(function(x){return x.id===uid;})||{};
   var salario=u.salario||0;
-  var vd=getVentasData(uid);
+  var ded=getDED(uid)||{};
   var now=new Date();
-  var mesesAg=Math.min(now.getMonth()+1,12);
+  var mesesAg=Math.min(now.getMonth()+2,12);
   var totalAg=0;
   for(var i=0;i<mesesAg;i++){
-    var mk=now.getFullYear()+'-'+String(i+1).padStart(2,'0');
-    var monthVentas=vd[mk]?vd[mk].ventas||[]:[]; 
-    var extrasTotal=monthVentas.reduce(function(s,v){return s+(v.comision||0);},0);
-    var baseAg=Math.round((salario/12)+extrasTotal);
+    var slotYM=agSlotYM(i);
+    var sy=slotYM[0], sm=slotYM[1];
+    var mk=sy+'-'+pad(sm+1);
+    var hist=getPlanillaHist(uid, mk);
+    var eSal=hist&&hist.salario_override>0?hist.salario_override:salario;
+    var eHex=getExtrasMontoForMonth(uid,salario,i);
+    // Ley 2412 CR: (salario_mes + horas_extra_mes) / 12
+    var baseAg=ded['ag_mes_'+i]!==undefined?ded['ag_mes_'+i]:Math.round((eSal+eHex)/12);
     totalAg+=baseAg;
-    rows.push([mk,i+1,salario,Math.round(extrasTotal),baseAg,totalAg]);
+    var mnNames=['Diciembre','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Setiembre','Octubre','Noviembre'];
+    rows.push([mnNames[i]+' '+sy, mk, eSal, eHex, baseAg, totalAg]);
   }
   return {
-    headers:['Mes','Num.Mes','Salario Base','Extras/Comisiones','Aguinaldo Mes','Aguinaldo Acumulado'],
+    headers:['Mes','Período','Salario Base','H.Extra','Aguinaldo Mes','Aguinaldo Acumulado'],
     rows:rows
   };
 }
