@@ -2177,18 +2177,34 @@ function buildAgEditGrid(uid){
   const el=document.getElementById('ag-edit-grid-'+uid);
   if(!el)return;
   const ded=getDED(uid)||{};
-  const mm=u.salario/12;
   const mn=['Dic','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov'];
   const today=new Date();
-  const mesesAg=Math.min(today.getMonth()+2,12); // +2: Dec prev year + months Jan-current
+  const mesesAg=Math.min(today.getMonth()+2,12);
   let html='';
   for(let i=0;i<mesesAg;i++){
     const key='ag_mes_'+i;
-    const base=(mm)+getExtrasMontoForMonth(uid,u.salario,i);
-    const val=(ded[key]!==undefined)?ded[key]:base;
-    html+='<div style="display:flex;flex-direction:column;gap:4px">'+
-      '<label style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">'+mn[i]+'</label>'+
-      '<input class="form-inp" id="ag-m-'+uid+'-'+i+'" type="text" value="'+(val>0?Math.round(val).toLocaleString('es-CR'):'0')+'" oninput="fmtInp(this)" style="font-size:12px;padding:6px 8px">'+
+    const [y,m]=agSlotYM(i);
+    const monthKey=y+'-'+pad(m+1);
+    const hist=getPlanillaHist(uid, monthKey);
+    // Use hist salario_override if available, else profile salary
+    const salMonth=hist&&hist.salario_override>0?hist.salario_override:u.salario;
+    const extMonto=getExtrasMontoForMonth(uid,u.salario,i); // already checks hist inside
+    const base=Math.round(salMonth/12)+extMonto;
+    // Priority: manual override (ag_mes_i) > calculated base
+    const isManual=(ded[key]!==undefined);
+    const val=isManual?ded[key]:base;
+    // Source indicator
+    const srcLabel=isManual
+      ?'<span title="Valor editado manualmente" style="font-size:8px;color:var(--amber);font-weight:800">✎MANUAL</span>'
+      :hist&&(hist.monto_extra>0||hist.salario_override>0)
+        ?'<span title="Calculado con datos de planilla histórica" style="font-size:8px;color:#60a5fa;font-weight:800">◌HIST</span>'
+        :'<span title="Calculado del registro diario" style="font-size:8px;color:var(--text3)">≈REG</span>';
+    html+='<div style="display:flex;flex-direction:column;gap:3px">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between">'+
+        '<label style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">'+mn[i]+'</label>'+
+        srcLabel+
+      '</div>'+
+      '<input class="form-inp" id="ag-m-'+uid+'-'+i+'" type="text" value="'+(val>0?Math.round(val).toLocaleString('es-CR'):'0')+'" oninput="fmtInp(this)" style="font-size:12px;padding:6px 8px;border-color:'+(isManual?'var(--amber)':'var(--border)')+'" title="Base: ₡'+Math.round(base).toLocaleString('es-CR')+' | Salario mes: ₡'+Math.round(salMonth/12).toLocaleString('es-CR')+' + H.Extra: ₡'+extMonto.toLocaleString('es-CR')+'">'+
       '</div>';
   }
   el.innerHTML=html;
@@ -2204,6 +2220,8 @@ function saveAgOverrides(uid){
   }
   _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
   buildAgGlobal();
+  // Sync: if superadmin is on planilla tab, refresh it too
+  if(document.getElementById('pagos-usuarios-tbody')) renderPagosUsuarios();
   toast('✓ Aguinaldo actualizado para este colaborador');
 }
 
@@ -2426,16 +2444,23 @@ function buildAgGlobal(){
   const users=getUsers().filter(u=>u.rol==='user');
   const today=new Date();
   const mesesAg=Math.min(today.getMonth()+2,12); // +2: Dec prev year + months Jan-current
-  document.getElementById('agTbody').innerHTML=users.map(u=>`<tr>
+  document.getElementById('agTbody').innerHTML=users.map(u=>{
+    // Use current month's hist salary override if available for display
+    const nowKey=new Date().getFullYear()+'-'+pad(new Date().getMonth()+1);
+    const histNow=getPlanillaHist(u.id, nowKey);
+    const salDisplay=histNow&&histNow.salario_override>0?histNow.salario_override:u.salario;
+    const agTotal=calcAgTotal(u.id,u.salario,mesesAg);
+    return `<tr>
     <td><div class="user-name-cell">
       <div class="user-avatar-sm user">${u.nombre.slice(0,2).toUpperCase()}</div>
       <div class="uname-main">${u.nombre}</div>
     </div></td>
-    <td>${fmt(u.salario)}</td>
+    <td>${fmt(salDisplay)}${histNow&&histNow.salario_override>0?'<span title="Salario histórico" style="font-size:9px;color:var(--amber);margin-left:3px">HIST</span>':''}</td>
     <td>${mesesAg} de 12</td>
-    <td style="font-family:var(--cond);font-weight:800;font-size:16px;color:var(--amber)">${fmt(calcAgTotal(u.id,u.salario,mesesAg))}</td>
+    <td style="font-family:var(--cond);font-weight:800;font-size:16px;color:var(--amber)">${fmt(agTotal)}</td>
     <td><button class="tbl-btn view" onclick="exportAguinaldoUser('${u.id}')">⬇ Colilla</button></td>
-  </tr>`).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Sin usuarios</td></tr>';
+  </tr>`;
+  }).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Sin usuarios</td></tr>';
 }
 
 function exportGlobalCSV(){
@@ -2885,12 +2910,20 @@ function buildAgDetailUser(sal,mesesAg){
   let total=0;
   let rows='';
   for(let i=0;i<mesesAg;i++){
-    // Admin can override individual month amounts (e.g. 0 for months before hire date)
     const overrideKey='ag_mes_'+i;
-    const base=(sal/12)+getExtrasMontoForMonth(uid,sal,i);
+    // Use hist salario_override for this month if available
+    const [y,m]=agSlotYM(i);
+    const monthKey=y+'-'+pad(m+1);
+    const hist=getPlanillaHist(uid, monthKey);
+    const salMonth=hist&&hist.salario_override>0?hist.salario_override:sal;
+    const base=Math.round(salMonth/12)+getExtrasMontoForMonth(uid,sal,i);
     const val=(ded[overrideKey]!==undefined)?ded[overrideKey]:base;
     total+=val;
-    rows+='<div class="ag-det-row"><span class="ag-det-l">'+mn[i]+'</span><span class="ag-det-v">'+fmt(val)+'</span></div>';
+    const isManual=(ded[overrideKey]!==undefined);
+    const hasHist=hist&&(hist.monto_extra>0||hist.salario_override>0);
+    const badge=isManual?'<span style="font-size:8px;color:var(--amber)">✎</span>'
+      :hasHist?'<span style="font-size:8px;color:#60a5fa">◌</span>':'';
+    rows+='<div class="ag-det-row"><span class="ag-det-l">'+mn[i]+badge+'</span><span class="ag-det-v">'+fmt(val)+'</span></div>';
   }
   rows+='<div class="ag-det-row"><span class="ag-det-l">TOTAL</span><span class="ag-det-v">'+fmt(total)+'</span></div>';
   document.getElementById('agDetail').innerHTML=rows;
@@ -2979,9 +3012,15 @@ function agSlotYM(i){
 // Calcula el monto de horas extra devengadas en el mes del slot i para un usuario
 function getExtrasMontoForMonth(uid, sal, i){
   try{
-    const reg=JSON.parse(localStorage.getItem('cc_h_'+uid)||'{}');
-    const vh=sal/(4.5*54)*1.5;
     const [y,m]=agSlotYM(i);
+    const monthKey=y+'-'+pad(m+1);
+    // 1. Check planilla historica first (superadmin-set value has priority)
+    const hist=getPlanillaHist(uid, monthKey);
+    if(hist&&hist.monto_extra>0) return hist.monto_extra;
+    // 2. Fall back to calculating from REG (user's daily entries)
+    const reg=getREG(uid)||{};
+    const salForMonth=hist&&hist.salario_override>0?hist.salario_override:sal;
+    const vh=salForMonth/(4.5*54)*1.5;
     let ext=0;
     for(let q=1;q<=2;q++){
       getDays(y,m,q).forEach(function(d){
@@ -2995,13 +3034,22 @@ function getExtrasMontoForMonth(uid, sal, i){
 }
 
 function calcAgTotal(uid, sal, mesesAg){
-  const ded = JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
+  const ded=getDED(uid)||{};
   let total=0;
   for(let i=0;i<mesesAg;i++){
     const key='ag_mes_'+i;
-    const base=(sal/12)+getExtrasMontoForMonth(uid,sal,i);
-    const val=(ded[key]!==undefined)?ded[key]:base;
-    total+=val;
+    // Check manual override first (superadmin edited ag_mes_i)
+    if(ded[key]!==undefined){
+      total+=ded[key];
+      continue;
+    }
+    // Use salario_override from hist if available for this month
+    const [y,m]=agSlotYM(i);
+    const monthKey=y+'-'+pad(m+1);
+    const hist=getPlanillaHist(uid, monthKey);
+    const salMonth=hist&&hist.salario_override>0?hist.salario_override:sal;
+    const base=(salMonth/12)+getExtrasMontoForMonth(uid,sal,i);
+    total+=base;
   }
   return total;
 }
@@ -10699,8 +10747,14 @@ function guardarHistRow(uid, monthKey, rowId){
   // Sync the year-month selector to the saved month so control de pagos reflects it
   var ymsel=document.getElementById('pago-yearmonth-sel');
   if(ymsel) ymsel.value=monthKey;
-  // Refresh table and planilla summary
-  setTimeout(function(){ renderPlanillaHistoricaTable(); renderPagosUsuarios(); }, 600);
+  // Refresh all related tables: planilla + aguinaldo (all sync from same hist data)
+  setTimeout(function(){
+    renderPlanillaHistoricaTable();
+    renderPagosUsuarios();
+    buildAgGlobal();                        // global aguinaldo table
+    buildAgEditGrid(uid);                   // per-user aguinaldo detail
+    if(SESSION&&SESSION.id===uid) recalcQ(); // if it's the current user, refresh their view
+  }, 600);
 }
 
 function borrarHistRow(uid, monthKey){
