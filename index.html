@@ -1246,7 +1246,8 @@ let REG={}, DED={};
 const pad=n=>String(n).padStart(2,'0');
 const dkey=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const rkey=()=>`${getYr()}-${pad(CM+1)}-${CQ}`;
-const fmt=n=>'₡'+Math.round(n).toLocaleString('es-CR');
+const fmt=n=>'₡'+Number(n).toLocaleString('es-CR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtUSD=n=>'$'+Number(n).toLocaleString('es-CR',{minimumFractionDigits:2,maximumFractionDigits:2});
 // parseMon: soporta enteros y decimales en formato es-CR o estándar
 const parseMon=s=>{
   if(!s) return 0;
@@ -1638,22 +1639,34 @@ function doLogin(){
   });
 }
 function doLogout(){
+  // Clear all session state
   SESSION=null;
+  REG={}; DED={};
   window._usersCache=null; window._ventasCache={}; window._horasCache={};
   window._vacCache={}; window._fondosCache={}; window._gastosCache={};
   window._crmClientsCache=null; window._crmLinksCache=null;
   window._trashCache=null; window._liqDataCache={}; window._liqSubsCache=null;
   window._catalogoCache=null; window._tiposProyCache=null;
   window._liqCostTypesCache=null; window._fondosLimCache=null;
-  var lo=document.getElementById('load-overlay');
-  if(lo) lo.style.display='none';
-  document.getElementById('appShell').style.display='none';
-  if(document.getElementById('adminPanel')) document.getElementById('adminPanel').style.display='none';
-  document.getElementById('loginScreen').style.display='flex';
-  document.getElementById('loginUser').value='';
-  document.getElementById('loginPass').value='';
-  var err=document.getElementById('loginError');
-  if(err) err.style.display='none';
+  window._planillaHistCache={};
+  window._presupuestoLoaded=false;
+  // Reset all tab/UI state
+  try{
+    document.querySelectorAll('.admin-section.on').forEach(function(s){s.classList.remove('on');});
+    document.querySelectorAll('.htab.on').forEach(function(b){b.classList.remove('on');});
+    var adminMain=document.querySelector('.admin-main');
+    if(adminMain){ adminMain.style.overflow=''; adminMain.style.padding=''; adminMain.classList.remove('pres-active'); }
+    // Reset month selectors
+    var ymsel=document.getElementById('pago-yearmonth-sel');
+    if(ymsel) ymsel.innerHTML='';
+    // Reset user selectors that were populated
+    ['vac-prog-user','adminHorasUserSel','comisUserSel'].forEach(function(id){
+      var el=document.getElementById(id);
+      if(el) while(el.options.length>1) el.remove(1);
+    });
+  }catch(e){}
+  // Force full reload to guarantee clean state for next user
+  setTimeout(function(){ window.location.reload(); }, 150);
 }
 
 // ══════════════════════════════════════════════
@@ -2406,62 +2419,126 @@ function buildComisGrid(){
     ?`Modo acumulativo: las comisiones se acumulan durante el año y se pagan completas en diciembre a ${u.nombre}.`
     :`Modo mensual: cada comisión se paga en el mes en que se genera a ${u.nombre}.`;
 
-  const yr=new Date().getFullYear();
-  document.getElementById('comisYrLabel').textContent=yr;
+  // Período Dic prevYear → Nov currYear
+  const now=new Date();
+  const yr=now.getFullYear();
+  const prevYr=yr-1;
+  document.getElementById('comisYrLabel').textContent='Dic '+prevYr+' — Nov '+yr;
   const ded=getDED(uid)||{};
+
+  // 12 slots: slot 0=Dic prevYear, slots 1-11=Ene-Nov currYear
+  const comisSlots=[
+    {m:'Dic',y:prevYr,i:12},  // Dic del año anterior
+    {m:'Ene',y:yr,i:1},{m:'Feb',y:yr,i:2},{m:'Mar',y:yr,i:3},
+    {m:'Abr',y:yr,i:4},{m:'May',y:yr,i:5},{m:'Jun',y:yr,i:6},
+    {m:'Jul',y:yr,i:7},{m:'Ago',y:yr,i:8},{m:'Set',y:yr,i:9},
+    {m:'Oct',y:yr,i:10},{m:'Nov',y:yr,i:11}
+  ];
 
   // Build monthly cards
   let total=0;
-  const cards=MES.map((m,i)=>{
-    const key=`comis_${yr}-${pad(i+1)}-1`;
+  const cards=comisSlots.map(function(sl){
+    const key='comis_'+sl.y+'-'+pad(sl.i)+'-1';
     const val=ded[key]||0;
     total+=val;
-    const clr = val>0 ? '#1a9e5c' : '#9a9b9d';
-    const vstr = val ? val.toLocaleString('es-CR') : '';
-    return `<div class="comis-month-card">
-      <div class="cmc-month">${m}</div>
-      <input class="comis-m-inp" style="color:${clr}"
-        type="text" value="${vstr}" placeholder="0"
-        data-uid="${uid}" data-mkey="${key}"
-        oninput="saveComisMonth(this)"
-        onfocus="this.style.borderColor='#E31837'"
-        onblur="this.style.borderColor='#ccc'">
-    </div>`;
+    const clr=val>0?'#1a9e5c':'#9a9b9d';
+    const vstr=val?val.toLocaleString('es-CR',{minimumFractionDigits:2,maximumFractionDigits:2}):'';
+    return '<div class="comis-month-card">'
+      +'<div class="cmc-month">'+sl.m+' '+sl.y+'</div>'
+      +'<input class="comis-m-inp" style="color:'+clr+'"'
+      +' type="text" value="'+vstr+'" placeholder="0"'
+      +' data-uid="'+uid+'" data-mkey="'+key+'"'
+      +' oninput="saveComisMonthDeferred(this)" onblur="saveComisMonth(this)"'
+      +'>' 
+      +'</div>';
   });
   document.getElementById('comisGrid').innerHTML=cards.join('');
 
   // Table rows
   let acum=0;
-  const rows=MES.map((m,i)=>{
-    const key=`comis_${yr}-${pad(i+1)}-1`;
+  const rows=comisSlots.map(function(sl){
+    const key='comis_'+sl.y+'-'+pad(sl.i)+'-1';
     const val=ded[key]||0;
     acum+=val;
-    const estado=isAnual?(i===11&&val>0?'Pago en dic':'Acumulado'):val>0?'Pagado':'Pendiente';
+    const estado=isAnual?(sl.i===12&&val>0?'Pago en dic':'Acumulado'):val>0?'Pagado':'Pendiente';
     const clrRow=val>0?'#1a9e5c':'#9a9b9d';
     const valStr=val>0?fmt(val):'—';
     const estadoHtml=isAnual?('Acum: '+fmt(acum)):'<span style="font-weight:700;color:'+clrRow+'">'+estado+'</span>';
     return '<tr>'
-      +'<td>'+m+' '+yr+'</td>'
+      +'<td>'+sl.m+' '+sl.y+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:'+clrRow+'">'+valStr+'</td>'
       +'<td>'+estadoHtml+'</td>'
       +'</tr>';
   });
-  const totalRow=`<tr style="background:var(--amber-dim)">
-    <td style="font-weight:800">TOTAL ${yr}</td>
-    <td style="font-family:var(--cond);font-weight:900;font-size:16px;color:var(--amber)">${fmt(total)}</td>
-    <td style="font-weight:700;color:var(--amber)">${isAnual?'Pago diciembre':'Mensual'}</td>
-  </tr>`;
+  const totalRow='<tr style="background:var(--amber-dim)">'
+    +'<td style="font-weight:800">TOTAL Dic '+prevYr+' — Nov '+yr+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:16px;color:var(--amber)">'+fmt(total)+'</td>'
+    +'<td style="font-weight:700;color:var(--amber)">'+(isAnual?'Pago diciembre':'Mensual')+'</td>'
+    +'</tr>';
   document.getElementById('comisTbody').innerHTML=rows.join('')+totalRow;
 }
 
+// saveComisMonthDeferred: updates color while typing WITHOUT re-rendering grid (no focus loss)
+function saveComisMonthDeferred(inp){
+  var val=parseMon(inp.value)||0;
+  inp.style.color=val>0?'#1a9e5c':'#9a9b9d';
+  // Update the table row live without full re-render
+  var uid=inp.dataset.uid; var key=inp.dataset.mkey;
+  var ded=getDED(uid)||{};
+  ded[key]=val;
+  if(!window._comisCache) window._comisCache={};
+  if(!window._comisCache[uid]) window._comisCache[uid]={};
+  window._comisCache[uid][key]=val;
+}
+// saveComisMonth: called on blur — saves to Supabase and refreshes table
 function saveComisMonth(inp){
   var uid=inp.dataset.uid;
   var key=inp.dataset.mkey;
-  var ded=JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
+  var ded=getDED(uid)||{};
   ded[key]=parseMon(inp.value)||0;
   inp.style.color=ded[key]>0?'#1a9e5c':'#9a9b9d';
+  // Update cache
+  if(uid===SESSION.id){
+    DED[key]=ded[key]; // keep in-memory DED current
+  }
   _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
-  buildComisGrid();
+  // Refresh only the table row (not the grid, to avoid focus loss)
+  refreshComisTableRow(uid, key, ded[key]);
+}
+// Refresh only the summary table without rebuilding grid inputs
+function refreshComisTableRow(uid, key, val){
+  // rebuild just the table portion
+  var ded=getDED(uid)||{};
+  var users=getUsers();
+  var u=users.find(function(x){return x.id===uid;})||{};
+  var isAnual=(u.comisType||'mensual')==='anual';
+  var now=new Date(); var yr=now.getFullYear(); var prevYr=yr-1;
+  var comisSlots=[
+    {m:'Dic',y:prevYr,i:12},
+    {m:'Ene',y:yr,i:1},{m:'Feb',y:yr,i:2},{m:'Mar',y:yr,i:3},
+    {m:'Abr',y:yr,i:4},{m:'May',y:yr,i:5},{m:'Jun',y:yr,i:6},
+    {m:'Jul',y:yr,i:7},{m:'Ago',y:yr,i:8},{m:'Set',y:yr,i:9},
+    {m:'Oct',y:yr,i:10},{m:'Nov',y:yr,i:11}
+  ];
+  var total=0; var acum=0;
+  var rows=comisSlots.map(function(sl){
+    var k='comis_'+sl.y+'-'+pad(sl.i)+'-1';
+    var v=ded[k]||0; total+=v;
+    var estado=isAnual?(sl.i===12&&v>0?'Pago en dic':'Acumulado'):v>0?'Pagado':'Pendiente';
+    var clrRow=v>0?'#1a9e5c':'#9a9b9d';
+    var valStr=v>0?fmt(v):'—';
+    acum+=v;
+    var estadoHtml=isAnual?('Acum: '+fmt(acum)):'<span style="font-weight:700;color:'+clrRow+'">'+estado+'</span>';
+    return '<tr><td>'+sl.m+' '+sl.y+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800;color:'+clrRow+'">'+valStr+'</td>'
+      +'<td>'+estadoHtml+'</td></tr>';
+  });
+  rows.push('<tr style="background:var(--amber-dim)">'
+    +'<td style="font-weight:800">TOTAL Dic '+prevYr+' — Nov '+yr+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:16px;color:var(--amber)">'+fmt(total)+'</td>'
+    +'<td style="font-weight:700;color:var(--amber)">'+(isAnual?'Pago diciembre':'Mensual')+'</td></tr>');
+  var tbody=document.getElementById('comisTbody');
+  if(tbody) tbody.innerHTML=rows.join('');
 }
 
 function saveComisConfig(){
@@ -10688,6 +10765,7 @@ function renderPlanillaHistoricaTable(){
     +'<th style="text-align:right">Salario base<br><span style="font-size:9px;font-weight:400;opacity:.6">(override o perfil)</span></th>'
     +'<th style="text-align:right;color:#f59e0b">Monto H.Extra ₡<br><span style="font-size:9px;font-weight:400;opacity:.6">(total del mes)</span></th>'
     +'<th style="text-align:right;color:var(--red)">Deducción total ₡<br><span style="font-size:9px;font-weight:400;opacity:.6">(CCSS + otros)</span></th>'
+    +'<th style="text-align:right;color:var(--green)">Total Q<br><span style="font-size:9px;font-weight:400;opacity:.6">(sal/2 + hex/2 - ded/2)</span></th>'
     +'<th>Nota</th>'
     +'<th style="text-align:center">Acción</th>'
     +'</tr></thead>'
@@ -10754,6 +10832,15 @@ function renderPlanillaHistoricaTable(){
       +' style="width:160px;font-size:11px;padding:4px 6px;border:1.5px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text2)">'
       +'</td>'
       // Actions
+      +'<td style="text-align:right;padding:6px 8px;font-family:var(--cond);font-weight:800;color:var(--green)">'
+      +(function(){
+          var salQ2=Math.round((salOvr>0?salOvr:salBase)/2);
+          var hexQ2=Math.round(montoExt/2);
+          var dedQ2=Math.round(dedTotal/2);
+          var tot=salQ2+hexQ2-dedQ2;
+          return tot!==0?fmt(tot):'—';
+        })()
+      +'</td>'
       +'<td style="text-align:center;padding:6px 8px;white-space:nowrap">'
       +'<button onclick="guardarHistRow(this.dataset.uid,this.dataset.mk,this.dataset.rid)" data-uid="'+uid+'" data-mk="'+mo.key+'" data-rid="'+rowId+'" style="font-size:11px;padding:4px 10px;border-radius:5px;border:none;background:var(--green);color:#fff;cursor:pointer;font-weight:700;margin-right:4px">💾 Guardar</button>'
       +(hasData?'<button onclick="borrarHistRow(this.dataset.uid,this.dataset.mk)" data-uid="'+uid+'" data-mk="'+mo.key+'" style="font-size:11px;padding:4px 8px;border-radius:5px;border:none;background:rgba(239,68,68,.15);color:var(--red);cursor:pointer;font-weight:700">✕</button>':'')
@@ -10880,7 +10967,7 @@ function renderPagosUsuarios(){
     });
     var montoExt=Math.round(totExt*vh);
     // If hist has a manual override for horas extra, use it instead
-    if(hist&&hist.monto_extra>0) montoExt=hist.monto_extra;
+    if(hist&&hist.monto_extra>0) montoExt=Math.round(hist.monto_extra/2); // monthly amount ÷ 2 per quincena
 
     // ── 3. COMISIONES — correct key: 'comis_YYYY-MM-1' or 'comis_YYYY-MM-2' ──
     var ded=getDED(u.id)||{};
@@ -19083,7 +19170,34 @@ window.initCalcCONCRE=initCalcCONCRE;
           <div class="page-sub">Selecciona un colaborador para ver o editar su planilla</div>
 
             <!-- PAYMENT CONTROLS: Users -->
-            <div style="margin-bottom:20px">
+            
+        <div style="margin-top:24px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+            <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">🏗 Pagos a Subcontratistas</div>
+            <span style="font-size:11px;color:var(--text3)">Quincenas cerradas — pendientes y pagadas</span>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden">
+            <div style="background:var(--gray-dark);padding:10px 16px;border-bottom:2px solid var(--red)">
+              <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">Liquidaciones de subcontratistas</span>
+              <span style="font-size:11px;color:rgba(255,255,255,.5);margin-left:8px">Marcar como pagado al confirmar depósito</span>
+            </div>
+            <div style="overflow-x:auto">
+              <table class="atbl" style="min-width:600px">
+                <thead><tr>
+                  <th>Subcontratista</th>
+                  <th>Quincena</th>
+                  <th style="text-align:right">Monto a depositar</th>
+                  <th>Fecha cierre</th>
+                  <th>Estado</th>
+                  <th style="text-align:center">✓ Pagado</th>
+                </tr></thead>
+                <tbody id="sub-planillas-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-bottom:20px">
               <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
                 <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">💰 Control de pagos — Colaboradores</div>
                 <select id="pago-period-sel" class="form-select" style="font-size:11px;padding:4px 8px;width:auto" onchange="renderPagosUsuarios()">
@@ -19118,31 +19232,6 @@ window.initCalcCONCRE=initCalcCONCRE;
               </div>
             </div>
 
-        <div style="margin-top:24px">
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
-            <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">🏗 Pagos a Subcontratistas</div>
-            <span style="font-size:11px;color:var(--text3)">Quincenas cerradas — pendientes y pagadas</span>
-          </div>
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden">
-            <div style="background:var(--gray-dark);padding:10px 16px;border-bottom:2px solid var(--red)">
-              <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">Liquidaciones de subcontratistas</span>
-              <span style="font-size:11px;color:rgba(255,255,255,.5);margin-left:8px">Marcar como pagado al confirmar depósito</span>
-            </div>
-            <div style="overflow-x:auto">
-              <table class="atbl" style="min-width:600px">
-                <thead><tr>
-                  <th>Subcontratista</th>
-                  <th>Quincena</th>
-                  <th style="text-align:right">Monto a depositar</th>
-                  <th>Fecha cierre</th>
-                  <th>Estado</th>
-                  <th style="text-align:center">✓ Pagado</th>
-                </tr></thead>
-                <tbody id="sub-planillas-tbody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
 
 
         <!-- PLANILLA HISTÓRICA — solo superadmin -->
