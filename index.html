@@ -2377,6 +2377,7 @@ function renderAdminHorasTable(uid){
   if(sumEl)sumEl.innerHTML=
     '<div class="sc grt" style="min-width:120px"><div class="sclbl">Días reg.</div><div class="scval">'+diasReg+'</div></div>'+
     '<div class="sc"><div class="sclbl">H. Extra</div><div class="scval red">'+(histAdmin&&histAdmin.monto_extra>0?fmt(histAdmin.monto_extra)+histBadge:totExt.toFixed(1)+'h')+'</div></div>'+
+    '<div class="sc" style="border-color:#1a9e5c"><div class="sclbl" style="color:#1a9e5c">₡ Extra</div><div class="scval" style="color:#1a9e5c">'+fmt(mExt)+'</div></div>'+
     '<div class="sc at"><div class="sclbl">Base Q'+histBadge+'</div><div class="scval amber">'+fmt(salQ)+'</div></div>'+
     '<div class="sc gt"><div class="sclbl">Total liq.</div><div class="scval green">'+fmt(tot)+'</div></div>';
 
@@ -2902,6 +2903,7 @@ function recalcQ(){
 
   document.getElementById('sdias').textContent=diasR;
   document.getElementById('sext').textContent=totExt.toFixed(1)+' h';
+  var smext=document.getElementById('smext'); if(smext) smext.textContent=fmt(mExt);
   document.getElementById('ssal').textContent=fmt(salQ);
   document.getElementById('stot').textContent=fmt(tot);
   document.getElementById('u-ccssRes').textContent=ccss>0?`-${fmt(ccss)}`:'₡0';
@@ -20320,6 +20322,7 @@ window.initCalcCONCRE=initCalcCONCRE;
         <div class="strip">
           <div class="sc grt"><div class="sclbl">Días registrados</div><div class="scval" id="sdias">0</div><div class="scsub">días ingresados</div></div>
           <div class="sc"><div class="sclbl">Horas extra</div><div class="scval red" id="sext">0.0 h</div><div class="scsub">esta quincena</div></div>
+          <div class="sc" style="border-color:#1a9e5c"><div class="sclbl" style="color:#1a9e5c">₡ Extra</div><div class="scval" style="color:#1a9e5c" id="smext">₡0,00</div><div class="scsub">monto horas extra</div></div>
           <div class="sc at"><div class="sclbl">Salario base</div><div class="scval amber" id="ssal">₡0</div><div class="scsub">proporcional quincena</div></div>
           <div class="sc gt"><div class="sclbl">Total a recibir</div><div class="scval green" id="stot">₡0</div><div class="scsub">base + extras − deducciones</div></div>
         </div>
