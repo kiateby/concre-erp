@@ -2836,6 +2836,7 @@ function buildMnav(){
 
 function buildTable(){
   const y=getYr(),days=getDays(y,CM,CQ,EXTRA_DAYS);
+  const vh=(SESSION&&SESSION.salario||0)/(4.5*54)*1.5; // hourly extra rate for ₡ Extra column
   const re=CQ===1?15:new Date(y,CM+1,0).getDate(),rs=CQ===1?1:16;
   document.getElementById('qtitle').textContent=`${MES[CM]} ${y}`;
   document.getElementById('plperiod').textContent=`${CQ}ª Quincena — ${MES[CM]} ${y}`;
