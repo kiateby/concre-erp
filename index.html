@@ -2297,6 +2297,7 @@ function buildAdminHorasTableHTML(){
       '<th style="background:var(--surface2);padding:8px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--text3);text-align:center;border-bottom:1px solid var(--border)">Salida</th>'+
       '<th style="background:var(--surface2);padding:8px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--text3);text-align:center;border-bottom:1px solid var(--border)">Ord.</th>'+
       '<th style="background:var(--surface2);padding:8px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--text3);text-align:center;border-bottom:1px solid var(--border)">Extra</th>'+
+      '<th style="background:var(--surface2);padding:8px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:#1a9e5c;text-align:right;border-bottom:1px solid var(--border)">₡ Extra</th>'+
       '<th style="background:var(--surface2);padding:8px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--text3);text-align:left;border-bottom:1px solid var(--border)">Notas</th>'+
     '</tr></thead>'+
     '<tbody id="admin-horas-tbody"></tbody>'+
@@ -2347,6 +2348,7 @@ function renderAdminHorasTable(uid){
       '<td style="font-family:var(--cond);font-weight:700">'+(r.salida||'—')+'</td>'+
       '<td><span class="ev evz" style="font-size:11px">'+(ord>0?ord.toFixed(1)+'h':'—')+'</span></td>'+
       '<td>'+extD+'</td>'+
+      '<td style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">'+(ext>0?fmt(ext*vh):'\u2014')+'</td>'+
       '<td style="font-size:11px;color:var(--text3)">'+(r.nota||'')+'</td>'+
       '</tr>';
   }).join('');
@@ -2867,6 +2869,7 @@ function buildTable(){
       <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':buildTimeSelect(k,'salida',salH,salM,'16','00')}</td>
       <td><span class="ev evz" style="font-size:11px">${ord>0?ord.toFixed(1)+'h':'—'}</span></td>
       <td>${extD}</td>
+      <td style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">${ext>0?fmt(ext*vh):'—'}</td>
       <td><input class="ninp${needN?' warn':''}" type="text" data-k="${k}" value="${r.nota||''}" placeholder="${ext>0?'⚠ Justificar extras':'Notas...'}" onchange="updN(this)">
       ${needN?'<span style="color:var(--amber);font-size:13px">⚠</span>':''}</td>
     </tr>`;
@@ -20335,6 +20338,7 @@ window.initCalcCONCRE=initCalcCONCRE;
               <th style="width:142px">Día</th><th style="width:90px">Jornada</th>
               <th style="width:82px">Entrada</th><th style="width:82px">Salida</th>
               <th style="width:70px">Ord.</th><th style="width:75px">Extra</th>
+              <th style="text-align:right;color:#1a9e5c;font-size:10px;font-weight:800">₡ Extra</th>
               <th>Notas / Justificación</th>
             </tr></thead>
             <tbody id="tbody"></tbody>
