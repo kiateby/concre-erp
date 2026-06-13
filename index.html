@@ -8339,7 +8339,8 @@ async function loadLiqFromDB(subId){
       rebajos:row.rebajos||[],notas:row.notas,
       ventaLines:row.venta_lines||[],consumibles:row.consumibles||{}});
     // Restore liq_state to localStorage for compatibility
-    localStorage.setItem('cc_liq_state_'+subId+'_'+row.period_key,
+    // Use same key format as getLiqPeriodState (replace dashes) so load overwrites stale state
+    localStorage.setItem('cc_liq_state_'+subId+'_'+row.period_key.replace(/-/g,'_'),
       JSON.stringify({cerrada:row.cerrada,pagado:row.pagado}));
   });
   if(!window._liqDataCache) window._liqDataCache={};
