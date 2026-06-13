@@ -12146,9 +12146,23 @@ function renderCRMPickerResults(){
   var el=document.getElementById('crm-picker-results'); if(!el) return;
   var q=(document.getElementById('crm-picker-q')||{}).value||'';
   var clients=getCRMClients();
-  // Usuarios solo ven sus propios clientes en el picker de ventas
+  // Usuarios ven: clientes que crearon + clientes con los que tienen ventas vinculadas
   if(SESSION&&SESSION.rol==='user'){
-    clients=clients.filter(function(cl){ return cl.createdBy===SESSION.id; });
+    var links=getCRMLinks()||[];
+    var userVd=getVentasData(SESSION.id)||{};
+    var userVentaIds=new Set();
+    Object.values(userVd).forEach(function(mv){
+      (mv.ventas||[]).forEach(function(v){ if(v.id) userVentaIds.add(v.id); });
+    });
+    var linkedClientIds=new Set();
+    links.forEach(function(lk){
+      if(userVentaIds.has(lk.ventaId)) linkedClientIds.add(lk.clienteId);
+    });
+    var filtered=clients.filter(function(cl){
+      return cl.createdBy===SESSION.id || linkedClientIds.has(cl.id);
+    });
+    // Si el filtro deja lista vacía, mostrar todos (el cliente puede no tener createdBy correcto)
+    clients=filtered.length>0?filtered:clients;
   }
   if(q.trim()) clients=clients.filter(function(cl){return fuzzyMatch(cl.nombreEmpresa,q)||fuzzyMatch(cl.cedula,q);});
   clients=clients.slice(0,15);
