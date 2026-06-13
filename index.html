@@ -5116,8 +5116,9 @@ function saveFondosCat(existingId){
   var idEl=document.getElementById('fcm-id');
   var catId=existingId||(idEl?idEl.value.trim().replace(/\s+/g,'_').toLowerCase():'');
   if(!label){toast('El nombre es obligatorio');return;}
+  catId=catId.replace(/[^a-z0-9_]/g,'_');
   if(!catId){toast('El ID es obligatorio');return;}
-  if(!existingId&&FONDOS_CATS[catId]){toast('Ese ID ya existe — elige otro');return;}
+  if(!existingId&&FONDOS_CATS[catId]){toast('❌ El ID "'+catId+'" ya existe — elige un ID diferente');return;}
   FONDOS_CATS[catId]={label:label,icon:icon,cls:'cat-'+catId};
   _saveToSupabase('fondos_cats_custom',FONDOS_CATS,'cc_fondos_cats');
   var m=document.getElementById('fondos-cat-modal'); if(m) m.remove();
@@ -5147,7 +5148,11 @@ function initFondosCatFilter(){
 }
 async function loadFondosCatsFromDB(){
   var r=await _loadFromSupabase('fondos_cats_custom','cc_fondos_cats');
-  if(r&&typeof r==='object'&&Object.keys(r).length>0) Object.assign(FONDOS_CATS,r);
+  if(r&&typeof r==='object'&&Object.keys(r).length>0){
+    // Fix any saved categories with null/missing icons
+    Object.keys(r).forEach(function(k){ if(!r[k].icon) r[k].icon='📌'; });
+    Object.assign(FONDOS_CATS,r);
+  }
 }
 // ── FIN FONDOS CATEGORIES ────────────────────────────────────
 
