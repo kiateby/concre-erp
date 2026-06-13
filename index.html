@@ -8424,6 +8424,7 @@ function renderLiqVentasRef(){
         if(!d) return;
         if(d<dates.from||d>dates.to) return;
         allRows.push({uid:u.id,uname:u.nombre,proyecto:v.proyecto||'—',
+          cantidad:v.cantidad||'',
           area:v.minimoArea||(v.tieneMinimo?'(min)':'—'),fecha:v.fecha,subtotal:v.subtotal||0});
       });
     });
@@ -8463,15 +8464,17 @@ function renderLiqVentasRef(){
 
   if(!filteredRows.length){
     var r2=document.createElement('tr');
-    r2.innerHTML='<td colspan="5" style="text-align:center;padding:20px;color:var(--text3)">Sin ventas registradas en este período'+(activeUid!=='all'?' para este usuario':'')+'.</td>';
+    r2.innerHTML='<td colspan="6" style="text-align:center;padding:20px;color:var(--text3)">Sin ventas registradas en este período'+(activeUid!=='all'?' para este usuario':'')+'.</td>';
     tbody.appendChild(r2); return;
   }
 
   filteredRows.sort(function(a,b){return a.fecha<b.fecha?-1:1;});
   filteredRows.forEach(function(row){
     var tr=document.createElement('tr');
+    var cantDisplay=row.cantidad&&row.cantidad!=='0'&&row.cantidad!=='1'?row.cantidad:'—';
     tr.innerHTML='<td style="font-size:12px;font-weight:700">'+row.uname+'</td>'
       +'<td style="font-size:12px">'+row.proyecto+'</td>'
+      +'<td style="font-size:12px;text-align:center;color:var(--text3)">'+cantDisplay+'</td>'
       +'<td style="font-size:12px;text-align:center">'+(row.area!=='—'&&row.area!=='(min)'?row.area+' m&sup2;':row.area)+'</td>'
       +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(row.fecha))+'</td>'
       +'<td style="text-align:right;font-family:var(--cond);font-weight:800;color:var(--green)">'+fmt(row.subtotal)+'</td>';
@@ -8480,7 +8483,7 @@ function renderLiqVentasRef(){
   var total=filteredRows.reduce(function(s,r){return s+r.subtotal;},0);
   var tfoot=document.createElement('tr');
   tfoot.style.cssText='background:var(--surface2);font-weight:800;border-top:2px solid var(--border)';
-  tfoot.innerHTML='<td colspan="4" style="font-size:12px;padding:8px 12px">Total período</td>'
+  tfoot.innerHTML='<td colspan="5" style="font-size:12px;padding:8px 12px">Total período</td>'
     +'<td style="text-align:right;font-family:var(--cond);font-size:15px;color:var(--green);padding:8px 12px">'+fmt(total)+'</td>';
   tbody.appendChild(tfoot);
 }
@@ -19990,7 +19993,7 @@ window.initCalcCONCRE=initCalcCONCRE;
             <div style="overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:var(--r)">
               <table class="atbl" style="min-width:700px">
                 <thead><tr>
-                  <th>Usuario</th><th>Proyecto</th><th>&#193;rea m&#237;nimo</th><th>Fecha</th><th style="text-align:right">Subtotal &#8353;</th>
+                  <th>Usuario</th><th>Proyecto</th><th style="text-align:center">Cant.</th><th>&#193;rea m&#237;nimo</th><th>Fecha</th><th style="text-align:right">Subtotal &#8353;</th>
                 </tr></thead>
                 <tbody id="liq-vref-tbody"></tbody>
               </table>
