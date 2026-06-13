@@ -11107,17 +11107,31 @@ function getCRMClients(){
 function setCRMClients(d){
   window._crmClientsCache=d;
   if(!d||!d.length) return;
-  // Upsert each client individually — safe against network failures
+  // Upsert only — NEVER delete. Each client saved individually by ID.
   var rows=d.map(function(cl){
     return {id:cl.id,nombre_empresa:cl.nombreEmpresa,cedula:cl.cedula||'',
       tipo_cedula:cl.tipoCedula||'',tipo_cliente:cl.tipoCliente||'',
       tipo_cliente_otro:cl.tipoClienteOtro||'',direccion:cl.direccion||'',
-      contactos:cl.contactos||[],created_by:cl.createdBy||'',
+      contactos:cl.contactos||[],created_by:cl.createdBy||SESSION.id||'',
       created_at:cl.created||new Date().toISOString(),
       updated_at:new Date().toISOString()};
   });
   DB.from('crm_clientes').upsert(rows,{onConflict:'id'}).then(function(r){
     if(r.error) console.error('setCRMClients:',r.error);
+    else {
+      // After save, reload ALL clients from Supabase to ensure cache is complete
+      DB.from('crm_clientes').select('*').order('nombre_empresa').then(function(r2){
+        if(!r2.error&&r2.data&&r2.data.length>0){
+          window._crmClientsCache=r2.data.map(function(row){
+            return {id:row.id,nombreEmpresa:row.nombre_empresa,cedula:row.cedula,
+              tipoCedula:row.tipo_cedula,tipoCliente:row.tipo_cliente,
+              tipoClienteOtro:row.tipo_cliente_otro,direccion:row.direccion,
+              contactos:row.contactos||[],createdBy:row.created_by,
+              created:row.created_at,updatedAt:row.updated_at};
+          });
+        }
+      });
+    }
   });
 }
 
