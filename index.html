@@ -1638,7 +1638,56 @@ function doLogin(){
     });
   });
 }
+// ── AUTO-REFRESH: reload shared Supabase data every 3 minutes ──
+// Updates caches silently without disrupting the current UI
+// Next time user opens a tab, they get fresh data
+function startAutoRefresh(){
+  if(window._autoRefreshInterval) clearInterval(window._autoRefreshInterval);
+  window._autoRefreshInterval = setInterval(async function(){
+    if(!SESSION) { clearInterval(window._autoRefreshInterval); return; }
+    try{
+      // Reload users (admin/superadmin may have added/edited)
+      var ur=await DB.from('usuarios').select('*');
+      if(!ur.error&&ur.data) window._usersCache=ur.data.map(dbRowToUser);
+
+      // Reload CRM clients (another user may have added clients)
+      var cr=await DB.from('crm_clientes').select('*').order('nombre_empresa');
+      if(!cr.error&&cr.data&&cr.data.length>0){
+        window._crmClientsCache=cr.data.map(function(row){
+          return {id:row.id,nombreEmpresa:row.nombre_empresa,cedula:row.cedula,
+            tipoCedula:row.tipo_cedula,tipoCliente:row.tipo_cliente,
+            tipoClienteOtro:row.tipo_cliente_otro,direccion:row.direccion,
+            contactos:row.contactos||[],createdBy:row.created_by,
+            created:row.created_at,updatedAt:row.updated_at};
+        });
+      }
+
+      // Reload CRM links
+      var lkr=await DB.from('crm_links').select('*');
+      if(!lkr.error&&lkr.data) window._crmLinksCache=lkr.data.map(function(row){
+        return {ventaId:row.venta_id,clienteId:row.cliente_id,
+          contactoId:row.contacto_id,autoMatched:row.auto_matched};
+      });
+
+      // Reload ventas for all users (admin/superadmin)
+      if(SESSION.rol==='admin'||SESSION.rol==='superadmin'){
+        await loadVentasFromDB(SESSION.id);
+      }
+
+      // Reload planilla hist (superadmin may have updated)
+      await loadPlanillaHist();
+
+    }catch(e){ console.warn('autoRefresh error:',e); }
+  }, 3*60*1000); // every 3 minutes
+}
+
+
 function doLogout(){
+  // Stop background refresh if running
+  if(window._autoRefreshInterval){
+    clearInterval(window._autoRefreshInterval);
+    window._autoRefreshInterval=null;
+  }
   // Clear all session state
   SESSION=null;
   REG={}; DED={};
@@ -1844,6 +1893,8 @@ function initApp(){
       buildAgGlobal();
     });
     populateAdminSelectors();
+    // Auto-refresh: reload shared data every 3 minutes while session is active
+    startAutoRefresh();
     // Build admin header tabs
     buildAdminTabs();
     showAdminSec('overview'); // Show overview on login
@@ -1866,6 +1917,8 @@ function initApp(){
     buildUserTabs(); // This handles first tab selection based on tabPerms
     setTimeout(applySearchableSelects,600);
     registerServiceWorker();
+    // Auto-refresh: reload shared data every 3 minutes while session is active
+    startAutoRefresh();
   }
 }
 
