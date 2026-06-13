@@ -5106,7 +5106,7 @@ function openFondosCatModal(catId){
       '<div style="font-size:11px;color:var(--text3);margin-top:6px;line-height:1.5">Haz clic en el cuadro y:<br>• <strong>Windows:</strong> tecla <strong>Win + .</strong><br>• <strong>Mac:</strong> <strong>Ctrl+Cmd+Espacio</strong><br>• O pega directamente un emoji (Ctrl+V)</div></div>'+
     '<div style="display:flex;gap:10px;justify-content:flex-end">'+
       '<button onclick="document.getElementById(\'fondos-cat-modal\').remove()" style="background:none;border:1px solid var(--border2);border-radius:7px;padding:8px 16px;cursor:pointer;font-size:13px">Cancelar</button>'+
-      '<button onclick="saveFondosCat(\''+catId+'\')" style="background:var(--purple);color:#fff;border:none;border-radius:7px;padding:8px 20px;cursor:pointer;font-size:13px;font-weight:700">Guardar</button>'+
+      '<button onclick="saveFondosCat('+(isNew?"''":("'"+catId+"'"))+')" style="background:var(--purple);color:#fff;border:none;border-radius:7px;padding:8px 20px;cursor:pointer;font-size:13px;font-weight:700">Guardar</button>'+
     '</div></div></div>');
 }
 function saveFondosCat(existingId){
