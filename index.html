@@ -1965,39 +1965,52 @@ async function generarCampanaRadar(){
 
   try{
     var lineas = linea === 'todas' ? ['macrofibra','equipo_liviano','servicios'] : [linea];
-    var zonaTexto = RADAR_ZONA_LABELS[zona] === 'Nacional' ? 'Costa Rica' : (RADAR_ZONA_LABELS[zona] + ', Costa Rica');
+    // 'Nacional' es demasiado genérico para Google Places (un país entero da pocos resultados de calidad).
+    // En su lugar, buscamos en cada una de las zonas reales priorizadas por Kia: GAM, Guanacaste, Limón, Alajuela fuera GAM, resto del país.
+    var zonasABuscar = zona === 'nacional'
+      ? ['GAM','Guanacaste','Limon','Alajuela_fuera_GAM','resto_pais']
+      : [zona];
 
     var todosResultadosPlaces = [];
     var todasSenalesTavily = [];
 
-    // 1. Google Places: una búsqueda por categoría de cada línea seleccionada
-    for(var li=0; li<lineas.length; li++){
-      var categorias = RADAR_QUERIES_PLACES[lineas[li]];
-      for(var ci=0; ci<categorias.length; ci++){
-        try{
-          var r = await llamarRadarServer({tipo:'google_places', query: categorias[ci], zona: zonaTexto, categoria: lineas[li]});
-          (r.resultados||[]).forEach(function(item){ item._linea = lineas[li]; item._categoriaQuery = categorias[ci]; });
-          todosResultadosPlaces = todosResultadosPlaces.concat(r.resultados||[]);
-        }catch(e){ console.warn('Google Places query falló:', categorias[ci], e); }
+    // 1. Google Places: una búsqueda por categoría × línea × zona real
+    for(var zi=0; zi<zonasABuscar.length; zi++){
+      var zonaTextoActual = RADAR_ZONA_LABELS[zonasABuscar[zi]] + ', Costa Rica';
+      for(var li=0; li<lineas.length; li++){
+        var categorias = RADAR_QUERIES_PLACES[lineas[li]];
+        for(var ci=0; ci<categorias.length; ci++){
+          try{
+            var r = await llamarRadarServer({tipo:'google_places', query: categorias[ci], zona: zonaTextoActual, categoria: lineas[li]});
+            (r.resultados||[]).forEach(function(item){ item._linea = lineas[li]; item._categoriaQuery = categorias[ci]; item._zonaReal = zonasABuscar[zi]; });
+            todosResultadosPlaces = todosResultadosPlaces.concat(r.resultados||[]);
+          }catch(e){ console.warn('Google Places query falló:', categorias[ci], zonaTextoActual, e); }
+        }
       }
     }
 
-    // 2. Tavily: noticias + LinkedIn público por línea seleccionada (señal de actividad reciente)
-    for(var lj=0; lj<lineas.length; lj++){
-      var queriesTavily = RADAR_QUERIES_TAVILY[lineas[lj]];
-      for(var qi=0; qi<queriesTavily.length; qi++){
-        try{
-          var rt = await llamarRadarServer({tipo:'tavily', query: queriesTavily[qi] + ' ' + zonaTexto});
-          todasSenalesTavily = todasSenalesTavily.concat(rt.resultados||[]);
-        }catch(e){ console.warn('Tavily query falló:', queriesTavily[qi], e); }
+    // 2. Tavily: noticias + LinkedIn público por línea × zona real (señal de actividad reciente)
+    for(var zj=0; zj<zonasABuscar.length; zj++){
+      var zonaTextoTavily = RADAR_ZONA_LABELS[zonasABuscar[zj]] + ', Costa Rica';
+      for(var lj=0; lj<lineas.length; lj++){
+        var queriesTavily = RADAR_QUERIES_TAVILY[lineas[lj]];
+        for(var qi=0; qi<queriesTavily.length; qi++){
+          try{
+            var rt = await llamarRadarServer({tipo:'tavily', query: queriesTavily[qi] + ' ' + zonaTextoTavily});
+            todasSenalesTavily = todasSenalesTavily.concat(rt.resultados||[]);
+          }catch(e){ console.warn('Tavily query falló:', queriesTavily[qi], zonaTextoTavily, e); }
+        }
       }
     }
 
     // 3. Deduplicar por nombre (mismo negocio puede salir en varias búsquedas)
+    //    y excluir la propia empresa (CONCRE) — no tiene sentido sugerirse a sí misma como prospecto
+    var EMPRESAS_EXCLUIDAS = ['concre']; // nombre exacto en Google Maps, en minúsculas
     var vistos = {};
     var unicos = todosResultadosPlaces.filter(function(p){
       var key = (p.nombre||'').toLowerCase().trim();
       if(!key || vistos[key]) return false;
+      if(EMPRESAS_EXCLUIDAS.indexOf(key) !== -1) return false; // excluir coincidencia exacta, no parcial
       vistos[key] = true;
       return true;
     });
@@ -2005,7 +2018,8 @@ async function generarCampanaRadar(){
     // 4. Convertir a prospectos con scoring real
     var campanaId = 'camp_' + Date.now();
     var prospectos = unicos.slice(0, cantidad).map(function(p, idx){
-      var scoreData = calcularScoreRadarReal(p, zona, todasSenalesTavily);
+      var zonaRealDelNegocio = p._zonaReal || zona; // zona específica donde se encontró (importante cuando se buscó 'nacional')
+      var scoreData = calcularScoreRadarReal(p, zonaRealDelNegocio, todasSenalesTavily);
       if(scoreData.score < scoreMin) return null;
       return {
         id: 'pros_' + Date.now() + '_' + idx,
@@ -2017,8 +2031,8 @@ async function generarCampanaRadar(){
         whatsapp_visible: false, // Google Places no distingue WhatsApp de teléfono normal
         direccion: p.direccion || '',
         canton: '—',
-        provincia: zona,
-        zona_prioridad: zona,
+        provincia: zonaRealDelNegocio,
+        zona_prioridad: zonaRealDelNegocio,
         sitio_web: p.sitio_web || '',
         google_maps_url: p.google_maps_url || '',
         calificacion: p.calificacion || null,
