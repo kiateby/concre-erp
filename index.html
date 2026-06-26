@@ -1691,6 +1691,7 @@ function startAutoRefresh(){
 var _radarCampanas = [];
 var _radarProspectos = [];
 var _radarFilterActive = 'all';
+var _radarHistoriaCampanaActiva = null; // id de campaña abierta en vista historial, null = ver todas
 
 // Catálogo de categorías y su línea de venta asociada (para demo + futuro scoring real)
 var RADAR_CATEGORIAS = {
@@ -1710,6 +1711,7 @@ function initRadarComercial(){
   if(banner) banner.style.display = '';
   loadRadarFromDB().then(function(){
     renderRadarCampanasResumen();
+    renderRadarHistorial();
     renderRadarProspectos();
   });
 }
@@ -1759,7 +1761,9 @@ function generarCampanaRadar(){
       if(r2.error){ console.error('radar_prospectos insert:', r2.error); toast('❌ Error guardando prospectos'); return; }
       _radarCampanas.unshift(campana);
       _radarProspectos = demoProspectos.concat(_radarProspectos);
+      _radarHistoriaCampanaActiva = null; // mostrar todos los prospectos incluyendo los nuevos
       renderRadarCampanasResumen();
+      renderRadarHistorial();
       renderRadarProspectos();
       toast('✅ Campaña generada: ' + demoProspectos.length + ' prospectos (demo)');
     });
@@ -1913,10 +1917,60 @@ function filterRadarProspectos(btn, filterVal){
   renderRadarProspectos();
 }
 
+// ── Historial de campañas: lista + vista de detalle por campaña ──
+function renderRadarHistorial(){
+  var el = document.getElementById('radar-historial-list');
+  if(!el) return;
+  if(!_radarCampanas.length){
+    el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:6px">Sin campañas generadas aún.</div>';
+    return;
+  }
+  el.innerHTML = _radarCampanas.map(function(camp){
+    var nProspectos = _radarProspectos.filter(function(p){ return p.campana_id === camp.id; }).length;
+    var fecha = new Date(camp.created_at).toLocaleDateString('es-CR', {day:'2-digit',month:'short',year:'numeric'});
+    var isActive = _radarHistoriaCampanaActiva === camp.id;
+    return '<div onclick="abrirCampanaHistorial(\''+camp.id+'\')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:8px;border:1px solid '+(isActive?'var(--red)':'var(--border)')+';background:'+(isActive?'rgba(227,24,55,.05)':'var(--surface2)')+'">'
+      +'<div>'
+      +'<div style="font-size:13px;font-weight:700">'+camp.nombre+'</div>'
+      +'<div style="font-size:11px;color:var(--text3)">'+fecha+' · '+(RADAR_ZONA_LABELS[camp.zona]||camp.zona)+' · '+(camp.linea_venta==='todas'?'Todas las líneas':camp.linea_venta)+'</div>'
+      +'</div>'
+      +'<div style="text-align:right">'
+      +'<div style="font-family:var(--cond);font-weight:900;font-size:16px;color:var(--red)">'+nProspectos+'</div>'
+      +'<div style="font-size:9px;color:var(--text3);text-transform:uppercase;font-weight:800">prospectos</div>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+}
+
+// Abre el detalle de una campaña específica: filtra la lista para mostrar solo sus prospectos
+function abrirCampanaHistorial(campanaId){
+  _radarHistoriaCampanaActiva = campanaId;
+  var volverBtn = document.getElementById('radar-volver-btn');
+  if(volverBtn) volverBtn.style.display = '';
+  renderRadarHistorial();
+  renderRadarProspectos();
+  // Scroll a la lista de prospectos para que el usuario vea el resultado de inmediato
+  var lista = document.getElementById('radar-prospectos-list');
+  if(lista) lista.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+// Vuelve a la vista de todos los prospectos de todas las campañas
+function volverATodosLosProspectos(){
+  _radarHistoriaCampanaActiva = null;
+  var volverBtn = document.getElementById('radar-volver-btn');
+  if(volverBtn) volverBtn.style.display = 'none';
+  renderRadarHistorial();
+  renderRadarProspectos();
+}
+
 function renderRadarProspectos(){
   var el = document.getElementById('radar-prospectos-list');
   if(!el) return;
-  var list = _radarProspectos;
+  // Si hay una campaña histórica abierta, mostrar solo sus prospectos
+  var base = _radarHistoriaCampanaActiva
+    ? _radarProspectos.filter(function(p){ return p.campana_id === _radarHistoriaCampanaActiva; })
+    : _radarProspectos;
+  var list = base.slice().sort(function(a,b){ return (b.score||0)-(a.score||0); }); // siempre mayor a menor score
   if(_radarFilterActive !== 'all'){
     list = list.filter(function(p){ return p.clasificacion === _radarFilterActive; });
   }
@@ -20810,6 +20864,15 @@ window.initCalcCONCRE=initCalcCONCRE;
             </label>
             <button class="btn-primary" onclick="generarCampanaRadar()" style="margin-left:auto">🔍 Generar campaña</button>
           </div>
+        </div>
+
+        <!-- Historial de campañas -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:18px;margin-bottom:20px;box-shadow:var(--sh)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div style="font-family:var(--cond);font-size:16px;font-weight:800">📚 Historial de campañas</div>
+            <button id="radar-volver-btn" onclick="volverATodosLosProspectos()" style="display:none;font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);cursor:pointer">← Ver todos los prospectos</button>
+          </div>
+          <div id="radar-historial-list" style="display:flex;flex-direction:column;gap:8px"></div>
         </div>
 
         <!-- Resumen de campañas -->
