@@ -1682,6 +1682,291 @@ function startAutoRefresh(){
 }
 
 
+// ══════════════════════════════════════════════════════════════
+//  RADAR COMERCIAL IA — módulo independiente de prospección
+//  Por ahora usa datos DEMO. Fase 2: conectará a Google Places
+//  + Tavily a través de una función serverless en Vercel.
+// ══════════════════════════════════════════════════════════════
+
+var _radarCampanas = [];
+var _radarProspectos = [];
+var _radarFilterActive = 'all';
+
+// Catálogo de categorías y su línea de venta asociada (para demo + futuro scoring real)
+var RADAR_CATEGORIAS = {
+  macrofibra: ['Constructora', 'Empresa de pisos industriales', 'Concretera', 'Contratista de losas', 'Bodega industrial'],
+  equipo_liviano: ['Ferretería', 'Alquiler de equipo', 'Contratista', 'Maestro de obras', 'Aplicador de pisos'],
+  servicios: ['Colocación de adoquines', 'Pulido de concreto', 'Remodelaciones', 'Obra civil menor']
+};
+
+var RADAR_ZONA_LABELS = {
+  nacional: 'Nacional', GAM: 'GAM', Guanacaste: 'Guanacaste', Limon: 'Limón',
+  Alajuela_fuera_GAM: 'Alajuela (fuera GAM)', resto_pais: 'Resto del país'
+};
+
+function initRadarComercial(){
+  // Verificar tabla de demo banner
+  var banner = document.getElementById('radar-demo-banner');
+  if(banner) banner.style.display = '';
+  loadRadarFromDB().then(function(){
+    renderRadarCampanasResumen();
+    renderRadarProspectos();
+  });
+}
+
+async function loadRadarFromDB(){
+  try{
+    var cr = await DB.from('radar_campanas').select('*').order('created_at',{ascending:false});
+    if(!cr.error && cr.data) _radarCampanas = cr.data;
+    var pr = await DB.from('radar_prospectos').select('*').order('score',{ascending:false});
+    if(!pr.error && pr.data) _radarProspectos = pr.data;
+  }catch(e){ console.warn('loadRadarFromDB:', e); }
+}
+
+// ── Generar campaña (DEMO: crea prospectos de ejemplo con scoring real) ──
+function generarCampanaRadar(){
+  var zona = document.getElementById('radar-zona').value;
+  var linea = document.getElementById('radar-linea').value;
+  var frecuencia = document.getElementById('radar-frecuencia').value;
+  var cantidad = parseInt(document.getElementById('radar-cantidad').value);
+  var scoreMin = parseInt(document.getElementById('radar-score-min').value);
+  var incluirGrandes = document.getElementById('radar-incluir-grandes').checked;
+
+  toast('🔍 Generando campaña (modo demo)...');
+
+  var campanaId = 'camp_' + Date.now();
+  var demoProspectos = generarProspectosDemo(zona, linea, cantidad, scoreMin, incluirGrandes, campanaId);
+
+  var campana = {
+    id: campanaId,
+    nombre: 'Campaña ' + RADAR_ZONA_LABELS[zona] + ' — ' + new Date().toLocaleDateString('es-CR'),
+    frecuencia: frecuencia,
+    zona: zona,
+    linea_venta: linea,
+    cantidad_deseada: cantidad,
+    incluir_grandes: incluirGrandes,
+    score_minimo: scoreMin,
+    estado: 'completa',
+    total_encontrados: demoProspectos.length,
+    costo_estimado: 0, // demo = sin costo real
+    created_by: SESSION.id,
+    created_at: new Date().toISOString()
+  };
+
+  DB.from('radar_campanas').insert(campana).then(function(r){
+    if(r.error){ console.error('radar_campanas insert:', r.error); toast('❌ Error guardando campaña'); return; }
+    DB.from('radar_prospectos').insert(demoProspectos).then(function(r2){
+      if(r2.error){ console.error('radar_prospectos insert:', r2.error); toast('❌ Error guardando prospectos'); return; }
+      _radarCampanas.unshift(campana);
+      _radarProspectos = demoProspectos.concat(_radarProspectos);
+      renderRadarCampanasResumen();
+      renderRadarProspectos();
+      toast('✅ Campaña generada: ' + demoProspectos.length + ' prospectos (demo)');
+    });
+  });
+}
+
+// Genera prospectos de ejemplo con nombres ficticios costarricenses y scoring realista
+function generarProspectosDemo(zona, linea, cantidad, scoreMin, incluirGrandes, campanaId){
+  var nombresDemo = [
+    'Constructora Vega y Asociados','Pisos Industriales del Valle','Ferretería La Unión',
+    'Contratista Méndez Hermanos','Alquiler de Equipos Solano','Concretera San Rafael',
+    'Adoquines y Bordillos CR','Pulido de Concreto Profesional','Obras Civiles Quesada',
+    'Constructora Heredia Norte','Maestro de Obras Jiménez','Bodegas y Parqueos del Este',
+    'Remodelaciones Castillo','Ferretería Industrial Pococí','Constructora Pacífico Sur',
+    'Equipos Pesados Liberia','Concreto y Acabados Tamarindo','Constructora Guanacaste Plus',
+    'Pisos y Losas del Norte','Contratista Independiente Rojas'
+  ];
+  var canales_linea = linea==='todas' ? Object.keys(RADAR_CATEGORIAS) : [linea];
+  var zonas_reales = zona==='nacional'
+    ? ['GAM','Guanacaste','Limon','Alajuela_fuera_GAM','resto_pais']
+    : [zona];
+
+  var out = [];
+  var n = Math.min(cantidad, nombresDemo.length);
+  for(var i=0; i<n; i++){
+    var lineaSel = canales_linea[i % canales_linea.length];
+    var zonaSel = zonas_reales[i % zonas_reales.length];
+    var categorias = RADAR_CATEGORIAS[lineaSel];
+    var categoria = categorias[i % categorias.length];
+    var esGrande = incluirGrandes && (i % 7 === 0);
+    if(esGrande && !incluirGrandes) continue;
+
+    var scoreData = calcularScoreRadar(zonaSel, categoria, esGrande, i);
+    if(scoreData.score < scoreMin) continue;
+
+    var nombre = nombresDemo[i] || ('Prospecto ' + (i+1));
+    var prospecto = {
+      id: 'pros_' + Date.now() + '_' + i,
+      campana_id: campanaId,
+      nombre: nombre,
+      categoria: categoria,
+      linea_venta: lineaSel,
+      telefono: '8' + (700+i) + '-' + (1000+i*7)%10000,
+      whatsapp_visible: scoreData.whatsapp,
+      direccion: RADAR_ZONA_LABELS[zonaSel] + ', Costa Rica',
+      canton: '—',
+      provincia: zonaSel,
+      zona_prioridad: zonaSel,
+      sitio_web: '',
+      google_maps_url: '',
+      calificacion: (3.5 + (i%3)*0.5),
+      num_resenas: 5 + (i*3)%40,
+      score: scoreData.score,
+      score_explicacion: scoreData.explicacion,
+      clasificacion: scoreData.clasificacion,
+      señal_detectada: scoreData.señal,
+      fuente: 'demo',
+      mensaje_sugerido: generarMensajeSugerido(nombre, categoria, lineaSel, scoreData),
+      siguiente_accion: scoreData.clasificacion==='alta' ? 'Llamar esta semana' : 'Enviar WhatsApp con catálogo',
+      estado_contacto: 'pendiente',
+      notas_usuario: '',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    out.push(prospecto);
+  }
+  return out;
+}
+
+// Sistema de scoring según las reglas del documento de Kia
+function calcularScoreRadar(zona, categoria, esGrande, seed){
+  var score = 0;
+  var razones = [];
+
+  // Puntos geográficos iniciales
+  var geoPuntos = {GAM:20, Guanacaste:17, Limon:14, Alajuela_fuera_GAM:12, resto_pais:8};
+  score += geoPuntos[zona] || 8;
+  razones.push(RADAR_ZONA_LABELS[zona]);
+
+  // Señales simuladas variando por seed (en producción vendrían de Google Places / Tavily)
+  var tieneWhatsapp = (seed % 3 !== 0);
+  if(tieneWhatsapp){ score += 20; razones.push('WhatsApp visible'); }
+
+  var tieneTelefono = true;
+  if(tieneTelefono){ score += 15; razones.push('contacto telefónico visible'); }
+
+  var esPymeProbable = !esGrande;
+  if(esPymeProbable){ score += 20; razones.push('empresa pequeña/mediana probable'); }
+  else { score -= 10; razones.push('empresa grande — puede ser más burocrática'); }
+
+  var senalReciente = (seed % 4 === 0);
+  var señalTexto = '';
+  if(senalReciente){
+    score += 20;
+    var señales = ['publicó obra reciente en redes','pidió cotización de materiales','mencionó proyecto activo en construcción'];
+    señalTexto = señales[seed % señales.length];
+    razones.push('señal reciente: ' + señalTexto);
+  }
+
+  var categoriaAlineada = true; // todas las categorías demo están alineadas
+  score += 15;
+
+  score = Math.max(0, Math.min(100, score));
+
+  var clasificacion = score>=80?'alta':score>=60?'media':score>=40?'secundaria':'archivar';
+
+  var explicacion = 'Prioridad ' + (clasificacion==='alta'?'alta':clasificacion==='media'?'media':'secundaria') +
+    ' porque es ' + (esPymeProbable?'una empresa pequeña/mediana':'una empresa grande') +
+    ' en ' + RADAR_ZONA_LABELS[zona] + (tieneWhatsapp?', tiene WhatsApp visible':'') +
+    (senalReciente?', y tiene una señal reciente: ' + señalTexto:'') + '.';
+
+  return {score:score, clasificacion:clasificacion, explicacion:explicacion, whatsapp:tieneWhatsapp, señal:señalTexto};
+}
+
+// Genera el mensaje que el vendedor puede copiar y enviar manualmente
+function generarMensajeSugerido(nombre, categoria, linea, scoreData){
+  var lineaTexto = {
+    macrofibra: 'macrofibra de polipropileno para refuerzo de concreto, una alternativa más rápida y económica que la malla electrosoldada',
+    equipo_liviano: 'equipo liviano, herramientas e insumos para construcción (compactadoras, vibradores, discos de corte, alisadoras)',
+    servicios: 'servicios de colocación de losas, pulido de concreto y acabados'
+  }[linea] || 'nuestros productos para construcción';
+
+  return 'Buenos días, le escribo de CONCRE. Vimos que ' + nombre.toLowerCase() +
+    ' trabaja con ' + categoria.toLowerCase() + (scoreData.señal ? ' y ' + scoreData.señal : '') +
+    '. Tenemos ' + lineaTexto + ' y nos gustaría conversar sobre cómo podemos apoyar su próximo proyecto. ' +
+    '¿Tendría unos minutos esta semana para una llamada o cotización sin compromiso?';
+}
+
+// ── Render: resumen de campañas generadas ──
+function renderRadarCampanasResumen(){
+  var el = document.getElementById('radar-campanas-resumen');
+  if(!el) return;
+  if(!_radarCampanas.length){
+    el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:10px">Aún no se ha generado ninguna campaña. Use el formulario arriba para crear la primera.</div>';
+    return;
+  }
+  el.innerHTML = _radarCampanas.slice(0,4).map(function(camp){
+    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;flex:1;min-width:180px">'
+      +'<div style="font-size:10px;color:var(--text3);font-weight:800;text-transform:uppercase">'+ (camp.frecuencia||'manual') +'</div>'
+      +'<div style="font-size:13px;font-weight:700;margin:2px 0">'+ camp.nombre +'</div>'
+      +'<div style="font-size:11px;color:var(--text3)">'+ camp.total_encontrados +' prospectos · '+ RADAR_ZONA_LABELS[camp.zona] +'</div>'
+      +'</div>';
+  }).join('');
+}
+
+// ── Render: lista de prospectos con tarjetas ──
+function filterRadarProspectos(btn, filterVal){
+  document.querySelectorAll('#sec-radar .aub-btn').forEach(function(b){b.classList.remove('on');});
+  btn.classList.add('on');
+  _radarFilterActive = filterVal;
+  renderRadarProspectos();
+}
+
+function renderRadarProspectos(){
+  var el = document.getElementById('radar-prospectos-list');
+  if(!el) return;
+  var list = _radarProspectos;
+  if(_radarFilterActive !== 'all'){
+    list = list.filter(function(p){ return p.clasificacion === _radarFilterActive; });
+  }
+  if(!list.length){
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Sin prospectos para mostrar. Genere una campaña arriba.</div>';
+    return;
+  }
+  var clrMap = {alta:'#dc2626', media:'#d97706', secundaria:'#6b7280', archivar:'#9ca3af'};
+  var iconMap = {alta:'🔴', media:'🟡', secundaria:'⚪', archivar:'⚫'};
+  el.innerHTML = list.map(function(p){
+    var clr = clrMap[p.clasificacion] || '#6b7280';
+    var icon = iconMap[p.clasificacion] || '⚪';
+    return '<div style="background:var(--surface);border:1px solid var(--border);border-left:4px solid '+clr+';border-radius:8px;padding:16px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">'
+      +'<div>'
+      +'<div style="font-family:var(--cond);font-size:16px;font-weight:800">'+icon+' '+p.nombre+'</div>'
+      +'<div style="font-size:11px;color:var(--text3);margin-top:2px">'+p.categoria+' · '+(RADAR_ZONA_LABELS[p.zona_prioridad]||p.zona_prioridad)+' · ⭐ '+(p.calificacion||'—')+' ('+(p.num_resenas||0)+' reseñas)</div>'
+      +'</div>'
+      +'<div style="text-align:right">'
+      +'<div style="font-family:var(--cond);font-size:24px;font-weight:900;color:'+clr+'">'+p.score+'</div>'
+      +'<div style="font-size:9px;color:var(--text3);text-transform:uppercase;font-weight:800">score</div>'
+      +'</div>'
+      +'</div>'
+      +'<div style="margin-top:10px;font-size:12px;color:var(--text2);background:var(--surface2);padding:8px 10px;border-radius:6px">'+p.score_explicacion+'</div>'
+      +'<div style="margin-top:10px;display:flex;gap:16px;flex-wrap:wrap;font-size:12px">'
+      +'<div><span style="color:var(--text3)">📞 </span>'+(p.telefono||'—')+(p.whatsapp_visible?' <span style="color:#1a9e5c;font-weight:700">✓ WhatsApp</span>':'')+'</div>'
+      +'<div><span style="color:var(--text3)">➡ Siguiente acción: </span><strong>'+p.siguiente_accion+'</strong></div>'
+      +'</div>'
+      +'<div style="margin-top:10px">'
+      +'<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:4px">💬 Mensaje sugerido (copiar y enviar manualmente)</div>'
+      +'<div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;line-height:1.5;color:var(--text2)">'+p.mensaje_sugerido+'</div>'
+      +'<button onclick="copiarMensajeRadar(this,\''+p.id+'\')" style="margin-top:6px;font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);cursor:pointer">📋 Copiar mensaje</button>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+}
+
+function copiarMensajeRadar(btn, prospectoId){
+  var p = _radarProspectos.find(function(x){ return x.id === prospectoId; });
+  if(!p) return;
+  navigator.clipboard.writeText(p.mensaje_sugerido).then(function(){
+    var orig = btn.textContent;
+    btn.textContent = '✓ Copiado';
+    setTimeout(function(){ btn.textContent = orig; }, 1500);
+  }).catch(function(){
+    toast('No se pudo copiar — selecciónelo manualmente');
+  });
+}
+
+
 function doLogout(){
   // Stop background refresh if running
   if(window._autoRefreshInterval){
@@ -1746,6 +2031,7 @@ function buildAdminTabs(){
     {id:'fibraplus',     label:'🧮 FibraPlus',       extra:'try{initFibraPlus54();}catch(e){}', saOnly:true},
     {id:'calculos',      label:'🏗 Cálculos',        extra:'try{initCalcCONCRE();}catch(e){}',  saOnly:true},
     {id:'presupuesto',   label:'🏗 Presupuesto',     extra:'try{initPresupuesto();}catch(e){console.error(e);}', superadmin_only:true},
+    {id:'radar',         label:'📡 Radar Comercial', extra:'try{initRadarComercial();}catch(e){console.error(e);}'},
   ];
   // Filter tabs based on admin permissions (superadmin sees all)
   var allowedBtns=btns.filter(function(b){
@@ -20459,6 +20745,88 @@ window.initCalcCONCRE=initCalcCONCRE;
 
       <!-- PRESUPUESTO SECTION -->
       <div id="sec-presupuesto" class="admin-section" style="padding:0;height:calc(100vh - 60px);overflow:hidden;"><div id="presupuesto-root" style="height:100%;overflow-y:auto;"></div></div>
+
+      <!-- RADAR COMERCIAL SECTION — módulo independiente de prospección -->
+      <div id="sec-radar" class="admin-section">
+        <div class="page-title">📡 Radar Comercial IA</div>
+        <div class="page-sub">Lista priorizada de clientes potenciales en Costa Rica, generada por línea de negocio y zona</div>
+
+        <div id="radar-demo-banner" style="display:none;background:rgba(217,119,6,.08);border:1px solid var(--amber);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#92400e">
+          ⚠ <strong>Modo demostración</strong> — estos son prospectos de ejemplo para mostrar cómo funciona el módulo. Aún no está conectado a Google Places ni búsqueda web en vivo.
+        </div>
+
+        <!-- Generar campaña -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:18px;margin-bottom:20px;box-shadow:var(--sh)">
+          <div style="font-family:var(--cond);font-size:16px;font-weight:800;margin-bottom:14px">🎯 Generar nueva campaña de prospección</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px">
+            <div>
+              <div class="form-label" style="margin-bottom:5px">Zona</div>
+              <select class="form-select" id="radar-zona">
+                <option value="nacional">🇨🇷 Nacional (todo el país)</option>
+                <option value="GAM">GAM (San José, Heredia, Cartago, Alajuela)</option>
+                <option value="Guanacaste">Guanacaste</option>
+                <option value="Limon">Limón</option>
+                <option value="Alajuela_fuera_GAM">Alajuela fuera de GAM</option>
+                <option value="resto_pais">Resto del país</option>
+              </select>
+            </div>
+            <div>
+              <div class="form-label" style="margin-bottom:5px">Línea de venta</div>
+              <select class="form-select" id="radar-linea">
+                <option value="todas">Todas las líneas</option>
+                <option value="macrofibra">Macrofibra de polipropileno</option>
+                <option value="equipo_liviano">Equipo liviano e insumos</option>
+                <option value="servicios">Servicios de construcción</option>
+              </select>
+            </div>
+            <div>
+              <div class="form-label" style="margin-bottom:5px">Frecuencia</div>
+              <select class="form-select" id="radar-frecuencia">
+                <option value="quincenal">Quincenal</option>
+                <option value="mensual">Mensual</option>
+                <option value="manual">Manual (ahora)</option>
+              </select>
+            </div>
+            <div>
+              <div class="form-label" style="margin-bottom:5px">Cantidad deseada</div>
+              <select class="form-select" id="radar-cantidad">
+                <option value="20">20 prospectos</option>
+                <option value="50" selected>50 prospectos</option>
+                <option value="100">100 prospectos</option>
+              </select>
+            </div>
+            <div>
+              <div class="form-label" style="margin-bottom:5px">Score mínimo</div>
+              <select class="form-select" id="radar-score-min">
+                <option value="40">40 (todo)</option>
+                <option value="60" selected>60 (media o más)</option>
+                <option value="80">80 (solo prioridad alta)</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)">
+              <input type="checkbox" id="radar-incluir-grandes"> Incluir empresas grandes / corporativas
+            </label>
+            <button class="btn-primary" onclick="generarCampanaRadar()" style="margin-left:auto">🔍 Generar campaña</button>
+          </div>
+        </div>
+
+        <!-- Resumen de campañas -->
+        <div id="radar-campanas-resumen" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px"></div>
+
+        <!-- Filtros de resultados -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+          <span style="font-size:11px;font-weight:800;color:var(--text3);text-transform:uppercase">Filtrar:</span>
+          <button class="aub-btn on" data-filter="all" onclick="filterRadarProspectos(this,'all')">Todos</button>
+          <button class="aub-btn" data-filter="alta" onclick="filterRadarProspectos(this,'alta')">🔴 Prioridad alta</button>
+          <button class="aub-btn" data-filter="media" onclick="filterRadarProspectos(this,'media')">🟡 Prioridad media</button>
+          <button class="aub-btn" data-filter="secundaria" onclick="filterRadarProspectos(this,'secundaria')">⚪ Secundaria</button>
+        </div>
+
+        <!-- Lista de prospectos -->
+        <div id="radar-prospectos-list" style="display:flex;flex-direction:column;gap:12px"></div>
+      </div>
 
       </div><!-- /admin-main -->
     </div><!-- /admin-layout -->
