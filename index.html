@@ -1713,6 +1713,7 @@ function initRadarComercial(){
     renderRadarCampanasResumen();
     renderRadarHistorial();
     renderRadarProspectos();
+    renderRadarResumenContacto();
   });
 }
 
@@ -1765,6 +1766,7 @@ function generarCampanaRadar(){
       renderRadarCampanasResumen();
       renderRadarHistorial();
       renderRadarProspectos();
+      renderRadarResumenContacto();
       toast('✅ Campaña generada: ' + demoProspectos.length + ' prospectos (demo)');
     });
   });
@@ -1918,6 +1920,54 @@ function filterRadarProspectos(btn, filterVal){
 }
 
 // ── Historial de campañas: lista + vista de detalle por campaña ──
+// ── Marcar prospecto como contactado + guardar nota de resultado ──
+function toggleProspectoContactado(chk){
+  var id = chk.dataset.id;
+  var p = _radarProspectos.find(function(x){ return x.id === id; });
+  if(!p) return;
+  var nuevoEstado = chk.checked ? 'contactado' : 'pendiente';
+  p.estado_contacto = nuevoEstado;
+  p.updated_at = new Date().toISOString();
+  var notaBox = document.getElementById('nota-resultado-'+id);
+  if(notaBox) notaBox.style.display = chk.checked ? 'block' : 'none';
+  // Actualizar el label visualmente sin re-renderizar toda la lista (no perder el foco del usuario)
+  var label = chk.parentElement.querySelector('span');
+  if(label){
+    label.textContent = chk.checked ? '✓ Contactado' : 'Marcar como contactado';
+    label.style.color = chk.checked ? '#1a9e5c' : 'var(--text3)';
+  }
+  DB.from('radar_prospectos').update({estado_contacto:nuevoEstado, updated_at:p.updated_at}).eq('id', id).then(function(r){
+    if(r.error){ console.error('toggleProspectoContactado:', r.error); toast('❌ Error guardando estado'); }
+    else { renderRadarResumenContacto(); }
+  });
+}
+
+function updNotaResultadoProspecto(inp){
+  var id = inp.dataset.id;
+  var p = _radarProspectos.find(function(x){ return x.id === id; });
+  if(!p) return;
+  p.notas_usuario = inp.value;
+  p.updated_at = new Date().toISOString();
+  DB.from('radar_prospectos').update({notas_usuario:inp.value, updated_at:p.updated_at}).eq('id', id).then(function(r){
+    if(r.error){ console.error('updNotaResultadoProspecto:', r.error); toast('❌ Error guardando nota'); }
+    else { toast('✓ Nota guardada'); }
+  });
+}
+
+// ── Resumen para superadmin: ¿se está usando la herramienta? ──
+function renderRadarResumenContacto(){
+  var el = document.getElementById('radar-resumen-contacto');
+  if(!el) return;
+  var total = _radarProspectos.length;
+  var contactados = _radarProspectos.filter(function(p){ return p.estado_contacto === 'contactado'; }).length;
+  var conNota = _radarProspectos.filter(function(p){ return p.estado_contacto === 'contactado' && p.notas_usuario; }).length;
+  var pct = total > 0 ? Math.round((contactados/total)*100) : 0;
+  el.innerHTML = '<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center">'
+    +'<div><span style="font-family:var(--cond);font-weight:900;font-size:20px;color:var(--red)">'+contactados+'</span> <span style="font-size:11px;color:var(--text3)">de '+total+' contactados ('+pct+'%)</span></div>'
+    +'<div><span style="font-family:var(--cond);font-weight:900;font-size:20px;color:var(--green)">'+conNota+'</span> <span style="font-size:11px;color:var(--text3)">con resultado registrado</span></div>'
+    +'</div>';
+}
+
 function renderRadarHistorial(){
   var el = document.getElementById('radar-historial-list');
   if(!el) return;
@@ -2003,6 +2053,15 @@ function renderRadarProspectos(){
       +'<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:4px">💬 Mensaje sugerido (copiar y enviar manualmente)</div>'
       +'<div style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;line-height:1.5;color:var(--text2)">'+p.mensaje_sugerido+'</div>'
       +'<button onclick="copiarMensajeRadar(this,\''+p.id+'\')" style="margin-top:6px;font-size:11px;padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);cursor:pointer">📋 Copiar mensaje</button>'
+      +'</div>'
+      +'<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">'
+      +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">'
+      +'<input type="checkbox" data-id="'+p.id+'" '+(p.estado_contacto==='contactado'?'checked':'')+' onchange="toggleProspectoContactado(this)" style="cursor:pointer">'
+      +(p.estado_contacto==='contactado'?'<span style="color:#1a9e5c">✓ Contactado</span>':'<span style="color:var(--text3)">Marcar como contactado</span>')
+      +'</label>'
+      +'<div id="nota-resultado-'+p.id+'" style="flex:1;min-width:200px;display:'+(p.estado_contacto==='contactado'?'block':'none')+'">'
+      +'<input type="text" data-id="'+p.id+'" value="'+(p.notas_usuario||'').replace(/"/g,'&quot;')+'" placeholder="¿Cuál fue el resultado del contacto? (ej: interesado, pidió cotización, no contestó)" onchange="updNotaResultadoProspecto(this)" style="width:100%;font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:6px">'
+      +'</div>'
       +'</div>'
       +'</div>';
   }).join('');
@@ -20876,7 +20935,13 @@ window.initCalcCONCRE=initCalcCONCRE;
         </div>
 
         <!-- Resumen de campañas -->
-        <div id="radar-campanas-resumen" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px"></div>
+        <div id="radar-campanas-resumen" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px"></div>
+
+        <!-- Resumen de uso real: cuántos prospectos han sido contactados -->
+        <div style="background:rgba(26,158,92,.06);border:1px solid rgba(26,158,92,.2);border-radius:8px;padding:10px 14px;margin-bottom:20px">
+          <div style="font-size:10px;font-weight:800;color:var(--green);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">📊 Uso real de la herramienta</div>
+          <div id="radar-resumen-contacto"></div>
+        </div>
 
         <!-- Filtros de resultados -->
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
