@@ -1732,7 +1732,7 @@ function buildAdminTabs(){
   var btns=[
     {id:'overview',      label:'📊 Resumen',       extra:''},
     {id:'users',         label:'👥 Usuarios',       extra:''},
-    {id:'horas-admin',   label:'⏱ Planilla',        extra:'try{initPagosUsuarios();renderSubcontratistaPlanillas();}catch(e){}'},
+    {id:'horas-admin',   label:'⏱ Planilla',        extra:'try{initPagosUsuarios();renderSubcontratistaPlanillas();loadLiqPagosHistorial().then(renderLiqPagosHistorial);}catch(e){}'},
     {id:'comisiones',    label:'💵 Comisiones',      extra:''},
     {id:'aguinaldo-admin',label:'🎄 Aguinaldo',      extra:'try{loadPlanillaHist().then(function(){buildAgGlobal();});}catch(e){}'},
     {id:'vacaciones',    label:'🌴 Vacaciones',      extra:'try{renderAdminVacSection();}catch(e){}'},
@@ -2904,10 +2904,12 @@ function buildTable(){
     const w=date.getDay(),k=dkey(date),f=isFer(date);
     const r=REG[k]||{},j=r.jornada||defJornada(date,r.entrada,r.salida),libre=j==='libre';
     const{ord,ext}=calcExt(r.entrada,r.salida,j);
-    const needN=ext>0&&!r.nota,isToday=date.toDateString()===today.toDateString();
+    const extManual=(r.seccionada&&r.extraManual>0)?r.extraManual:0;
+    const extTotal=ext+extManual; // suma horas extra normales + jornada seccionada manual
+    const needN=extTotal>0&&!r.nota,isToday=date.toDateString()===today.toDateString();
     let rc=w===0||w===6?'wknd':'';if(f)rc='hday';if(libre)rc='libre';
     const dc=isToday?'today':(f?'hday':(w===0||w===6?'wknd':''));
-    const extD=ext>0?`<span class="ev evp">+${ext.toFixed(1)}h</span>`:`<span class="ev evz">—</span>`;
+    const extD=extTotal>0?`<span class="ev evp">+${extTotal.toFixed(1)}h${extManual>0?' <small style=\"opacity:.7\">(secc.)</small>':''}</span>`:`<span class="ev evz">—</span>`;
     const ferT=f?`<div class="dferiado">${f}</div>`:'';
     // Build hour selects
     const entH=r.entrada?r.entrada.split(':')[0]:'';
@@ -2924,9 +2926,20 @@ function buildTable(){
       <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':buildTimeSelect(k,'salida',salH,salM,'16','00')}</td>
       <td><span class="ev evz" style="font-size:11px">${ord>0?ord.toFixed(1)+'h':'—'}</span></td>
       <td>${extD}</td>
-      <td style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">${ext>0?fmt(ext*vh):'—'}</td>
-      <td><input class="ninp${needN?' warn':''}" type="text" data-k="${k}" value="${r.nota||''}" placeholder="${ext>0?'⚠ Justificar extras':'Notas...'}" onchange="updN(this)">
+      <td style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">${extTotal>0?fmt(extTotal*vh):'—'}</td>
+      <td><input class="ninp${needN?' warn':''}" type="text" data-k="${k}" value="${r.nota||''}" placeholder="${extTotal>0?'⚠ Justificar extras':'Notas...'}" onchange="updN(this)">
       ${needN?'<span style="color:var(--amber);font-size:13px">⚠</span>':''}</td>
+      <td style="text-align:center">
+        <label style="display:flex;align-items:center;gap:4px;cursor:${libre?'not-allowed':'pointer'};white-space:nowrap;font-size:10px;color:var(--text3)" title="Marcar si trabajó una jornada adicional separada (ej. turno nocturno) el mismo día">
+          <input type="checkbox" data-k="${k}" ${libre?'disabled':''} ${r.seccionada?'checked':''} onchange="toggleJornadaSeccionada(this)" style="cursor:pointer">
+          Seccionada
+        </label>
+        <div id="secc-box-${k}" style="display:${r.seccionada?'block':'none'};margin-top:6px;text-align:left;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px">
+          <div style="font-size:9px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Horas extra adicionales (jornada seccionada)</div>
+          <input type="number" step="0.5" min="0" data-k="${k}" value="${r.extraManual||''}" placeholder="Ej: 3.5" onchange="updExtraManual(this)" style="width:100%;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;margin-bottom:4px">
+          <input type="text" data-k="${k}" value="${r.extraManualNota||''}" placeholder="Nota (opcional)" onchange="updExtraManualNota(this)" style="width:100%;font-size:11px;padding:5px 8px;border:1px solid var(--border);border-radius:5px">
+        </div>
+      </td>
     </tr>`;
   }).join('');
 
@@ -2937,6 +2950,37 @@ function updJ(s){const k=s.dataset.k;if(!REG[k])REG[k]={};if(s.value==='libre'){
 function updT(i){const k=i.dataset.k,f=i.dataset.f;if(!REG[k])REG[k]={};REG[k][f]=i.value;if(REG[k].jornada&&REG[k].jornada!=='libre')delete REG[k].jornada;saveData(SESSION.id);buildTable();recalcQ();}
 function updN(i){const k=i.dataset.k;if(!REG[k])REG[k]={};REG[k].nota=i.value;saveData(SESSION.id);}
 
+// Jornada seccionada: el usuario marca que trabajó un turno adicional separado el mismo día
+// (ej. jornada diurna normal + turno nocturno). Las horas se ingresan manualmente y se
+// SUMAN como horas extra adicionales al cálculo normal de Entrada/Salida del mismo día.
+function toggleJornadaSeccionada(chk){
+  const k=chk.dataset.k;
+  if(!REG[k])REG[k]={};
+  REG[k].seccionada=chk.checked;
+  if(!chk.checked){
+    // Al desmarcar, limpiar las horas manuales para no dejar datos huérfanos
+    delete REG[k].extraManual;
+    delete REG[k].extraManualNota;
+  }
+  var box=document.getElementById('secc-box-'+k);
+  if(box) box.style.display=chk.checked?'block':'none';
+  saveData(SESSION.id);
+  recalcQ();
+}
+function updExtraManual(i){
+  const k=i.dataset.k;
+  if(!REG[k])REG[k]={};
+  REG[k].extraManual=parseFloat(i.value)||0;
+  saveData(SESSION.id);
+  recalcQ();
+}
+function updExtraManualNota(i){
+  const k=i.dataset.k;
+  if(!REG[k])REG[k]={};
+  REG[k].extraManualNota=i.value;
+  saveData(SESSION.id);
+}
+
 function recalcQ(){
   const y=getYr(),days=getDays(y,CM,CQ,EXTRA_DAYS),sal=SESSION.salario||0,vh=sal/(4.5*54)*1.5;
   let totExt=0,diasR=0;
@@ -2944,6 +2988,7 @@ function recalcQ(){
     const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
     if(j==='libre')return;
     totExt+=calcExt(r.entrada,r.salida,j).ext;
+    if(r.seccionada&&r.extraManual>0) totExt+=r.extraManual; // jornada seccionada: horas extra adicionales manuales
     if(r.entrada)diasR++;
   });
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
@@ -3014,7 +3059,10 @@ function recalcQ(){
   let extM=0;
   for(let q=1;q<=2;q++)getDays(y,CM,q).forEach(d=>{
     const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
-    if(j!=='libre')extM+=calcExt(r.entrada,r.salida,j).ext;
+    if(j!=='libre'){
+      extM+=calcExt(r.entrada,r.salida,j).ext;
+      if(r.seccionada&&r.extraManual>0) extM+=r.extraManual;
+    }
   });
   document.getElementById('sbex').textContent=extM.toFixed(1)+' h';
   document.getElementById('sbme').textContent=fmt(extM*vh);
@@ -10675,8 +10723,56 @@ function markSubPagado(subId, periodKey, pagado){
   var state=getLiqPeriodState(subId, periodKey);
   state.pagado=pagado;
   setLiqPeriodState(subId, periodKey, state);
+  // Save payment to history when marking as PAID
+  if(pagado && SESSION){
+    var subs=getLiqSubs();
+    var sub=subs.find(function(s){return s.id===subId;})||{};
+    var closed=getClosedLiqPeriods().find(function(p){return p.subId===subId&&p.periodKey===periodKey;})||{};
+    var histRow={
+      id:'pago_'+Date.now()+'_'+Math.floor(Math.random()*10000),
+      sub_id:subId,
+      sub_nombre:sub.nombre||state.subNombre||subId,
+      period_key:periodKey,
+      monto:closed.monto||state.monto||0,
+      fecha_pago:new Date().toISOString(),
+      pagado_por:SESSION.id,
+      pagado_por_nombre:SESSION.nombre||SESSION.id,
+      notas:'',
+      created_at:new Date().toISOString()
+    };
+    DB.from('liq_pagos_historial').insert(histRow).then(function(r){
+      if(r.error) console.error('liq_pagos_historial insert:',r.error);
+      else renderLiqPagosHistorial();
+    });
+  }
   renderSubcontratistaPlanillas();
-  toast(pagado?'✓ Marcado como pagado':'Marcado como pendiente');
+  if(!pagado) renderLiqPagosHistorial(); // refresh to remove if unmarked
+  toast(pagado?'✓ Marcado como pagado — registrado en historial':'Marcado como pendiente');
+}
+
+// ── Historial de pagos a subcontratistas ──
+async function loadLiqPagosHistorial(){
+  var r=await DB.from('liq_pagos_historial').select('*').order('fecha_pago',{ascending:false});
+  if(r.error) console.error('loadLiqPagosHistorial:',r.error);
+  window._liqPagosHistorial=r.data||[];
+}
+
+function renderLiqPagosHistorial(){
+  var el=document.getElementById('liq-pagos-hist-tbody'); if(!el) return;
+  var hist=window._liqPagosHistorial||[];
+  if(!hist.length){
+    el.innerHTML='<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text3)">Sin pagos registrados aún.</td></tr>';
+    return;
+  }
+  el.innerHTML=hist.map(function(h){
+    return '<tr>'
+      +'<td style="font-weight:800">'+h.sub_nombre+'</td>'
+      +'<td style="font-size:11px;color:var(--text3)">'+h.period_key+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:900;color:var(--green)">'+fmt(h.monto||0)+'</td>'
+      +'<td style="font-size:11px">'+formatDate(parseDate((h.fecha_pago||'').split('T')[0]))+'</td>'
+      +'<td style="font-size:11px;color:var(--text3)">'+h.pagado_por_nombre+'</td>'
+      +'</tr>';
+  }).join('');
 }
 
 // ── Render subcontratistas planillas table ──
@@ -19293,6 +19389,25 @@ window.initCalcCONCRE=initCalcCONCRE;
           </div>
         </div>
 
+        <!-- Historial de pagos -->
+        <div style="margin-top:24px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+            <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">📋 Historial de pagos a subcontratistas</div>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="atbl" style="min-width:600px">
+              <thead><tr>
+                <th style="text-align:left">Subcontratista</th>
+                <th>Quincena</th>
+                <th style="text-align:right">Monto pagado</th>
+                <th>Fecha pago</th>
+                <th>Registrado por</th>
+              </tr></thead>
+              <tbody id="liq-pagos-hist-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div style="margin-bottom:20px">
               <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
                 <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">💰 Control de pagos — Colaboradores</div>
@@ -20434,6 +20549,7 @@ window.initCalcCONCRE=initCalcCONCRE;
               <th style="width:70px">Ord.</th><th style="width:75px">Extra</th>
               <th style="text-align:right;color:#1a9e5c;font-size:10px;font-weight:800">₡ Extra</th>
               <th>Notas / Justificación</th>
+              <th style="text-align:center;font-size:10px">Jornada seccionada</th>
             </tr></thead>
             <tbody id="tbody"></tbody>
           </table>
