@@ -1,8 +1,8 @@
 // ══════════════════════════════════════════════════════════════
 // CONCRE ERP — Radar Comercial IA
 // Servidor intermediario (Vercel Serverless Function)
-// Protege las claves de Google Places y Tavily — el navegador
-// nunca las ve. Solo responde si recibe el token secreto correcto.
+// Protege las claves de Google Places, Tavily y Firecrawl — el
+// navegador nunca las ve. Solo responde si recibe el token correcto.
 // ══════════════════════════════════════════════════════════════
 
 export default async function handler(req, res) {
@@ -25,10 +25,10 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Token inválido o ausente.' });
   }
 
-  const { tipo, query, zona, categoria } = req.body || {};
+  const { tipo, query, zona, categoria, url } = req.body || {};
 
   if (!tipo) {
-    return res.status(400).json({ error: 'Falta el campo "tipo" (google_places | tavily).' });
+    return res.status(400).json({ error: 'Falta el campo "tipo" (google_places | tavily | firecrawl).' });
   }
 
   try {
@@ -39,6 +39,11 @@ export default async function handler(req, res) {
 
     if (tipo === 'tavily') {
       const resultado = await buscarTavily(query);
+      return res.status(200).json(resultado);
+    }
+
+    if (tipo === 'firecrawl') {
+      const resultado = await leerConFirecrawl(url);
       return res.status(200).json(resultado);
     }
 
@@ -57,8 +62,8 @@ async function buscarGooglePlaces(query, zona, categoria) {
 
   const textoQuery = `${categoria || ''} ${query || ''} ${zona || 'Costa Rica'}`.trim();
 
-  const url = 'https://places.googleapis.com/v1/places:searchText';
-  const response = await fetch(url, {
+  const url2 = 'https://places.googleapis.com/v1/places:searchText';
+  const response = await fetch(url2, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -131,5 +136,43 @@ async function buscarTavily(query) {
       contenido: r.content || '',
       score_relevancia: r.score || 0
     }))
+  };
+}
+
+// ── Firecrawl — lee a fondo una URL específica (noticia, página municipal, sitio de empresa) ──
+// A diferencia de Tavily (que ENCUENTRA páginas relevantes), Firecrawl LEE una página ya
+// identificada y la convierte en texto limpio para extraer detalles que el snippet de
+// búsqueda no alcanza a mostrar (nombre completo de la empresa, ubicación exacta, tipo de obra).
+async function leerConFirecrawl(targetUrl) {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey) throw new Error('FIRECRAWL_API_KEY no configurada en Vercel.');
+  if (!targetUrl) throw new Error('Falta el campo "url" para Firecrawl.');
+
+  const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      url: targetUrl,
+      formats: ['markdown'],
+      onlyMainContent: true
+    })
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`Firecrawl respondió ${response.status}: ${errBody}`);
+  }
+
+  const data = await response.json();
+  const contenido = data?.data?.markdown || '';
+
+  return {
+    fuente: 'firecrawl',
+    url: targetUrl,
+    // Limitamos el texto devuelto para no inflar el tamaño de la respuesta innecesariamente
+    contenido: contenido.slice(0, 3000)
   };
 }
