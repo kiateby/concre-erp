@@ -14972,10 +14972,7 @@ async function renderAuditPanel(){
   // Only CREATE a new audit on Mondays
   var weekKey=getAuditWeekKey();
   var auditId='aud-'+SESSION.id+'-'+weekKey;
-  var existingR=await DB.from('inv_auditoria').select('*').eq('id',auditId);
-  var alreadyExists=(!existingR.error&&existingR.data&&existingR.data.length>0);
-  var isMonday=new Date().getDay()===1;
-  if(!alreadyExists&&!isMonday) return; // Only create on Mondays
+  // Se genera la primera vez que el usuario entra esa semana, sin importar el día (ya no depende de que sea lunes)
   var audit=await getOrCreateAuditForUser(SESSION.id);
   if(!audit||audit.completado) return;
   var items=audit.items||[];
@@ -15071,10 +15068,22 @@ async function renderAuditAdmin(){
   checkOverdueAudits();
   var r=await DB.from('inv_auditoria').select('*').order('created_at',{ascending:false});
   var body=_invBody(); if(!body) return;
-  var audits=(!r.error&&r.data)?r.data:[];
+  var allAudits=(!r.error&&r.data)?r.data:[];
   var pool=getAuditPool();
   var weekKey=getAuditWeekKey();
   var mondayDate=getAuditMondayDate();
+
+  // Ocultar de semanas ANTERIORES (no la actual) las que ya están revisadas Y sin discrepancias.
+  // Las que tienen discrepancia, o siguen pendientes, se mantienen visibles sin importar la semana.
+  var audits=allAudits.filter(function(a){
+    var esSemanaActual=(a.semana_key===weekKey);
+    var tieneDiscrepancia=(a.discrepancias||[]).length>0;
+    var estaRevisada=a.superadmin_revisado||a.completado;
+    if(esSemanaActual) return true; // siempre mostrar la semana actual
+    if(tieneDiscrepancia) return true; // discrepancias nunca se ocultan
+    if(!estaRevisada) return true; // pendientes nunca se ocultan
+    return false; // semana anterior, revisada, sin discrepancia → ocultar
+  });
 
   var html='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">';
   html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">';
@@ -15087,7 +15096,7 @@ async function renderAuditAdmin(){
     html+='<div style="background:var(--surface2);border-radius:8px;padding:16px;text-align:center;color:var(--text3)">';
     html+='<div style="font-size:24px;margin-bottom:8px">⏳</div>';
     html+='<div style="font-weight:700;margin-bottom:4px">Aún no hay auditorías generadas</div>';
-    html+='<div style="font-size:12px">Las auditorías se generan automáticamente cuando los usuarios con acceso a inventario abran la pestaña por primera vez en la semana.<br>La semana empieza el lunes. La próxima asignación será el <strong>'+mondayDate+'</strong>.</div>';
+    html+='<div style="font-size:12px">Las auditorías se generan automáticamente cuando los usuarios con acceso a inventario abran la pestaña de inventario por primera vez en la semana.</div>';
     html+='</div>';
   } else {
     html+='<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--surface2)">';
@@ -15105,7 +15114,11 @@ async function renderAuditAdmin(){
       html+='<td style="padding:8px;text-align:center;font-size:11px">'+a.semana_key+'</td>';
       html+='<td style="padding:8px;text-align:center">'+(a.items||[]).length+'</td>';
       html+='<td style="padding:8px;text-align:center"><span style="font-size:11px;font-weight:800;color:'+color+'">'+label+'</span></td>';
-      html+='<td style="padding:8px;text-align:center;color:'+(disc>0?'var(--red)':'var(--text3)')+'">'+disc+'</td>';
+      html+='<td style="padding:8px;text-align:center;color:'+(disc>0?'var(--red)':'var(--text3)')+'">'+disc;
+      if(disc>0){
+        html+=' <button onclick="toggleDiscrepanciaDetalle(this,\''+a.id+'\')" style="background:none;border:1px solid var(--red);color:var(--red);border-radius:5px;padding:1px 6px;cursor:pointer;font-size:10px;margin-left:4px">Ver</button>';
+      }
+      html+='</td>';
       html+='<td style="padding:8px;text-align:center">';
       if(!a.completado&&!a.superadmin_revisado){
         html+='<button onclick="markAuditRevisada(\''+a.id+'\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">✓ Marcar revisada</button>';
@@ -15113,11 +15126,24 @@ async function renderAuditAdmin(){
         html+='<span style="font-size:11px;color:var(--text3)">✓ Revisada</span>';
       }
       html+='</td></tr>';
+      if(disc>0){
+        var detalleFilas=(a.discrepancias||[]).map(function(d){
+          return '<div style="padding:4px 0;border-bottom:1px solid var(--border)"><strong>'+d.nombre+'</strong> — sistema: '+invFmt(d.sistema)+' · contado por '+(d.uNombre||a.uid)+': '+invFmt(d.usuario)+'</div>';
+        }).join('');
+        html+='<tr id="disc-detalle-'+a.id+'" style="display:none"><td colspan="6" style="padding:8px 14px;background:rgba(220,38,38,.05);font-size:11px">'+detalleFilas+'</td></tr>';
+      }
     });
     html+='</tbody></table>';
   }
   html+='</div>';
   body.innerHTML=html+body.innerHTML;
+}
+function toggleDiscrepanciaDetalle(btn,auditId){
+  var row=document.getElementById('disc-detalle-'+auditId);
+  if(!row) return;
+  var isOpen=row.style.display!=='none';
+  row.style.display=isOpen?'none':'';
+  btn.textContent=isOpen?'Ver':'Ocultar';
 }
 async function markAuditRevisada(auditId){
   await DB.from('inv_auditoria').update({superadmin_revisado:true,completado:true,completado_at:new Date().toISOString()}).eq('id',auditId);
