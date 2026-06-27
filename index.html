@@ -15156,6 +15156,43 @@ async function markAuditRevisada(auditId){
 //  FIN AUDITORÍA
 // ══════════════════════════════════════════════════════════════
 
+// ── Exportar tabla de Alertas activas (ítems bajo mínimo) a Excel ──
+function exportarAlertasExcel(){
+  var alertas=window._invAlertas||[];
+  var items=window._invItems||[];
+  if(!alertas.length){ toast('No hay alertas para exportar'); return; }
+
+  var filas=alertas.map(function(a){
+    var item=items.find(function(i){return i.id===a.item_id;})||{nombre:a.item_id};
+    return {
+      Item: item.nombre,
+      Cantidad: a.cantidad_al_momento,
+      Minimo: a.cantidad_minima,
+      FechaAlerta: invDateFmt(a.created_at)
+    };
+  });
+
+  // Construir tabla HTML — Excel la abre nativamente preservando encabezados y formato
+  var html='<table border="1"><tr style="background:#E31837;color:#fff;font-weight:bold">'
+    +'<th>Ítem</th><th>Cantidad</th><th>Mínimo</th><th>Fecha alerta</th></tr>';
+  filas.forEach(function(f){
+    html+='<tr><td>'+f.Item+'</td><td>'+f.Cantidad+'</td><td>'+f.Minimo+'</td><td>'+f.FechaAlerta+'</td></tr>';
+  });
+  html+='</table>';
+
+  var blob=new Blob(['\ufeff'+html], {type:'application/vnd.ms-excel'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  var fecha=new Date().toISOString().slice(0,10);
+  a.href=url;
+  a.download='alertas_inventario_'+fecha+'.xls';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('✅ Excel descargado: '+filas.length+' alerta(s)');
+}
+
 function renderInvDashboard(){
   renderAuditAdmin(); // includes checkOverdueAudits internally
   var body=_invBody();
@@ -15218,7 +15255,10 @@ function renderInvDashboard(){
   // Alertas table (admin/SA only)
   if(invIsAdminSA()&&alertas.length>0){
     html+='<div style="background:rgba(227,24,55,.04);border:1.5px solid rgba(227,24,55,.25);border-radius:10px;padding:16px;margin-bottom:16px">';
-    html+='<div style="font-family:var(--cond);font-weight:800;color:var(--red);margin-bottom:10px">🔴 Alertas activas — ítems bajo mínimo</div>';
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
+    html+='<div style="font-family:var(--cond);font-weight:800;color:var(--red)">🔴 Alertas activas — ítems bajo mínimo</div>';
+    html+='<button onclick="exportarAlertasExcel()" style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;font-size:11px;font-weight:700">📥 Exportar a Excel</button>';
+    html+='</div>';
     html+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
     html+='<thead><tr style="background:var(--surface2)"><th style="padding:6px 8px;text-align:left">Ítem</th><th style="padding:6px 8px;text-align:right">Cantidad</th><th style="padding:6px 8px;text-align:right">Mínimo</th><th style="padding:6px 8px;text-align:center">Fecha alerta</th>';
     if(SESSION.rol==='superadmin') html+='<th style="padding:6px 8px"></th>';
