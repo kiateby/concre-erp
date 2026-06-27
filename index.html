@@ -1916,6 +1916,18 @@ var RADAR_QUERIES_TAVILY = {
   servicios: ['pulido de concreto Costa Rica proyecto', 'colocación de adoquines Costa Rica empresa']
 };
 
+// SEÑALES DE OBRA: no buscan empresas, buscan EVIDENCIA de que existe un proyecto/obra real en curso.
+// Se ejecutan una vez por zona (no por línea de venta) porque una obra nueva aplica a varias líneas a la vez.
+// Cubre Motores 2 (Proyectos), 3 (Permisos), 4 (Noticias) del documento de inteligencia comercial.
+var RADAR_QUERIES_SENALES_OBRA = [
+  'nueva bodega construcción',
+  'inicio de obras construcción',
+  'permiso de construcción municipalidad',
+  'nueva inversión construcción planta',
+  'movimiento de tierras construcción',
+  'nuevo parque industrial construcción'
+];
+
 async function llamarRadarServer(payload){
   var resp = await fetch(RADAR_API_URL, {
     method: 'POST',
@@ -2001,18 +2013,52 @@ async function generarCampanaRadar(){
           }catch(e){ console.warn('Tavily query falló:', queriesTavily[qi], zonaTextoTavily, e); }
         }
       }
+      // 2b. SEÑALES DE OBRA: evidencia de proyectos/permisos/inversión real (una vez por zona, no por línea)
+      for(var so=0; so<RADAR_QUERIES_SENALES_OBRA.length; so++){
+        try{
+          var rso = await llamarRadarServer({tipo:'tavily', query: RADAR_QUERIES_SENALES_OBRA[so] + ' ' + zonaTextoTavily});
+          todasSenalesTavily = todasSenalesTavily.concat(rso.resultados||[]);
+        }catch(e){ console.warn('Tavily señal de obra falló:', RADAR_QUERIES_SENALES_OBRA[so], zonaTextoTavily, e); }
+      }
     }
 
-    // 3. Deduplicar por nombre (mismo negocio puede salir en varias búsquedas)
-    //    y excluir la propia empresa (CONCRE) y categorías fuera de nicho (prefabricadoras, ferreterías)
+    // 2c. FIRECRAWL: leer a fondo las 5 señales más relevantes encontradas por Tavily.
+    // Tavily solo da un fragmento corto (snippet); Firecrawl lee la página completa para
+    // extraer detalles que el snippet no alcanza a mostrar (nombre de empresa, ubicación exacta).
+    var topSenales = todasSenalesTavily.slice().sort(function(a,b){ return (b.score_relevancia||0)-(a.score_relevancia||0); }).slice(0,5);
+    for(var fc=0; fc<topSenales.length; fc++){
+      try{
+        var rfc = await llamarRadarServer({tipo:'firecrawl', url: topSenales[fc].url});
+        topSenales[fc]._contenidoCompleto = rfc.contenido || '';
+      }catch(e){ console.warn('Firecrawl falló para:', topSenales[fc].url, e); }
+    }
+    // Sustituir el contenido corto por el contenido completo donde Firecrawl tuvo éxito,
+    // para que el scoring tenga más texto donde buscar coincidencias con el nombre del negocio
+    topSenales.forEach(function(ts){
+      if(ts._contenidoCompleto){
+        var idx = todasSenalesTavily.indexOf(ts);
+        if(idx !== -1) todasSenalesTavily[idx].contenido = ts._contenidoCompleto;
+      }
+    });
+
+    // 3. Deduplicar por nombre y excluir: la propia empresa, fuera de nicho, y COMPETENCIA DIRECTA.
+    //    Filtramos por NOMBRE (palabras clave) y también por CATEGORÍA de Google (más confiable que el nombre,
+    //    porque una ferretería puede llamarse "Materiales El Constructor" sin la palabra "ferretería").
     var EMPRESAS_EXCLUIDAS = ['concre']; // nombre exacto en Google Maps, en minúsculas
-    var PALABRAS_EXCLUIDAS = ['prefabricad', 'ferreter']; // excluye si el nombre contiene cualquiera de estas
+    var PALABRAS_EXCLUIDAS_NOMBRE = [
+      'prefabricad', 'ferreter',
+      // Competencia directa: empresas que venden lo mismo que CONCRE (no son clientes, son rivales)
+      'macrofibra', 'fibra de polipropileno', 'densificador', 'sellador de juntas', 'sellajuntas'
+    ];
+    var CATEGORIAS_EXCLUIDAS = ['hardware_store', 'home_goods_store']; // categorías de Google = ferreterías
     var vistos = {};
     var unicos = todosResultadosPlaces.filter(function(p){
       var key = (p.nombre||'').toLowerCase().trim();
       if(!key || vistos[key]) return false;
-      if(EMPRESAS_EXCLUIDAS.indexOf(key) !== -1) return false; // excluir coincidencia exacta, no parcial
-      if(PALABRAS_EXCLUIDAS.some(function(w){ return key.indexOf(w) !== -1; })) return false; // fuera de nicho
+      if(EMPRESAS_EXCLUIDAS.indexOf(key) !== -1) return false; // coincidencia exacta de nombre
+      if(PALABRAS_EXCLUIDAS_NOMBRE.some(function(w){ return key.indexOf(w) !== -1; })) return false; // fuera de nicho o competencia
+      var cats = (p.categorias||[]).map(function(t){return t.toLowerCase();});
+      if(CATEGORIAS_EXCLUIDAS.some(function(ce){ return cats.indexOf(ce) !== -1; })) return false; // categoría real de Google
       vistos[key] = true;
       return true;
     });
@@ -2118,19 +2164,24 @@ function calcularScoreRadarReal(place, zona, senalesTavily){
   var reseñasRecientes = (place.num_resenas||0) >= 5;
   if(reseñasRecientes){ score += 7; }
 
-  // Señal reciente detectada por Tavily — proyecto activo, noticia, mención (máx 30)
-  // Esta es la señal más fuerte del documento de Kia: necesidad explícita / proyecto activo
+  // Señal reciente detectada por Tavily — proyecto activo, noticia, mención (máx 40)
+  // Esta es la señal más fuerte del documento de Kia: evidencia de obra real, no solo categoría de negocio
   var nombreLower = (place.nombre||'').toLowerCase();
-  var señalEncontrada = senalesTavily.find(function(s){
+  var menciones = senalesTavily.filter(function(s){
     var contenido = ((s.titulo||'') + ' ' + (s.contenido||'')).toLowerCase();
     return nombreLower.length > 4 && contenido.indexOf(nombreLower) !== -1;
   });
   var señalTexto = '';
-  if(señalEncontrada){
+  if(menciones.length > 0){
     score += 30;
-    señalTexto = 'mencionado en: ' + (señalEncontrada.titulo || señalEncontrada.url);
+    señalTexto = 'mencionado en: ' + (menciones[0].titulo || menciones[0].url);
+    // Si aparece mencionado en MÁS de una fuente, es evidencia más fuerte de obra real
+    if(menciones.length > 1){
+      score += 10;
+      señalTexto += ' (y ' + (menciones.length-1) + ' fuente(s) más)';
+    }
   }
-  // Máximo teórico: 20+25+15+30 = 90 → permite alcanzar clasificación "alta" (80+) con señal fuerte
+  // Máximo teórico: 20+25+15+40 = 100
 
   score = Math.max(0, Math.min(100, score));
   var clasificacion = score>=80?'alta':score>=60?'media':score>=40?'secundaria':'archivar';
@@ -2281,10 +2332,12 @@ function volverATodosLosProspectos(){
 function renderRadarProspectos(){
   var el = document.getElementById('radar-prospectos-list');
   if(!el) return;
-  // Si hay una campaña histórica abierta, mostrar solo sus prospectos
-  var base = _radarHistoriaCampanaActiva
-    ? _radarProspectos.filter(function(p){ return p.campana_id === _radarHistoriaCampanaActiva; })
-    : _radarProspectos;
+  // Vista activa: SOLO la campaña más reciente (evita ver duplicados de campañas viejas mezclados).
+  // Las campañas anteriores siguen disponibles intactas en el Historial.
+  var campanaParaMostrar = _radarHistoriaCampanaActiva || (_radarCampanas[0] && _radarCampanas[0].id);
+  var base = campanaParaMostrar
+    ? _radarProspectos.filter(function(p){ return p.campana_id === campanaParaMostrar; })
+    : _radarProspectos; // fallback: si no hay ninguna campaña aún, no hay nada que filtrar
   var list = base.slice().sort(function(a,b){ return (b.score||0)-(a.score||0); }); // siempre mayor a menor score
   if(_radarFilterActive !== 'all'){
     list = list.filter(function(p){ return p.clasificacion === _radarFilterActive; });
