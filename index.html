@@ -1695,9 +1695,9 @@ var _radarHistoriaCampanaActiva = null; // id de campaña abierta en vista histo
 
 // Catálogo de categorías y su línea de venta asociada (para demo + futuro scoring real)
 var RADAR_CATEGORIAS = {
-  macrofibra: ['Constructora', 'Empresa de pisos industriales', 'Concretera', 'Contratista de losas', 'Bodega industrial'],
-  equipo_liviano: ['Ferretería', 'Alquiler de equipo', 'Contratista', 'Maestro de obras', 'Aplicador de pisos'],
-  servicios: ['Colocación de adoquines', 'Pulido de concreto', 'Remodelaciones', 'Obra civil menor']
+  macrofibra: ['Constructora pequeña/mediana', 'Contratista de losas', 'Bodega industrial', 'Ingeniero civil independiente'],
+  equipo_liviano: ['Alquiler de equipo', 'Contratista', 'Maestro de obras'],
+  servicios: ['Colocación de adoquines', 'Pulido de concreto', 'Contratista de pisos']
 };
 
 var RADAR_ZONA_LABELS = {
@@ -1904,16 +1904,16 @@ var RADAR_TOKEN = 'concre-2026-x7k9mP2qL'; // debe coincidir con RADAR_SECRET_TO
 
 // Queries de Google Places por línea de venta (categorías del documento de Kia)
 var RADAR_QUERIES_PLACES = {
-  macrofibra: ['constructora', 'empresa de pisos industriales', 'concretera', 'contratista de losas de concreto'],
-  equipo_liviano: ['ferretería construcción', 'alquiler de equipo construcción', 'maestro de obras'],
-  servicios: ['colocación de adoquines', 'pulido de concreto', 'remodelaciones construcción']
+  macrofibra: ['constructora pequeña', 'contratista de losas de concreto', 'construcción de bodegas', 'ingeniero civil independiente'],
+  equipo_liviano: ['alquiler de equipo construcción', 'contratista construcción', 'maestro de obras'],
+  servicios: ['colocación de adoquines', 'pulido de concreto', 'contratista de pisos']
 };
 
 // Queries de Tavily (noticias + LinkedIn público) por línea de venta
 var RADAR_QUERIES_TAVILY = {
-  macrofibra: ['constructora pequeña Costa Rica proyecto nuevo', 'site:linkedin.com ingeniero civil Costa Rica construcción'],
-  equipo_liviano: ['alquiler equipo construcción Costa Rica', 'site:linkedin.com contratista Costa Rica'],
-  servicios: ['pulido concreto Costa Rica proyecto', 'adoquines Costa Rica empresa']
+  macrofibra: ['construcción de bodega Costa Rica proyecto nuevo', 'site:linkedin.com ingeniero civil independiente Costa Rica'],
+  equipo_liviano: ['alquiler equipo construcción Costa Rica', 'site:linkedin.com contratista construcción Costa Rica'],
+  servicios: ['pulido de concreto Costa Rica proyecto', 'colocación de adoquines Costa Rica empresa']
 };
 
 async function llamarRadarServer(payload){
@@ -2004,13 +2004,15 @@ async function generarCampanaRadar(){
     }
 
     // 3. Deduplicar por nombre (mismo negocio puede salir en varias búsquedas)
-    //    y excluir la propia empresa (CONCRE) — no tiene sentido sugerirse a sí misma como prospecto
+    //    y excluir la propia empresa (CONCRE) y categorías fuera de nicho (prefabricadoras, ferreterías)
     var EMPRESAS_EXCLUIDAS = ['concre']; // nombre exacto en Google Maps, en minúsculas
+    var PALABRAS_EXCLUIDAS = ['prefabricad', 'ferreter']; // excluye si el nombre contiene cualquiera de estas
     var vistos = {};
     var unicos = todosResultadosPlaces.filter(function(p){
       var key = (p.nombre||'').toLowerCase().trim();
       if(!key || vistos[key]) return false;
       if(EMPRESAS_EXCLUIDAS.indexOf(key) !== -1) return false; // excluir coincidencia exacta, no parcial
+      if(PALABRAS_EXCLUIDAS.some(function(w){ return key.indexOf(w) !== -1; })) return false; // fuera de nicho
       vistos[key] = true;
       return true;
     });
