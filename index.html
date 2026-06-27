@@ -2044,11 +2044,24 @@ async function generarCampanaRadar(){
     // 3. Deduplicar por nombre y excluir: la propia empresa, fuera de nicho, y COMPETENCIA DIRECTA.
     //    Filtramos por NOMBRE (palabras clave) y también por CATEGORÍA de Google (más confiable que el nombre,
     //    porque una ferretería puede llamarse "Materiales El Constructor" sin la palabra "ferretería").
-    var EMPRESAS_EXCLUIDAS = ['concre']; // nombre exacto en Google Maps, en minúsculas
+    var EMPRESAS_EXCLUIDAS = ['concre', 'pavurcon s.a.', 'pavurcon', 'rpm concrete floor s.a.', 'rpm concrete floor']; // competencia directa, nombre exacto en Google Maps, en minúsculas
+
+    // Cargar nombres de prospectos de TODAS las campañas anteriores (sin importar score, para no repetir a nadie ya visto)
+    var prospectosAnteriores = {};
+    try{
+      var rPrev = await DB.from('radar_prospectos').select('nombre,señal_detectada');
+      if(!rPrev.error && rPrev.data){
+        rPrev.data.forEach(function(pp){
+          var k = (pp.nombre||'').toLowerCase().trim();
+          if(k) prospectosAnteriores[k] = pp.señal_detectada || '';
+        });
+      }
+    }catch(e){ console.warn('No se pudo cargar histórico de prospectos previos:', e); }
     var PALABRAS_EXCLUIDAS_NOMBRE = [
       'prefabricad', 'ferreter',
       // Competencia directa: empresas que venden lo mismo que CONCRE (no son clientes, son rivales)
-      'macrofibra', 'fibra de polipropileno', 'densificador', 'sellador de juntas', 'sellajuntas'
+      'macrofibra', 'fibra de polipropileno', 'densificador', 'sellador de juntas', 'sellajuntas',
+      'concrete floor', 'concrete polishing', 'pulido de piso', 'piso de concreto pulido'
     ];
     var CATEGORIAS_EXCLUIDAS = ['hardware_store', 'home_goods_store']; // categorías de Google = ferreterías
     var vistos = {};
@@ -2069,6 +2082,15 @@ async function generarCampanaRadar(){
       var zonaRealDelNegocio = p._zonaReal || zona; // zona específica donde se encontró (importante cuando se buscó 'nacional')
       var scoreData = calcularScoreRadarReal(p, zonaRealDelNegocio, todasSenalesTavily);
       if(scoreData.score < scoreMin) return null;
+      // No repetir prospectos ya vistos en campañas anteriores, A MENOS que esta vez haya
+      // una señal de obra NUEVA y distinta a la que ya teníamos registrada para ese negocio.
+      var nombreKey = (p.nombre||'').toLowerCase().trim();
+      if(prospectosAnteriores.hasOwnProperty(nombreKey)){
+        var señalPrevia = prospectosAnteriores[nombreKey];
+        var señalActual = scoreData.señal || '';
+        var haySeñalNueva = señalActual && señalActual !== señalPrevia;
+        if(!haySeñalNueva) return null; // ya lo vimos antes y no hay nada nuevo que justifique repetirlo
+      }
       return {
         id: 'pros_' + Date.now() + '_' + idx,
         campana_id: campanaId,
@@ -2100,7 +2122,11 @@ async function generarCampanaRadar(){
     }).filter(Boolean);
 
     if(!prospectos.length){
-      toast('⚠ No se encontraron prospectos que cumplan el score mínimo. Intente bajar el score mínimo o ampliar la zona.');
+      var totalCandidatosBrutos = unicos.length;
+      var mensajeVacio = totalCandidatosBrutos > 0
+        ? '⚠ Se encontraron ' + totalCandidatosBrutos + ' negocios, pero ya habían sido vistos en campañas anteriores sin señal de obra nueva. Intente otra zona o espere a que surjan nuevas señales.'
+        : '⚠ No se encontraron prospectos que cumplan el score mínimo. Intente bajar el score mínimo o ampliar la zona.';
+      toast(mensajeVacio);
       aplicarEstadoBloqueoRadar();
       return;
     }
