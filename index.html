@@ -3707,9 +3707,10 @@ function renderAdminHorasTable(uid){
     const w=date.getDay(),k=dkey(date),f=isFer(date);
     const r=regU[k]||{},j=r.jornada||defJornada(date,r.entrada,r.salida),libre=j==='libre';
     const{ord,ext}=calcExt(r.entrada,r.salida,j);
-    // Si el día tiene un origen de quincena marcado (se llenó como "días extra") y NO
-    // coincide con la quincena que se está viendo, se excluye — evita duplicar horas.
-    const excluirDeEstaQuincena=(r.quincenaOrigen!=null && r.quincenaOrigen!==ADMIN_CQ);
+    // Regla definitiva: días de rango extra solo suman si tienen marca EXPLÍCITA quincenaOrigen===ADMIN_CQ.
+    // Días normales: se excluyen si tienen marca de otra quincena.
+    const isExtraRangeAdmin=esFechaDeRangoExtraQ(date,ADMIN_CQ,ADMIN_CM);
+    const excluirDeEstaQuincena=isExtraRangeAdmin?(r.quincenaOrigen!==ADMIN_CQ):(r.quincenaOrigen!=null&&r.quincenaOrigen!==ADMIN_CQ);
     const extMostrable=excluirDeEstaQuincena?0:ext; // si pertenece a la otra quincena, no se muestra ni suma aquí
     if(!excluirDeEstaQuincena) totExt+=ext;
     let rc=w===0||w===6?'wknd':'';if(f)rc='hday';if(libre)rc='libre';
@@ -4245,6 +4246,12 @@ function esFechaDeRangoExtra(date){
     return d>=13&&d<=15&&m===CM;
   }
 }
+// Versión parametrizada para bucles donde q y mes son variables locales (sidebar, pagos, etc.)
+function esFechaDeRangoExtraQ(date,q,mes){
+  const d=date.getDate(),m=date.getMonth();
+  if(q===1){ return m!==mes; }
+  else { return d>=13&&d<=15&&m===mes; }
+}
 
 // Responde: "¿debo MOSTRAR este día especial en la tabla ahora mismo?"
 // Sí, si el botón está prendido (el usuario quiere ver/llenar días vacíos nuevos),
@@ -4397,9 +4404,13 @@ function recalcQ(){
   days.forEach(d=>{
     const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
     if(j==='libre')return;
-    // Si el día tiene un origen de quincena marcado y NO coincide con la quincena actual,
-    // pertenece exclusivamente a la otra — nunca se suma aquí, evitando duplicar horas.
-    if(r.quincenaOrigen!=null && r.quincenaOrigen!==CQ) return;
+    // Regla definitiva: días de rango extra SOLO suman si tienen marca EXPLÍCITA quincenaOrigen===CQ.
+    // Días normales: se excluyen si tienen marca de otra quincena. Sin marca en rango extra = nunca suma.
+    if(esFechaDeRangoExtra(d)){
+      if(r.quincenaOrigen!==CQ) return;
+    } else {
+      if(r.quincenaOrigen!=null && r.quincenaOrigen!==CQ) return;
+    }
     totExt+=calcExt(r.entrada,r.salida,j).ext;
     if(r.seccionada&&r.extraManual>0) totExt+=r.extraManual; // jornada seccionada: horas extra adicionales manuales
     if(r.entrada)diasR++;
@@ -4489,10 +4500,13 @@ function recalcQ(){
   for(let q=1;q<=2;q++)getDays(y,CM,q).forEach(d=>{
     const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
     if(j==='libre') return;
-    // Mismo criterio que recalcQ: si el día tiene un origen de quincena marcado y no
-    // coincide con la quincena de este ciclo (q), se excluye — evita contar el mismo
-    // día dos veces (una en Q1 por su rango normal, otra en Q2 por su quincenaOrigen).
-    if(r.quincenaOrigen!=null && r.quincenaOrigen!==q) return;
+    // Regla definitiva: días de rango extra solo suman si tienen marca explícita quincenaOrigen===q.
+    // Días normales: excluidos si tienen marca de otra quincena.
+    if(esFechaDeRangoExtraQ(d,q,CM)){
+      if(r.quincenaOrigen!==q) return;
+    } else {
+      if(r.quincenaOrigen!=null && r.quincenaOrigen!==q) return;
+    }
     extM+=calcExt(r.entrada,r.salida,j).ext;
     if(r.seccionada&&r.extraManual>0) extM+=r.extraManual;
   });
@@ -4823,7 +4837,7 @@ function exportPlanilla(){
   const y=getYr(),sal=SESSION.salario||0,vh=sal/(4.5*54)*1.5;
   const days=getDays(y,CM,CQ);
   let totExt=0;
-  days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);if(j!=='libre'&&!(r.quincenaOrigen!=null&&r.quincenaOrigen!==CQ))totExt+=calcExt(r.entrada,r.salida,j).ext;});
+  days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);if(j==='libre')return;if(esFechaDeRangoExtra(d)){if(r.quincenaOrigen!==CQ)return;}else{if(r.quincenaOrigen!=null&&r.quincenaOrigen!==CQ)return;}totExt+=calcExt(r.entrada,r.salida,j).ext;});
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
   const ccss=DED.ccss_monto||0,rb=DED.rb_monto||0,ex=DED.extra_monto||0;
   const comis=DED[`comis_${y}-${pad(CM+1)}-${CQ}`]||0;
@@ -12641,9 +12655,13 @@ function renderPagosUsuarios(){
       var r=reg[dkey(d)]||{};
       var j=r.jornada||defJornada(d,r.entrada,r.salida);
       if(j==='libre') return;
-      // Mismo criterio que el resto del sistema: si el día tiene un origen de quincena
-      // marcado y no coincide con la que se está calculando, se excluye (evita duplicar).
-      if(r.quincenaOrigen!=null && r.quincenaOrigen!==q) return;
+      // Regla definitiva: días de rango extra solo suman si tienen marca explícita quincenaOrigen===q.
+      // Días normales: excluidos si tienen marca de otra quincena.
+      if(esFechaDeRangoExtraQ(d,q,m)){
+        if(r.quincenaOrigen!==q) return;
+      } else {
+        if(r.quincenaOrigen!=null && r.quincenaOrigen!==q) return;
+      }
       totExt+=calcExt(r.entrada,r.salida,j).ext;
     });
     var montoExt=Math.round(totExt*vh);
