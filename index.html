@@ -6012,6 +6012,7 @@ async function loadFondosCatsFromDB(){
 async function initAdminFondos(){
   await loadFondosCatsFromDB(); // load custom cats before anything
   await loadFondosAprobados(); // load approval states
+  await loadDepositosAprobados(); // load deposit approval states
   initFondosCatPanel();
   initFondosCatFilter();
   initFondosLimUserSel(); // populate per-user limits selector
@@ -6250,6 +6251,31 @@ async function loadFondosAprobados(){
   } catch(e){ window._fondosAprobados={}; }
 }
 
+// ── Depósitos aprobados (superadmin) — mismo patrón que Fondos aprobados ──
+window._depositosAprobados = {};
+
+async function loadDepositosAprobados(){
+  try{
+    const {data}=await DB.from('configuracion').select('valor').eq('clave','depositos_aprobados').single();
+    window._depositosAprobados = data ? JSON.parse(data.valor||'{}') : {};
+  } catch(e){ window._depositosAprobados={}; }
+}
+async function saveDepositosAprobados(){
+  try{
+    await DB.from('configuracion').upsert({clave:'depositos_aprobados',valor:JSON.stringify(window._depositosAprobados)},{onConflict:'clave'});
+  } catch(e){ console.warn('saveDepositosAprobados error',e); }
+}
+async function toggleDepositoAprobado(did){
+  if(!did) return;
+  if(window._depositosAprobados[did]){
+    delete window._depositosAprobados[did];
+  } else {
+    window._depositosAprobados[did]=true;
+  }
+  await saveDepositosAprobados();
+  renderAdminDepTable(window._lastDepositosRendered||[]);
+}
+
 async function saveFondosAprobados(){
   try{
     await DB.from('configuracion').upsert({clave:'fondos_aprobados',valor:JSON.stringify(window._fondosAprobados)},{onConflict:'clave'});
@@ -6319,16 +6345,32 @@ function renderAdminFondosTable(){
   body.innerHTML=rows.join('');
 }
 function renderAdminDepTable(depositos){
+  window._lastDepositosRendered=depositos; // cache para re-render tras toggle de check
   const body=document.getElementById('af-dep-body');
   if(!body) return;
+  const isSA=SESSION&&SESSION.rol==='superadmin';
+  const thAp=document.getElementById('af-dep-th-aprobado');
+  if(thAp) thAp.style.display=isSA?'':'none';
+  const cols=isSA?5:4;
   body.innerHTML=depositos.length
-    ? depositos.sort((a,b)=>a.fecha>b.fecha?-1:1).map(d=>`<tr>
-        <td style="font-size:11px;color:var(--text3)">${formatDate(parseDate(d.fecha))}</td>
-        <td><strong>${d.uname}</strong></td>
-        <td>${d.desc||'Fondo'}</td>
-        <td style="font-family:var(--cond);font-weight:800;color:var(--blue)">${fmt(d.monto)}</td>
-      </tr>`).join('')
-    : '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:20px">Sin depósitos</td></tr>';
+    ? depositos.sort((a,b)=>a.fecha>b.fecha?-1:1).map(d=>{
+        const did=d.id||'';
+        const aprobado=window._depositosAprobados&&window._depositosAprobados[did];
+        const apCell=isSA
+          ? '<td style="text-align:center">'+(aprobado
+              ? '<span style="color:#1a9e5c;font-weight:800;font-size:13px">OK</span>'
+              : '<button data-did="'+did+'" onclick="toggleDepositoAprobado(this.dataset.did)" style="background:none;border:1.5px solid var(--border2);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px;color:var(--text3)">✓</button>'
+            )+'</td>'
+          : '';
+        return '<tr style="'+(aprobado?'background:rgba(26,158,92,.10)':'')+'">'
+          +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(d.fecha))+'</td>'
+          +'<td><strong>'+d.uname+'</strong></td>'
+          +'<td>'+(d.desc||'Fondo')+'</td>'
+          +'<td style="font-family:var(--cond);font-weight:800;color:var(--blue)">'+fmt(d.monto)+'</td>'
+          +apCell
+          +'</tr>';
+      }).join('')
+    : '<tr><td colspan="'+cols+'" style="text-align:center;color:var(--text3);padding:20px">Sin depósitos</td></tr>';
 }
 
 function exportFondosUser(){
@@ -11864,6 +11906,7 @@ function renderPagosUsuarios(){
   var days=getDays(y,m,q);
 
   var users=sortAlpha(getUsers().filter(function(u){return u.estado==='activo';}), 'nombre');
+  var totalGeneral=0;
 
   tbody.innerHTML=users.map(function(u){
     // ── 1. SALARY ─────────────────────────────────────────
@@ -11885,13 +11928,29 @@ function renderPagosUsuarios(){
     // If hist has a manual override for horas extra, use it instead
     if(hist&&hist.monto_extra>0) montoExt=Math.round(hist.monto_extra/2); // monthly amount ÷ 2 per quincena
 
-    // ── 3. COMISIONES — correct key: 'comis_YYYY-MM-1' or 'comis_YYYY-MM-2' ──
+    // ── 3. COMISIONES ──
+    // Usuarios MENSUALES: la comisión del mes M se paga en la Q1 (día 15) del mes M+1.
+    // Ej: comisión de junio (comis_2026-06-1) se paga el 15 de julio (Q1 julio), nunca en junio.
+    // Usuarios ANUALES: se paga acumulado en diciembre Q2, sin cambios (no afectado por este fix).
     var ded=getDED(u.id)||{};
-    var comisKey='comis_'+y+'-'+pad(m+1)+'-'+q; // Q1→'-1', Q2→'-2'
-    var comisRaw=ded[comisKey]||0;
     var isAnual=(u.comisType||'mensual')==='anual';
     var esDiciembre=m===11;
-    var comisVal=isAnual?(esDiciembre&&q===2?comisRaw:0):comisRaw;
+    var comisVal;
+    if(isAnual){
+      var comisKeyAnual='comis_'+y+'-'+pad(m+1)+'-'+q;
+      var comisRawAnual=ded[comisKeyAnual]||0;
+      comisVal=(esDiciembre&&q===2?comisRawAnual:0);
+    } else {
+      // Solo Q1 (día 15) muestra comisión, y es la del mes ANTERIOR
+      if(q===1){
+        var mesAnterior=m-1, anioAnterior=y;
+        if(mesAnterior<0){ mesAnterior=11; anioAnterior=y-1; }
+        var comisKeyMensual='comis_'+anioAnterior+'-'+pad(mesAnterior+1)+'-1';
+        comisVal=ded[comisKeyMensual]||0;
+      } else {
+        comisVal=0; // Q2 nunca muestra comisión para usuarios mensuales
+      }
+    }
 
     // ── 4. DEDUCCIONES — ccss+rb apply both quincenas, extra only Q1 ──
     var dedTotal;
@@ -11907,6 +11966,7 @@ function renderPagosUsuarios(){
     // ── 5. TOTALS ──────────────────────────────────────────
     var bruto=salQ+montoExt+comisVal;
     var total=bruto-dedTotal;
+    totalGeneral+=total;
     var hasHist=!!hist;
     var state=getPagoState(u.id, periodKey);
     var pagado=state.pagado||false;
@@ -11927,6 +11987,16 @@ function renderPagosUsuarios(){
       +'</td>'
       +'</tr>';
   }).join('');
+
+  // Total general — suma del "Total a pagar" de todos los colaboradores en esta quincena
+  var tfoot=document.getElementById('pagos-usuarios-tfoot');
+  if(tfoot){
+    tfoot.innerHTML='<tr style="background:var(--surface2);border-top:2px solid var(--border)">'
+      +'<td colspan="6" style="text-align:right;font-weight:800;padding:10px 8px">Total a pagar (todos los colaboradores):</td>'
+      +'<td style="text-align:right;font-family:var(--cond);font-size:17px;font-weight:900;color:'+(totalGeneral>=0?'var(--green)':'var(--red)')+'">'+fmt(totalGeneral)+'</td>'
+      +'<td></td><td></td>'
+      +'</tr>';
+  }
 
   // Wire checkboxes
   tbody.querySelectorAll('.usuario-pago-chk').forEach(function(chk){
@@ -14956,7 +15026,10 @@ async function getOrCreateAuditForUser(uid){
   }
   if(!items3.length) return null;
   punteros[uid]=usedPtr;
-  await DB.from('inv_auditoria_ciclos').update({punteros:punteros,updated_at:new Date().toISOString()}).eq('id','global');
+  // FIX: 'updated_at' no existe en esta tabla — causaba que el UPDATE fallara silenciosamente
+  // y el puntero nunca avanzara, repitiendo los mismos ítems cada semana.
+  var updPtrR=await DB.from('inv_auditoria_ciclos').update({punteros:punteros}).eq('id','global');
+  if(updPtrR.error) console.error('Error guardando puntero de auditoría (se repetirán los ítems):', updPtrR.error);
   var audit={id:auditId,uid:uid,semana_key:weekKey,lunes_date:getAuditMondayDate(),
     items:items3,completado:false,completado_at:null,discrepancias:[],
     alerta_enviada:false,superadmin_revisado:false,
@@ -20269,6 +20342,7 @@ window.initCalcCONCRE=initCalcCONCRE;
                       <th style="text-align:center">✓ Pagado</th>
                     </tr></thead>
                     <tbody id="pagos-usuarios-tbody"></tbody>
+                    <tfoot id="pagos-usuarios-tfoot"></tfoot>
                   </table>
                 </div>
               </div>
@@ -20503,6 +20577,17 @@ window.initCalcCONCRE=initCalcCONCRE;
           <!-- Full expense table -->
           <div class="admin-table-wrap">
             <div class="admin-table-hdr">
+              <span class="ath-title">Resumen de depósitos</span>
+            </div>
+            <table class="atbl">
+              <thead><tr><th>Fecha</th><th>Usuario</th><th>Descripción</th><th>Monto</th><th id="af-dep-th-aprobado" style="display:none">✓</th></tr></thead>
+              <tbody id="af-dep-body"></tbody>
+            </table>
+          </div>
+
+          <!-- Expense detail table -->
+          <div class="admin-table-wrap" style="margin-top:14px">
+            <div class="admin-table-hdr">
               <span class="ath-title">Detalle de gastos</span>
               <div style="display:flex;gap:6px">
                 <select class="form-select" id="af-cat-filter" onchange="renderAdminFondosTable()" style="font-size:11px;padding:5px 8px;width:auto;background:var(--surface);border:1.5px solid var(--border2);color:var(--text)">
@@ -20531,17 +20616,6 @@ window.initCalcCONCRE=initCalcCONCRE;
                 <th>Factura</th><th>Monto</th><th>x Persona</th><th>Proyecto</th><th>⚠</th><th id="af-th-aprobado" style="display:none">✓</th>
               </tr></thead>
               <tbody id="af-table-body"></tbody>
-            </table>
-          </div>
-
-          <!-- Deposits summary table -->
-          <div class="admin-table-wrap" style="margin-top:14px">
-            <div class="admin-table-hdr">
-              <span class="ath-title">Resumen de depósitos</span>
-            </div>
-            <table class="atbl">
-              <thead><tr><th>Fecha</th><th>Usuario</th><th>Descripción</th><th>Monto</th></tr></thead>
-              <tbody id="af-dep-body"></tbody>
             </table>
           </div>
 
