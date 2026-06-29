@@ -3709,9 +3709,10 @@ function renderAdminHorasTable(uid){
     // Si el día tiene un origen de quincena marcado (se llenó como "días extra") y NO
     // coincide con la quincena que se está viendo, se excluye — evita duplicar horas.
     const excluirDeEstaQuincena=(r.quincenaOrigen!=null && r.quincenaOrigen!==ADMIN_CQ);
+    const extMostrable=excluirDeEstaQuincena?0:ext; // si pertenece a la otra quincena, no se muestra ni suma aquí
     if(!excluirDeEstaQuincena) totExt+=ext;
     let rc=w===0||w===6?'wknd':'';if(f)rc='hday';if(libre)rc='libre';
-    const extD=ext>0?'<span class="ev evp">+'+ext.toFixed(1)+'h</span>':'<span class="ev evz">—</span>';
+    const extD=extMostrable>0?'<span class="ev evp">+'+extMostrable.toFixed(1)+'h</span>':'<span class="ev evz">—</span>';
     const ferT=f?'<div class="dferiado">'+f+'</div>':'';
     const isExtra=date.getMonth()!==ADMIN_CM&&ADMIN_EXTRA;
     const extraTag=isExtra?'<span style="font-size:9px;color:var(--amber);font-weight:800">+EXTRA</span>':'';
@@ -3723,7 +3724,7 @@ function renderAdminHorasTable(uid){
       '<td style="font-family:var(--cond);font-weight:700">'+(r.salida||'—')+'</td>'+
       '<td><span class="ev evz" style="font-size:11px">'+(ord>0?ord.toFixed(1)+'h':'—')+'</span></td>'+
       '<td>'+extD+'</td>'+
-      '<td style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">'+(ext>0?fmt(ext*vh):'\u2014')+'</td>'+
+      '<td style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">'+(extMostrable>0?fmt(extMostrable*vh):'\u2014')+'</td>'+
       '<td style="font-size:11px;color:var(--text3)">'+(r.nota||'')+'</td>'+
       '</tr>';
   }).join('');
@@ -4174,7 +4175,7 @@ function updSel(sel){
   // Si se está llenando desde "Días extra" (vista de período anterior), marcar a qué
   // quincena pertenece el dato — así queda fijo, visible y sumando SOLO en esa quincena,
   // sin importar si el botón de días extra está activo o no en el futuro.
-  if(EXTRA_DAYS && isExtraDay(new Date(k+'T00:00:00'))){
+  if(EXTRA_DAYS && esFechaDeRangoExtra(new Date(k+'T00:00:00'))){
     REG[k].quincenaOrigen=CQ;
   }
   wrap.querySelectorAll('.tsel').forEach(s=>{
@@ -4183,7 +4184,33 @@ function updSel(sel){
     s.dataset.hasval='1';
   });
   saveData(SESSION.id);
-  buildTable();
+  // Actualización QUIRÚRGICA: solo se recalculan los totales y la celda de horas extra
+  // de ESTA fila — NO se reconstruye toda la tabla, así no se interrumpe al usuario
+  // mientras llena entrada y salida de un mismo día (evita el parpadeo/pérdida de foco).
+  actualizarFilaIndividual(k);
+  recalcQ();
+}
+
+// Recalcula y actualiza SOLO las celdas de horas extra de un día específico,
+// sin tocar los selectores de hora (entrada/salida) — preserva la interacción del usuario.
+function actualizarFilaIndividual(k){
+  const date=new Date(k+'T00:00:00');
+  const r=REG[k]||{};
+  const j=r.jornada||defJornada(date,r.entrada,r.salida);
+  if(j==='libre') return; // sin horas que mostrar
+  const vh=(SESSION&&SESSION.salario||0)/(4.5*54)*1.5;
+  const esVistaExtra=isExtraDay(date);
+  const perteneceAOtraQuincena=esVistaExtra && r.quincenaOrigen!==CQ;
+  const{ord,ext}=calcExt(r.entrada,r.salida,j);
+  const extManual=(r.seccionada&&r.extraManual>0)?r.extraManual:0;
+  const extTotal=ext+extManual;
+  const extTotalMostrable=perteneceAOtraQuincena?0:extTotal;
+  const ordEl=document.getElementById('ord-'+k);
+  if(ordEl) ordEl.innerHTML='<span class="ev evz" style="font-size:11px">'+(ord>0?ord.toFixed(1)+'h':'—')+'</span>';
+  const extdEl=document.getElementById('extd-'+k);
+  if(extdEl) extdEl.innerHTML=extTotalMostrable>0?'<span class="ev evp">+'+extTotalMostrable.toFixed(1)+'h'+(extManual>0&&!perteneceAOtraQuincena?' <small style="opacity:.7">(secc.)</small>':'')+'</span>':'<span class="ev evz">—</span>';
+  const pextraEl=document.getElementById('pextra-'+k);
+  if(pextraEl) pextraEl.textContent=extTotalMostrable>0?fmt(extTotalMostrable*vh):'—';
 }
 
 // Called on first click of an unset select — confirms the default value
@@ -4204,16 +4231,28 @@ function confirmDefault(sel){
   buildTable();
 }
 
-function isExtraDay(date){
-  if(!EXTRA_DAYS) return false;
+// Responde SOLO según el calendario: "¿esta fecha es uno de los 3 días especiales
+// de la quincena vecina?" — NUNCA depende de si el botón está prendido o apagado.
+// Esto permite reconocer y bloquear correctamente días ya llenados aunque el botón esté apagado.
+function esFechaDeRangoExtra(date){
   const d=date.getDate(),m=date.getMonth();
   if(CQ===1){
-    // Extra days are from previous month
+    // Para Quincena 1: los días especiales son del MES ANTERIOR
     return m!==CM;
   } else {
-    // Extra days are 13,14,15
+    // Para Quincena 2: los días especiales son 13,14,15 del MISMO mes
     return d>=13&&d<=15&&m===CM;
   }
+}
+
+// Responde: "¿debo MOSTRAR este día especial en la tabla ahora mismo?"
+// Sí, si el botón está prendido (el usuario quiere ver/llenar días vacíos nuevos),
+// O si el día ya tiene datos guardados pertenecientes a esta quincena (siempre visible).
+function isExtraDay(date){
+  if(!esFechaDeRangoExtra(date)) return false;
+  if(EXTRA_DAYS) return true;
+  const k=dkey(date);
+  return !!(REG[k] && REG[k].quincenaOrigen===CQ);
 }
 
 function toggleExtraDays(btn){
@@ -4272,10 +4311,12 @@ function buildTable(){
     const{ord,ext}=calcExt(r.entrada,r.salida,j);
     const extManual=(r.seccionada&&r.extraManual>0)?r.extraManual:0;
     const extTotal=ext+extManual; // suma horas extra normales + jornada seccionada manual
-    const needN=extTotal>0&&!r.nota,isToday=date.toDateString()===today.toDateString();
+    // Si el día pertenece a la otra quincena, no se muestra ni se cuenta su extra aquí
+    const extTotalMostrable=perteneceAOtraQuincena?0:extTotal;
+    const needN=extTotalMostrable>0&&!r.nota,isToday=date.toDateString()===today.toDateString();
     let rc=w===0||w===6?'wknd':'';if(f)rc='hday';if(libre)rc='libre';
     const dc=isToday?'today':(f?'hday':(w===0||w===6?'wknd':''));
-    const extD=extTotal>0?`<span class="ev evp">+${extTotal.toFixed(1)}h${extManual>0?' <small style=\"opacity:.7\">(secc.)</small>':''}</span>`:`<span class="ev evz">—</span>`;
+    const extD=extTotalMostrable>0?`<span class="ev evp">+${extTotalMostrable.toFixed(1)}h${extManual>0&&!perteneceAOtraQuincena?' <small style=\"opacity:.7\">(secc.)</small>':''}</span>`:`<span class="ev evz">—</span>`;
     const ferT=f?`<div class="dferiado">${f}</div>`:'';
     // Build hour selects
     const entH=r.entrada?r.entrada.split(':')[0]:'';
@@ -4290,9 +4331,9 @@ function buildTable(){
       <td><span class="badge user" style="font-size:10px;margin-right:4px">${JOPL[j]}</span><select class="jsel" data-k="${k}" onchange="updJ(this)" style="font-size:10px;border:1px solid var(--border);border-radius:4px;padding:2px 4px;background:var(--surface)" title="Solo puedes marcar Libre"><option value="">Auto</option><option value="libre"${j==='libre'?' selected':''}>Libre</option></select</td>
       <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':(bloqEntrada?'<span style="color:var(--text3);font-size:11px" title="Este horario ya pertenece a la otra quincena">🔒 '+r.entrada+'</span>':buildTimeSelect(k,'entrada',entH,entM,'07','00'))}</td>
       <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':(bloqSalida?'<span style="color:var(--text3);font-size:11px" title="Este horario ya pertenece a la otra quincena">🔒 '+r.salida+'</span>':buildTimeSelect(k,'salida',salH,salM,'16','00'))}</td>
-      <td><span class="ev evz" style="font-size:11px">${ord>0?ord.toFixed(1)+'h':'—'}</span></td>
-      <td>${extD}</td>
-      <td style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">${extTotal>0?fmt(extTotal*vh):'—'}</td>
+      <td id="ord-${k}"><span class="ev evz" style="font-size:11px">${ord>0?ord.toFixed(1)+'h':'—'}</span></td>
+      <td id="extd-${k}">${extD}</td>
+      <td id="pextra-${k}" style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">${extTotalMostrable>0?fmt(extTotalMostrable*vh):'—'}</td>
       <td><input class="ninp${needN?' warn':''}" type="text" data-k="${k}" value="${r.nota||''}" placeholder="${extTotal>0?'⚠ Justificar extras':'Notas...'}" onchange="updN(this)">
       ${needN?'<span style="color:var(--amber);font-size:13px">⚠</span>':''}
       ${(bloqEntrada||bloqSalida)?'<div style="margin-top:4px;font-size:9px;color:var(--text3)">🔒 Pertenece a otra quincena <button data-k="'+k+'" onclick="desbloquearDiaManual(this.dataset.k)" style="margin-left:4px;background:none;border:1px solid var(--border);border-radius:4px;padding:1px 6px;cursor:pointer;font-size:9px;color:var(--blue)">Editar de todos modos</button></div>':''}
