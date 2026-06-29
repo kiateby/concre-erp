@@ -7387,15 +7387,22 @@ function _doSaveVenta(){
 }
 
 function syncComisionToPlanilla(uid,saleYear,saleMonth,allVentas){
-  // Commission is paid on the 15th of the NEXT month
-  var payMonth=saleMonth+1, payYear=saleYear;
-  if(payMonth>11){ payMonth=0; payYear++; }
-  // Sum all commissions for this sale month
   const fibraCosto=getFibraCosto(saleMonth,saleYear);
   const totalComis=calcTotalComisionConBase(allVentas,fibraCosto,uid);
-  // Store in DED as comis_YEAR-MM-2 (quincena 2 = 15th)
   const ded=getDED(uid)||{};
-  const key='comis_'+payYear+'-'+pad(payMonth+1)+'-2';
+  const u=getUsers().find(function(x){return x.id===uid;});
+  const isAnual=(u&&u.comisType)==='anual';
+  var key;
+  if(isAnual){
+    // Usuarios ANUALES: la comisión se guarda en el MISMO mes de la venta, sin desfase.
+    // Se acumula todo el año (Dic-Nov) y se paga completa en diciembre Q1 — sin pago mensual intermedio.
+    key='comis_'+saleYear+'-'+pad(saleMonth+1)+'-1';
+  } else {
+    // Usuarios MENSUALES: SIN CAMBIOS — mismo comportamiento de siempre (sufijo -2, mes siguiente).
+    var payMonth=saleMonth+1, payYear=saleYear;
+    if(payMonth>11){ payMonth=0; payYear++; }
+    key='comis_'+payYear+'-'+pad(payMonth+1)+'-2';
+  }
   ded[key]=Math.round(totalComis);
   _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
 }
