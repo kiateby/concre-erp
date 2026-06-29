@@ -9445,6 +9445,15 @@ function editVenta(ventaId){
     // vf-usd hidden field for compat
     document.getElementById('vf-usd').value=found.usd||'';
   }
+  // Poblar vf-subtotal-input con el valor guardado (es el campo principal de edición)
+  var siEditEl=document.getElementById('vf-subtotal-input');
+  if(siEditEl){
+    if(found.isUsd){
+      siEditEl.value=found.usd?Number(found.usd).toLocaleString('es-CR'):'';
+    } else {
+      siEditEl.value=found.subtotal?Math.round(found.subtotal).toLocaleString('es-CR'):'';
+    }
+  }
   document.getElementById('vf-pend-chk').checked=found.tienePendiente||false;
   if(found.tienePendiente){
     document.getElementById('vf-pendiente-wrap').className='vf-pendiente-wrap show';
@@ -9499,16 +9508,13 @@ function updateVenta(){
   const fecha=document.getElementById('vf-fecha').value||old.fecha;
   const isUsd=document.getElementById('vf-is-usd').checked;
   let subtotal=0,usd=0,tcUsed=0;
+  const _qtyU=parseFloat(document.getElementById('vf-cantidad').value)||0;
   if(isUsd){
-    const qtyU=parseFloat(document.getElementById('vf-cantidad').value)||0;
-    const precioUsdU=parseMon(document.getElementById('vf-precio').value)||0;
-    usd=precioUsdU*qtyU; // total USD
+    usd=parseMon(document.getElementById('vf-subtotal-input').value)||0;
     tcUsed=parseMon(document.getElementById('vf-tc-used').value)||525;
     subtotal=usd*tcUsed;
   } else {
-    const qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
-    const precio=parseMon(document.getElementById('vf-precio').value)||0;
-    subtotal=qty*precio;
+    subtotal=parseMon(document.getElementById('vf-subtotal-input').value)||0;
   }
   const ivaPct=getIvaPct();
   const ivaAmt=subtotal*(ivaPct/100);
@@ -9519,8 +9525,9 @@ function updateVenta(){
 
   var newProdId=document.getElementById('vf-prod').value;
   var newCliente=document.getElementById('vf-cliente').value.trim();
-  var newPrecio=parseMon(document.getElementById('vf-precio').value)||0;
-  var newEstado=(old.estado==='incompleta'&&newProdId&&newCliente&&newPrecio>0)?'activa':(old.estado||'activa');
+  // precio unitario se deriva del subtotal / cantidad (igual que _doSaveVenta)
+  var newPrecioUnit=_qtyU>0?(isUsd?usd:subtotal)/_qtyU:0;
+  var newEstado=(old.estado==='incompleta'&&newProdId&&newCliente&&subtotal>0)?'activa':(old.estado||'activa');
 
   vd[mk].ventas[idx]={
     ...old,
@@ -9530,8 +9537,8 @@ function updateVenta(){
     cliente:newCliente,
     factura:document.getElementById('vf-factura').value.trim(),
     cantidad:document.getElementById('vf-cantidad').value,
-    precio:parseMon(document.getElementById('vf-precio').value)||0,
-    precioUnit:parseMon(document.getElementById('vf-precio').value)||0,
+    precio:newPrecioUnit,
+    precioUnit:newPrecioUnit,
     subtotal,ivaPct,ivaAmt,total:subtotal+ivaAmt,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:plazo,
@@ -12638,8 +12645,10 @@ function renderPagosUsuarios(){
   var periodKey=y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
   var qLabel='Q'+(q)+' '+MES[m]+' '+y;
   var monthKey=y+'-'+pad(m+1);
-  // Days for this quincena — same logic as user view
-  var days=getDays(y,m,q);
+  // mainDays: rango normal de la quincena (sin días extra)
+  var mainDays=getDays(y,m,q,false);
+  // extraCandidates: los 3 días del período anterior que podrían ser extra
+  var extraCandidates=getDays(y,m,q,true).filter(function(d){ return !mainDays.some(function(md){ return md.toDateString()===d.toDateString(); }); });
 
   var users=sortAlpha(getUsers().filter(function(u){return u.estado==='activo';}), 'nombre');
   var totalGeneral=0;
@@ -12650,9 +12659,12 @@ function renderPagosUsuarios(){
     var sal=hist&&hist.salario_override>0 ? hist.salario_override : (u.salario||0);
     var salQ=Math.round(sal/2);
 
-    // ── 2. HORAS EXTRA — calculated from REG exactly like user view ──
+    // ── 2. HORAS EXTRA — calculated per-user using each user's own REG ──
     var reg=getREG(u.id)||{};
     var vh=sal/(4.5*54)*1.5; // same formula as buildAdminOverview and recalcQ
+    // Build user-specific days list: main days + extra days that THIS user explicitly marked with quincenaOrigen===q
+    var hasUserExtra=extraCandidates.some(function(d){ var r=reg[dkey(d)]; return r&&r.entrada&&r.quincenaOrigen===q; });
+    var days=hasUserExtra?mainDays.concat(extraCandidates):mainDays;
     var totExt=0;
     days.forEach(function(d){
       var r=reg[dkey(d)]||{};
