@@ -2447,6 +2447,546 @@ function copiarMensajeRadar(btn, prospectoId){
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+//  IMPORTACIONES — módulo independiente, solo superadmin
+//  Calcula precio final de venta para productos importados de China
+// ══════════════════════════════════════════════════════════════
+
+var _impProveedores = [];
+var _impProductos = [];
+var _impImportaciones = [];
+var _impLineasActuales = []; // líneas de la importación que se está creando/editando
+var _impVistaActual = 'lista'; // 'lista' | 'nueva' | 'catalogo' | 'detalle'
+var _impImportacionEditando = null; // id de importación en edición, null = nueva
+
+async function initImportaciones(){
+  buildImportacionesHTML();
+  await loadImportacionesFromDB();
+  renderImportacionesVista();
+}
+
+async function loadImportacionesFromDB(){
+  try{
+    var rp = await DB.from('imp_proveedores').select('*').order('nombre');
+    if(!rp.error && rp.data) _impProveedores = rp.data;
+    var rpr = await DB.from('imp_productos').select('*').order('nombre');
+    if(!rpr.error && rpr.data) _impProductos = rpr.data;
+    var ri = await DB.from('imp_importaciones').select('*').order('fecha',{ascending:false});
+    if(!ri.error && ri.data) _impImportaciones = ri.data;
+  }catch(e){ console.warn('loadImportacionesFromDB:', e); }
+}
+
+
+// ── MOTOR DE CÁLCULO — implementa la fórmula confirmada con Kia ──
+// Convierte un monto a USD si está marcado como 'crc', usando el tipo de cambio
+// de nacionalización (igual que el Excel original para el campo Impuestos)
+function impConvertirAUsd(monto, moneda, tipoCambioNacionalizacion){
+  if(moneda === 'crc') return monto / tipoCambioNacionalizacion;
+  return monto; // ya está en USD
+}
+
+// Calcula el detalle completo de una importación: % de cada costo general,
+// y el desglose línea por línea hasta el precio final con/sin IVA.
+function impCalcularImportacion(importacion, lineas){
+  var tcCompra = importacion.tipo_cambio_compra;
+  var tcNac = importacion.tipo_cambio_nacionalizacion;
+
+  // 1. Convertir todos los costos generales a USD
+  var feeUsd = impConvertirAUsd(importacion.fee_monto||0, importacion.fee_moneda, tcNac);
+  var cifUsd = impConvertirAUsd(importacion.cif_monto||0, importacion.cif_moneda, tcNac);
+  var navieraUsd = impConvertirAUsd(importacion.naviera_monto||0, importacion.naviera_moneda, tcNac);
+  var agenciaUsd = impConvertirAUsd(importacion.agencia_monto||0, importacion.agencia_moneda, tcNac);
+  var publicidadUsd = impConvertirAUsd(importacion.publicidad_monto||0, importacion.publicidad_moneda, tcNac);
+
+  // 2. Total general de la importación (suma de cantidad×precio de TODOS los productos)
+  var totalGeneral = lineas.reduce(function(s,l){ return s + (l.cantidad*l.precio_unitario); }, 0);
+
+  // 3. Porcentaje que representa cada costo general sobre el total — se muestran en pantalla
+  var pctFee = totalGeneral>0 ? feeUsd/totalGeneral : 0;
+  var pctCif = totalGeneral>0 ? cifUsd/totalGeneral : 0;
+  var pctNaviera = totalGeneral>0 ? navieraUsd/totalGeneral : 0;
+  var pctAgencia = totalGeneral>0 ? agenciaUsd/totalGeneral : 0;
+  var pctPublicidad = totalGeneral>0 ? publicidadUsd/totalGeneral : 0;
+
+  // 4. Calcular cada línea de producto
+  var detalle = lineas.map(function(l){
+    var total = l.cantidad * l.precio_unitario; // USD
+    var fee = total * pctFee;
+    var cif = total * pctCif;
+    var naviera = total * pctNaviera;
+    var agencia = total * pctAgencia;
+    var publicidad = total * pctPublicidad;
+    var subtotal = total + fee + cif + naviera + agencia + publicidad; // USD
+    var precioBodegaUsd = l.cantidad>0 ? subtotal / l.cantidad : 0;
+    var precioColones = precioBodegaUsd * tcCompra; // por equipo
+    var totalMargen = precioColones * (l.margen||0);
+    var precioConMargen = precioColones + totalMargen;
+    var comisionInterna = precioConMargen * (importacion.comision_pct!=null?importacion.comision_pct:0.05);
+    var precioSinIva = precioConMargen + comisionInterna;
+    var precioConIva = precioSinIva * 1.13;
+    return {
+      producto_id: l.producto_id,
+      cantidad: l.cantidad,
+      precio_unitario: l.precio_unitario,
+      total: total, fee: fee, cif: cif, naviera: naviera, agencia: agencia, publicidad: publicidad,
+      subtotal: subtotal, precioBodegaUsd: precioBodegaUsd, precioColones: precioColones,
+      margen: l.margen, totalMargen: totalMargen, precioConMargen: precioConMargen,
+      comisionInterna: comisionInterna, precioSinIva: precioSinIva, precioConIva: precioConIva
+    };
+  });
+
+  return {
+    totalGeneral: totalGeneral,
+    pctFee: pctFee, pctCif: pctCif, pctNaviera: pctNaviera, pctAgencia: pctAgencia, pctPublicidad: pctPublicidad,
+    feeUsd: feeUsd, cifUsd: cifUsd, navieraUsd: navieraUsd, agenciaUsd: agenciaUsd, publicidadUsd: publicidadUsd,
+    detalle: detalle
+  };
+}
+
+
+// ── Generador del HTML completo de la pestaña Importaciones ──
+function buildImportacionesHTML(){
+  var root = document.getElementById('imp-root-admin');
+  if(!root) return;
+  root.innerHTML = `
+    <div class="page-title">🚢 Importaciones</div>
+    <div class="page-sub">Cálculo de precio final de venta para productos importados</div>
+
+    <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+      <button class="aub-btn on" data-vista="lista" onclick="impCambiarVista(this,'lista')">📋 Historial</button>
+      <button class="aub-btn" data-vista="nueva" onclick="impCambiarVista(this,'nueva')">➕ Nueva importación</button>
+      <button class="aub-btn" data-vista="catalogo" onclick="impCambiarVista(this,'catalogo')">📦 Proveedores y productos</button>
+    </div>
+
+    <div id="imp-vista-lista"></div>
+    <div id="imp-vista-nueva" style="display:none"></div>
+    <div id="imp-vista-catalogo" style="display:none"></div>
+    <div id="imp-vista-detalle" style="display:none"></div>
+  `;
+}
+
+function impCambiarVista(btn, vista){
+  document.querySelectorAll('#imp-root-admin .aub-btn').forEach(function(b){b.classList.remove('on');});
+  if(btn) btn.classList.add('on');
+  _impVistaActual = vista;
+  ['lista','nueva','catalogo','detalle'].forEach(function(v){
+    var el=document.getElementById('imp-vista-'+v);
+    if(el) el.style.display=(v===vista)?'':'none';
+  });
+  renderImportacionesVista();
+}
+
+function renderImportacionesVista(){
+  if(_impVistaActual==='lista') renderImpHistorial();
+  else if(_impVistaActual==='nueva') renderImpFormularioNueva();
+  else if(_impVistaActual==='catalogo') renderImpCatalogo();
+}
+
+
+// ── CATÁLOGO: Proveedores y Productos reutilizables ──
+function renderImpCatalogo(){
+  var root = document.getElementById('imp-vista-catalogo');
+  if(!root) return;
+  root.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:18px">
+      <div style="font-family:var(--cond);font-weight:800;margin-bottom:10px">Nuevo proveedor</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input id="imp-prov-nombre" class="form-inp" placeholder="Nombre del proveedor (ej: Excalibur)" style="flex:1;min-width:200px">
+        <button class="btn-primary" onclick="impCrearProveedor()">+ Crear proveedor</button>
+      </div>
+    </div>
+    <div id="imp-proveedores-list"></div>
+  `;
+  renderImpProveedoresList();
+}
+
+async function impCrearProveedor(){
+  var nombre = document.getElementById('imp-prov-nombre').value.trim();
+  if(!nombre){ toast('Ingrese el nombre del proveedor'); return; }
+  var prov = { id:'prov_'+Date.now(), nombre:nombre, notas:'', created_by:SESSION.id, created_at:new Date().toISOString() };
+  var r = await DB.from('imp_proveedores').insert(prov);
+  if(r.error){ console.error('impCrearProveedor:',r.error); toast('❌ Error creando proveedor'); return; }
+  _impProveedores.push(prov);
+  document.getElementById('imp-prov-nombre').value='';
+  renderImpProveedoresList();
+  toast('✅ Proveedor creado: '+nombre);
+}
+
+function renderImpProveedoresList(){
+  var el = document.getElementById('imp-proveedores-list');
+  if(!el) return;
+  if(!_impProveedores.length){
+    el.innerHTML = '<div style="color:var(--text3);padding:20px;text-align:center">Sin proveedores aún. Cree el primero arriba.</div>';
+    return;
+  }
+  el.innerHTML = _impProveedores.map(function(p){
+    var productos = _impProductos.filter(function(pr){ return pr.proveedor_id===p.id; });
+    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px">'
+      +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+      +'<div style="font-family:var(--cond);font-size:16px;font-weight:800">'+p.nombre+'</div>'
+      +'<span style="font-size:11px;color:var(--text3)">'+productos.length+' producto(s)</span>'
+      +'</div>'
+      +'<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
+      +'<input id="imp-prod-nombre-'+p.id+'" class="form-inp" placeholder="Nombre del producto" style="flex:1;min-width:150px;font-size:12px">'
+      +'<input id="imp-prod-cat-'+p.id+'" class="form-inp" placeholder="Categoría (opcional)" style="width:140px;font-size:12px">'
+      +'<button data-pid="'+p.id+'" onclick="impAgregarProducto(this.dataset.pid)" style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:700">+ Agregar</button>'
+      +'</div>'
+      +(productos.length
+        ? '<div style="display:flex;flex-wrap:wrap;gap:6px">'+productos.map(function(pr){
+            return '<span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px">'+pr.nombre+(pr.categoria?' <span style="color:var(--text3)">· '+pr.categoria+'</span>':'')+'</span>';
+          }).join('')+'</div>'
+        : '<div style="font-size:11px;color:var(--text3)">Sin productos aún para este proveedor.</div>')
+      +'</div>';
+  }).join('');
+}
+
+async function impAgregarProducto(provId){
+  var nombreEl = document.getElementById('imp-prod-nombre-'+provId);
+  var catEl = document.getElementById('imp-prod-cat-'+provId);
+  var nombre = nombreEl.value.trim();
+  if(!nombre){ toast('Ingrese el nombre del producto'); return; }
+  var prod = { id:'prod_'+Date.now(), proveedor_id:provId, nombre:nombre, categoria:catEl.value.trim(), created_at:new Date().toISOString() };
+  var r = await DB.from('imp_productos').insert(prod);
+  if(r.error){ console.error('impAgregarProducto:',r.error); toast('❌ Error agregando producto'); return; }
+  _impProductos.push(prod);
+  renderImpProveedoresList();
+  toast('✅ Producto agregado: '+nombre);
+}
+
+
+// ── FORMULARIO: Nueva importación (o edición) ──
+function renderImpFormularioNueva(){
+  var root = document.getElementById('imp-vista-nueva');
+  if(!root) return;
+
+  var editando = _impImportacionEditando ? _impImportaciones.find(function(i){return i.id===_impImportacionEditando;}) : null;
+  if(editando && !_impLineasActuales.length){
+    // cargar líneas existentes al entrar en modo edición (solo si aún no se cargaron)
+    impCargarLineasParaEdicion(editando.id);
+  }
+
+  var opcionesProveedor = _impProveedores.map(function(p){
+    var sel = editando && editando.proveedor_id===p.id ? 'selected' : '';
+    return '<option value="'+p.id+'" '+sel+'>'+p.nombre+'</option>';
+  }).join('');
+
+  root.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:18px">
+      <div style="font-family:var(--cond);font-weight:800;font-size:16px;margin-bottom:14px">${editando?'Editando importación':'Datos generales de la importación'}</div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px">
+        <div>
+          <div class="form-label" style="margin-bottom:5px">Proveedor</div>
+          <select id="imp-f-proveedor" class="form-select" onchange="renderImpLineasProductos()">
+            <option value="">— Seleccionar —</option>
+            ${opcionesProveedor}
+          </select>
+        </div>
+        <div>
+          <div class="form-label" style="margin-bottom:5px">Fecha de importación</div>
+          <input type="date" id="imp-f-fecha" class="form-inp" value="${editando?editando.fecha:new Date().toISOString().slice(0,10)}">
+        </div>
+        <div>
+          <div class="form-label" style="margin-bottom:5px">Tipo de cambio — compra en China</div>
+          <input type="number" step="0.01" id="imp-f-tc-compra" class="form-inp" placeholder="₡ por $1" value="${editando?editando.tipo_cambio_compra:''}">
+        </div>
+        <div>
+          <div class="form-label" style="margin-bottom:5px">Tipo de cambio — nacionalización</div>
+          <input type="number" step="0.01" id="imp-f-tc-nac" class="form-inp" placeholder="₡ por $1" value="${editando?editando.tipo_cambio_nacionalizacion:''}">
+        </div>
+        <div>
+          <div class="form-label" style="margin-bottom:5px">Comisión interna (%)</div>
+          <input type="number" step="0.01" id="imp-f-comision" class="form-inp" placeholder="Ej: 5" value="${editando?(editando.comision_pct*100):'5'}">
+        </div>
+      </div>
+
+      <div style="font-family:var(--cond);font-weight:800;margin-bottom:10px;color:var(--text2)">Costos generales de la importación (sin IVA)</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px" id="imp-f-costos-generales">
+        ${impGenerarCampoCostoGeneral('fee','Fee de plataforma',editando)}
+        ${impGenerarCampoCostoGeneral('cif','CIF (costo del proveedor a puerto)',editando)}
+        ${impGenerarCampoCostoGeneral('naviera','Naviera',editando)}
+        ${impGenerarCampoCostoGeneral('agencia','Agencia aduanal',editando)}
+        ${impGenerarCampoCostoGeneral('publicidad','Publicidad',editando)}
+      </div>
+
+      <div style="font-family:var(--cond);font-weight:800;margin-bottom:10px;color:var(--text2)">Productos de esta importación</div>
+      <div id="imp-f-lineas-productos"></div>
+      <button onclick="impAgregarLineaVacia()" style="margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;font-weight:700">+ Agregar producto</button>
+
+      <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end">
+        <button onclick="impCancelarFormulario()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:8px 18px;cursor:pointer;font-size:12px">Cancelar</button>
+        <button class="btn-primary" onclick="impCalcularYMostrar()">🧮 Calcular</button>
+        <button onclick="impGuardarImportacion()" style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:8px 18px;cursor:pointer;font-size:12px;font-weight:700">💾 Guardar importación</button>
+      </div>
+    </div>
+
+    <div id="imp-f-resultado"></div>
+  `;
+
+  renderImpLineasProductos();
+}
+
+function impGenerarCampoCostoGeneral(key, label, editando){
+  var monto = editando ? editando[key+'_monto'] : '';
+  var moneda = editando ? editando[key+'_moneda'] : 'usd';
+  return '<div>'
+    +'<div class="form-label" style="margin-bottom:5px">'+label+'</div>'
+    +'<div style="display:flex;gap:6px;align-items:center">'
+    +'<input type="number" step="0.01" id="imp-f-'+key+'-monto" class="form-inp" placeholder="0" value="'+monto+'" style="flex:1">'
+    +'<select id="imp-f-'+key+'-moneda" class="form-select" style="width:70px">'
+    +'<option value="usd" '+(moneda==='usd'?'selected':'')+'>USD</option>'
+    +'<option value="crc" '+(moneda==='crc'?'selected':'')+'>CRC</option>'
+    +'</select>'
+    +'</div>'
+    +'</div>';
+}
+
+
+// ── Manejo de líneas de producto dentro del formulario ──
+function impAgregarLineaVacia(){
+  _impLineasActuales.push({producto_id:'', cantidad:1, precio_unitario:0, margen:0});
+  renderImpLineasProductos();
+}
+
+function impEliminarLinea(idx){
+  _impLineasActuales.splice(idx,1);
+  renderImpLineasProductos();
+}
+
+function impActualizarLinea(idx, campo, valor){
+  if(!_impLineasActuales[idx]) return;
+  if(campo==='producto_id'){
+    _impLineasActuales[idx].producto_id = valor;
+  } else {
+    _impLineasActuales[idx][campo] = parseFloat(valor)||0;
+  }
+}
+
+function renderImpLineasProductos(){
+  var cont = document.getElementById('imp-f-lineas-productos');
+  if(!cont) return;
+  var provId = document.getElementById('imp-f-proveedor') ? document.getElementById('imp-f-proveedor').value : '';
+  var productosDisponibles = _impProductos.filter(function(p){ return p.proveedor_id===provId; });
+
+  if(!provId){
+    cont.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:10px">Seleccione un proveedor primero para ver sus productos.</div>';
+    return;
+  }
+  if(!_impLineasActuales.length){
+    cont.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:10px">Sin productos agregados. Use el botón "+ Agregar producto" abajo.</div>';
+    return;
+  }
+
+  cont.innerHTML = '<div style="overflow-x:auto"><table class="atbl" style="min-width:680px">'
+    +'<thead><tr><th>Producto</th><th style="text-align:center">Cantidad</th><th style="text-align:right">Precio unit. (USD)</th><th style="text-align:center">Margen</th><th></th></tr></thead>'
+    +'<tbody>'
+    +_impLineasActuales.map(function(l, idx){
+      var opciones = productosDisponibles.map(function(p){
+        return '<option value="'+p.id+'" '+(l.producto_id===p.id?'selected':'')+'>'+p.nombre+'</option>';
+      }).join('');
+      return '<tr>'
+        +'<td><select data-idx="'+idx+'" onchange="impActualizarLinea(this.dataset.idx,\'producto_id\',this.value)" class="form-select" style="font-size:12px"><option value="">— Producto —</option>'+opciones+'</select></td>'
+        +'<td><input type="number" step="1" data-idx="'+idx+'" value="'+l.cantidad+'" onchange="impActualizarLinea(this.dataset.idx,\'cantidad\',this.value)" class="form-inp" style="width:70px;text-align:center"></td>'
+        +'<td><input type="number" step="0.01" data-idx="'+idx+'" value="'+l.precio_unitario+'" onchange="impActualizarLinea(this.dataset.idx,\'precio_unitario\',this.value)" class="form-inp" style="width:100px;text-align:right"></td>'
+        +'<td><input type="number" step="0.01" data-idx="'+idx+'" value="'+l.margen+'" onchange="impActualizarLinea(this.dataset.idx,\'margen\',this.value)" class="form-inp" style="width:80px;text-align:center" title="Número libre, ej: 0.65, 1.5"></td>'
+        +'<td><button data-idx="'+idx+'" onclick="impEliminarLinea(this.dataset.idx)" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px">🗑</button></td>'
+        +'</tr>';
+    }).join('')
+    +'</tbody></table></div>';
+}
+
+function impCancelarFormulario(){
+  _impLineasActuales = [];
+  _impImportacionEditando = null;
+  document.querySelector('#imp-root-admin .aub-btn[data-vista="lista"]').click();
+}
+
+
+// ── Calcular y mostrar el resultado en pantalla (sin guardar aún) ──
+function impLeerDatosFormulario(){
+  var provId = document.getElementById('imp-f-proveedor').value;
+  if(!provId){ toast('Seleccione un proveedor'); return null; }
+  var tcCompra = parseFloat(document.getElementById('imp-f-tc-compra').value)||0;
+  var tcNac = parseFloat(document.getElementById('imp-f-tc-nac').value)||0;
+  if(!tcCompra||!tcNac){ toast('Ingrese ambos tipos de cambio'); return null; }
+  if(!_impLineasActuales.length || _impLineasActuales.some(function(l){return !l.producto_id;})){
+    toast('Agregue al menos un producto y selecciónelo de la lista'); return null;
+  }
+
+  var importacion = {
+    proveedor_id: provId,
+    fecha: document.getElementById('imp-f-fecha').value,
+    tipo_cambio_compra: tcCompra,
+    tipo_cambio_nacionalizacion: tcNac,
+    comision_pct: (parseFloat(document.getElementById('imp-f-comision').value)||5)/100
+  };
+  ['fee','cif','naviera','agencia','publicidad'].forEach(function(key){
+    importacion[key+'_monto'] = parseFloat(document.getElementById('imp-f-'+key+'-monto').value)||0;
+    importacion[key+'_moneda'] = document.getElementById('imp-f-'+key+'-moneda').value;
+  });
+  return importacion;
+}
+
+function impCalcularYMostrar(){
+  var importacion = impLeerDatosFormulario();
+  if(!importacion) return;
+  var resultado = impCalcularImportacion(importacion, _impLineasActuales);
+  renderImpResultado(resultado);
+}
+
+function renderImpResultado(resultado){
+  var el = document.getElementById('imp-f-resultado');
+  if(!el) return;
+  el.innerHTML = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px">'
+    +'<div style="font-family:var(--cond);font-weight:800;font-size:16px;margin-bottom:12px">🧮 Resultado del cálculo</div>'
+    +'<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:var(--text3)">'
+    +'<div>Total general: <strong style="color:var(--text2)">$'+resultado.totalGeneral.toFixed(2)+'</strong></div>'
+    +'<div>% Fee: <strong style="color:var(--text2)">'+(resultado.pctFee*100).toFixed(2)+'%</strong></div>'
+    +'<div>% CIF: <strong style="color:var(--text2)">'+(resultado.pctCif*100).toFixed(2)+'%</strong></div>'
+    +'<div>% Naviera: <strong style="color:var(--text2)">'+(resultado.pctNaviera*100).toFixed(2)+'%</strong></div>'
+    +'<div>% Agencia: <strong style="color:var(--text2)">'+(resultado.pctAgencia*100).toFixed(2)+'%</strong></div>'
+    +'<div>% Publicidad: <strong style="color:var(--text2)">'+(resultado.pctPublicidad*100).toFixed(2)+'%</strong></div>'
+    +'</div>'
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1100px;font-size:11px">'
+    +'<thead><tr><th>Producto</th><th>Cant.</th><th>Precio Unit.</th><th>Subtotal $</th><th>Precio bodega $</th><th>Precio ₡ (sin margen)</th><th>Margen</th><th>Comisión int.</th><th>Precio sin IVA</th><th>Precio con IVA</th></tr></thead>'
+    +'<tbody>'+resultado.detalle.map(function(d){
+      var prod = _impProductos.find(function(p){return p.id===d.producto_id;});
+      return '<tr>'
+        +'<td style="font-weight:700">'+(prod?prod.nombre:'—')+'</td>'
+        +'<td style="text-align:center">'+d.cantidad+'</td>'
+        +'<td style="text-align:right">$'+d.precio_unitario.toFixed(2)+'</td>'
+        +'<td style="text-align:right">$'+d.subtotal.toFixed(2)+'</td>'
+        +'<td style="text-align:right">$'+d.precioBodegaUsd.toFixed(2)+'</td>'
+        +'<td style="text-align:right">₡'+d.precioColones.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
+        +'<td style="text-align:center">'+(d.margen*100).toFixed(0)+'%</td>'
+        +'<td style="text-align:right">₡'+d.comisionInterna.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
+        +'<td style="text-align:right;font-weight:800;color:var(--text2)">₡'+d.precioSinIva.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
+        +'<td style="text-align:right;font-weight:900;color:var(--green)">₡'+d.precioConIva.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
+        +'</tr>';
+    }).join('')+'</tbody></table></div>'
+    +'</div>';
+}
+
+
+// ── Guardar importación (nueva o edición) en Supabase ──
+async function impGuardarImportacion(){
+  var importacion = impLeerDatosFormulario();
+  if(!importacion) return;
+
+  var esEdicion = !!_impImportacionEditando;
+  importacion.id = esEdicion ? _impImportacionEditando : ('imp_'+Date.now());
+  importacion.created_by = SESSION.id;
+  importacion.created_at = esEdicion ? (_impImportaciones.find(function(i){return i.id===importacion.id;}).created_at) : new Date().toISOString();
+  importacion.updated_at = new Date().toISOString();
+
+  var rImp = await DB.from('imp_importaciones').upsert(importacion,{onConflict:'id'});
+  if(rImp.error){ console.error('impGuardarImportacion:',rImp.error); toast('❌ Error guardando importación'); return; }
+
+  // Borrar líneas viejas (si es edición) y guardar las actuales
+  if(esEdicion){
+    await DB.from('imp_lineas').delete().eq('importacion_id', importacion.id);
+  }
+  var lineasParaGuardar = _impLineasActuales.map(function(l,idx){
+    return {
+      id: 'lin_'+Date.now()+'_'+idx,
+      importacion_id: importacion.id,
+      producto_id: l.producto_id,
+      cantidad: l.cantidad,
+      precio_unitario: l.precio_unitario,
+      margen: l.margen,
+      created_at: new Date().toISOString()
+    };
+  });
+  var rLin = await DB.from('imp_lineas').insert(lineasParaGuardar);
+  if(rLin.error){ console.error('impGuardarImportacion lineas:',rLin.error); toast('❌ Error guardando productos de la importación'); return; }
+
+  if(esEdicion){
+    var idx2 = _impImportaciones.findIndex(function(i){return i.id===importacion.id;});
+    _impImportaciones[idx2] = importacion;
+  } else {
+    _impImportaciones.unshift(importacion);
+  }
+
+  _impLineasActuales = [];
+  _impImportacionEditando = null;
+  toast(esEdicion?'✅ Importación actualizada':'✅ Importación guardada');
+  document.querySelector('#imp-root-admin .aub-btn[data-vista="lista"]').click();
+}
+
+async function impCargarLineasParaEdicion(importacionId){
+  try{
+    var r = await DB.from('imp_lineas').select('*').eq('importacion_id', importacionId);
+    if(!r.error && r.data){
+      _impLineasActuales = r.data.map(function(l){
+        return { producto_id:l.producto_id, cantidad:l.cantidad, precio_unitario:l.precio_unitario, margen:l.margen };
+      });
+      renderImpLineasProductos();
+    }
+  }catch(e){ console.warn('impCargarLineasParaEdicion:', e); }
+}
+
+function impEditarImportacion(id){
+  _impImportacionEditando = id;
+  _impLineasActuales = [];
+  document.querySelector('#imp-root-admin .aub-btn[data-vista="nueva"]').click();
+}
+
+
+// ── Historial de importaciones guardadas ──
+function renderImpHistorial(){
+  var root = document.getElementById('imp-vista-lista');
+  if(!root) return;
+  if(!_impImportaciones.length){
+    root.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Sin importaciones registradas aún. Use "Nueva importación" arriba.</div>';
+    return;
+  }
+  root.innerHTML = '<div style="overflow-x:auto"><table class="atbl" style="min-width:700px">'
+    +'<thead><tr><th>Fecha</th><th>Proveedor</th><th style="text-align:center">T.C. compra</th><th style="text-align:center">T.C. nacionalización</th><th></th></tr></thead>'
+    +'<tbody>'+_impImportaciones.map(function(imp){
+      var prov = _impProveedores.find(function(p){return p.id===imp.proveedor_id;});
+      return '<tr>'
+        +'<td>'+formatDate(parseDate(imp.fecha))+'</td>'
+        +'<td style="font-weight:700">'+(prov?prov.nombre:'—')+'</td>'
+        +'<td style="text-align:center">₡'+imp.tipo_cambio_compra+'</td>'
+        +'<td style="text-align:center">₡'+imp.tipo_cambio_nacionalizacion+'</td>'
+        +'<td style="text-align:center;white-space:nowrap">'
+        +'<button data-id="'+imp.id+'" onclick="impVerDetalle(this.dataset.id)" style="background:none;border:1px solid var(--border);border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px;margin-right:4px">Ver</button>'
+        +'<button data-id="'+imp.id+'" onclick="impEditarImportacion(this.dataset.id)" style="background:none;border:1px solid var(--border);border-radius:5px;padding:3px 10px;cursor:pointer;font-size:11px">Editar</button>'
+        +'</td>'
+        +'</tr>';
+    }).join('')+'</tbody></table></div>';
+}
+
+async function impVerDetalle(importacionId){
+  var imp = _impImportaciones.find(function(i){return i.id===importacionId;});
+  if(!imp) return;
+  var r = await DB.from('imp_lineas').select('*').eq('importacion_id', importacionId);
+  var lineas = (!r.error && r.data) ? r.data.map(function(l){
+    return { producto_id:l.producto_id, cantidad:l.cantidad, precio_unitario:l.precio_unitario, margen:l.margen };
+  }) : [];
+  var resultado = impCalcularImportacion(imp, lineas);
+
+  ['lista','nueva','catalogo'].forEach(function(v){
+    var el=document.getElementById('imp-vista-'+v);
+    if(el) el.style.display='none';
+  });
+  document.querySelectorAll('#imp-root-admin .aub-btn').forEach(function(b){b.classList.remove('on');});
+  var detEl = document.getElementById('imp-vista-detalle');
+  detEl.style.display='';
+
+  var prov = _impProveedores.find(function(p){return p.id===imp.proveedor_id;});
+  detEl.innerHTML = '<button onclick="impVolverAlHistorial()" style="margin-bottom:14px;background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px">← Volver al historial</button>'
+    +'<div style="font-family:var(--cond);font-size:18px;font-weight:900;margin-bottom:4px">'+(prov?prov.nombre:'—')+' — '+formatDate(parseDate(imp.fecha))+'</div>'
+    +'<div id="imp-f-resultado"></div>';
+  renderImpResultado(resultado);
+}
+
+
+function impVolverAlHistorial(){
+  var btn = document.querySelector('#imp-root-admin .aub-btn[data-vista="lista"]');
+  if(btn) btn.click();
+}
+
 
 function doLogout(){
   // Stop background refresh if running
@@ -2513,6 +3053,7 @@ function buildAdminTabs(){
     {id:'calculos',      label:'🏗 Cálculos',        extra:'try{initCalcCONCRE();}catch(e){}',  saOnly:true},
     {id:'presupuesto',   label:'🏗 Presupuesto',     extra:'try{initPresupuesto();}catch(e){console.error(e);}', superadmin_only:true},
     {id:'radar',         label:'📡 Radar Comercial', extra:'try{initRadarComercial();}catch(e){console.error(e);}'},
+    {id:'importaciones', label:'🚢 Importaciones',   extra:'try{initImportaciones();}catch(e){console.error(e);}', superadmin_only:true},
   ];
   // Filter tabs based on admin permissions (superadmin sees all)
   var allowedBtns=btns.filter(function(b){
@@ -21438,6 +21979,9 @@ window.initCalcCONCRE=initCalcCONCRE;
 
       <!-- RADAR COMERCIAL SECTION — módulo independiente de prospección -->
       <div id="sec-radar" class="admin-section"><div id="radar-root-admin"></div></div>
+
+      <!-- IMPORTACIONES SECTION — módulo independiente, solo superadmin -->
+      <div id="sec-importaciones" class="admin-section"><div id="imp-root-admin"></div></div>
 
       </div><!-- /admin-main -->
     </div><!-- /admin-layout -->
