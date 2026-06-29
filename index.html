@@ -2720,7 +2720,7 @@ function renderImpFormularioNueva(){
       </div>
     </div>
 
-    <div id="imp-f-resultado"></div>
+    <div id="imp-f-resultado-nueva"></div>
   `;
 
   renderImpLineasProductos();
@@ -2831,11 +2831,11 @@ function impCalcularYMostrar(){
   var importacion = impLeerDatosFormulario();
   if(!importacion) return;
   var resultado = impCalcularImportacion(importacion, _impLineasActuales);
-  renderImpResultado(resultado);
+  renderImpResultado(resultado, 'imp-f-resultado-nueva');
 }
 
-function renderImpResultado(resultado){
-  var el = document.getElementById('imp-f-resultado');
+function renderImpResultado(resultado, contenedorId){
+  var el = document.getElementById(contenedorId||'imp-f-resultado-nueva');
   if(!el) return;
   el.innerHTML = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px">'
     +'<div style="font-family:var(--cond);font-weight:800;font-size:16px;margin-bottom:12px">🧮 Resultado del cálculo</div>'
@@ -2977,8 +2977,8 @@ async function impVerDetalle(importacionId){
   var prov = _impProveedores.find(function(p){return p.id===imp.proveedor_id;});
   detEl.innerHTML = '<button onclick="impVolverAlHistorial()" style="margin-bottom:14px;background:none;border:1px solid var(--border);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px">← Volver al historial</button>'
     +'<div style="font-family:var(--cond);font-size:18px;font-weight:900;margin-bottom:4px">'+(prov?prov.nombre:'—')+' — '+formatDate(parseDate(imp.fecha))+'</div>'
-    +'<div id="imp-f-resultado"></div>';
-  renderImpResultado(resultado);
+    +'<div id="imp-f-resultado-detalle"></div>';
+  renderImpResultado(resultado, 'imp-f-resultado-detalle');
 }
 
 
@@ -3706,7 +3706,10 @@ function renderAdminHorasTable(uid){
     const w=date.getDay(),k=dkey(date),f=isFer(date);
     const r=regU[k]||{},j=r.jornada||defJornada(date,r.entrada,r.salida),libre=j==='libre';
     const{ord,ext}=calcExt(r.entrada,r.salida,j);
-    totExt+=ext;
+    // Mismo criterio que la vista del usuario: si el día pertenece a Q2 (origenQ2),
+    // no se suma en el total mostrado al ver Q1 — evita duplicar horas entre quincenas.
+    const excluirDeQ1=(ADMIN_CQ===1 && r.origenQ2);
+    if(!excluirDeQ1) totExt+=ext;
     let rc=w===0||w===6?'wknd':'';if(f)rc='hday';if(libre)rc='libre';
     const extD=ext>0?'<span class="ev evp">+'+ext.toFixed(1)+'h</span>':'<span class="ev evz">—</span>';
     const ferT=f?'<div class="dferiado">'+f+'</div>':'';
@@ -4116,6 +4119,14 @@ function getDays(y,m,q,extras=false){
       // Mostrar días 13,14,15 (cierre Q1)
       for(let d=13;d<=15;d++) days.push(new Date(y,m,d));
     }
+  } else if(q===2){
+    // Aunque el botón de "días extra" esté apagado, si algún día 13/14/15 ya quedó
+    // registrado con origenQ2=true (se llenó alguna vez desde Q2), debe seguir
+    // mostrándose y sumando en Q2 siempre — ya no depende del estado del botón.
+    for(let d=13;d<=15;d++){
+      const dt=new Date(y,m,d), k=`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+      if(REG[k]&&REG[k].origenQ2) days.push(dt);
+    }
   }
   for(let d=s;d<=e;d++)days.push(new Date(y,m,d));
   return days;
@@ -4151,6 +4162,14 @@ function updSel(sel){
   const hSel=wrap.querySelector('[data-part="h"]');
   const mSel=wrap.querySelector('[data-part="m"]');
   REG[k][field]=hSel.value+':'+mSel.value;
+  // Si se está llenando desde "Días extra Q2" (días 13-15 vistos desde la quincena 2),
+  // marcar el día como perteneciente a Q2 — así NO se duplica/suma en el cálculo de Q1.
+  if(CQ===2 && EXTRA_DAYS){
+    const [yK,mK,dK]=k.split('-').map(Number);
+    if(dK>=13 && dK<=15 && (mK-1)===CM){
+      REG[k].origenQ2=true;
+    }
+  }
   wrap.querySelectorAll('.tsel').forEach(s=>{
     s.classList.add('filled');
     s.classList.remove('unset');
@@ -4222,6 +4241,9 @@ function buildTable(){
   document.getElementById('tbody').innerHTML=days.map(date=>{
     const w=date.getDay(),k=dkey(date),f=isFer(date);
     const r=REG[k]||{},j=r.jornada||defJornada(date,r.entrada,r.salida),libre=j==='libre';
+    // Bloquear edición desde "Días extra Q2" si el día YA tiene datos cargados desde Q1 normal
+    // (evita que se sobreescriba/duplique un registro que pertenece a la otra quincena)
+    const bloqueadoPorOtraQuincena = isExtraDay(date) && r.entrada && !r.origenQ2;
     const{ord,ext}=calcExt(r.entrada,r.salida,j);
     const extManual=(r.seccionada&&r.extraManual>0)?r.extraManual:0;
     const extTotal=ext+extManual; // suma horas extra normales + jornada seccionada manual
@@ -4241,8 +4263,8 @@ function buildTable(){
     return`<tr class="${rc}"${extraCls}>
       <td><div class="dcell"><div class="dnum ${dc}">${date.getDate()}</div><div><div class="dname">${DIA[w]}</div>${ferT}${extraTag}</div></div></td>
       <td><span class="badge user" style="font-size:10px;margin-right:4px">${JOPL[j]}</span><select class="jsel" data-k="${k}" onchange="updJ(this)" style="font-size:10px;border:1px solid var(--border);border-radius:4px;padding:2px 4px;background:var(--surface)" title="Solo puedes marcar Libre"><option value="">Auto</option><option value="libre"${j==='libre'?' selected':''}>Libre</option></select</td>
-      <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':buildTimeSelect(k,'entrada',entH,entM,'07','00')}</td>
-      <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':buildTimeSelect(k,'salida',salH,salM,'16','00')}</td>
+      <td>${(libre||bloqueadoPorOtraQuincena)?(bloqueadoPorOtraQuincena?'<span style="color:var(--text3);font-size:11px" title="Este día ya tiene registro en su quincena correspondiente">🔒 '+(r.entrada||'')+'</span>':'<span style="color:var(--text3);font-size:12px">—</span>'):buildTimeSelect(k,'entrada',entH,entM,'07','00')}</td>
+      <td>${(libre||bloqueadoPorOtraQuincena)?(bloqueadoPorOtraQuincena?'<span style="color:var(--text3);font-size:11px">🔒 '+(r.salida||'')+'</span>':'<span style="color:var(--text3);font-size:12px">—</span>'):buildTimeSelect(k,'salida',salH,salM,'16','00')}</td>
       <td><span class="ev evz" style="font-size:11px">${ord>0?ord.toFixed(1)+'h':'—'}</span></td>
       <td>${extD}</td>
       <td style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">${extTotal>0?fmt(extTotal*vh):'—'}</td>
@@ -4306,6 +4328,9 @@ function recalcQ(){
   days.forEach(d=>{
     const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
     if(j==='libre')return;
+    // Si este día fue llenado desde "Días extra Q2" (origenQ2=true), pertenece exclusivamente
+    // a la Quincena 2 — Q1 nunca debe sumarlo, aunque el día calendario sea parte de su rango normal.
+    if(CQ===1 && r.origenQ2) return;
     totExt+=calcExt(r.entrada,r.salida,j).ext;
     if(r.seccionada&&r.extraManual>0) totExt+=r.extraManual; // jornada seccionada: horas extra adicionales manuales
     if(r.entrada)diasR++;
@@ -4726,7 +4751,7 @@ function exportPlanilla(){
   const y=getYr(),sal=SESSION.salario||0,vh=sal/(4.5*54)*1.5;
   const days=getDays(y,CM,CQ);
   let totExt=0;
-  days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);if(j!=='libre')totExt+=calcExt(r.entrada,r.salida,j).ext;});
+  days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);if(j!=='libre'&&!(CQ===1&&r.origenQ2))totExt+=calcExt(r.entrada,r.salida,j).ext;});
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
   const ccss=DED.ccss_monto||0,rb=DED.rb_monto||0,ex=DED.extra_monto||0;
   const comis=DED[`comis_${y}-${pad(CM+1)}-${CQ}`]||0;
@@ -6470,7 +6495,12 @@ function renderFondosUser(){
         const alerta=isAlertGasto(g); // recalculate with current per-user limits
         const ppLabel=getPpLabel(g);
         const descFull=[g.desc,g.vehiculo?'('+g.vehiculo+')':'',g.otrosDesc].filter(Boolean).join(' ');
-        return `<div class="gasto-row${alerta?' alerta-total':''}">
+        const gidUser=g.id||g._localId||'';
+        const revisadoUser=window._fondosRevisadosUsuario&&window._fondosRevisadosUsuario[gidUser];
+        const revisadoCell=revisadoUser
+          ? '<span style="color:#1a9e5c;font-weight:800;font-size:12px">OK</span>'
+          : '<button data-gid="'+gidUser+'" onclick="toggleGastoRevisadoUsuario(this.dataset.gid)" style="background:none;border:1.5px solid var(--border2);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:11px;color:var(--text3)" title="Marcar como revisado">✓</button>';
+        return `<div class="gasto-row${alerta?' alerta-total':''}" style="${revisadoUser?'background:rgba(26,158,92,.08)':''}">
           <span class="gasto-fecha">${formatDate(parseDate(g.fecha))}</span>
           <span class="gasto-cat ${cat.cls}">${cat.icon} ${cat.label}</span>
           <span class="gasto-desc" title="${descFull}">${descFull||'—'}</span>
@@ -6478,6 +6508,7 @@ function renderFondosUser(){
           <span class="gasto-monto">${fmt(g.monto)}</span>
           <span class="gasto-pp">${ppLabel}</span>
           <span class="gasto-alert-icon">${alerta?'🔴':''}</span>
+          <span style="display:inline-flex;align-items:center;margin-right:4px">${revisadoCell}</span>
           <button class="gasto-del" onclick="editGasto('${g.id}')" title="Editar" style="color:var(--blue);margin-right:2px">✏</button>
           <button class="gasto-del" onclick="delGasto('${g.id}')" title="Eliminar">✕</button>
         </div>
@@ -6836,6 +6867,30 @@ async function loadFondosAprobados(){
   } catch(e){ window._fondosAprobados={}; }
 }
 
+// ── Gastos revisados por el propio USUARIO (independiente del check de superadmin) ──
+window._fondosRevisadosUsuario = {};
+async function loadFondosRevisadosUsuario(){
+  try{
+    const {data}=await DB.from('configuracion').select('valor').eq('clave','fondos_revisados_usuario').single();
+    window._fondosRevisadosUsuario = data ? JSON.parse(data.valor||'{}') : {};
+  } catch(e){ window._fondosRevisadosUsuario={}; }
+}
+async function saveFondosRevisadosUsuario(){
+  try{
+    await DB.from('configuracion').upsert({clave:'fondos_revisados_usuario',valor:JSON.stringify(window._fondosRevisadosUsuario)},{onConflict:'clave'});
+  } catch(e){ console.warn('saveFondosRevisadosUsuario error',e); }
+}
+async function toggleGastoRevisadoUsuario(gid){
+  if(!gid) return;
+  if(window._fondosRevisadosUsuario[gid]){
+    delete window._fondosRevisadosUsuario[gid];
+  } else {
+    window._fondosRevisadosUsuario[gid]=true;
+  }
+  await saveFondosRevisadosUsuario();
+  renderFondosUser();
+}
+
 // ── Depósitos aprobados (superadmin) — mismo patrón que Fondos aprobados ──
 window._depositosAprobados = {};
 
@@ -7051,7 +7106,7 @@ function initFondosModule(){
     if(SESSION.rol==='user'){
       FD_MONTH=new Date().getMonth();
       FD_YEAR=new Date().getFullYear();
-      renderFondosUser();
+      loadFondosRevisadosUsuario().then(function(){ renderFondosUser(); });
     } else {
       initAdminFondos();
     }
@@ -12514,6 +12569,9 @@ function renderPagosUsuarios(){
       var r=reg[dkey(d)]||{};
       var j=r.jornada||defJornada(d,r.entrada,r.salida);
       if(j==='libre') return;
+      // Mismo criterio que la vista del usuario y la de superadmin en Horas: si el día
+      // pertenece a Q2 (origenQ2), no se suma en Q1 — evita duplicar horas entre quincenas.
+      if(q===1 && r.origenQ2) return;
       totExt+=calcExt(r.entrada,r.salida,j).ext;
     });
     var montoExt=Math.round(totExt*vh);
