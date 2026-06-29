@@ -549,6 +549,20 @@ td:not(:first-child){text-align:center}
   .htab{padding:3px 5px;font-size:9px}
   .hdr-logo .lc{font-size:14px}
 }
+@media(max-width:600px){
+  /* Comisiones: 12 tarjetas mensuales, 4 columnas fijas → ajustar para celular */
+  .comis-year-grid{grid-template-columns:1fr 1fr}
+}
+@media(max-width:480px){
+  .comis-year-grid{grid-template-columns:1fr}
+}
+@media(max-width:700px){
+  /* Aguinaldo: grid de edición mensual de superadmin, 4 columnas fijas */
+  .ag-edit-grid-resp{grid-template-columns:1fr 1fr}
+}
+@media(max-width:420px){
+  .ag-edit-grid-resp{grid-template-columns:1fr}
+}
 
   /* ════════════════════════════════
      VACACIONES MODULE STYLES
@@ -2984,7 +2998,7 @@ function loadAdminUserHoras(uid){
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 20px;box-shadow:var(--sh);margin-top:14px">
       <div style="font-family:var(--cond);font-size:16px;font-weight:800;color:var(--gray-dark);margin-bottom:4px">Aguinaldo — Desglose editable</div>
       <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Ajusta a ₡0 los meses anteriores al ingreso del colaborador para evitar cálculos erróneos. El monto base por mes es ${fmt(u.salario/12)}.</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px" id="ag-edit-grid-${uid}"></div>
+      <div class="ag-edit-grid-resp" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px" id="ag-edit-grid-${uid}"></div>
       <button class="modal-btn save" onclick="saveAgOverrides('${uid}')">💾 Guardar aguinaldo</button>
     </div>`;
   // uid is a real variable here (outside the template literal)
@@ -15575,7 +15589,8 @@ async function openInvItemDetail(itemId){
   if(movs.length===0){
     html+='<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Sin movimientos registrados</div>';
   } else {
-    html+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    html+='<div style="overflow-x:auto">';
+    html+='<table style="width:100%;border-collapse:collapse;font-size:12px;min-width:700px">';
     html+='<thead><tr style="background:var(--surface2)"><th style="padding:8px 12px;text-align:left">Nº Mov.</th><th style="padding:8px 12px;text-align:left">Tipo</th><th style="padding:8px 12px;text-align:left">Categoría</th><th style="padding:8px 12px;text-align:right">Cantidad</th><th style="padding:8px 12px;text-align:right">Stock</th><th style="padding:8px 12px;text-align:left">Usuario</th><th style="padding:8px 12px;text-align:left">Nota</th><th style="padding:8px 12px;text-align:left">Fecha</th></tr></thead>';
     html+='<tbody>';
     movs.forEach(function(m){
@@ -15594,6 +15609,7 @@ async function openInvItemDetail(itemId){
       html+='</tr>';
     });
     html+='</tbody></table>';
+    html+='</div>';
   }
   body.innerHTML=html;
 }
@@ -17102,6 +17118,10 @@ table.vt td.err{color:#C8102E;font-weight:700}
 .fp-empty{text-align:center;padding:30px;color:#939598;font-size:.82rem}
 .exp-row{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
 .sec-title{font-size:.82rem;font-weight:800;color:#58595B;border-left:3px solid #C8102E;padding-left:8px;margin:14px 0 8px;text-transform:uppercase;letter-spacing:.04em}
+@media(max-width:700px){
+  #sec-fibraplus .form-row-2{grid-template-columns:1fr}
+  #sec-fibraplus .fp-hdr{flex-wrap:wrap}
+}
 `;
 
 // ── DOM HELPERS ───────────────────────────────────────────────────────────────
@@ -19210,6 +19230,9 @@ const CSS=`
 .cc-proj-row .pnm{font-weight:700;font-size:.88rem;flex:1}
 .cc-proj-row .pmt{font-size:.76rem;color:#7F8C8D}
 .cc-info-tag{font-size:.72rem;color:#27AE60;background:#F0FFF4;border:1px solid #C3E6CB;border-radius:4px;padding:1px 6px;margin-left:6px}
+@media(max-width:600px){
+  #sec-calculos .cc-persona-row{grid-template-columns:1fr;gap:5px}
+}
 `;
 
 // ── INIT ──────────────────────────────────────────────────────────────────
