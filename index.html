@@ -3747,9 +3747,27 @@ function recalcQ(){
   const ccss=DED.ccss_monto||0,rb=DED.rb_monto||0,ex=DED.extra_monto||0;
   const rk=`${y}-${pad(CM+1)}-${CQ}`;
   const comisRaw=DED[`comis_${rk}`]||0;
-  // Comisión anual: solo se paga en diciembre Q2
   const sesComisType=(SESSION&&SESSION.comisType)||getUsers().find(function(u){return SESSION&&u.id===SESSION.id;})?.comisType||'mensual';
-  const comis=(sesComisType==='anual')?(CM===11&&CQ===30?comisRaw:0):comisRaw;
+  // Comisión anual: se ACUMULA de diciembre del año anterior a noviembre del año actual,
+  // y se PAGA completa en la Quincena 1 (día 15) de diciembre del año actual.
+  // (Mismo ciclo Dic-Nov que usa el Aguinaldo — ver agSlotYM)
+  var comis;
+  if(sesComisType==='anual'){
+    if(CM===11&&CQ===1){
+      var totalComisCicloAnual=0;
+      for(var miAc=0;miAc<12;miAc++){
+        var yAc=miAc===0?(y-1):y;
+        var mAc=miAc===0?11:miAc-1;
+        var keyAc='comis_'+yAc+'-'+pad(mAc+1)+'-1';
+        totalComisCicloAnual+=DED[keyAc]||0;
+      }
+      comis=totalComisCicloAnual;
+    } else {
+      comis=0; // fuera de la quincena de pago, no se muestra en el total a pagar
+    }
+  } else {
+    comis=comisRaw;
+  }
   const tot=bruto-ccss-rb-ex;
 
   document.getElementById('sdias').textContent=diasR;
@@ -3777,11 +3795,9 @@ function recalcQ(){
         var totalAnual=0;
         var mesesHtml='';
         for(var mi=0;mi<12;mi++){
-          var mkQ1='comis_'+y+'-'+pad(mi+1)+'-15';
-          var mkQ2='comis_'+y+'-'+pad(mi+1)+'-'+String(new Date(y,mi+1,0).getDate());
-          var cQ1=DED[mkQ1]||0;
-          var cQ2=DED[mkQ2]||0;
-          var cMes=cQ1+cQ2;
+          // FIX: misma corrección — clave real es 'comis_AAAA-MM-1', no '-15'/'-día_del_mes'
+          var mkComis1='comis_'+y+'-'+pad(mi+1)+'-1';
+          var cMes=DED[mkComis1]||0;
           totalAnual+=cMes;
           var isActual=mi===CM;
           mesesHtml+='<div style="padding:5px 8px;border-radius:6px;background:'+(isActual?'rgba(217,119,6,.12)':'var(--surface2)')+';border:1px solid '+(isActual?'var(--amber)':'var(--border)')+'">'
@@ -3845,9 +3861,11 @@ function recalcQ(){
         var csbRows='';
         var mesesConComis=0;
         for(var mi2=0;mi2<12;mi2++){
-          var mkQ1c='comis_'+y+'-'+pad(mi2+1)+'-15';
-          var mkQ2c='comis_'+y+'-'+pad(mi2+1)+'-'+String(new Date(y,mi2+1,0).getDate());
-          var cMes2=(DED[mkQ1c]||0)+(DED[mkQ2c]||0);
+          // FIX: la clave real que usa la pestaña Comisiones es 'comis_AAAA-MM-1'
+          // (sufijo '-1' = identificador del mes, NO el día 15 literal). Las claves
+          // '-15' y '-día_del_mes' que se buscaban antes nunca coincidían con nada guardado.
+          var mkComis2='comis_'+y+'-'+pad(mi2+1)+'-1';
+          var cMes2=DED[mkComis2]||0;
           if(cMes2>0) mesesConComis++;
           totalComisAnual+=cMes2;
           var isActualMes=mi2===CM;
@@ -11937,9 +11955,20 @@ function renderPagosUsuarios(){
     var esDiciembre=m===11;
     var comisVal;
     if(isAnual){
-      var comisKeyAnual='comis_'+y+'-'+pad(m+1)+'-'+q;
-      var comisRawAnual=ded[comisKeyAnual]||0;
-      comisVal=(esDiciembre&&q===2?comisRawAnual:0);
+      // Comisión anual: se ACUMULA de diciembre del año anterior a noviembre del año actual,
+      // y se PAGA completa en la Quincena 1 (día 15) de diciembre. Mismo ciclo que el Aguinaldo.
+      if(esDiciembre&&q===1){
+        var totalComisCicloAnualPag=0;
+        for(var miAcPag=0;miAcPag<12;miAcPag++){
+          var yAcPag=miAcPag===0?(y-1):y;
+          var mAcPag=miAcPag===0?11:miAcPag-1;
+          var keyAcPag='comis_'+yAcPag+'-'+pad(mAcPag+1)+'-1';
+          totalComisCicloAnualPag+=ded[keyAcPag]||0;
+        }
+        comisVal=totalComisCicloAnualPag;
+      } else {
+        comisVal=0;
+      }
     } else {
       // Solo Q1 (día 15) muestra comisión, y es la del mes ANTERIOR
       if(q===1){
