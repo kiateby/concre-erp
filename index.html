@@ -4202,7 +4202,7 @@ function actualizarFilaIndividual(k){
   if(j==='libre') return; // sin horas que mostrar
   const vh=(SESSION&&SESSION.salario||0)/(4.5*54)*1.5;
   const esVistaExtra=isExtraDay(date);
-  const perteneceAOtraQuincena=esVistaExtra && r.quincenaOrigen!==CQ;
+  const perteneceAOtraQuincena=esVistaExtra ? (r.quincenaOrigen!==CQ) : (r.quincenaOrigen!=null && r.quincenaOrigen!==CQ);
   const{ord,ext}=calcExt(r.entrada,r.salida,j);
   const extManual=(r.seccionada&&r.extraManual>0)?r.extraManual:0;
   const extTotal=ext+extManual;
@@ -4312,7 +4312,10 @@ function buildTable(){
     // (entrada/salida) se bloquea SOLO si YA tiene un valor — el campo vacío
     // permanece editable. El usuario siempre puede desbloquear manualmente con el botón.
     const esVistaExtra = isExtraDay(date);
-    const perteneceAOtraQuincena = esVistaExtra && r.quincenaOrigen!==CQ;
+    // Pertenece a otra quincena si:
+    // - Es día de rango extra y NO tiene marca explícita de esta quincena, O
+    // - Es día normal pero tiene marca explícita de OTRA quincena (ej: día 15 llenado como extra de Q2, visto desde Q1)
+    const perteneceAOtraQuincena = esVistaExtra ? (r.quincenaOrigen!==CQ) : (r.quincenaOrigen!=null && r.quincenaOrigen!==CQ);
     const desbloqueado = window._diasDesbloqueados && window._diasDesbloqueados[k];
     const bloqEntrada = perteneceAOtraQuincena && !!r.entrada && !desbloqueado;
     const bloqSalida = perteneceAOtraQuincena && !!r.salida && !desbloqueado;
