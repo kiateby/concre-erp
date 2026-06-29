@@ -448,7 +448,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 /* TABLE */
 .sectitle{font-size:10px;font-weight:800;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:10px}
 .sectitle::after{content:'';flex:1;height:1px;background:var(--border)}
-.twrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh)}
+.twrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow-x:auto;box-shadow:var(--sh)}
 table{width:100%;border-collapse:collapse}
 thead th{background:var(--gray-dark);padding:9px 12px;font-size:10px;font-weight:800;letter-spacing:1.3px;color:rgba(255,255,255,.65);text-align:left;border-bottom:2px solid var(--red);white-space:nowrap}
 thead th:not(:first-child){text-align:center}
@@ -538,6 +538,16 @@ td:not(:first-child){text-align:center}
   .overview-grid,.strip{grid-template-columns:1fr}
   .uu-main{padding:12px}
   .tinp{width:68px}.ninp{width:108px}
+  /* Header/menú principal — celular: pestañas más compactas para que quepan más por fila */
+  .hdr{padding:4px 8px;gap:4px}
+  .hdr-logo .lc{font-size:16px}
+  .htab{padding:4px 6px;font-size:10px}
+  .hdr-sep{margin:0}
+}
+@media(max-width:380px){
+  /* Celulares muy angostos */
+  .htab{padding:3px 5px;font-size:9px}
+  .hdr-logo .lc{font-size:14px}
 }
 
   /* ════════════════════════════════
@@ -3094,7 +3104,8 @@ function buildAdminHorasTableHTML(){
   '</div>'+
   '<div style="padding:10px 14px;display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--border)">'+mnavHtml+'</div>'+
   '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)" id="admin-horas-summary"></div>'+
-  '<table style="width:100%;border-collapse:collapse">'+
+  '<div style="overflow-x:auto">'+
+  '<table style="width:100%;border-collapse:collapse;min-width:780px">'+
     '<thead><tr>'+
       '<th style="width:140px;background:var(--surface2);padding:8px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--text3);text-align:left;border-bottom:1px solid var(--border)">Día</th>'+
       '<th style="background:var(--surface2);padding:8px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--text3);text-align:center;border-bottom:1px solid var(--border)">Jornada</th>'+
@@ -3106,7 +3117,8 @@ function buildAdminHorasTableHTML(){
       '<th style="background:var(--surface2);padding:8px 12px;font-size:10px;font-weight:800;letter-spacing:1.2px;color:var(--text3);text-align:left;border-bottom:1px solid var(--border)">Notas</th>'+
     '</tr></thead>'+
     '<tbody id="admin-horas-tbody"></tbody>'+
-  '</table>';
+  '</table>'+
+  '</div>';
 }
 
 function renderAdminHorasTable(uid){
