@@ -3706,10 +3706,10 @@ function renderAdminHorasTable(uid){
     const w=date.getDay(),k=dkey(date),f=isFer(date);
     const r=regU[k]||{},j=r.jornada||defJornada(date,r.entrada,r.salida),libre=j==='libre';
     const{ord,ext}=calcExt(r.entrada,r.salida,j);
-    // Mismo criterio que la vista del usuario: si el día pertenece a Q2 (origenQ2),
-    // no se suma en el total mostrado al ver Q1 — evita duplicar horas entre quincenas.
-    const excluirDeQ1=(ADMIN_CQ===1 && r.origenQ2);
-    if(!excluirDeQ1) totExt+=ext;
+    // Si el día tiene un origen de quincena marcado (se llenó como "días extra") y NO
+    // coincide con la quincena que se está viendo, se excluye — evita duplicar horas.
+    const excluirDeEstaQuincena=(r.quincenaOrigen!=null && r.quincenaOrigen!==ADMIN_CQ);
+    if(!excluirDeEstaQuincena) totExt+=ext;
     let rc=w===0||w===6?'wknd':'';if(f)rc='hday';if(libre)rc='libre';
     const extD=ext>0?'<span class="ev evp">+'+ext.toFixed(1)+'h</span>':'<span class="ev evz">—</span>';
     const ferT=f?'<div class="dferiado">'+f+'</div>':'';
@@ -4119,13 +4119,22 @@ function getDays(y,m,q,extras=false){
       // Mostrar días 13,14,15 (cierre Q1)
       for(let d=13;d<=15;d++) days.push(new Date(y,m,d));
     }
-  } else if(q===2){
-    // Aunque el botón de "días extra" esté apagado, si algún día 13/14/15 ya quedó
-    // registrado con origenQ2=true (se llenó alguna vez desde Q2), debe seguir
-    // mostrándose y sumando en Q2 siempre — ya no depende del estado del botón.
-    for(let d=13;d<=15;d++){
-      const dt=new Date(y,m,d), k=`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
-      if(REG[k]&&REG[k].origenQ2) days.push(dt);
+  } else {
+    // Aunque el botón de "días extra" esté apagado, si algún día ya quedó registrado
+    // con quincenaOrigen=q (se llenó alguna vez como "extra" perteneciente a ESTA quincena),
+    // debe seguir mostrándose y sumando siempre aquí — ya no depende del estado del botón.
+    if(q===1){
+      const prevMonth=new Date(y,m,0);
+      const prevDays=prevMonth.getDate();
+      for(let d=Math.max(1,prevDays-2);d<=prevDays;d++){
+        const dt=new Date(y,m-1,d), k=`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+        if(REG[k]&&REG[k].quincenaOrigen===1) days.push(dt);
+      }
+    } else {
+      for(let d=13;d<=15;d++){
+        const dt=new Date(y,m,d), k=`${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+        if(REG[k]&&REG[k].quincenaOrigen===2) days.push(dt);
+      }
     }
   }
   for(let d=s;d<=e;d++)days.push(new Date(y,m,d));
@@ -4162,13 +4171,11 @@ function updSel(sel){
   const hSel=wrap.querySelector('[data-part="h"]');
   const mSel=wrap.querySelector('[data-part="m"]');
   REG[k][field]=hSel.value+':'+mSel.value;
-  // Si se está llenando desde "Días extra Q2" (días 13-15 vistos desde la quincena 2),
-  // marcar el día como perteneciente a Q2 — así NO se duplica/suma en el cálculo de Q1.
-  if(CQ===2 && EXTRA_DAYS){
-    const [yK,mK,dK]=k.split('-').map(Number);
-    if(dK>=13 && dK<=15 && (mK-1)===CM){
-      REG[k].origenQ2=true;
-    }
+  // Si se está llenando desde "Días extra" (vista de período anterior), marcar a qué
+  // quincena pertenece el dato — así queda fijo, visible y sumando SOLO en esa quincena,
+  // sin importar si el botón de días extra está activo o no en el futuro.
+  if(EXTRA_DAYS && isExtraDay(new Date(k+'T00:00:00'))){
+    REG[k].quincenaOrigen=CQ;
   }
   wrap.querySelectorAll('.tsel').forEach(s=>{
     s.classList.add('filled');
@@ -4216,6 +4223,16 @@ function toggleExtraDays(btn){
   buildTable();
 }
 
+// Permite al usuario editar manualmente un día marcado como "perteneciente a otra quincena",
+// por ejemplo si se equivocó al llenarlo. El desbloqueo es temporal (mientras la tabla esté
+// abierta en esta sesión) — el día sigue contando para la quincena que tenga marcada.
+window._diasDesbloqueados = {};
+function desbloquearDiaManual(k){
+  if(!confirm('¿Seguro que desea editar este día? Pertenece a otra quincena — verifique que no esté duplicando información.')) return;
+  window._diasDesbloqueados[k]=true;
+  buildTable();
+}
+
 function buildAll(){buildMnav();buildTable();}
 
 function buildMnav(){
@@ -4243,7 +4260,15 @@ function buildTable(){
     const r=REG[k]||{},j=r.jornada||defJornada(date,r.entrada,r.salida),libre=j==='libre';
     // Bloquear edición desde "Días extra Q2" si el día YA tiene datos cargados desde Q1 normal
     // (evita que se sobreescriba/duplique un registro que pertenece a la otra quincena)
-    const bloqueadoPorOtraQuincena = isExtraDay(date) && r.entrada && !r.origenQ2;
+    // Bloqueo POR CAMPO (no por fila completa): si el día pertenece a la quincena
+    // "dueña" normal (no fue llenado como días-extra de ESTA vista), cada campo
+    // (entrada/salida) se bloquea SOLO si YA tiene un valor — el campo vacío
+    // permanece editable. El usuario siempre puede desbloquear manualmente con el botón.
+    const esVistaExtra = isExtraDay(date);
+    const perteneceAOtraQuincena = esVistaExtra && r.quincenaOrigen!==CQ;
+    const desbloqueado = window._diasDesbloqueados && window._diasDesbloqueados[k];
+    const bloqEntrada = perteneceAOtraQuincena && !!r.entrada && !desbloqueado;
+    const bloqSalida = perteneceAOtraQuincena && !!r.salida && !desbloqueado;
     const{ord,ext}=calcExt(r.entrada,r.salida,j);
     const extManual=(r.seccionada&&r.extraManual>0)?r.extraManual:0;
     const extTotal=ext+extManual; // suma horas extra normales + jornada seccionada manual
@@ -4263,13 +4288,15 @@ function buildTable(){
     return`<tr class="${rc}"${extraCls}>
       <td><div class="dcell"><div class="dnum ${dc}">${date.getDate()}</div><div><div class="dname">${DIA[w]}</div>${ferT}${extraTag}</div></div></td>
       <td><span class="badge user" style="font-size:10px;margin-right:4px">${JOPL[j]}</span><select class="jsel" data-k="${k}" onchange="updJ(this)" style="font-size:10px;border:1px solid var(--border);border-radius:4px;padding:2px 4px;background:var(--surface)" title="Solo puedes marcar Libre"><option value="">Auto</option><option value="libre"${j==='libre'?' selected':''}>Libre</option></select</td>
-      <td>${(libre||bloqueadoPorOtraQuincena)?(bloqueadoPorOtraQuincena?'<span style="color:var(--text3);font-size:11px" title="Este día ya tiene registro en su quincena correspondiente">🔒 '+(r.entrada||'')+'</span>':'<span style="color:var(--text3);font-size:12px">—</span>'):buildTimeSelect(k,'entrada',entH,entM,'07','00')}</td>
-      <td>${(libre||bloqueadoPorOtraQuincena)?(bloqueadoPorOtraQuincena?'<span style="color:var(--text3);font-size:11px">🔒 '+(r.salida||'')+'</span>':'<span style="color:var(--text3);font-size:12px">—</span>'):buildTimeSelect(k,'salida',salH,salM,'16','00')}</td>
+      <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':(bloqEntrada?'<span style="color:var(--text3);font-size:11px" title="Este horario ya pertenece a la otra quincena">🔒 '+r.entrada+'</span>':buildTimeSelect(k,'entrada',entH,entM,'07','00'))}</td>
+      <td>${libre?'<span style="color:var(--text3);font-size:12px">—</span>':(bloqSalida?'<span style="color:var(--text3);font-size:11px" title="Este horario ya pertenece a la otra quincena">🔒 '+r.salida+'</span>':buildTimeSelect(k,'salida',salH,salM,'16','00'))}</td>
       <td><span class="ev evz" style="font-size:11px">${ord>0?ord.toFixed(1)+'h':'—'}</span></td>
       <td>${extD}</td>
       <td style="text-align:right;font-family:var(--cond);font-size:11px;color:#1a9e5c;font-weight:700">${extTotal>0?fmt(extTotal*vh):'—'}</td>
       <td><input class="ninp${needN?' warn':''}" type="text" data-k="${k}" value="${r.nota||''}" placeholder="${extTotal>0?'⚠ Justificar extras':'Notas...'}" onchange="updN(this)">
-      ${needN?'<span style="color:var(--amber);font-size:13px">⚠</span>':''}</td>
+      ${needN?'<span style="color:var(--amber);font-size:13px">⚠</span>':''}
+      ${(bloqEntrada||bloqSalida)?'<div style="margin-top:4px;font-size:9px;color:var(--text3)">🔒 Pertenece a otra quincena <button data-k="'+k+'" onclick="desbloquearDiaManual(this.dataset.k)" style="margin-left:4px;background:none;border:1px solid var(--border);border-radius:4px;padding:1px 6px;cursor:pointer;font-size:9px;color:var(--blue)">Editar de todos modos</button></div>':''}
+      </td>
       <td style="text-align:center">
         <label style="display:flex;align-items:center;gap:4px;cursor:${libre?'not-allowed':'pointer'};white-space:nowrap;font-size:10px;color:var(--text3)" title="Marcar si trabajó una jornada adicional separada (ej. turno nocturno) el mismo día">
           <input type="checkbox" data-k="${k}" ${libre?'disabled':''} ${r.seccionada?'checked':''} onchange="toggleJornadaSeccionada(this)" style="cursor:pointer">
@@ -4328,9 +4355,9 @@ function recalcQ(){
   days.forEach(d=>{
     const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
     if(j==='libre')return;
-    // Si este día fue llenado desde "Días extra Q2" (origenQ2=true), pertenece exclusivamente
-    // a la Quincena 2 — Q1 nunca debe sumarlo, aunque el día calendario sea parte de su rango normal.
-    if(CQ===1 && r.origenQ2) return;
+    // Si el día tiene un origen de quincena marcado y NO coincide con la quincena actual,
+    // pertenece exclusivamente a la otra — nunca se suma aquí, evitando duplicar horas.
+    if(r.quincenaOrigen!=null && r.quincenaOrigen!==CQ) return;
     totExt+=calcExt(r.entrada,r.salida,j).ext;
     if(r.seccionada&&r.extraManual>0) totExt+=r.extraManual; // jornada seccionada: horas extra adicionales manuales
     if(r.entrada)diasR++;
@@ -4751,7 +4778,7 @@ function exportPlanilla(){
   const y=getYr(),sal=SESSION.salario||0,vh=sal/(4.5*54)*1.5;
   const days=getDays(y,CM,CQ);
   let totExt=0;
-  days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);if(j!=='libre'&&!(CQ===1&&r.origenQ2))totExt+=calcExt(r.entrada,r.salida,j).ext;});
+  days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);if(j!=='libre'&&!(r.quincenaOrigen!=null&&r.quincenaOrigen!==CQ))totExt+=calcExt(r.entrada,r.salida,j).ext;});
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
   const ccss=DED.ccss_monto||0,rb=DED.rb_monto||0,ex=DED.extra_monto||0;
   const comis=DED[`comis_${y}-${pad(CM+1)}-${CQ}`]||0;
@@ -12569,9 +12596,9 @@ function renderPagosUsuarios(){
       var r=reg[dkey(d)]||{};
       var j=r.jornada||defJornada(d,r.entrada,r.salida);
       if(j==='libre') return;
-      // Mismo criterio que la vista del usuario y la de superadmin en Horas: si el día
-      // pertenece a Q2 (origenQ2), no se suma en Q1 — evita duplicar horas entre quincenas.
-      if(q===1 && r.origenQ2) return;
+      // Mismo criterio que el resto del sistema: si el día tiene un origen de quincena
+      // marcado y no coincide con la que se está calculando, se excluye (evita duplicar).
+      if(r.quincenaOrigen!=null && r.quincenaOrigen!==q) return;
       totExt+=calcExt(r.entrada,r.salida,j).ext;
     });
     var montoExt=Math.round(totExt*vh);
