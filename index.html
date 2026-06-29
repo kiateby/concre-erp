@@ -3684,11 +3684,12 @@ function renderAdminHorasTable(uid){
   if(!u)return;
   const regU=getREG(uid)||{}; // getREG reads localStorage('cc_h_'+uid) loaded by _loadUserDEDForAdmin
   const y=new Date().getFullYear();
-  // Admin always shows main quincena days + any extra days the USER filled
+  // Admin always shows main quincena days + any extra days el usuario llenó CON la marca
+  // explícita quincenaOrigen (sin marca = pertenece a su quincena normal de calendario,
+  // nunca se fuerza a aparecer en la quincena vecina, evita el bug de datos viejos sin marca).
   const mainDays=getDays(y,ADMIN_CM,ADMIN_CQ,false);
-  // Check if user has data for extra days (previous period days)
   const extraDays=getDays(y,ADMIN_CM,ADMIN_CQ,true).filter(d=>!mainDays.some(m=>m.toDateString()===d.toDateString()));
-  const hasUserExtraData=extraDays.some(d=>{ const r=regU[dkey(d)]; return r&&r.entrada; });
+  const hasUserExtraData=extraDays.some(d=>{ const r=regU[dkey(d)]; return r&&r.entrada&&r.quincenaOrigen===ADMIN_CQ; });
   const days=hasUserExtraData?getDays(y,ADMIN_CM,ADMIN_CQ,true):mainDays;
   // Show indicator if extra days are visible
   const indEl=document.getElementById('admin-extra-indicator');
@@ -4487,10 +4488,13 @@ function recalcQ(){
   let extM=0;
   for(let q=1;q<=2;q++)getDays(y,CM,q).forEach(d=>{
     const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);
-    if(j!=='libre'){
-      extM+=calcExt(r.entrada,r.salida,j).ext;
-      if(r.seccionada&&r.extraManual>0) extM+=r.extraManual;
-    }
+    if(j==='libre') return;
+    // Mismo criterio que recalcQ: si el día tiene un origen de quincena marcado y no
+    // coincide con la quincena de este ciclo (q), se excluye — evita contar el mismo
+    // día dos veces (una en Q1 por su rango normal, otra en Q2 por su quincenaOrigen).
+    if(r.quincenaOrigen!=null && r.quincenaOrigen!==q) return;
+    extM+=calcExt(r.entrada,r.salida,j).ext;
+    if(r.seccionada&&r.extraManual>0) extM+=r.extraManual;
   });
   document.getElementById('sbex').textContent=extM.toFixed(1)+' h';
   document.getElementById('sbme').textContent=fmt(extM*vh);
