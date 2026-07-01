@@ -6368,6 +6368,8 @@ function onCatChange(){
   const isComb=cat==='comb_v';
   const isOtros=cat==='otros';
   document.getElementById('g-vehiculo-wrap').style.display=isComb?'block':'none';
+  document.getElementById('g-km-wrap').style.display=isComb?'block':'none';
+  if(!isComb){ var kmE=document.getElementById('g-km-error'); if(kmE) kmE.style.display='none'; }
   document.getElementById('g-personas-wrap').style.display=(isAlim||isHosp)?'block':'none';
   document.getElementById('g-comidas-wrap').style.display=isAlim?'block':'none';
   document.getElementById('g-noches-wrap').style.display=isHosp?'block':'none';
@@ -6460,6 +6462,7 @@ function editGasto(id){
   setV('g-comidas',g.comidas||1);
   setV('g-noches',g.noches||1);
   setV('g-vehiculo',g.vehiculo||'');
+  setV('g-km',g.kilometraje||'');
   setV('g-otros-desc',g.otrosDesc||'');
 
   // Update button label and form title
@@ -6489,10 +6492,24 @@ function addGasto(){
     comidas: parseInt(document.getElementById('g-comidas')?.value)||1,
     noches:  parseInt(document.getElementById('g-noches')?.value)||1,
     vehiculo:document.getElementById('g-vehiculo')?.value||'',
+    kilometraje: cat==='comb_v'?parseInt(document.getElementById('g-km')?.value)||0:null,
     otrosDesc:document.getElementById('g-otros-desc')?.value||'',
     nota:    document.getElementById('g-nota').value.trim(),
     alerta:  false,
   };
+
+  // Kilometraje obligatorio y debe ser número para combustible
+  if(cat==='comb_v'){
+    const kmVal=document.getElementById('g-km')?.value||'';
+    const kmNum=parseInt(kmVal);
+    const kmErr=document.getElementById('g-km-error');
+    if(!kmVal.trim()||isNaN(kmNum)||kmNum<=0){
+      if(kmErr) kmErr.style.display='block';
+      document.getElementById('g-km')?.focus();
+      return;
+    }
+    if(kmErr) kmErr.style.display='none';
+  }
   g.alerta=isAlertGasto(g);
 
   if(g.alerta&&!g.nota){ alert('Este gasto supera el límite autorizado. Debes ingresar una justificación.'); return; }
@@ -6658,7 +6675,7 @@ function renderFondosUser(){
         const cat=FONDOS_CATS[g.cat]||{label:g.cat,cls:'cat-otros',icon:'📌'};
         const alerta=isAlertGasto(g); // recalculate with current per-user limits
         const ppLabel=getPpLabel(g);
-        const descFull=[g.desc,g.vehiculo?'('+g.vehiculo+')':'',g.otrosDesc].filter(Boolean).join(' ');
+        const descFull=[g.desc,g.otrosDesc].filter(Boolean).join(' ');
         const gidUser=g.id||g._localId||'';
         const revisadoUser=window._fondosRevisadosUsuario&&window._fondosRevisadosUsuario[gidUser];
         const revisadoCell=revisadoUser
@@ -6670,6 +6687,7 @@ function renderFondosUser(){
           <span class="gasto-desc" title="${descFull}">${descFull||'—'}</span>
           <span class="gasto-fac">${g.factura||'—'}</span>
           <span class="gasto-monto">${fmt(g.monto)}</span>
+          ${g.cat==='comb_v'?`<span style="font-size:11px;color:var(--text2);background:var(--surface2);border-radius:4px;padding:2px 6px;margin-right:4px">⛽ ${g.kilometraje!=null&&g.kilometraje!==''?g.kilometraje+' km':'—'}</span>`:''}
           <span class="gasto-pp">${ppLabel}</span>
           <span class="gasto-alert-icon">${alerta?'🔴':''}</span>
           <span style="display:inline-flex;align-items:center;margin-right:4px">${revisadoCell}</span>
@@ -7113,7 +7131,7 @@ function renderAdminFondosTable(){
   const body=document.getElementById('af-table-body');
   if(!body) return;
   if(!filtered.length){
-    const cols=isSA?10:9;
+    const cols=isSA?11:10;
     body.innerHTML='<tr><td colspan="'+cols+'" style="text-align:center;color:var(--text3);padding:20px">Sin registros en este período</td></tr>';
     return;
   }
@@ -7129,12 +7147,13 @@ function renderAdminFondosTable(){
           : '<button data-gid="'+gid+'" onclick="toggleFondoAprobado(this.dataset.gid)" style="background:none;border:1.5px solid var(--border2);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px;color:var(--text3)">✓</button>'
         )+'</td>'
       : '';
-    const cols=isSA?10:9;
+    const cols=isSA?11:10;
     let html='<tr style="'+rowBg+'">'
       +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(g.fecha))+'</td>'
       +'<td><strong>'+(g.uname||g.uid)+'</strong></td>'
       +'<td><span class="gasto-cat '+cat.cls+'">'+cat.icon+' '+cat.label+'</span></td>'
-      +'<td style="font-size:12px">'+([g.desc||g.descripcion,g.vehiculo?'('+g.vehiculo+')':''].filter(Boolean).join(' ')||'—')+'</td>'
+      +'<td style="font-size:12px">'+([g.desc||g.descripcion,g.otrosDesc].filter(Boolean).join(' ')||'—')+'</td>'
+      +'<td style="font-size:11px;color:var(--text2)">'+(g.cat==='comb_v'&&g.kilometraje!=null&&g.kilometraje!==''?g.kilometraje+' km':'—')+'</td>'
       +'<td style="font-size:11px;color:var(--text3)">'+(g.factura||'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800">'+fmt(g.monto)+'</td>'
       +'<td style="font-size:11px;color:'+(alerta?'var(--red)':'var(--text3)')+'">'+( getPpLabel(g)||'—')+'</td>'
@@ -7197,7 +7216,7 @@ function exportFondosUser(){
     const cat=FONDOS_CATS[g.cat]||{label:g.cat,icon:'📌'};
     const ppL=getPpLabel(g);
     return `<div class="col-row${g.alerta?' alerta-row':''}${i%2?'':' alt'}">
-      <span class="cr-label">${formatDate(parseDate(g.fecha))} · ${cat.icon} ${cat.label}${g.vehiculo?' ('+g.vehiculo+')':''}</span>
+      <span class="cr-label">${formatDate(parseDate(g.fecha))} · ${cat.icon} ${cat.label}</span>
       <span style="font-size:11px;color:#9a9b9d">${g.factura||''} ${g.proyecto||''}</span>
       <span class="cr-value${alerta?' red':''}">${fmt(g.monto)}</span>
       ${ppL?('<span style="font-size:10px;color:'+(alerta?'#E31837':'#9a9b9d')+'">'+ppL+'</span>'):''}
@@ -21508,7 +21527,7 @@ window.initCalcCONCRE=initCalcCONCRE;
             <table class="atbl">
               <thead><tr>
                 <th>Fecha</th><th>Usuario</th><th>Categoría</th><th>Descripción</th>
-                <th>Factura</th><th>Monto</th><th>x Persona</th><th>Proyecto</th><th>⚠</th><th id="af-th-aprobado" style="display:none">✓</th>
+                <th>Kilometraje</th><th>Factura</th><th>Monto</th><th>x Persona</th><th>Proyecto</th><th>⚠</th><th id="af-th-aprobado" style="display:none">✓</th>
               </tr></thead>
               <tbody id="af-table-body"></tbody>
             </table>
@@ -22652,6 +22671,11 @@ window.initCalcCONCRE=initCalcCONCRE;
                   <option value="buseta">Buseta</option>
                   <option value="particular">Particular</option>
                 </select>
+              </div>
+              <div id="g-km-wrap" style="display:none">
+                <span class="ag-label">Kilometraje <span style="color:var(--red)">*</span></span>
+                <input type="number" class="ag-inp" id="g-km" min="0" step="1" placeholder="Ingrese número (ej: 12500)" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+                <span id="g-km-error" style="color:var(--red);font-size:11px;display:none">El kilometraje es obligatorio y debe ser un número</span>
               </div>
               <div>
                 <span class="ag-label">N° Factura</span>
