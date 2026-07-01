@@ -12579,6 +12579,22 @@ function guardarHistRow(uid, monthKey, rowId){
   var montoExt=montoExtEl?parseInt(montoExtEl.value)||0:0;
   var dedTotal=dedTotalEl?parseInt(dedTotalEl.value)||0:0;
   var nota=notaEl?(notaEl.value||'').trim():'';
+  // Si todos los campos están en 0/vacío, eliminar el registro HIST completamente
+  // para que el sistema use el valor calculado real — guardar {monto_extra:0} no funciona
+  // porque hasData evalúa como false (0 es falsy) y vuelve al pre-llenado automático.
+  if(!salOvr && !montoExt && !dedTotal && !nota){
+    deletePlanillaHist(uid, monthKey);
+    var ymsel=document.getElementById('pago-yearmonth-sel');
+    if(ymsel) ymsel.value=monthKey;
+    setTimeout(function(){
+      renderPlanillaHistoricaTable();
+      renderPagosUsuarios();
+      buildAgGlobal();
+      buildAgEditGrid(uid);
+    }, 300);
+    toast('✅ Override eliminado — usando valores calculados');
+    return;
+  }
   var data={salario_override:salOvr, monto_extra:montoExt, deduccion_total:dedTotal, nota:nota};
   savePlanillaHist(uid, monthKey, data);
   // Sync the year-month selector to the saved month so control de pagos reflects it
