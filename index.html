@@ -4059,6 +4059,13 @@ td:last-child{border-left:2px solid rgba(26,158,92,.2)}
 // ══════════════════════════════════════════════
 //  USER HOURS MODULE
 // ══════════════════════════════════════════════
+// Fecha actual en zona horaria de Costa Rica (UTC-6, sin DST).
+// Vercel corre en UTC — después de las 6pm CR, new Date() ya da el día siguiente.
+// Usar esta función en TODOS los lugares donde se necesite la fecha de hoy como default.
+function todayCR(){
+  return new Date().toLocaleDateString('en-CA',{timeZone:'America/Costa_Rica'});
+  // Devuelve 'YYYY-MM-DD' — formato correcto para inputs type=date
+}
 function isFer(d){
   const k=`${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   if(FERIADOS[k])return FERIADOS[k];
@@ -6292,7 +6299,7 @@ function toggleAddGastoForm(){
   if(f.style.display==='block'){
     populateGCatSelect(); // ensure categories loaded (handles async timing)
     const d=document.getElementById('g-fecha');
-    if(d&&!d.value) d.value=new Date().toISOString().split('T')[0];
+    if(d&&!d.value) d.value=todayCR();
   }
 }
 
@@ -6411,7 +6418,7 @@ function addGasto(){
   if(!cat){ alert('Selecciona una categoría'); return; }
   const monto=parseMon(document.getElementById('g-monto').value);
   if(!monto){ alert('Ingresa el monto del gasto'); return; }
-  const fecha=document.getElementById('g-fecha').value||new Date().toISOString().split('T')[0];
+  const fecha=document.getElementById('g-fecha').value||todayCR();
 
   const g={
     id: GASTO_EDIT_ID || ('g'+Date.now()),
@@ -6469,7 +6476,7 @@ function addGasto(){
 }
 
 function addDeposito(){
-  const fecha=document.getElementById('dep-fecha').value||new Date().toISOString().split('T')[0];
+  const fecha=document.getElementById('dep-fecha').value||todayCR();
   const desc=document.getElementById('dep-desc').value.trim();
   const monto=parseMon(document.getElementById('dep-monto').value);
   if(!monto){ alert('Ingresa el monto del depósito'); return; }
@@ -7700,7 +7707,7 @@ function toggleVentaForm(){
   f.style.display=isOpen?'none':'block';
   if(!isOpen){
     const fd=document.getElementById('vf-fecha');
-    if(fd&&!fd.value) fd.value=new Date().toISOString().split('T')[0];
+    if(fd&&!fd.value) fd.value=todayCR();
     buildProdSelect();
   }
 }
@@ -8010,7 +8017,7 @@ function _doSaveVenta(){
     if(_lbl){ _lbl.parentElement.style.borderColor='var(--red)'; _lbl.parentElement.style.background='rgba(227,24,55,.04)'; }
     return;
   }
-  const fecha=document.getElementById('vf-fecha').value||new Date().toISOString().split('T')[0];
+  const fecha=document.getElementById('vf-fecha').value||todayCR();
   const isUsd=document.getElementById('vf-is-usd').checked;
   let subtotal=0, usd=0, tcUsed=0;
   var _qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
@@ -9588,7 +9595,7 @@ function marcarEjecutado(ventaId, fromMonthKey){
   if(idx<0) return;
   const v=vd[fromMonthKey].ventas[idx];
   v.ejecutado=true;
-  v.ejecutadoFecha=new Date().toISOString().split('T')[0];
+  v.ejecutadoFecha=todayCR();
   v.tienePendiente=false;
   // Actualizar la venta original en cache y Supabase
   window._ventasCache[uid]=vd;
@@ -9598,7 +9605,7 @@ function marcarEjecutado(ventaId, fromMonthKey){
   const mv=getMonthVentas(uid,nowY,nowM);
   const execVenta={
     id:'exec'+Date.now(),
-    fecha:new Date().toISOString().split('T')[0],
+    fecha:todayCR(),
     prodId:v.prodId,
     cliente:v.cliente,
     factura:v.factura,
@@ -10680,7 +10687,7 @@ function clearProjectModal(){
   ['proj-nombre','proj-notas','proj-cobro','proj-pago-sub','proj-adelanto','proj-planilla-total','proj-vehiculo']
     .forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
   var fa=document.getElementById('proj-fecha');
-  if(fa) fa.value=new Date().toISOString().split('T')[0];
+  if(fa) fa.value=todayCR();
   var pa=document.getElementById('proj-area');
   if(pa) pa.value='';
   document.getElementById('proj-calc-preview').innerHTML='';
@@ -11378,7 +11385,7 @@ function toggleAdminVentaForm(){
     if(sel) sel.onchange=function(){ onAdminCatProdChange(); onAdminVentaProdChange(); };
     // Default date
     var df=document.getElementById('avf-fecha');
-    if(df&&!df.value) df.value=new Date().toISOString().split('T')[0];
+    if(df&&!df.value) df.value=todayCR();
   }
 }
 
@@ -11743,7 +11750,7 @@ function toggleGastosForm(){
   document.getElementById('gastos-form-title').textContent='Nuevo registro de gastos';
   // Default date = today
   var df=document.getElementById('gp-fecha');
-  if(df&&!df.value) df.value=new Date().toISOString().split('T')[0];
+  if(df&&!df.value) df.value=todayCR();
   fw.style.display='block';
   fw.scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -12645,10 +12652,14 @@ function renderPagosUsuarios(){
   var periodKey=y+'-'+pad(m+1)+'-'+(q===1?'15':String(new Date(y,m+1,0).getDate()));
   var qLabel='Q'+(q)+' '+MES[m]+' '+y;
   var monthKey=y+'-'+pad(m+1);
-  // mainDays: rango normal de la quincena (sin días extra)
-  var mainDays=getDays(y,m,q,false);
-  // extraCandidates: los 3 días del período anterior que podrían ser extra
-  var extraCandidates=getDays(y,m,q,true).filter(function(d){ return !mainDays.some(function(md){ return md.toDateString()===d.toDateString(); }); });
+  // Rango normal de la quincena — puramente por calendario, sin tocar ningún REG
+  var mainRange=[];
+  if(q===1){ for(var _d=1;_d<=15;_d++) mainRange.push(new Date(y,m,_d)); }
+  else { var _eom=new Date(y,m+1,0).getDate(); for(var _d=16;_d<=_eom;_d++) mainRange.push(new Date(y,m,_d)); }
+  // Candidatos extra: los 3 días del período anterior (calculados sin REG)
+  var extraCandidates=[];
+  if(q===2){ for(var _d=13;_d<=15;_d++) extraCandidates.push(new Date(y,m,_d)); }
+  else { var _pm=m===0?11:m-1,_py=m===0?y-1:y,_pme=new Date(_py,_pm+1,0).getDate(); for(var _d=_pme-2;_d<=_pme;_d++) extraCandidates.push(new Date(_py,_pm,_d)); }
 
   var users=sortAlpha(getUsers().filter(function(u){return u.estado==='activo';}), 'nombre');
   var totalGeneral=0;
@@ -12659,12 +12670,12 @@ function renderPagosUsuarios(){
     var sal=hist&&hist.salario_override>0 ? hist.salario_override : (u.salario||0);
     var salQ=Math.round(sal/2);
 
-    // ── 2. HORAS EXTRA — calculated per-user using each user's own REG ──
+    // ── 2. HORAS EXTRA — días calculados 100% desde el REG de ESTE usuario ──
     var reg=getREG(u.id)||{};
     var vh=sal/(4.5*54)*1.5; // same formula as buildAdminOverview and recalcQ
-    // Build user-specific days list: main days + extra days that THIS user explicitly marked with quincenaOrigen===q
-    var hasUserExtra=extraCandidates.some(function(d){ var r=reg[dkey(d)]; return r&&r.entrada&&r.quincenaOrigen===q; });
-    var days=hasUserExtra?mainDays.concat(extraCandidates):mainDays;
+    // Agregar solo los días extra que ESTE usuario marcó explícitamente con quincenaOrigen===q
+    var userExtraDays=extraCandidates.filter(function(d){ var r=reg[dkey(d)]||{}; return r.quincenaOrigen===q; });
+    var days=mainRange.concat(userExtraDays);
     var totExt=0;
     days.forEach(function(d){
       var r=reg[dkey(d)]||{};
@@ -16950,7 +16961,7 @@ function invExportMovs(mode){
       return [item.nombre,item.type,item.unidad||'',item.cantidad,entradas,salidas];
     });
     tsv='sep=\t\r\n'+headers.join('\t')+'\r\n'+rows.map(function(r){return r.join('\t');}).join('\r\n');
-    filename='CONCRE_Inventario_Totales_'+new Date().toISOString().split('T')[0]+'.csv';
+    filename='CONCRE_Inventario_Totales_'+todayCR()+'.csv';
   } else {
     var headers2=['Nº Movimiento','Ítem','Lote','Tipo','Categoría','Cantidad','Stock Antes','Stock Después','Responsable','Vendedor','Nota','Fecha'];
     var rows2=movs.map(function(m){
@@ -16960,7 +16971,7 @@ function invExportMovs(mode){
       return [m.id,item.nombre,lote?lote.nombre:'',m.tipo,catLabel,m.cantidad,(m.cantidad_antes||'—'),(m.cantidad_despues||'—'),(m.nombre_responsable||m.uid_responsable||''),(m.nombre_vendedor||''),m.nota,invDateFmt(m.created_at)];
     });
     tsv='sep=\t\r\n'+headers2.join('\t')+'\r\n'+rows2.map(function(r){return r.map(function(v){return String(v||'').replace(/\t/g,' ');}).join('\t');}).join('\r\n');
-    filename='CONCRE_Inventario_Historial_'+new Date().toISOString().split('T')[0]+'.csv';
+    filename='CONCRE_Inventario_Historial_'+todayCR()+'.csv';
   }
   var bom=new Uint8Array([0xFF,0xFE]);
   var encoded=new Uint16Array(tsv.length);
@@ -17326,7 +17337,7 @@ function icExportarExcel(){
   var blob=new Blob([bom,encoded],{type:'text/csv;charset=utf-16le'});
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a'); a.href=url;
-  a.download='CONCRE_InteligenciaComercial_'+new Date().toISOString().split('T')[0]+'.csv';
+  a.download='CONCRE_InteligenciaComercial_'+todayCR()+'.csv';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
   toast('✅ Exportado');
