@@ -3711,8 +3711,9 @@ function renderAdminHorasTable(uid){
     // Días normales: se excluyen si tienen marca de otra quincena.
     const isExtraRangeAdmin=esFechaDeRangoExtraQ(date,ADMIN_CQ,ADMIN_CM);
     const excluirDeEstaQuincena=isExtraRangeAdmin?(r.quincenaOrigen!==ADMIN_CQ):(r.quincenaOrigen!=null&&r.quincenaOrigen!==ADMIN_CQ);
-    const extMostrable=excluirDeEstaQuincena?0:ext; // si pertenece a la otra quincena, no se muestra ni suma aquí
-    if(!excluirDeEstaQuincena) totExt+=ext;
+    const extraManualSec=(!excluirDeEstaQuincena&&r.seccionada&&r.extraManual>0)?r.extraManual:0;
+    const extMostrable=excluirDeEstaQuincena?0:(ext+extraManualSec);
+    if(!excluirDeEstaQuincena){ totExt+=ext; totExt+=extraManualSec; }
     let rc=w===0||w===6?'wknd':'';if(f)rc='hday';if(libre)rc='libre';
     const extD=extMostrable>0?'<span class="ev evp">+'+extMostrable.toFixed(1)+'h</span>':'<span class="ev evz">—</span>';
     const ferT=f?'<div class="dferiado">'+f+'</div>':'';
@@ -3736,8 +3737,10 @@ function renderAdminHorasTable(uid){
   const histAdmin=getPlanillaHist(uid, monthKeyAdmin);
   const salAdmin=histAdmin&&histAdmin.salario_override>0?histAdmin.salario_override:u.salario;
   const salQ=Math.round(salAdmin/2);
-  // horas extra: if hist has manual monto_extra, use it; else use calculated
-  const mExt=histAdmin&&histAdmin.monto_extra>0?histAdmin.monto_extra:totExt*(salAdmin/(4.5*54)*1.5);
+  // horas extra: monto_extra en HIST es valor mensual → dividir por 2 para la quincena.
+  // Si no hay HIST override, usar el valor calculado desde las entradas reales.
+  const calcExt_monto=totExt*(salAdmin/(4.5*54)*1.5);
+  const mExt=histAdmin&&histAdmin.monto_extra>0?Math.round(histAdmin.monto_extra/2):calcExt_monto;
   const dedU=getDED(uid)||{};
   // Deducciones: hist total (÷2 per quincena) or DED normal
   let ccss,rb,ex;
@@ -12689,6 +12692,7 @@ function renderPagosUsuarios(){
         if(r.quincenaOrigen!=null && r.quincenaOrigen!==q) return;
       }
       totExt+=calcExt(r.entrada,r.salida,j).ext;
+      if(r.seccionada&&r.extraManual>0) totExt+=r.extraManual;
     });
     var montoExt=Math.round(totExt*vh);
     // If hist has a manual override for horas extra, use it instead
