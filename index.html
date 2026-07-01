@@ -13326,6 +13326,12 @@ function fuzzyMatch(str,q){
   return tokens.every(function(t){return str.includes(t);});
 }
 
+// Normaliza texto para comparación de duplicados: minúsculas, sin tildes, sin puntos, sin espacios extras
+function normalizeCRM(s){
+  if(!s) return '';
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\./g,'').replace(/\s+/g,' ').trim();
+}
+
 // ── Client detail modal ──
 function openCRMDetail(clienteId){
   _crmCurrentDetailId=clienteId;
@@ -13634,6 +13640,23 @@ function saveCRMClient(){
     if(idx2>=0){ reg.created=clients[idx2].created; clients[idx2]=reg; }
     else clients.push(reg);
   } else {
+    // Verificar duplicados: mismo nombreEmpresa normalizado + al menos un contacto igual (nombre o tel o email)
+    var normNuevo=normalizeCRM(nombre);
+    var dupCliente=clients.find(function(cl){
+      if(normalizeCRM(cl.nombreEmpresa)!==normNuevo) return false;
+      // Mismo nombre de empresa — verificar si algún contacto coincide
+      return contactos.some(function(ctNuevo){
+        return (cl.contactos||[]).some(function(ctEx){
+          var mismoNombre=ctNuevo.nombre&&ctEx.nombre&&normalizeCRM(ctNuevo.nombre)===normalizeCRM(ctEx.nombre);
+          var mismoTel=ctNuevo.tel&&ctEx.tel&&ctNuevo.tel.replace(/\D/g,'')===ctEx.tel.replace(/\D/g,'');
+          var mismoEmail=ctNuevo.email&&ctEx.email&&ctNuevo.email.toLowerCase()===ctEx.email.toLowerCase();
+          return mismoNombre||mismoTel||mismoEmail;
+        });
+      });
+    });
+    if(dupCliente){
+      toast('⚠ Ya existe un cliente similar: "'+dupCliente.nombreEmpresa+'" — verifique antes de duplicar'); return;
+    }
     clients.push(reg);
     // Try to link unmatched ventas
     tryMatchClientVentas(reg);
@@ -13974,8 +13997,8 @@ function renderCRMPickerResults(){
     // Si el filtro deja lista vacía, mostrar todos (el cliente puede no tener createdBy correcto)
     clients=filtered.length>0?filtered:clients;
   }
-  if(q.trim()) clients=clients.filter(function(cl){return fuzzyMatch(cl.nombreEmpresa,q)||fuzzyMatch(cl.cedula,q);});
-  clients=clients.slice(0,15);
+  if(q.trim()) clients=clients.filter(function(cl){return fuzzyMatch(cl.nombreEmpresa,q)||fuzzyMatch(cl.cedula,q)||(cl.contactos||[]).some(function(ct){return fuzzyMatch(ct.nombre,q)||fuzzyMatch(ct.tel,q)||fuzzyMatch(ct.email,q);});});
+  // No límite — mostrar todos los clientes disponibles
   if(!clients.length){
     el.innerHTML='<div style="text-align:center;padding:20px;color:var(--text3)">Sin coincidencias</div>'; return;
   }
