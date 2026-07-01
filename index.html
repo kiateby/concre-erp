@@ -2456,6 +2456,7 @@ var _impProveedores = [];
 var _impProductos = [];
 var _impImportaciones = [];
 var _impLineasActuales = []; // líneas de la importación que se está creando/editando
+var _impLastImportacion = null; // datos del formulario al último cálculo — para recalcular al editar margen en resultados
 var _impVistaActual = 'lista'; // 'lista' | 'nueva' | 'catalogo' | 'detalle'
 var _impImportacionEditando = null; // id de importación en edición, null = nueva
 
@@ -2777,8 +2778,8 @@ function renderImpLineasProductos(){
     return;
   }
 
-  cont.innerHTML = '<div style="overflow-x:auto"><table class="atbl" style="min-width:680px">'
-    +'<thead><tr><th>Producto</th><th style="text-align:center">Cantidad</th><th style="text-align:right">Precio unit. (USD)</th><th style="text-align:center">Margen</th><th></th></tr></thead>'
+  cont.innerHTML = '<div style="overflow-x:auto"><table class="atbl" style="min-width:520px">'
+    +'<thead><tr><th>Producto</th><th style="text-align:center">Cantidad</th><th style="text-align:right">Precio unit. (USD)</th><th></th></tr></thead>'
     +'<tbody>'
     +_impLineasActuales.map(function(l, idx){
       var opciones = productosDisponibles.map(function(p){
@@ -2788,7 +2789,6 @@ function renderImpLineasProductos(){
         +'<td><select data-idx="'+idx+'" onchange="impActualizarLinea(this.dataset.idx,\'producto_id\',this.value)" class="form-select" style="font-size:12px"><option value="">— Producto —</option>'+opciones+'</select></td>'
         +'<td><input type="number" step="1" data-idx="'+idx+'" value="'+l.cantidad+'" onchange="impActualizarLinea(this.dataset.idx,\'cantidad\',this.value)" class="form-inp" style="width:70px;text-align:center"></td>'
         +'<td><input type="number" step="0.01" data-idx="'+idx+'" value="'+l.precio_unitario+'" onchange="impActualizarLinea(this.dataset.idx,\'precio_unitario\',this.value)" class="form-inp" style="width:100px;text-align:right"></td>'
-        +'<td><input type="number" step="0.01" data-idx="'+idx+'" value="'+l.margen+'" onchange="impActualizarLinea(this.dataset.idx,\'margen\',this.value)" class="form-inp" style="width:80px;text-align:center" title="Número libre, ej: 0.65, 1.5"></td>'
         +'<td><button data-idx="'+idx+'" onclick="impEliminarLinea(this.dataset.idx)" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px">🗑</button></td>'
         +'</tr>';
     }).join('')
@@ -2830,7 +2830,18 @@ function impLeerDatosFormulario(){
 function impCalcularYMostrar(){
   var importacion = impLeerDatosFormulario();
   if(!importacion) return;
+  _impLastImportacion = importacion; // guardar para recalcular al editar margen
   var resultado = impCalcularImportacion(importacion, _impLineasActuales);
+  renderImpResultado(resultado, 'imp-f-resultado-nueva');
+}
+
+// Actualiza el margen de una línea desde la tabla de resultados y recalcula en tiempo real.
+// valorPct: lo que el usuario escribe (ej: 80 → 80%) → se almacena como 0.80
+function impActualizarMargenFila(idx, valorPct){
+  if(!_impLineasActuales[idx]) return;
+  _impLineasActuales[idx].margen = (parseFloat(valorPct)||0) / 100;
+  if(!_impLastImportacion) return;
+  var resultado = impCalcularImportacion(_impLastImportacion, _impLineasActuales);
   renderImpResultado(resultado, 'imp-f-resultado-nueva');
 }
 
@@ -2841,24 +2852,41 @@ function renderImpResultado(resultado, contenedorId){
     +'<div style="font-family:var(--cond);font-weight:800;font-size:16px;margin-bottom:12px">🧮 Resultado del cálculo</div>'
     +'<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px;font-size:12px;color:var(--text3)">'
     +'<div>Total general: <strong style="color:var(--text2)">$'+resultado.totalGeneral.toFixed(2)+'</strong></div>'
-    +'<div>% Fee: <strong style="color:var(--text2)">'+(resultado.pctFee*100).toFixed(2)+'%</strong></div>'
-    +'<div>% CIF: <strong style="color:var(--text2)">'+(resultado.pctCif*100).toFixed(2)+'%</strong></div>'
-    +'<div>% Naviera: <strong style="color:var(--text2)">'+(resultado.pctNaviera*100).toFixed(2)+'%</strong></div>'
-    +'<div>% Agencia: <strong style="color:var(--text2)">'+(resultado.pctAgencia*100).toFixed(2)+'%</strong></div>'
-    +'<div>% Publicidad: <strong style="color:var(--text2)">'+(resultado.pctPublicidad*100).toFixed(2)+'%</strong></div>'
+    +'<div>Fee: <strong style="color:#f4a30a">$'+resultado.feeUsd.toFixed(2)+'</strong> <span>('+( resultado.pctFee*100).toFixed(2)+'%)</span></div>'
+    +'<div>CIF: <strong style="color:#f4a30a">$'+resultado.cifUsd.toFixed(2)+'</strong> <span>('+(resultado.pctCif*100).toFixed(2)+'%)</span></div>'
+    +'<div>Naviera: <strong style="color:#f4a30a">$'+resultado.navieraUsd.toFixed(2)+'</strong> <span>('+(resultado.pctNaviera*100).toFixed(2)+'%)</span></div>'
+    +'<div>Agencia: <strong style="color:#f4a30a">$'+resultado.agenciaUsd.toFixed(2)+'</strong> <span>('+(resultado.pctAgencia*100).toFixed(2)+'%)</span></div>'
+    +'<div>Publicidad: <strong style="color:#f4a30a">$'+resultado.publicidadUsd.toFixed(2)+'</strong> <span>('+(resultado.pctPublicidad*100).toFixed(2)+'%)</span></div>'
     +'</div>'
-    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1100px;font-size:11px">'
-    +'<thead><tr><th>Producto</th><th>Cant.</th><th>Precio Unit.</th><th>Subtotal $</th><th>Precio bodega $</th><th>Precio ₡ (sin margen)</th><th>Margen</th><th>Comisión int.</th><th>Precio sin IVA</th><th>Precio con IVA</th></tr></thead>'
-    +'<tbody>'+resultado.detalle.map(function(d){
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1400px;font-size:11px">'
+    +'<thead><tr>'
+    +'<th>Producto</th><th>Cant.</th><th>Precio Unit.</th><th>Subtotal $</th>'
+    +'<th style="color:#f4a30a">Fee $</th><th style="color:#f4a30a">CIF $</th><th style="color:#f4a30a">Naviera $</th><th style="color:#f4a30a">Agencia $</th><th style="color:#f4a30a">Publicidad $</th>'
+    +'<th>P. bodega $</th><th>Precio ₡ (sin margen)</th>'
+    +'<th>Margen %<br><span style="font-weight:400;font-size:9px;color:var(--text3)">editable · recalcula</span></th>'
+    +'<th>Comisión int.</th><th>Precio sin IVA</th><th>Precio con IVA</th>'
+    +'</tr></thead>'
+    +'<tbody>'+resultado.detalle.map(function(d, idx){
       var prod = _impProductos.find(function(p){return p.id===d.producto_id;});
+      var margenPct = (d.margen*100).toFixed(0);
       return '<tr>'
         +'<td style="font-weight:700">'+(prod?prod.nombre:'—')+'</td>'
         +'<td style="text-align:center">'+d.cantidad+'</td>'
         +'<td style="text-align:right">$'+d.precio_unitario.toFixed(2)+'</td>'
-        +'<td style="text-align:right">$'+d.subtotal.toFixed(2)+'</td>'
+        +'<td style="text-align:right">$'+(d.total).toFixed(2)+'</td>'
+        +'<td style="text-align:right;color:#f4a30a">$'+d.fee.toFixed(2)+'</td>'
+        +'<td style="text-align:right;color:#f4a30a">$'+d.cif.toFixed(2)+'</td>'
+        +'<td style="text-align:right;color:#f4a30a">$'+d.naviera.toFixed(2)+'</td>'
+        +'<td style="text-align:right;color:#f4a30a">$'+d.agencia.toFixed(2)+'</td>'
+        +'<td style="text-align:right;color:#f4a30a">$'+d.publicidad.toFixed(2)+'</td>'
         +'<td style="text-align:right">$'+d.precioBodegaUsd.toFixed(2)+'</td>'
         +'<td style="text-align:right">₡'+d.precioColones.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
-        +'<td style="text-align:center">'+(d.margen*100).toFixed(0)+'%</td>'
+        +'<td style="text-align:center">'
+          +'<input type="number" step="1" min="0" value="'+margenPct+'" '
+          +'oninput="impActualizarMargenFila('+idx+',this.value)" '
+          +'style="width:72px;text-align:center;font-size:11px;padding:3px 5px;border:1.5px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text);font-family:var(--cond);font-weight:700">'
+          +' <span style="font-size:10px;color:var(--text3)">%</span>'
+        +'</td>'
         +'<td style="text-align:right">₡'+d.comisionInterna.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
         +'<td style="text-align:right;font-weight:800;color:var(--text2)">₡'+d.precioSinIva.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
         +'<td style="text-align:right;font-weight:900;color:var(--green)">₡'+d.precioConIva.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
@@ -2866,6 +2894,7 @@ function renderImpResultado(resultado, contenedorId){
     }).join('')+'</tbody></table></div>'
     +'</div>';
 }
+
 
 
 // ── Guardar importación (nueva o edición) en Supabase ──
