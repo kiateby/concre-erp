@@ -6250,6 +6250,22 @@ function initFondosLimUserSel(){
 
 function getFondosMesKey(y,m){ return y+'-'+pad(m+1); }
 
+// Saldo acumulado de TODOS los meses anteriores al mes seleccionado (y, m).
+// Itera todos los keys YYYY-MM del usuario y suma (depósitos - gastos) de los que sean < mes actual.
+function getSaldoAnterior(uid, y, m){
+  const fd=getFondosData(uid);
+  const limitKey=getFondosMesKey(y,m); // mes actual — solo sumamos los MENORES a este
+  let saldo=0;
+  Object.keys(fd).forEach(function(key){
+    if(key>=limitKey) return; // ignorar mes actual y futuros
+    const md=fd[key]||{};
+    const dep=(md.depositos||[]).reduce(function(s,d){return s+d.monto;},0);
+    const gast=(md.gastos||[]).reduce(function(s,g){return s+g.monto;},0);
+    saldo+=dep-gast;
+  });
+  return saldo;
+}
+
 function getMonthData(uid,y,m){
   const fd=getFondosData(uid);
   const key=getFondosMesKey(y,m);
@@ -6541,6 +6557,10 @@ function renderFondosUser(){
   // Depositos
   const deps=md.depositos||[];
   const totalDep=deps.reduce((s,d)=>s+d.monto,0);
+
+  // Saldo acumulado de meses anteriores
+  const saldoAnterior=getSaldoAnterior(uid,FD_YEAR,FD_MONTH);
+
   const dc=document.getElementById('dep-list');
   const dtv=document.getElementById('dep-total-val');
   const dcount=document.getElementById('fd-dep-count');
@@ -6558,7 +6578,7 @@ function renderFondosUser(){
   // Gastos
   const gastos=md.gastos||[];
   const totalGast=gastos.reduce((s,g)=>s+g.monto,0);
-  const disponible=totalDep-totalGast;
+  const disponible=saldoAnterior+totalDep-totalGast;
   const alertas=gastos.filter(g=>isAlertGasto(g));
 
   // Sidebar summary
@@ -6568,6 +6588,12 @@ function renderFondosUser(){
   if(ftd) ftd.textContent=fmt(totalDep);
   const ftg=document.getElementById('fd-total-gast');
   if(ftg) ftg.textContent=fmt(totalGast);
+  // Saldo anterior en sidebar
+  const fsa=document.getElementById('fd-saldo-anterior');
+  if(fsa){
+    fsa.textContent=fmt(saldoAnterior);
+    fsa.style.color=saldoAnterior>=0?'var(--green)':'var(--red)';
+  }
 
   // Alert count
   const ac=document.getElementById('fd-alert-count');
@@ -6618,8 +6644,9 @@ function renderFondosUser(){
   // Footer
   const gf=document.getElementById('gastos-footer');
   if(gf) gf.innerHTML=`
-    <div class="gf-item"><span class="gf-label">Total gastos</span><span class="gf-val red">${fmt(totalGast)}</span></div>
+    <div class="gf-item"><span class="gf-label">Saldo anterior</span><span class="gf-val ${saldoAnterior>=0?'green':'red'}">${fmt(saldoAnterior)}</span></div>
     <div class="gf-item"><span class="gf-label">Total depositado</span><span class="gf-val blue">${fmt(totalDep)}</span></div>
+    <div class="gf-item"><span class="gf-label">Total gastos</span><span class="gf-val red">${fmt(totalGast)}</span></div>
     <div class="gf-item"><span class="gf-label">Disponible</span><span class="gf-val ${disponible>=0?'green':'red'}">${fmt(disponible)}</span></div>
     <div class="gf-item"><span class="gf-label">Alertas</span><span class="gf-val ${alertas.length?'red':'green'}">${alertas.length?alertas.length+' ⚠':'0 ✓'}</span></div>`;
 }
@@ -22457,6 +22484,10 @@ window.initCalcCONCRE=initCalcCONCRE;
             <div class="frc-val" id="fd-disponible">₡0</div>
             <div class="frc-sub" id="fd-mes-label">este mes</div>
             <div class="frc-grid">
+              <div class="frc-item" style="grid-column:1/-1;border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:2px">
+                <div class="frc-item-label">Saldo anterior</div>
+                <div class="frc-item-val" id="fd-saldo-anterior" style="color:var(--text2)">₡0</div>
+              </div>
               <div class="frc-item">
                 <div class="frc-item-label">Depositado</div>
                 <div class="frc-item-val" id="fd-total-dep">₡0</div>
