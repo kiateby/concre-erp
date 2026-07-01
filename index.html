@@ -2842,7 +2842,15 @@ function impActualizarMargenFila(idx, valorPct){
   _impLineasActuales[idx].margen = (parseFloat(valorPct)||0) / 100;
   if(!_impLastImportacion) return;
   var resultado = impCalcularImportacion(_impLastImportacion, _impLineasActuales);
-  renderImpResultado(resultado, 'imp-f-resultado-nueva');
+  var d = resultado.detalle[idx];
+  if(!d) return;
+  // Actualizar solo las celdas afectadas — sin reconstruir la tabla (preserva el foco del input)
+  var elCom = document.getElementById('imp-res-comision-'+idx);
+  var elSin = document.getElementById('imp-res-siniva-'+idx);
+  var elCon = document.getElementById('imp-res-coniva-'+idx);
+  if(elCom) elCom.textContent = '₡'+d.comisionInterna.toLocaleString('es-CR',{maximumFractionDigits:2});
+  if(elSin) elSin.textContent = '₡'+d.precioSinIva.toLocaleString('es-CR',{maximumFractionDigits:2});
+  if(elCon) elCon.textContent = '₡'+d.precioConIva.toLocaleString('es-CR',{maximumFractionDigits:2});
 }
 
 function renderImpResultado(resultado, contenedorId){
@@ -2858,9 +2866,10 @@ function renderImpResultado(resultado, contenedorId){
     +'<div>Agencia: <strong style="color:#f4a30a">$'+resultado.agenciaUsd.toFixed(2)+'</strong> <span>('+(resultado.pctAgencia*100).toFixed(2)+'%)</span></div>'
     +'<div>Publicidad: <strong style="color:#f4a30a">$'+resultado.publicidadUsd.toFixed(2)+'</strong> <span>('+(resultado.pctPublicidad*100).toFixed(2)+'%)</span></div>'
     +'</div>'
-    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1400px;font-size:11px">'
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1400px;font-size:11px;border-collapse:separate;border-spacing:0">'
     +'<thead><tr>'
-    +'<th>Producto</th><th>Cant.</th><th>Precio Unit.</th><th>Subtotal $</th>'
+    +'<th style="position:sticky;left:0;z-index:3;background:var(--surface2);min-width:140px">Producto</th>'
+    +'<th>Cant.</th><th>Precio Unit.</th><th>Subtotal $</th>'
     +'<th style="color:#f4a30a">Fee $</th><th style="color:#f4a30a">CIF $</th><th style="color:#f4a30a">Naviera $</th><th style="color:#f4a30a">Agencia $</th><th style="color:#f4a30a">Publicidad $</th>'
     +'<th>P. bodega $</th><th>Precio ₡ (sin margen)</th>'
     +'<th>Margen %<br><span style="font-weight:400;font-size:9px;color:var(--text3)">editable · recalcula</span></th>'
@@ -2870,7 +2879,7 @@ function renderImpResultado(resultado, contenedorId){
       var prod = _impProductos.find(function(p){return p.id===d.producto_id;});
       var margenPct = (d.margen*100).toFixed(0);
       return '<tr>'
-        +'<td style="font-weight:700">'+(prod?prod.nombre:'—')+'</td>'
+        +'<td style="position:sticky;left:0;z-index:2;background:var(--surface);font-weight:700;border-right:2px solid var(--border)">'+(prod?prod.nombre:'—')+'</td>'
         +'<td style="text-align:center">'+d.cantidad+'</td>'
         +'<td style="text-align:right">$'+d.precio_unitario.toFixed(2)+'</td>'
         +'<td style="text-align:right">$'+(d.total).toFixed(2)+'</td>'
@@ -2887,13 +2896,14 @@ function renderImpResultado(resultado, contenedorId){
           +'style="width:72px;text-align:center;font-size:11px;padding:3px 5px;border:1.5px solid var(--border);border-radius:5px;background:var(--surface2);color:var(--text);font-family:var(--cond);font-weight:700">'
           +' <span style="font-size:10px;color:var(--text3)">%</span>'
         +'</td>'
-        +'<td style="text-align:right">₡'+d.comisionInterna.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
-        +'<td style="text-align:right;font-weight:800;color:var(--text2)">₡'+d.precioSinIva.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
-        +'<td style="text-align:right;font-weight:900;color:var(--green)">₡'+d.precioConIva.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
+        +'<td id="imp-res-comision-'+idx+'" style="text-align:right">₡'+d.comisionInterna.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
+        +'<td id="imp-res-siniva-'+idx+'" style="text-align:right;font-weight:800;color:var(--text2)">₡'+d.precioSinIva.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
+        +'<td id="imp-res-coniva-'+idx+'" style="text-align:right;font-weight:900;color:var(--green)">₡'+d.precioConIva.toLocaleString('es-CR',{maximumFractionDigits:2})+'</td>'
         +'</tr>';
     }).join('')+'</tbody></table></div>'
     +'</div>';
 }
+
 
 
 
