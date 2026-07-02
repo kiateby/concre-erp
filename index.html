@@ -2068,7 +2068,19 @@ async function generarCampanaRadar(){
     // 3. Deduplicar por nombre y excluir: la propia empresa, fuera de nicho, y COMPETENCIA DIRECTA.
     //    Filtramos por NOMBRE (palabras clave) y también por CATEGORÍA de Google (más confiable que el nombre,
     //    porque una ferretería puede llamarse "Materiales El Constructor" sin la palabra "ferretería").
-    var EMPRESAS_EXCLUIDAS = ['concre', 'pavurcon s.a.', 'pavurcon', 'rpm concrete floor s.a.', 'rpm concrete floor']; // competencia directa, nombre exacto en Google Maps, en minúsculas
+    var EMPRESAS_EXCLUIDAS = [
+      // Propia empresa
+      'concre',
+      // Competencia directa — coincidencia exacta de nombre en minúsculas
+      'pavurcon s.a.', 'pavurcon',
+      'rpm concrete floor s.a.', 'rpm concrete floor',
+      'terra equipos',
+      'agrecon',
+      'renteco',
+      'balbeck s.a.', 'balbeck',
+      'alco s.a.', 'alco',
+      'constructora macoma', 'macoma'
+    ];
 
     // Cargar nombres de prospectos de TODAS las campañas anteriores (sin importar score, para no repetir a nadie ya visto)
     var prospectosAnteriores = {};
@@ -2291,6 +2303,17 @@ function toggleProspectoContactado(chk){
   var id = chk.dataset.id;
   var p = _radarProspectos.find(function(x){ return x.id === id; });
   if(!p) return;
+  // Si está marcando como contactado, la nota es obligatoria
+  if(chk.checked){
+    var notaInp = document.getElementById('nota-resultado-'+id);
+    var notaVal = notaInp ? notaInp.value.trim() : (p.notas_usuario||'').trim();
+    if(!notaVal){
+      chk.checked = false; // revertir el checkbox
+      toast('⚠ Debes agregar una nota antes de marcar como contactado');
+      if(notaInp){ notaInp.style.display='block'; notaInp.focus(); notaInp.style.border='2px solid var(--red)'; setTimeout(function(){ notaInp.style.border=''; },2500); }
+      return;
+    }
+  }
   var nuevoEstado = chk.checked ? 'contactado' : 'pendiente';
   p.estado_contacto = nuevoEstado;
   p.updated_at = new Date().toISOString();
