@@ -12441,7 +12441,7 @@ function renderSubcontratistaPlanillas(){
       +'<td style="font-weight:800">'+p.subNombre+'</td>'
       +'<td style="font-size:11px;color:var(--text3)">'+p.periodKey+'</td>'
       +'<td style="font-family:var(--cond);font-size:15px;font-weight:900;color:'+(p.monto>=0?'var(--green)':'var(--red)')+'">'+fmt(p.monto)+'</td>'
-      +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(p.fechaCierre.split('T')[0]))+'</td>'
+      +'<td style="font-size:11px;color:var(--text3)">'+(p.fechaCierre?formatDate(parseDate(p.fechaCierre.split('T')[0])):'—')+'</td>'
       +'<td>'+(p.pagado?'<span class="vac-badge approved">✓ Pagado</span>':'<span class="vac-badge pending">Pendiente</span>')+'</td>'
       +'<td style="text-align:center">'
         +'<input type="checkbox" '+(p.pagado?'checked':'')
