@@ -3077,7 +3077,7 @@ function buildAdminTabs(){
   var btns=[
     {id:'overview',      label:'📊 Resumen',       extra:''},
     {id:'users',         label:'👥 Usuarios',       extra:''},
-    {id:'horas-admin',   label:'⏱ Planilla',        extra:'try{initPagosUsuarios();renderSubcontratistaPlanillas();loadLiqPagosHistorial().then(renderLiqPagosHistorial);}catch(e){}'},
+    {id:'horas-admin',   label:'⏱ Planilla',        extra:'try{initPagosUsuarios();loadAllLiqDataThenRender();loadLiqPagosHistorial().then(renderLiqPagosHistorial);}catch(e){}'},
     {id:'comisiones',    label:'💵 Comisiones',      extra:''},
     {id:'aguinaldo-admin',label:'🎄 Aguinaldo',      extra:'try{loadPlanillaHist().then(function(){buildAgGlobal();});}catch(e){}'},
     {id:'vacaciones',    label:'🌴 Vacaciones',      extra:'try{renderAdminVacSection();}catch(e){}'},
@@ -12408,6 +12408,22 @@ function renderLiqPagosHistorial(){
 }
 
 // ── Render subcontratistas planillas table ──
+// Carga los datos de todos los subcontratistas desde Supabase (si aún no están en caché)
+// y luego renderiza la tabla de pagos en la pestaña Planillas.
+// Necesario porque _liqDataCache solo se llena cuando se visita la pestaña Liquidaciones.
+async function loadAllLiqDataThenRender(){
+  var subs=getLiqSubs();
+  if(!subs.length){ renderSubcontratistaPlanillas(); return; }
+  // Cargar solo los subs que aún no tienen datos en caché
+  var pending=subs.filter(function(s){
+    return !window._liqDataCache||!window._liqDataCache[s.id]||Object.keys(window._liqDataCache[s.id]).length===0;
+  });
+  if(pending.length){
+    await Promise.all(pending.map(function(s){ return loadLiqFromDB(s.id); }));
+  }
+  renderSubcontratistaPlanillas();
+}
+
 function renderSubcontratistaPlanillas(){
   var el=document.getElementById('sub-planillas-tbody');
   if(!el) return;
