@@ -1941,8 +1941,6 @@ var RADAR_QUERIES_TAVILY = {
 };
 
 // SEÑALES DE OBRA: no buscan empresas, buscan EVIDENCIA de que existe un proyecto/obra real en curso.
-// Se ejecutan una vez por zona (no por línea de venta) porque una obra nueva aplica a varias líneas a la vez.
-// Cubre Motores 2 (Proyectos), 3 (Permisos), 4 (Noticias) del documento de inteligencia comercial.
 var RADAR_QUERIES_SENALES_OBRA = [
   'nueva bodega construcción',
   'inicio de obras construcción',
@@ -1951,6 +1949,73 @@ var RADAR_QUERIES_SENALES_OBRA = [
   'movimiento de tierras construcción',
   'nuevo parque industrial construcción'
 ];
+
+// ── NUEVAS CAPAS DE INTELIGENCIA COMERCIAL ──────────────────────────────────
+
+// Señales de intención: empresas/personas buscando activamente servicios que CONCRE ofrece
+var RADAR_QUERIES_INTENCION = [
+  'solicito empresa pulido pisos concreto Costa Rica',
+  'busco contratista piso industrial bodega Costa Rica',
+  'cotización piso concreto pulido Costa Rica empresa',
+  'necesito empresa colocación adoquines Costa Rica',
+  'solicito macrofibra concreto Costa Rica proveedor',
+  'busco alquiler compactador vibradora Costa Rica obra',
+  'empresa piso epóxico industrial Costa Rica cotización'
+];
+
+// Licitaciones y contrataciones públicas CR (SICOP, Mer-link, La Gaceta)
+var RADAR_QUERIES_LICITACIONES = [
+  'site:sicop.go.cr piso concreto industrial construcción',
+  'site:sicop.go.cr pulido concreto bodega',
+  'licitación pública piso concreto Costa Rica SICOP 2025 2026',
+  'contratación directa pisos industriales construcción Costa Rica',
+  'site:imprentanacional.go.cr contratación piso concreto construcción',
+  'Mer-link Costa Rica licitación piso industrial bodega'
+];
+
+// CFIA — permisos, proyectos visados, movimiento de planos
+var RADAR_QUERIES_CFIA = [
+  'site:cfia.or.cr permiso construcción bodega industrial',
+  'CFIA permiso construcción proyecto industrial Costa Rica 2025 2026',
+  'visado planos CFIA bodega almacén Costa Rica',
+  'CFIA Costa Rica nuevo proyecto construcción industrial aprobado'
+];
+
+// ICCYC — empresa activas en concreto, publicaciones técnicas
+var RADAR_QUERIES_ICCYC = [
+  'site:iccyc.or.cr empresa construcción concreto Costa Rica',
+  'ICCYC concreto Costa Rica empresa proyecto miembro 2025 2026',
+  'Instituto Costarricense Cemento Concreto empresa constructora afiliada'
+];
+
+// Cámara Costarricense de la Construcción — directorio, proyectos, noticias del sector
+var RADAR_QUERIES_CAMARA = [
+  'site:construccion.co.cr empresa proyecto industrial bodega',
+  'Cámara Construcción Costa Rica proyecto bodega industrial 2025 2026',
+  'directorio constructoras Costa Rica piso industrial cámara construcción',
+  'Cámara Costarricense Construcción empresa afiliada proyecto nuevo'
+];
+
+// Actividad web reciente: parques industriales, bodegas, noticias construcción CR
+var RADAR_QUERIES_ACTIVIDAD = [
+  'nuevo parque industrial Costa Rica 2025 2026 construcción',
+  'bodega industrial Costa Rica obra nueva inversión 2025 2026',
+  'zona franca Costa Rica nueva construcción bodega planta',
+  'proyecto inmobiliario industrial Costa Rica constructora inicio obras',
+  'CINDE Costa Rica nueva inversión construcción planta'
+];
+
+// Etiquetas de fuente para mostrar en la UI de cada prospecto
+var RADAR_FUENTE_LABELS = {
+  'google_places': '📍 Google Maps',
+  'intencion': '🎯 Intención detectada',
+  'licitacion': '📋 Licitación pública',
+  'cfia': '🏛 CFIA',
+  'iccyc': '🏗 ICCYC',
+  'camara': '🏢 Cámara de Construcción',
+  'actividad': '📰 Actividad web reciente',
+  'google_places+tavily': '📍 Google Maps'
+};
 
 async function llamarRadarServer(payload){
   var resp = await fetch(RADAR_API_URL, {
@@ -2043,6 +2108,26 @@ async function generarCampanaRadar(){
           var rso = await llamarRadarServer({tipo:'tavily', query: RADAR_QUERIES_SENALES_OBRA[so] + ' ' + zonaTextoTavily});
           todasSenalesTavily = todasSenalesTavily.concat(rso.resultados||[]);
         }catch(e){ console.warn('Tavily señal de obra falló:', RADAR_QUERIES_SENALES_OBRA[so], zonaTextoTavily, e); }
+      }
+
+      // 2c. NUEVAS CAPAS: señales de intención, licitaciones, CFIA, ICCYC, Cámara, actividad web
+      var capasExtra = [
+        {queries: RADAR_QUERIES_INTENCION, fuente: 'intencion'},
+        {queries: RADAR_QUERIES_LICITACIONES, fuente: 'licitacion'},
+        {queries: RADAR_QUERIES_CFIA, fuente: 'cfia'},
+        {queries: RADAR_QUERIES_ICCYC, fuente: 'iccyc'},
+        {queries: RADAR_QUERIES_CAMARA, fuente: 'camara'},
+        {queries: RADAR_QUERIES_ACTIVIDAD, fuente: 'actividad'}
+      ];
+      for(var ci2=0; ci2<capasExtra.length; ci2++){
+        var capa = capasExtra[ci2];
+        for(var qi2=0; qi2<capa.queries.length; qi2++){
+          try{
+            var rcapa = await llamarRadarServer({tipo:'tavily', query: capa.queries[qi2] + ' ' + zonaTextoTavily});
+            (rcapa.resultados||[]).forEach(function(r){ r._fuenteCapa = capa.fuente; });
+            todasSenalesTavily = todasSenalesTavily.concat(rcapa.resultados||[]);
+          }catch(e){ console.warn('Capa extra falló:', capa.fuente, capa.queries[qi2], e); }
+        }
       }
     }
 
@@ -2157,10 +2242,72 @@ async function generarCampanaRadar(){
       };
     }).filter(Boolean);
 
-    if(!prospectos.length){
+    // 4b. Convertir resultados de capas extra (Tavily) en prospectos adicionales
+    // Solo los que tienen _fuenteCapa asignado, tienen URL y no son competencia
+    var prospectosCapas = [];
+    var vistosCapas = {};
+    todasSenalesTavily.forEach(function(s, idx){
+      if(!s._fuenteCapa) return; // solo capas extra, no señales de obra genéricas
+      if(!s.url || !s.titulo) return;
+      // Extraer nombre del dominio o título
+      var nombre = '';
+      try{
+        var host = new URL(s.url).hostname.replace('www.','').replace('.com','').replace('.cr','').replace('.co.cr','').replace('.or.cr','').replace('.go.cr','');
+        // Si el título tiene contenido útil, usarlo como nombre
+        var titulo = (s.titulo||'').trim();
+        nombre = titulo.length > 5 && titulo.length < 80 ? titulo : host;
+      }catch(e){ nombre = (s.titulo||s.url||'').slice(0,60); }
+      var key = nombre.toLowerCase().trim();
+      if(!key || vistosCapas[key]) return;
+      if(EMPRESAS_EXCLUIDAS.some(function(ex){ return key.indexOf(ex)!==-1; })) return;
+      vistosCapas[key] = true;
+      var score = Math.min(90, Math.round((s.score_relevancia||0.5)*80) + 20);
+      if(score < scoreMin) return;
+      // No repetir si ya fue visto en campañas anteriores sin señal nueva
+      var señalActual = (s.contenido||'').slice(0,200);
+      if(prospectosAnteriores.hasOwnProperty(key)){
+        var señalPrevia = prospectosAnteriores[key];
+        if(!señalActual || señalActual === señalPrevia) return;
+      }
+      var clasificacion = score>=75?'alta':score>=55?'media':'secundaria';
+      var fuenteLabel = RADAR_FUENTE_LABELS[s._fuenteCapa] || s._fuenteCapa;
+      prospectosCapas.push({
+        id: 'pros_capa_' + Date.now() + '_' + idx,
+        campana_id: campanaId,
+        nombre: nombre,
+        categoria: fuenteLabel,
+        linea_venta: linea==='todas'?'macrofibra':linea,
+        telefono: '',
+        whatsapp_visible: false,
+        direccion: '',
+        canton: '—',
+        provincia: zona,
+        zona_prioridad: zona,
+        sitio_web: s.url || '',
+        google_maps_url: '',
+        calificacion: null,
+        num_resenas: 0,
+        score: score,
+        score_explicacion: fuenteLabel + ': ' + (s.contenido||'').slice(0,180),
+        clasificacion: clasificacion,
+        señal_detectada: señalActual,
+        fuente: s._fuenteCapa,
+        mensaje_sugerido: generarMensajeSugerido(nombre, s._fuenteCapa, linea==='todas'?'macrofibra':linea, {score:score, clasificacion:clasificacion, señal:señalActual}),
+        siguiente_accion: clasificacion==='alta'?'Llamar esta semana':'Enviar WhatsApp con catálogo',
+        estado_contacto: 'pendiente',
+        notas_usuario: '',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+    });
+
+    // Combinar prospectos de Places con prospectos de capas extra
+    var todosProspectos = prospectos.concat(prospectosCapas).slice(0, cantidad * 2);
+
+    if(!todosProspectos.length){
       var totalCandidatosBrutos = unicos.length;
-      var mensajeVacio = totalCandidatosBrutos > 0
-        ? '⚠ Se encontraron ' + totalCandidatosBrutos + ' negocios, pero ya habían sido vistos en campañas anteriores sin señal de obra nueva. Intente otra zona o espere a que surjan nuevas señales.'
+      var mensajeVacio = unicos.length > 0 || prospectosCapas.length > 0
+        ? '⚠ Se encontraron candidatos, pero ya habían sido vistos en campañas anteriores sin señal nueva. Intente otra zona o espere nuevas señales.'
         : '⚠ No se encontraron prospectos que cumplan el score mínimo. Intente bajar el score mínimo o ampliar la zona.';
       toast(mensajeVacio);
       aplicarEstadoBloqueoRadar();
@@ -2177,7 +2324,7 @@ async function generarCampanaRadar(){
       incluir_grandes: incluirGrandes,
       score_minimo: scoreMin,
       estado: 'completa',
-      total_encontrados: prospectos.length,
+      total_encontrados: todosProspectos.length,
       costo_estimado: 0,
       created_by: SESSION.id,
       created_at: new Date().toISOString()
@@ -2185,7 +2332,7 @@ async function generarCampanaRadar(){
 
     var rIns = await DB.from('radar_campanas').insert(campana);
     if(rIns.error){ console.error('radar_campanas insert:', rIns.error); toast('❌ Error guardando campaña'); return; }
-    var rIns2 = await DB.from('radar_prospectos').insert(prospectos);
+    var rIns2 = await DB.from('radar_prospectos').insert(todosProspectos);
     if(rIns2.error){ console.error('radar_prospectos insert:', rIns2.error); toast('❌ Error guardando prospectos'); return; }
 
     _radarCampanas.unshift(campana);
@@ -2260,16 +2407,86 @@ function calcularScoreRadarReal(place, zona, senalesTavily){
 
 // Genera el mensaje que el vendedor puede copiar y enviar manualmente
 function generarMensajeSugerido(nombre, categoria, linea, scoreData){
-  var lineaTexto = {
-    macrofibra: 'macrofibra de polipropileno para refuerzo de concreto, una alternativa más rápida y económica que la malla electrosoldada',
-    equipo_liviano: 'equipo liviano, herramientas e insumos para construcción (compactadoras, vibradores, discos de corte, alisadoras)',
-    servicios: 'servicios de colocación de losas, pulido de concreto y acabados'
-  }[linea] || 'nuestros productos para construcción';
+  var señal = (scoreData&&scoreData.señal ? scoreData.señal : '').toLowerCase();
+  var fuente = categoria||'';
+  var clasificacion = scoreData&&scoreData.clasificacion ? scoreData.clasificacion : 'media';
 
-  return 'Buenos días, le escribo de CONCRE. Vimos que ' + nombre.toLowerCase() +
-    ' trabaja con ' + categoria.toLowerCase() + (scoreData.señal ? ' y ' + scoreData.señal : '') +
-    '. Tenemos ' + lineaTexto + ' y nos gustaría conversar sobre cómo podemos apoyar su próximo proyecto. ' +
-    '¿Tendría unos minutos esta semana para una llamada o cotización sin compromiso?';
+  // Extractores de contexto de la señal para referencias específicas
+  function detectaObra(s){ return s.indexOf('bodega')!==-1||s.indexOf('planta')!==-1||s.indexOf('almacén')!==-1||s.indexOf('industrial')!==-1||s.indexOf('zona franca')!==-1; }
+  function detectaPiso(s){ return s.indexOf('piso')!==-1||s.indexOf('pulido')!==-1||s.indexOf('acabado')!==-1||s.indexOf('losa')!==-1; }
+  function detectaEquipo(s){ return s.indexOf('compactador')!==-1||s.indexOf('vibrador')!==-1||s.indexOf('equipo')!==-1||s.indexOf('herramienta')!==-1||s.indexOf('alquiler')!==-1; }
+  function detectaLicitacion(s){ return s.indexOf('licitación')!==-1||s.indexOf('sicop')!==-1||s.indexOf('contratación')!==-1||s.indexOf('concurso')!==-1; }
+  function detectaCFIA(s){ return s.indexOf('cfia')!==-1||s.indexOf('permiso')!==-1||s.indexOf('plano')!==-1||s.indexOf('visado')!==-1; }
+  function nombreCorto(n){ return n.split(' ').slice(0,3).join(' '); }
+
+  var nom = nombreCorto(nombre);
+
+  // ── MENSAJES POR FUENTE ─────────────────────────────────────────────────
+
+  // LICITACIÓN PÚBLICA (SICOP, Mer-link, Imprenta Nacional)
+  if(fuente==='licitacion' || detectaLicitacion(señal)){
+    var refLic = señal ? ('Encontramos información relacionada con ' + señal.slice(0,80) + '.') : 'Localizamos un proceso de contratación pública relacionado con pisos o construcción industrial.';
+    return 'Buenos días. Le escribo de CONCRE.\n\n' + refLic + '\n\nSomos proveedores especializados en pisos industriales de concreto, macrofibra y equipo para construcción en Costa Rica. Trabajamos con instituciones públicas y privadas y podemos ajustarnos a los requisitos de contratación vigentes.\n\n¿Le interesa recibir una cotización formal o información técnica para su proceso? Quedamos a su disposición.';
+  }
+
+  // CFIA — permisos y planos
+  if(fuente==='cfia' || detectaCFIA(señal)){
+    return 'Buenos días. Le escribo de CONCRE.\n\nIdentificamos que ' + nom + ' tiene un proyecto de construcción en trámite o reciente visado ante el CFIA' + (detectaObra(señal) ? ' relacionado con una obra industrial' : '') + '.\n\nNos especializamos en soluciones para pisos industriales de concreto — desde macrofibra hasta pulido y sellado final — y en equipo liviano para las etapas de colada y acabado. Podemos acompañar su proyecto desde etapas tempranas con especificaciones técnicas y cotización.\n\n¿Cuándo podríamos conversar unos minutos?';
+  }
+
+  // ICCYC
+  if(fuente==='iccyc'){
+    return 'Buenos días. Le escribo de CONCRE.\n\nEncontramos a ' + nom + ' como empresa activa en el sector de concreto y construcción en Costa Rica.\n\nOfrecemos macrofibra de polipropileno como alternativa técnica y económica a la malla electrosoldada, además de equipo liviano para construcción y servicios de pulido y acabado de pisos industriales.\n\nNos gustaría compartirle nuestra ficha técnica y casos de aplicación. ¿Tiene un proyecto en curso o próximo donde podamos ser de utilidad?';
+  }
+
+  // CÁMARA DE CONSTRUCCIÓN
+  if(fuente==='camara'){
+    var refCamara = detectaObra(señal) ? 'un proyecto de construcción industrial' : 'proyectos de construcción en Costa Rica';
+    return 'Buenos días. Le escribo de CONCRE.\n\nTenemos registrado a ' + nom + ' como empresa constructora activa en ' + refCamara + '.\n\nSomos proveedores costarricenses de macrofibra para refuerzo de concreto, equipo liviano para obras (compactadoras, vibradores, alisadoras) y servicios de pisos industriales. Nos adaptamos a los requerimientos técnicos de cada proyecto.\n\n¿Podríamos agendar una llamada breve para ver cómo podemos apoyar sus obras actuales o próximas?';
+  }
+
+  // INTENCIÓN DE COMPRA DETECTADA
+  if(fuente==='intencion'){
+    var necesidad = detectaPiso(señal) ? 'pulido y acabado de pisos de concreto' : detectaEquipo(señal) ? 'alquiler de equipo para construcción' : 'soluciones para pisos y obras de concreto';
+    return 'Buenos días. Le escribo de CONCRE.\n\nDetectamos que ' + nom + ' está buscando ' + necesidad + ' en Costa Rica.\n\nSomos especialistas en ese tema: ofrecemos ' + (detectaPiso(señal) ? 'servicio profesional de pulido, sellado y densificado de pisos industriales' : detectaEquipo(señal) ? 'alquiler y venta de equipo liviano de construcción: compactadoras, vibradores, alisadoras y más' : 'macrofibra, equipo liviano y servicio completo de pisos de concreto') + '. Operamos en toda Costa Rica y podemos darle una cotización rápida.\n\n¿Le conviene hablar esta semana?';
+  }
+
+  // ACTIVIDAD WEB RECIENTE (parques, bodegas, noticias)
+  if(fuente==='actividad'){
+    var contextoObra = detectaObra(señal) ? 'un proyecto de bodega o instalación industrial' : 'un nuevo proyecto de construcción';
+    return 'Buenos días. Le escribo de CONCRE.\n\nNos llegó información sobre ' + nom + ' y ' + contextoObra + ' en Costa Rica.\n\nNos especializamos en pisos industriales de concreto (macrofibra, pulido, sellado) y equipo liviano para obra. Si tienen una colada o acabado de piso próximo, podemos cotizarle con tiempo para que entre en el presupuesto del proyecto.\n\n¿Le parece si coordinamos una llamada corta esta semana?';
+  }
+
+  // ── GOOGLE MAPS / FUENTE TRADICIONAL — ramificado por línea y señal ────
+
+  // MACROFIBRA
+  if(linea==='macrofibra'){
+    if(detectaObra(señal)){
+      return 'Buenos días. Le escribo de CONCRE.\n\nVimos que ' + nom + ' está involucrado en construcción de ' + (señal.indexOf('bodega')!==-1?'bodegas':señal.indexOf('planta')!==-1?'plantas industriales':'obras industriales') + ' en Costa Rica.\n\nLe cuento: ofrecemos macrofibra de polipropileno para refuerzo de losas de concreto, que sustituye la malla electrosoldada con ventajas en tiempo de colada y costo. Varios constructores en CR ya la usan en sus proyectos.\n\n¿Le interesa ver una ficha técnica o una cotización comparativa?';
+    }
+    return 'Buenos días. Le escribo de CONCRE.\n\nIdentificamos a ' + nom + ' como empresa constructora activa en Costa Rica.\n\nOfrecemos macrofibra de polipropileno para refuerzo de concreto — es más rápida de instalar que la malla y puede reducir costos en obra. Trabajamos con contratistas y maestros de obras en todo el país.\n\n¿Tiene algún proyecto de losa próximo donde podamos cotizarle?';
+  }
+
+  // EQUIPO LIVIANO
+  if(linea==='equipo_liviano'){
+    if(detectaEquipo(señal)){
+      return 'Buenos días. Le escribo de CONCRE.\n\nNos indicaron que ' + nom + ' trabaja con equipo para construcción en Costa Rica.\n\nContamos con alquiler y venta de equipo liviano: compactadoras de placa y ranas, vibradores para concreto, cortadoras de asfalto, alisadoras de piso, discos y más. Equipo en buen estado y a precios competitivos.\n\n¿Tiene algún equipo que necesite para una obra próxima?';
+    }
+    return 'Buenos días. Le escribo de CONCRE.\n\nUbicamos a ' + nom + ' dentro del sector de construcción en Costa Rica.\n\nNos dedicamos a alquiler y venta de equipo liviano para obra: compactadoras, vibradores de concreto, alisadoras, cortadoras y más. Entregamos rápido y damos soporte técnico.\n\n¿Tiene alguna obra activa o próxima donde podamos apoyar con equipo?';
+  }
+
+  // SERVICIOS (pulido, losas, adoquines)
+  if(linea==='servicios'){
+    if(detectaPiso(señal)){
+      return 'Buenos días. Le escribo de CONCRE.\n\nDetectamos que ' + nom + ' tiene proyectos relacionados con pisos de concreto o acabados en Costa Rica.\n\nNos especializamos en colocación de losas industriales, pulido y densificado de pisos de concreto, y colocación de adoquines. Hemos trabajado en bodegas, plantas y espacios comerciales en todo el país.\n\n¿Le puedo enviar nuestro portafolio o coordinar una visita técnica sin compromiso?';
+    }
+    return 'Buenos días. Le escribo de CONCRE.\n\nEncontramos a ' + nom + ' como empresa activa en proyectos de construcción en Costa Rica.\n\nSomos especialistas en pisos industriales: colocación de losas de concreto, pulido y sellado de pisos, y adoquines. Damos servicio rápido y con respaldo técnico.\n\n¿Tienen algún proyecto próximo donde podamos participar con una cotización?';
+  }
+
+  // FALLBACK genérico mejorado
+  return 'Buenos días. Le escribo de CONCRE.\n\n' +
+    (señal ? 'Nos apareció ' + nom + ' en relación con ' + señal.slice(0,80) + '.\n\n' : 'Identificamos a ' + nom + ' como empresa activa en construcción en Costa Rica.\n\n') +
+    'Somos proveedores de macrofibra para refuerzo de concreto, equipo liviano de construcción y servicios de pisos industriales. Operamos en todo el país y podemos ajustarnos a sus necesidades.\n\n¿Le parece si conversamos unos minutos esta semana?';
 }
 
 // ── Render: resumen de campañas generadas ──
@@ -2429,6 +2646,7 @@ function renderRadarProspectos(){
       +'<div>'
       +'<div style="font-family:var(--cond);font-size:16px;font-weight:800">'+icon+' '+p.nombre+'</div>'
       +'<div style="font-size:11px;color:var(--text3);margin-top:2px">'+p.categoria+' · '+(RADAR_ZONA_LABELS[p.zona_prioridad]||p.zona_prioridad)+' · ⭐ '+(p.calificacion||'—')+' ('+(p.num_resenas||0)+' reseñas)</div>'
+      +'<div style="margin-top:4px"><span style="font-size:10px;font-weight:700;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:2px 7px;color:var(--text2)">'+(RADAR_FUENTE_LABELS[p.fuente]||p.fuente||'📍 Google Maps')+'</span></div>'
       +'</div>'
       +'<div style="text-align:right">'
       +'<div style="font-family:var(--cond);font-size:24px;font-weight:900;color:'+clr+'">'+(p.score!=null?p.score:'—')+'</div>'
