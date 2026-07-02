@@ -12334,7 +12334,11 @@ function getClosedLiqPeriods(){
     var d=getLiqData(s.id);
     Object.keys(d).forEach(function(pk){
       var state=getLiqPeriodState(s.id, pk);
-      if(state.cerrada){
+      // cerrada: prefer localStorage state (may have been updated this session),
+      // but fall back to the value loaded from DB in the cache (d[pk].cerrada).
+      // This fixes the Planillas tab showing empty when localStorage wasn't set yet.
+      var isCerrada=state.cerrada||d[pk].cerrada||false;
+      if(isCerrada){
         var period=getLiqPeriod(s.id, pk);
         var totals=calcPeriodTotals(period.proyectos||[]);
         result.push({
@@ -12342,8 +12346,8 @@ function getClosedLiqPeriods(){
           subNombre: s.nombre,
           periodKey: pk,
           monto: totals.aDepositar,
-          fechaCierre: state.fechaCierre,
-          pagado: state.pagado||false
+          fechaCierre: state.fechaCierre||d[pk].fechaCierre||null,
+          pagado: state.pagado||d[pk].pagado||false
         });
       }
     });
