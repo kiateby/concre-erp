@@ -8473,6 +8473,11 @@ function _doSaveVenta(){
 
   const ivaPct=getIvaPct();
   const ivaAmt=subtotal*(ivaPct/100);
+  // usdTotal: total en dólares incluyendo IVA (subtotal_USD + IVA_USD)
+  // IVA se calcula primero en dólares: iva_USD = usd * ivaPct/100
+  // total_USD = usd + iva_USD = usd * (1 + ivaPct/100)
+  // total_CRC = total_USD * tcUsed (mismo resultado que subtotal_CRC + iva_CRC, conmutativo)
+  const usdTotal = isUsd ? usd*(1+ivaPct/100) : 0;
   const insChk=document.getElementById('vf-ins-chk').checked;
   const tercChk=document.getElementById('vf-terc-chk').checked;
   const pendChk=document.getElementById('vf-pend-chk').checked;
@@ -8490,7 +8495,7 @@ function _doSaveVenta(){
     subtotal, ivaPct, ivaAmt, total:subtotal+ivaAmt,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:parseInt(document.getElementById('vf-plazo').value)||0,
-    isUsd, usd, tcUsed,
+    isUsd, usd, tcUsed, usdTotal,
     tieneInsumos:insChk,
     insDesc:insChk?document.getElementById('vf-ins-desc').value.trim():'',
     insMontoNum,
@@ -8739,14 +8744,22 @@ function renderVentasUser(){
       '<td style="font-weight:600">'+v.cliente+'</td>'+
       '<td style="font-size:11px;color:var(--text3)">'+( v.factura||'—')+'</td>'+
       '<td style="white-space:nowrap">'+pagoLabel+'</td>'+
-      '<td style="font-family:var(--cond);text-align:center;font-size:12px">'+(v.ivaAmt>0?fmt(v.ivaAmt):'S/IVA')+'</td>'+
       '<td style="font-family:var(--cond);font-weight:800;text-align:right">'
         +fmt(v.subtotal)
         +(v.isUsd&&v.usd>0?'<br><span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(2)+')</span>':'')
       +'</td>'+
+      '<td style="font-family:var(--cond);text-align:center;font-size:12px">'
+        +(v.ivaAmt>0
+          ? fmt(v.ivaAmt)+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd*(v.ivaPct||0)/100).toFixed(2)+')</span>':'')
+          : 'S/IVA')
+      +'</td>'+
       '<td style="font-family:var(--cond);font-weight:700;text-align:right">'
         +fmt(v.total||v.subtotal+(v.ivaAmt||0))
-        +(v.isUsd&&v.usd>0?'<br><span style="font-size:10px;color:var(--text3)">($'+(v.usdTotal>0?Number(v.usdTotal).toFixed(2):Number(v.usd).toFixed(2))+')</span>':'')
+        +(v.isUsd&&v.usd>0?(()=>{
+            // usdTotal guardado, o calculado desde usd + ivaPct
+            var usdT=v.usdTotal>0 ? v.usdTotal : v.usd*((1+(v.ivaPct||0)/100));
+            return '<br><span style="font-size:10px;color:var(--text3)">($'+Number(usdT).toFixed(2)+')</span>';
+          })():'')
       +'</td>'+
       '<td style="font-family:var(--cond);font-weight:700;color:var(--green);text-align:right">'+
         (v.esTercero?'<span style="color:var(--amber);font-size:10px">Tercero</span>':fmt(comis))+
