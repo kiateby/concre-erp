@@ -24051,83 +24051,59 @@ function getLastExportI
 </div>
 
 <script>
-// ── SCROLLBAR HORIZONTAL SUPERIOR — siempre visible al inicio de la tabla ──────
-// Inserta una barra de scroll ENCIMA de cada tabla con overflow-x,
-// sincronizada bidirecccionalmente. El usuario la ve inmediatamente sin bajar.
+// ── SCROLLBAR HORIZONTAL SUPERIOR — una sola barra, siempre visible ──────────
 (function(){
-  var mirrors = []; // {mirror, content} para sincronizar
+  var mirrors = [];
 
   function buildMirror(el){
-    if(el._topScrollMirror) return; // ya tiene mirror
+    if(el._topScrollMirror || el.dataset.scrollMirror) return;
+    if(el.scrollWidth <= el.clientWidth + 4) return;
 
     var wrapper = document.createElement('div');
-    wrapper.style.cssText = 'overflow-x:auto;overflow-y:hidden;height:14px;margin-bottom:2px;';
-    wrapper.style.background = 'var(--surface2, #f5f5f5)';
-    wrapper.style.borderRadius = '4px 4px 0 0';
-    wrapper.style.borderBottom = '1px solid var(--border, #e0e0e0)';
+    // Marcar como mirror para que init() no lo procese de nuevo
+    wrapper.dataset.scrollMirror = '1';
+    wrapper.style.cssText = 'overflow-x:auto;overflow-y:hidden;height:12px;margin-bottom:1px;border-radius:4px 4px 0 0;';
 
     var inner = document.createElement('div');
-    inner.style.height = '1px';
-    inner.style.width = el.scrollWidth + 'px';
+    inner.style.cssText = 'height:1px;width:' + el.scrollWidth + 'px';
     wrapper.appendChild(inner);
 
-    // Insertar ANTES del contenedor scrollable (encima de la tabla)
     el.parentNode.insertBefore(wrapper, el);
     el._topScrollMirror = wrapper;
-    el._topScrollInner = inner;
 
     var lock = false;
     wrapper.addEventListener('scroll', function(){
-      if(lock) return; lock = true;
-      el.scrollLeft = wrapper.scrollLeft;
-      lock = false;
+      if(lock) return; lock = true; el.scrollLeft = wrapper.scrollLeft; lock = false;
     });
     el.addEventListener('scroll', function(){
-      if(lock) return; lock = true;
-      wrapper.scrollLeft = el.scrollLeft;
-      lock = false;
+      if(lock) return; lock = true; wrapper.scrollLeft = el.scrollLeft; lock = false;
     });
-
     mirrors.push({wrapper: wrapper, inner: inner, el: el});
   }
 
-  function syncWidths(){
-    mirrors.forEach(function(m){
-      if(m.el.scrollWidth !== parseInt(m.inner.style.width)){
-        m.inner.style.width = m.el.scrollWidth + 'px';
-      }
-    });
-  }
-
   function init(){
-    // Buscar todos los divs con overflow-x en sus estilos inline
+    // SOLO divs con overflow-x inline y SIN la marca de mirror
     document.querySelectorAll('div[style]').forEach(function(el){
-      var s = el.style.overflowX;
-      if((s === 'auto' || s === 'scroll') && el.scrollWidth > el.clientWidth + 4){
-        buildMirror(el);
-      }
+      if(el.dataset.scrollMirror) return; // saltar mirrors ya creados
+      var ox = el.style.overflowX;
+      if(ox === 'auto' || ox === 'scroll') buildMirror(el);
     });
-    syncWidths();
+    // Sincronizar anchos
+    mirrors.forEach(function(m){
+      var w = m.el.scrollWidth + 'px';
+      if(m.inner.style.width !== w) m.inner.style.width = w;
+    });
   }
 
-  // Inicializar después de que la UI cargue
-  window.addEventListener('load', function(){ setTimeout(init, 600); });
+  // Inicializar una vez al cargar
+  window.addEventListener('load', function(){ setTimeout(init, 700); });
 
-  // Re-aplicar cuando se renderizan tablas dinámicas
-  window.initStickyScrollbars = function(){ setTimeout(init, 150); };
+  // Exponer para que el código de renderizado llame manualmente
+  window.initStickyScrollbars = function(){ setTimeout(init, 200); };
 
-  // MutationObserver con debounce para re-aplicar automáticamente
-  var debounceTimer;
-  var mo = new MutationObserver(function(){
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(function(){
-      init();
-    }, 400);
-  });
+  // Polling ligero cada 2s para tablas que cambian dinámicamente
   window.addEventListener('load', function(){
-    mo.observe(document.body, {childList:true, subtree:true});
-    // Sincronizar anchos periódicamente (las tablas pueden cambiar de tamaño)
-    setInterval(syncWidths, 1000);
+    setInterval(init, 2000);
   });
 })();
 </script>
