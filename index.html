@@ -9457,12 +9457,17 @@ function renderAdminVentasTable(){
     var pagoAdminLabel=v.tipoPago==='CONTADO'
       ?'<span class="v-badge contado">Contado</span>'
       :'<span class="v-badge credito">Crédito '+(v.plazoCredito>0?v.plazoCredito+'d':'')+'</span>';
+    var stickyBg = v.pagadoAdmin
+      ? 'linear-gradient(rgba(26,158,92,.08),rgba(26,158,92,.08)),var(--surface)'
+      : v.esTercero
+        ? 'linear-gradient(rgba(217,119,6,.06),rgba(217,119,6,.06)),var(--surface)'
+        : 'var(--surface)';
     return '<tr style="'+(v.pagadoAdmin?'background:rgba(26,158,92,.06)':v.esTercero?'background:rgba(217,119,6,.04)':'')+'">'
-      +'<td style="position:sticky;left:0;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:130px;white-space:nowrap"><strong>'+v.uname+'</strong></td>'
-      +'<td style="position:sticky;left:130px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:90px;font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
-      +'<td style="position:sticky;left:220px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:140px;white-space:nowrap"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+p.nombre+'</span></td>'
-      +'<td style="position:sticky;left:360px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+v.cliente+'</td>'
-      +'<td style="position:sticky;left:500px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:80px;font-size:11px;color:var(--text3);box-shadow:2px 0 5px rgba(0,0,0,.10)">'+( v.factura||'—')+'</td>'
+      +'<td style="position:sticky;left:0;z-index:2;background:'+stickyBg+';min-width:130px;white-space:nowrap"><strong>'+v.uname+'</strong></td>'
+      +'<td style="position:sticky;left:130px;z-index:2;background:'+stickyBg+';min-width:90px;font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
+      +'<td style="position:sticky;left:220px;z-index:2;background:'+stickyBg+';min-width:140px;white-space:nowrap"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+p.nombre+'</span></td>'
+      +'<td style="position:sticky;left:360px;z-index:2;background:'+stickyBg+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+v.cliente+'</td>'
+      +'<td style="position:sticky;left:500px;z-index:2;background:'+stickyBg+';min-width:80px;font-size:11px;color:var(--text3);box-shadow:2px 0 5px rgba(0,0,0,.10)">'+( v.factura||'—')+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'
       +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(2):fmt(v.precio)):'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.subtotal)+'</td>'
