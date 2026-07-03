@@ -1678,6 +1678,8 @@ function doLogin(){
     loadAllDataFromDB().then(function(){
       document.getElementById('loginScreen').style.display='none';
       initApp();
+      // Migración retroactiva: recalcular ventas USD con IVA usando nueva lógica de 1 decimal
+      setTimeout(migrateUsdVentasIva, 2000);
     });
   });
 }
@@ -3491,6 +3493,66 @@ function injectNotifBell(){
     if(p&&b&&!p.contains(e.target)&&!b.contains(e.target)) p.classList.remove('open');
   });
   renderNotifBell();
+}
+
+// ── MIGRACIÓN RETROACTIVA: ventas USD con IVA → nueva lógica 1 decimal ──────
+// Corre una sola vez al iniciar (o si hay ventas sin migrar).
+// Recalcula usdTotal, ivaAmt y total usando round a 1 decimal en USD.
+// Solo afecta ventas isUsd===true con ivaPct>0. No toca ventas en colones.
+async function migrateUsdVentasIva(){
+  if(!SESSION) return;
+  // Solo superadmin y admin pueden ver y corregir ventas de todos los usuarios
+  var uids = [];
+  if(SESSION.rol==='superadmin'||SESSION.rol==='admin'){
+    uids = (getUsers()||[]).filter(function(u){return u.estado==='activo';}).map(function(u){return u.id;});
+  } else {
+    uids = [SESSION.id];
+  }
+  var totalFixed = 0;
+  uids.forEach(function(uid){
+    var vd = getVentasData(uid);
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(v){
+        if(!v.isUsd && !v.isUSD) return; // solo USD
+        if(!(v.ivaPct>0)) return;         // solo con IVA
+        if(v._usdMigrated) return;        // ya migrado
+
+        var usd = v.usd||0;
+        var tcUsed = v.tcUsed||0;
+        if(!usd||!tcUsed) return;
+
+        var subtotal = usd*tcUsed;
+        var usdTotal1 = Math.round(usd*(1+(v.ivaPct||0)/100)*10)/10;
+        var ivaUsd1   = Math.round(usd*(v.ivaPct||0)/100*10)/10;
+        var ivaAmt1   = ivaUsd1*tcUsed;
+        var total1    = usdTotal1*tcUsed;
+
+        // Solo actualizar si el total cambió (diferencia por redondeo)
+        var oldTotal = v.total||0;
+        if(Math.abs(total1-oldTotal) < 0.01) {
+          v._usdMigrated=true; return; // ya coincide, marcar y salir
+        }
+
+        v.subtotal  = subtotal;
+        v.ivaAmt    = ivaAmt1;
+        v.iva       = ivaAmt1;
+        v.usdTotal  = usdTotal1;
+        v.total     = total1;
+        v._usdMigrated = true;
+        totalFixed++;
+
+        // Guardar versión corregida
+        _saveSingleVenta(uid, v, mk);
+      });
+    });
+    if(vd) window._ventasCache[uid] = vd;
+  });
+  if(totalFixed>0){
+    console.log('migrateUsdVentasIva: '+totalFixed+' ventas corregidas con nueva lógica USD 1 decimal');
+    // Re-renderizar si la pestaña de ventas está activa
+    try{ renderVentasUser(); }catch(e){}
+    try{ renderAdminVentasTable(); }catch(e){}
+  }
 }
 
 function initApp(){
@@ -8472,12 +8534,12 @@ function _doSaveVenta(){
   if(!subtotal){ alert('El subtotal es 0. Verifica subtotal y cantidad.'); return; }
 
   const ivaPct=getIvaPct();
-  const ivaAmt=subtotal*(ivaPct/100);
-  // usdTotal: total en dólares incluyendo IVA (subtotal_USD + IVA_USD)
-  // IVA se calcula primero en dólares: iva_USD = usd * ivaPct/100
-  // total_USD = usd + iva_USD = usd * (1 + ivaPct/100)
-  // total_CRC = total_USD * tcUsed (mismo resultado que subtotal_CRC + iva_CRC, conmutativo)
-  const usdTotal = isUsd ? usd*(1+ivaPct/100) : 0;
+  // Redondear a 1 decimal para coincidir con sistema de facturación
+  const usdTotal = isUsd ? Math.round(usd*(1+ivaPct/100)*10)/10 : 0;
+  const ivaUsd1 = isUsd ? Math.round(usd*(ivaPct/100)*10)/10 : 0;
+  // Total CRC basado en el monto USD ya redondeado a 1 decimal
+  const ivaAmt = isUsd ? ivaUsd1*tcUsed : subtotal*(ivaPct/100);
+  const totalFinal = isUsd ? usdTotal*tcUsed : subtotal+ivaAmt;
   const insChk=document.getElementById('vf-ins-chk').checked;
   const tercChk=document.getElementById('vf-terc-chk').checked;
   const pendChk=document.getElementById('vf-pend-chk').checked;
@@ -8492,7 +8554,7 @@ function _doSaveVenta(){
     factura:document.getElementById('vf-factura').value.trim(),
     cantidad:document.getElementById('vf-cantidad').value,
     precio:(()=>{var _q=parseFloat(document.getElementById('vf-cantidad').value)||0; var _s=isUsd?usd:subtotal; return _q>0?_s/_q:0;})(),
-    subtotal, ivaPct, ivaAmt, total:subtotal+ivaAmt,
+    subtotal, ivaPct, ivaAmt, total:totalFinal,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:parseInt(document.getElementById('vf-plazo').value)||0,
     isUsd, usd, tcUsed, usdTotal,
@@ -8739,18 +8801,18 @@ function renderVentasUser(){
     return '<tr class="'+rowCls+'">'+
       '<td style="font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'+
       '<td style="font-family:var(--cond);font-weight:700;text-align:center">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'+
-      '<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(2):fmt(v.precio)):'—')+'</td>'+
+      '<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(1):fmt(v.precio)):'—')+'</td>'+
       '<td><span class="v-cat '+TIPO_COLORS[p.tipo]+'">'+getVentaDisplayNombre(v,catMap)+'</span></td>'+
       '<td style="font-weight:600">'+v.cliente+'</td>'+
       '<td style="font-size:11px;color:var(--text3)">'+( v.factura||'—')+'</td>'+
       '<td style="white-space:nowrap">'+pagoLabel+'</td>'+
       '<td style="font-family:var(--cond);font-weight:800;text-align:right">'
         +fmt(v.subtotal)
-        +(v.isUsd&&v.usd>0?'<br><span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(2)+')</span>':'')
+        +(v.isUsd&&v.usd>0?'<br><span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(1)+')</span>':'')
       +'</td>'+
       '<td style="font-family:var(--cond);text-align:center;font-size:12px">'
         +(v.ivaAmt>0
-          ? fmt(v.ivaAmt)+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd*(v.ivaPct||0)/100).toFixed(2)+')</span>':'')
+          ? fmt(v.ivaAmt)+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd*(v.ivaPct||0)/100).toFixed(1)+')</span>':'')
           : 'S/IVA')
       +'</td>'+
       '<td style="font-family:var(--cond);font-weight:700;text-align:right">'
@@ -8758,7 +8820,7 @@ function renderVentasUser(){
         +(v.isUsd&&v.usd>0?(()=>{
             // usdTotal guardado, o calculado desde usd + ivaPct
             var usdT=v.usdTotal>0 ? v.usdTotal : v.usd*((1+(v.ivaPct||0)/100));
-            return '<br><span style="font-size:10px;color:var(--text3)">($'+Number(usdT).toFixed(2)+')</span>';
+            return '<br><span style="font-size:10px;color:var(--text3)">($'+Number(usdT).toFixed(1)+')</span>';
           })():'')
       +'</td>'+
       '<td style="font-family:var(--cond);font-weight:700;color:var(--green);text-align:right">'+
@@ -9571,10 +9633,10 @@ function renderAdminVentasTable(){
       +'<td style="position:sticky;left:360px;z-index:2;background:'+stickyBg+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+v.cliente+'</td>'
       +'<td style="position:sticky;left:500px;z-index:2;background:'+stickyBg+';min-width:80px;font-size:11px;color:var(--text3);box-shadow:2px 0 5px rgba(0,0,0,.10)">'+( v.factura||'—')+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'
-      +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(2):fmt(v.precio)):'—')+'</td>'
+      +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(1):fmt(v.precio)):'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.subtotal)+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;font-size:12px">'+(v.ivaAmt>0?fmt(v.ivaAmt):'S/IVA')+'</td>'
-      +'<td style="font-family:var(--cond);text-align:right">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(2)+')</span>':'')+'</td>'
+      +'<td style="font-family:var(--cond);text-align:right">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(1)+')</span>':'')+'</td>'
       +'<td style="white-space:nowrap">'+pagoAdminLabel+'</td>'
       +'<td style="font-family:var(--cond);color:var(--blue);text-align:right">'+fmt(Math.max(0,v.subtotal-(v.insMontoNum||0)))+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:'+(v.esTercero?'var(--amber)':'var(--green)')+';text-align:right">'+(v.esTercero?'Tercero':fmt(comis))+'</td>'
@@ -10000,10 +10062,11 @@ function updateVenta(){
     subtotal=parseMon(document.getElementById('vf-subtotal-input').value)||0;
   }
   const ivaPct=getIvaPct();
-  // Nuevo cálculo USD: IVA se calcula en dólares, luego se coloniza el total
-  // subtotal_USD × (1 + ivaPct/100) = total_USD → total_USD × TC = total_CRC
-  const ivaAmt=subtotal*(ivaPct/100);
-  const usdTotal=isUsd ? usd*(1+ivaPct/100) : 0; // total en USD incluyendo IVA
+  // Redondear a 1 decimal para coincidir con sistema de facturación
+  const usdTotal=isUsd ? Math.round(usd*(1+ivaPct/100)*10)/10 : 0;
+  const ivaUsd1=isUsd ? Math.round(usd*(ivaPct/100)*10)/10 : 0;
+  const ivaAmt=isUsd ? ivaUsd1*tcUsed : subtotal*(ivaPct/100);
+  const totalFinal=isUsd ? usdTotal*tcUsed : subtotal+ivaAmt;
   const insChk=document.getElementById('vf-ins-chk').checked;
   const tercChk=document.getElementById('vf-terc-chk').checked;
   const pendChk=document.getElementById('vf-pend-chk').checked;
@@ -10025,7 +10088,7 @@ function updateVenta(){
     cantidad:document.getElementById('vf-cantidad').value,
     precio:newPrecioUnit,
     precioUnit:newPrecioUnit,
-    subtotal,ivaPct,ivaAmt,total:subtotal+ivaAmt,
+    subtotal,ivaPct,ivaAmt,total:totalFinal,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:plazo,
     isUsd,usd,tcUsed,
@@ -11980,7 +12043,7 @@ function calcAdminVentaPreview(){
   }
   var total=sub*(1+ivaPct/100);
   var el=document.getElementById('avf-preview');
-  if(el) el.textContent='Subtotal: '+fmt(sub)+(ivaPct?' + IVA '+fmt(sub*ivaPct/100)+' = '+fmt(total):'')+(isUsd&&usdAmt>0?' ($'+usdAmt.toFixed(2)+')':'');
+  if(el) el.textContent='Subtotal: '+fmt(sub)+(ivaPct?' + IVA '+fmt(sub*ivaPct/100)+' = '+fmt(total):'')+(isUsd&&usdAmt>0?' ($'+usdAmt.toFixed(1)+')':'');
 }
 
 function saveAdminVenta(){
