@@ -1026,11 +1026,15 @@ select{color:var(--text) !important}
   .vc-concreto{background:rgba(227,24,55,.1);color:var(--red)}
   .vc-adoquin{background:rgba(234,88,12,.12);color:#ea580c}
   /* Scrollbar horizontal siempre visible — sin bajar al fondo de la tabla */
-  [style*="overflow-x:auto"],[style*="overflow-x: auto"]{overflow-x:scroll!important}
+  /* Scrollbar styling — siempre visible via JS sticky scrollbar */
   ::-webkit-scrollbar{height:8px;width:6px}
   ::-webkit-scrollbar-track{background:var(--surface2);border-radius:4px}
   ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
   ::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+  /* Floating sticky scrollbar */
+  .sticky-hscroll-mirror{position:sticky;bottom:0;left:0;right:0;height:12px;overflow-x:auto;overflow-y:hidden;z-index:10;background:var(--surface2);border-top:1px solid var(--border);border-radius:0 0 6px 6px}
+  .sticky-hscroll-mirror::-webkit-scrollbar{height:8px}
+  .sticky-hscroll-mirror > div{height:1px}
   .vc-fibra{background:rgba(124,58,237,.1);color:var(--purple)}
   .vc-sello{background:rgba(37,99,235,.1);color:var(--blue)}
   .vc-pulido{background:rgba(16,185,129,.1);color:#059669}
@@ -9436,11 +9440,11 @@ function renderAdminVentasTable(){
       ?'<span class="v-badge contado">Contado</span>'
       :'<span class="v-badge credito">Crédito '+(v.plazoCredito>0?v.plazoCredito+'d':'')+'</span>';
     return '<tr style="'+(v.pagadoAdmin?'background:rgba(26,158,92,.06)':v.esTercero?'background:rgba(217,119,6,.04)':'')+'">'
-      +'<td style="position:sticky;left:0;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';white-space:nowrap;min-width:130px;box-shadow:2px 0 4px rgba(0,0,0,.08)"><strong>'+v.uname+'</strong></td>'
-      +'<td style="font-size:11px;color:var(--text3);white-space:nowrap;min-width:90px">'+formatDate(parseDate(v.fecha))+'</td>'
-      +'<td style="white-space:nowrap;min-width:140px"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+p.nombre+'</span></td>'
-      +'<td style="min-width:140px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+v.cliente+'</td>'
-      +'<td style="font-size:11px;color:var(--text3);min-width:80px">'+( v.factura||'—')+'</td>'
+      +'<td style="position:sticky;left:0;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:130px;white-space:nowrap"><strong>'+v.uname+'</strong></td>'
+      +'<td style="position:sticky;left:130px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:90px;font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
+      +'<td style="position:sticky;left:220px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:140px;white-space:nowrap"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+p.nombre+'</span></td>'
+      +'<td style="position:sticky;left:360px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+v.cliente+'</td>'
+      +'<td style="position:sticky;left:500px;z-index:2;background:'+(v.pagadoAdmin?'rgba(26,158,92,.06)':v.esTercero?'rgba(217,119,6,.04)':'var(--surface)')+';min-width:80px;font-size:11px;color:var(--text3);box-shadow:2px 0 5px rgba(0,0,0,.10)">'+( v.factura||'—')+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'
       +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(2):fmt(v.precio)):'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.subtotal)+'</td>'
@@ -22067,9 +22071,9 @@ window.initCalcCONCRE=initCalcCONCRE;
               <thead><tr>
                 <th style="position:sticky;left:0;z-index:3;background:var(--surface2);white-space:nowrap;min-width:130px">Colaborador</th>
                 <th style="position:sticky;left:130px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:90px">Fecha</th>
-                <th style="position:sticky;left:220px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:110px">Producto</th>
-                <th style="position:sticky;left:330px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:110px">Cliente</th>
-                <th style="position:sticky;left:440px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:70px">Factura</th>
+                <th style="position:sticky;left:220px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:140px">Producto</th>
+                <th style="position:sticky;left:360px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:140px">Cliente</th>
+                <th style="position:sticky;left:500px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:80px;box-shadow:2px 0 5px rgba(0,0,0,.10)">Factura</th>
                 <th>Cant.</th><th>Precio unit.</th>
                 <th style="text-align:right">Subtotal</th><th>IVA ₡</th><th style="text-align:right">Total</th>
                 <th>Pago / Plazo</th><th>Base comis.</th><th>Comisión</th>
@@ -24042,5 +24046,60 @@ function getLastExportI
   </div>
 </div>
 
+<script>
+// ── STICKY HORIZONTAL SCROLLBAR ──────────────────────────────────────────────
+// Añade un scrollbar espejo pegado al viewport para contenedores overflow-x,
+// de modo que el usuario no tenga que bajar hasta el fondo de la tabla para desplazarse.
+(function(){
+  function initStickyScrollbars(){
+    // Seleccionar todos los contenedores con scroll horizontal
+    var containers = document.querySelectorAll('[style*="overflow-x"]');
+    containers.forEach(function(el){
+      // Saltar si ya tiene mirror o si no tiene scroll real
+      if(el._stickyMirror || el.scrollWidth <= el.clientWidth + 4) return;
+      // Forzar overflow-x:auto para que el scrollbar del contenedor exista
+      el.style.overflowX = 'auto';
+      // Crear el scrollbar espejo
+      var mirror = document.createElement('div');
+      mirror.className = 'sticky-hscroll-mirror';
+      var inner = document.createElement('div');
+      mirror.appendChild(inner);
+      el.parentNode.insertBefore(mirror, el.nextSibling);
+      el._stickyMirror = mirror;
+      // Sincronizar anchos
+      function syncWidth(){
+        inner.style.width = el.scrollWidth + 'px';
+      }
+      syncWidth();
+      // Sincronizar scroll bidireccional
+      var syncing = false;
+      el.addEventListener('scroll', function(){
+        if(syncing) return; syncing = true;
+        mirror.scrollLeft = el.scrollLeft;
+        syncing = false;
+      });
+      mirror.addEventListener('scroll', function(){
+        if(syncing) return; syncing = true;
+        el.scrollLeft = mirror.scrollLeft;
+        syncing = false;
+      });
+      // Resync on resize
+      var ro = new ResizeObserver(syncWidth);
+      ro.observe(el);
+    });
+  }
+  // Inicializar después del render inicial y también cuando el DOM cambia (render de tablas)
+  document.addEventListener('DOMContentLoaded', function(){
+    setTimeout(initStickyScrollbars, 800);
+  });
+  // Re-aplicar cuando se renderizan tablas dinámicas (llamado globalmente)
+  window.initStickyScrollbars = function(){ setTimeout(initStickyScrollbars, 200); };
+  // Observar cambios en el DOM para re-aplicar automáticamente
+  var mo = new MutationObserver(function(){ setTimeout(initStickyScrollbars, 300); });
+  document.addEventListener('DOMContentLoaded', function(){
+    mo.observe(document.body, {childList:true, subtree:true, attributes:false});
+  });
+})();
+</script>
 </body>
 </html>
