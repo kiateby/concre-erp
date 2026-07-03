@@ -24208,7 +24208,12 @@ function getLastExportI
 
   function syncWidth(){
     if(!current) return;
-    inner.style.width = current.scrollWidth + 'px';
+    // La barra fija tiene position:fixed y ocupa todo el viewport (bar.clientWidth ≈ window.innerWidth).
+    // El contenedor de la tabla (current.clientWidth) puede ser más angosto (hay sidebar).
+    // Para que la barra cubra exactamente el mismo rango que el scroll de la tabla:
+    //   inner.width = scrollWidth + (barWidth - containerWidth)
+    var extra = Math.max(0, bar.clientWidth - current.clientWidth);
+    inner.style.width = (current.scrollWidth + extra) + 'px';
   }
 
   function detach(){
