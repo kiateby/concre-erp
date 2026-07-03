@@ -8684,6 +8684,8 @@ function setVentasMes(m){ VM=m; renderVentasUser(); }
 // ── ADMIN VENTAS ──
 function initAdminVentas(){
   cleanupOldCxc(); // Remove paid CXC older than 7 days
+  try{ buildProdSelect(); }catch(e){} // needed for editVenta() to work for admin's own ventas
+  VM=new Date().getMonth(); VY=new Date().getFullYear(); // ensure VM/VY set for editVenta
   renderAdminOwnVentas(); // Admin own sales table
   const sel=document.getElementById('av-user-sel');
   if(sel&&sel.options.length===1){
@@ -11916,24 +11918,39 @@ function renderAdminOwnVentas(){
     +'<th style="text-align:right">Subtotal</th><th>IVA ₡</th><th>Proyecto</th><th>Notas</th><th></th>'
     +'</tr></thead><tbody>'
     +ventas.map(function(v){
-      var p=cat[v.prodId]||{nombre:v.prodId,tipo:'otros'};
-      return '<tr>'
+      var p=cat[v.prodId]||{nombre:v.prodId||'Sin producto',tipo:'otros'};
+      var isIncompleta=v.estado==='incompleta'||!v.prodId||!v.cliente||!v.precio;
+      return '<tr style="'+(isIncompleta?'background:rgba(234,88,12,.06);':'')+'">'
         +'<td style="font-size:11px;white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
-        +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo]||'bg-otros')+'">'+p.nombre+'</span></td>'
-        +'<td>'+v.cliente+'</td>'
+        +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo]||'vc-otros')+'">'+(p.nombre||'—')+'</span>'
+          +(isIncompleta?' <span style="font-size:9px;font-weight:800;color:#ea580c;background:rgba(234,88,12,.12);padding:1px 5px;border-radius:4px;margin-left:4px">⚠ INCOMPLETA</span>':'')
+        +'</td>'
+        +'<td>'+(v.cliente||'<em style="color:var(--text3)">Sin cliente</em>')+'</td>'
         +'<td style="text-align:center;font-family:var(--cond)">'+(v.cantidad||'—')+'</td>'
         +'<td style="text-align:right;font-family:var(--cond);font-weight:700">'+fmt(v.subtotal)+'</td>'
         +'<td style="text-align:center;font-size:11px;color:var(--text3)">'+(v.ivaAmt>0?fmt(v.ivaAmt):'S/IVA')+'</td>'
         +'<td style="font-size:11px;color:var(--text2)">'+(v.proyecto||'—')+'</td>'
-        +'<td style="font-size:11px;color:var(--text3)">'+(v.notas||'—')+'</td>'
-        +'<td><button data-avid="'+v.id+'" class="gasto-del admin-del-btn">✕</button></td>'
+        +'<td style="font-size:11px;color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(v.notas||'—')+'</td>'
+        +'<td style="white-space:nowrap">'
+          +'<button data-avid="'+v.id+'" class="admin-edit-btn" style="background:rgba(37,99,235,.1);border:1px solid rgba(37,99,235,.25);color:var(--blue);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px;font-weight:700;margin-right:3px">✏</button>'
+          +'<button data-avid="'+v.id+'" class="gasto-del admin-del-btn">✕</button>'
+        +'</td>'
         +'</tr>';
     }).join('')
     +'</tbody></table>';
-  // Wire delete buttons
+  // Wire buttons
   setTimeout(function(){
     el.querySelectorAll('.admin-del-btn').forEach(function(btn){
       btn.onclick=function(){ deleteAdminVenta(btn.dataset.avid); };
+    });
+    el.querySelectorAll('.admin-edit-btn').forEach(function(btn){
+      btn.onclick=function(){
+        var vid=btn.dataset.avid;
+        // Mostrar el ventaForm (que puede estar oculto en la vista admin)
+        var vf=document.getElementById('ventaForm');
+        if(vf){ vf.style.display='block'; vf.scrollIntoView({behavior:'smooth',block:'start'}); }
+        editVenta(vid);
+      };
     });
   },0);
 }
@@ -24051,60 +24068,104 @@ function getLastExportI
 </div>
 
 <script>
-// ── SCROLLBAR HORIZONTAL SUPERIOR — una sola barra, siempre visible ──────────
+// ── SCROLLBAR HORIZONTAL FIJO EN VIEWPORT ────────────────────────────────────
+// Una sola barra fija en la parte inferior de la pantalla (position:fixed;bottom:0).
+// Se sincroniza con la tabla scrollable que esté visible en ese momento.
 (function(){
-  var mirrors = [];
+  // Crear la barra fija
+  var bar = document.createElement('div');
+  bar.setAttribute('data-fixed-hbar','1');
+  bar.style.cssText=[
+    'position:fixed','bottom:0','left:0','right:0','height:14px',
+    'overflow-x:auto','overflow-y:hidden','z-index:9999',
+    'background:rgba(200,200,200,0.95)','border-top:2px solid #bbb',
+    'display:none','box-shadow:0 -1px 4px rgba(0,0,0,.12)'
+  ].join(';');
+  var inner = document.createElement('div');
+  inner.style.cssText = 'height:1px;width:100px;pointer-events:none';
+  bar.appendChild(inner);
+  document.body.appendChild(bar);
 
-  function buildMirror(el){
-    if(el._topScrollMirror || el.dataset.scrollMirror) return;
-    if(el.scrollWidth <= el.clientWidth + 4) return;
+  var current = null;   // tabla actualmente sincronizada
+  var lock    = false;
 
-    var wrapper = document.createElement('div');
-    // Marcar como mirror para que init() no lo procese de nuevo
-    wrapper.dataset.scrollMirror = '1';
-    wrapper.style.cssText = 'overflow-x:auto;overflow-y:hidden;height:12px;margin-bottom:1px;border-radius:4px 4px 0 0;';
-
-    var inner = document.createElement('div');
-    inner.style.cssText = 'height:1px;width:' + el.scrollWidth + 'px';
-    wrapper.appendChild(inner);
-
-    el.parentNode.insertBefore(wrapper, el);
-    el._topScrollMirror = wrapper;
-
-    var lock = false;
-    wrapper.addEventListener('scroll', function(){
-      if(lock) return; lock = true; el.scrollLeft = wrapper.scrollLeft; lock = false;
-    });
-    el.addEventListener('scroll', function(){
-      if(lock) return; lock = true; wrapper.scrollLeft = el.scrollLeft; lock = false;
-    });
-    mirrors.push({wrapper: wrapper, inner: inner, el: el});
-  }
-
-  function init(){
-    // SOLO divs con overflow-x inline y SIN la marca de mirror
-    document.querySelectorAll('div[style]').forEach(function(el){
-      if(el.dataset.scrollMirror) return; // saltar mirrors ya creados
-      var ox = el.style.overflowX;
-      if(ox === 'auto' || ox === 'scroll') buildMirror(el);
-    });
-    // Sincronizar anchos
-    mirrors.forEach(function(m){
-      var w = m.el.scrollWidth + 'px';
-      if(m.inner.style.width !== w) m.inner.style.width = w;
-    });
-  }
-
-  // Inicializar una vez al cargar
-  window.addEventListener('load', function(){ setTimeout(init, 700); });
-
-  // Exponer para que el código de renderizado llame manualmente
-  window.initStickyScrollbars = function(){ setTimeout(init, 200); };
-
-  // Polling ligero cada 2s para tablas que cambian dinámicamente
-  window.addEventListener('load', function(){
-    setInterval(init, 2000);
+  // Scroll en la barra → mover tabla
+  bar.addEventListener('scroll', function(){
+    if(lock || !current) return;
+    lock = true; current.scrollLeft = bar.scrollLeft; lock = false;
   });
+
+  function attachTo(el){
+    if(current === el){ syncWidth(); return; }
+    // Desconectar anterior
+    if(current && current._hbarListener){
+      current.removeEventListener('scroll', current._hbarListener);
+      current._hbarListener = null;
+    }
+    current = el;
+    syncWidth();
+    bar.scrollLeft = el.scrollLeft;
+    bar.style.display = 'block';
+    // Scroll en la tabla → mover barra
+    el._hbarListener = function(){
+      if(lock) return;
+      lock = true; bar.scrollLeft = el.scrollLeft; lock = false;
+    };
+    el.addEventListener('scroll', el._hbarListener);
+  }
+
+  function syncWidth(){
+    if(!current) return;
+    inner.style.width = current.scrollWidth + 'px';
+  }
+
+  function detach(){
+    if(current && current._hbarListener){
+      current.removeEventListener('scroll', current._hbarListener);
+      current._hbarListener = null;
+    }
+    current = null;
+    bar.style.display = 'none';
+  }
+
+  // Encontrar todos los contenedores con scroll horizontal real
+  function getScrollables(){
+    return Array.from(document.querySelectorAll('div[style]')).filter(function(el){
+      if(el.getAttribute('data-fixed-hbar')) return false; // la barra misma
+      if(el.getAttribute('data-scroll-mirror')) return false; // mirrors viejos
+      var ox = el.style.overflowX;
+      return (ox==='auto'||ox==='scroll') && el.scrollWidth > el.clientWidth + 8;
+    });
+  }
+
+  // Determinar qué tabla es más relevante (más visible en el viewport)
+  function pickActive(){
+    var scrollables = getScrollables();
+    if(!scrollables.length){ detach(); return; }
+    var wh = window.innerHeight;
+    var best = null, bestScore = -1;
+    scrollables.forEach(function(el){
+      var r = el.getBoundingClientRect();
+      if(r.bottom <= 0 || r.top >= wh) return; // fuera del viewport
+      // Score: cuántos pixels del elemento están en la pantalla
+      var visible = Math.min(r.bottom, wh) - Math.max(r.top, 0);
+      if(visible > bestScore){ bestScore = visible; best = el; }
+    });
+    if(best) attachTo(best); else detach();
+  }
+
+  // Escuchar scroll de página y resize
+  window.addEventListener('scroll', pickActive, {passive:true});
+  window.addEventListener('resize', pickActive, {passive:true});
+
+  // Inicializar al cargar y cada 2s para tablas dinámicas
+  window.addEventListener('load', function(){
+    setTimeout(pickActive, 800);
+    setInterval(function(){ syncWidth(); pickActive(); }, 2000);
+  });
+
+  // API pública para llamar tras renderizar tablas
+  window.initStickyScrollbars = function(){ setTimeout(pickActive, 250); };
 })();
 </script>
 </body>
