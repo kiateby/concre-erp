@@ -1463,7 +1463,8 @@ async function loadAllDataFromDB(){
     if(!users.error&&users.data) window._usersCache=users.data.map(dbRowToUser);
 
     if(!configs.error&&configs.data){
-      window._pagadoAdminOverrides = {}; // { [ventaId]: true/false }
+      window._pagadoAdminOverrides = {};
+      window._ventaEditsCache = {}; // ediciones de ventas guardadas como backup
       configs.data.forEach(function(row){
         if(row.clave==='catalogo'){
           var lc=row.valor;
@@ -1474,10 +1475,13 @@ async function loadAllDataFromDB(){
         if(row.clave==='tipos_proyecto') window._tiposProyCache=row.valor;
         if(row.clave==='liq_cost_types') window._liqCostTypesCache=row.valor;
         if(row.clave==='fondos_lim') window._fondosLimCache=row.valor;
-        // Overrides de pagado_admin guardados por toggleVentaPago
         if(row.clave&&row.clave.startsWith('cc_pagado_admin_')&&row.valor){
           var vid=row.clave.replace('cc_pagado_admin_','');
           window._pagadoAdminOverrides[vid]=!!(row.valor.pagado);
+        }
+        // Ediciones de ventas guardadas como backup
+        if(row.clave&&row.clave.startsWith('cc_venta_v_')&&row.valor&&row.valor.id){
+          window._ventaEditsCache[row.valor.id]=row.valor;
         }
       });
     }
@@ -7871,16 +7875,42 @@ function _saveSingleVenta(uid, v, mk){
     is_admin_venta: v.isAdminVenta||false,
     pagado_admin: v.pagadoAdmin||false
   };
-  // Usar dbUpsert que maneja insert y update automáticamente
+
+  // ── BACKUP GARANTIZADO en configuracion (cross-device, sin RLS issues) ──
+  // Guarda los campos editables completos para que sobrevivan aunque el upsert falle
+  var ventaEditKey = 'cc_venta_v_'+v.id;
+  var ventaEditVal = {
+    id:v.id, uid:uid, mk:mk,
+    fecha:v.fecha, prodId:v.prodId, subProdId:v.subProdId||'', subProdNombre:v.subProdNombre||'',
+    cantidad:v.cantidad, precio:v.precioUnit||v.precio||0, precioUnit:v.precioUnit||0,
+    subtotal:v.subtotal||0, ivaPct:v.ivaPct||0, ivaAmt:v.ivaAmt||0, total:v.total||0,
+    cliente:v.cliente||'', factura:v.factura||'', proyecto:v.proyecto||'',
+    tipoPago:v.tipoPago||'CONTADO', plazoCredito:v.plazoCredito||0,
+    isUsd:v.isUsd||false, usd:v.usd||0, tcUsed:v.tcUsed||0, usdTotal:v.usdTotal||0,
+    tieneInsumos:v.tieneInsumos||false, insDesc:v.insDesc||'', insMontoNum:v.insMontoNum||0,
+    esTercero:v.esTercero||false, tercNombre:v.tercNombre||'',
+    tienePendiente:v.tienePendiente||false, pendMonto:v.pendMonto||0, pendCancelado:v.pendCancelado||'no',
+    referido:v.referido||'', notas:v.notas||'', estado:v.estado||'activa',
+    tieneMinimo:v.tieneMinimo||false, minimoArea:v.minimoArea||0,
+    ts: new Date().toISOString()
+  };
+  if(!window._ventaEditsCache) window._ventaEditsCache={};
+  window._ventaEditsCache[v.id]=ventaEditVal; // actualizar cache en memoria inmediatamente
+  DB.from('configuracion').upsert(
+    {clave:ventaEditKey, valor:ventaEditVal, updated_at:new Date().toISOString()},
+    {onConflict:'clave'}
+  ).then(function(r){
+    if(r.error) console.error('_saveSingleVenta backup configuracion error:', r.error);
+  });
+
+  // ── INTENTO PRINCIPAL: upsert en tabla ventas ──
   DB.from('ventas').upsert([row],{onConflict:'id'}).then(function(r){
     if(r.error){
-      console.error('_saveSingleVenta upsert error (code='+r.error.code+'):',r.error.message||r.error);
-      // Si upsert falla, intentar insert directo como fallback
+      console.warn('_saveSingleVenta upsert falló, intentando métodos alternativos:', r.error.message);
       DB.from('ventas').insert([row]).then(function(r2){
         if(r2.error){
-          // Si insert también falla (duplicado), hacer update
           DB.from('ventas').update(row).eq('id',v.id).then(function(r3){
-            if(r3.error) console.error('_saveSingleVenta all methods failed:',r3.error);
+            if(r3.error) console.warn('_saveSingleVenta todos los métodos fallaron — datos guardados en configuracion como respaldo:', r3.error.message);
           });
         }
       });
@@ -7925,6 +7955,59 @@ async function loadVentasFromDB(uid){
     var configOverride=window._pagadoAdminOverrides&&window._pagadoAdminOverrides.hasOwnProperty(row.id)
       ? window._pagadoAdminOverrides[row.id] : null;
     var pagadoAdminFinal = configOverride!==null ? configOverride : (row.pagado_admin||false);
+
+    // Aplicar override de edición de venta si existe en _ventaEditsCache
+    var editOverride=window._ventaEditsCache&&window._ventaEditsCache[row.id];
+    if(editOverride){
+      // El override tiene datos más recientes que la tabla ventas — usarlos
+      var mk2=editOverride.mk||mk;
+      if(!vd[mk2]) vd[mk2]={ventas:[],tc:row.tc||525,comisVerif:false};
+      vd[mk2].ventas.push({
+        id:row.id, fecha:editOverride.fecha||row.fecha,
+        prodId:editOverride.prodId||row.prod_id,
+        subProdId:editOverride.subProdId||row.sub_prod_id||'',
+        subProdNombre:editOverride.subProdNombre||row.sub_prod_nombre||'',
+        cantidad:editOverride.cantidad||row.cantidad,
+        precio:editOverride.precioUnit||editOverride.precio||row.precio_unit||0,
+        precioUnit:editOverride.precioUnit||row.precio_unit||0,
+        subtotal:editOverride.subtotal||row.subtotal,
+        ivaPct:editOverride.ivaPct||0,
+        ivaAmt:editOverride.ivaAmt||row.iva||0,
+        iva:editOverride.ivaAmt||row.iva||0,
+        total:editOverride.total||row.total,
+        usdTotal:editOverride.usdTotal||0,
+        cliente:editOverride.cliente||row.cliente,
+        crmClienteId:row.crm_cliente_id, crmContactoId:row.crm_contacto_id,
+        factura:editOverride.factura||row.factura||'',
+        proyecto:editOverride.proyecto||row.proyecto||'',
+        tipoPago:editOverride.tipoPago||row.pago||'CONTADO',
+        pago:editOverride.tipoPago||row.pago||'CONTADO',
+        plazoCredito:editOverride.plazoCredito||row.plazo_credito||0,
+        comision:row.comision,
+        esTercero:editOverride.esTercero||row.es_tercero||false,
+        tercNombre:editOverride.tercNombre||'',
+        isUsd:editOverride.isUsd||row.is_usd||false,
+        isUSD:editOverride.isUsd||row.is_usd||false,
+        tcUsed:editOverride.tcUsed||row.tc_used||0,
+        usd:editOverride.usd||row.usd||0,
+        depositoNum:row.deposito_num||'',
+        notas:editOverride.notas||row.notas||'',
+        estado:editOverride.estado||row.estado||'activo',
+        tieneInsumos:editOverride.tieneInsumos||false,
+        insDesc:editOverride.insDesc||'', insMontoNum:editOverride.insMontoNum||0,
+        tienePendiente:editOverride.tienePendiente||false,
+        pendMonto:editOverride.pendMonto||0, pendCancelado:editOverride.pendCancelado||'no',
+        referido:editOverride.referido||'',
+        tieneMinimo:editOverride.tieneMinimo||false, minimoArea:editOverride.minimoArea||0,
+        isAdminVenta:row.is_admin_venta||false,
+        pagadoAdmin:pagadoAdminFinal,
+        ejecutado:row.ejecutado||false, ejecutadoFecha:row.ejecutado_fecha||null,
+        cxcPagado:row.cxc_pagado||false, cxcPagadoDate:row.cxc_pagado_date||null,
+        invMovId:row.inv_mov_id||'',
+        _fromEditCache:true
+      });
+      return; // no continuar con el mapeo normal — ya se usó el override
+    }
     // Map all fields — both old names (from original) and new names (from _doSaveVenta)
     vd[mk].ventas.push({
       id:row.id,
@@ -8657,8 +8740,14 @@ function renderVentasUser(){
       '<td style="font-size:11px;color:var(--text3)">'+( v.factura||'—')+'</td>'+
       '<td style="white-space:nowrap">'+pagoLabel+'</td>'+
       '<td style="font-family:var(--cond);text-align:center;font-size:12px">'+(v.ivaAmt>0?fmt(v.ivaAmt):'S/IVA')+'</td>'+
-      '<td style="font-family:var(--cond);font-weight:800;text-align:right">'+fmt(v.subtotal)+'</td>'+
-      '<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(2)+')</span>':'')+'</td>'+
+      '<td style="font-family:var(--cond);font-weight:800;text-align:right">'
+        +fmt(v.subtotal)
+        +(v.isUsd&&v.usd>0?'<br><span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(2)+')</span>':'')
+      +'</td>'+
+      '<td style="font-family:var(--cond);font-weight:700;text-align:right">'
+        +fmt(v.total||v.subtotal+(v.ivaAmt||0))
+        +(v.isUsd&&v.usd>0?'<br><span style="font-size:10px;color:var(--text3)">($'+(v.usdTotal>0?Number(v.usdTotal).toFixed(2):Number(v.usd).toFixed(2))+')</span>':'')
+      +'</td>'+
       '<td style="font-family:var(--cond);font-weight:700;color:var(--green);text-align:right">'+
         (v.esTercero?'<span style="color:var(--amber);font-size:10px">Tercero</span>':fmt(comis))+
       '</td>'+
@@ -9898,7 +9987,10 @@ function updateVenta(){
     subtotal=parseMon(document.getElementById('vf-subtotal-input').value)||0;
   }
   const ivaPct=getIvaPct();
+  // Nuevo cálculo USD: IVA se calcula en dólares, luego se coloniza el total
+  // subtotal_USD × (1 + ivaPct/100) = total_USD → total_USD × TC = total_CRC
   const ivaAmt=subtotal*(ivaPct/100);
+  const usdTotal=isUsd ? usd*(1+ivaPct/100) : 0; // total en USD incluyendo IVA
   const insChk=document.getElementById('vf-ins-chk').checked;
   const tercChk=document.getElementById('vf-terc-chk').checked;
   const pendChk=document.getElementById('vf-pend-chk').checked;
