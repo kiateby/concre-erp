@@ -1463,6 +1463,7 @@ async function loadAllDataFromDB(){
     if(!users.error&&users.data) window._usersCache=users.data.map(dbRowToUser);
 
     if(!configs.error&&configs.data){
+      window._pagadoAdminOverrides = {}; // { [ventaId]: true/false }
       configs.data.forEach(function(row){
         if(row.clave==='catalogo'){
           var lc=row.valor;
@@ -1473,6 +1474,11 @@ async function loadAllDataFromDB(){
         if(row.clave==='tipos_proyecto') window._tiposProyCache=row.valor;
         if(row.clave==='liq_cost_types') window._liqCostTypesCache=row.valor;
         if(row.clave==='fondos_lim') window._fondosLimCache=row.valor;
+        // Overrides de pagado_admin guardados por toggleVentaPago
+        if(row.clave&&row.clave.startsWith('cc_pagado_admin_')&&row.valor){
+          var vid=row.clave.replace('cc_pagado_admin_','');
+          window._pagadoAdminOverrides[vid]=!!(row.valor.pagado);
+        }
       });
     }
 
@@ -7915,6 +7921,10 @@ async function loadVentasFromDB(uid){
   (data||[]).forEach(function(row){
     var mk=row.anio+'-'+pad(row.mes+1);
     if(!vd[mk]) vd[mk]={ventas:[],tc:525,comisVerif:false};
+    // Aplicar override de pagado_admin desde configuracion de Supabase (cross-device, sin localStorage)
+    var configOverride=window._pagadoAdminOverrides&&window._pagadoAdminOverrides.hasOwnProperty(row.id)
+      ? window._pagadoAdminOverrides[row.id] : null;
+    var pagadoAdminFinal = configOverride!==null ? configOverride : (row.pagado_admin||false);
     // Map all fields — both old names (from original) and new names (from _doSaveVenta)
     vd[mk].ventas.push({
       id:row.id,
@@ -7954,7 +7964,7 @@ async function loadVentasFromDB(uid){
       tienePendiente:row.tiene_pendiente||false,
       pendMonto:row.pend_monto||0,
       pendCancelado:row.pend_cancelado||'no',
-      pagadoAdmin:row.pagado_admin||false,
+      pagadoAdmin:pagadoAdminFinal,
       ejecutado:row.ejecutado||false,
       ejecutadoFecha:row.ejecutado_fecha||null,
       cxcPagado:row.cxc_pagado||false,
@@ -9493,22 +9503,26 @@ function saveDepositoNum(uid, ventaId, val){
   });
 }
 function toggleVentaPago(uid,ventaId,chk){
-  // Find the month this venta belongs to
   const vd=getVentasData(uid);
   Object.keys(vd).forEach(mk=>{
     const idx=(vd[mk].ventas||[]).findIndex(v=>v.id===ventaId);
     if(idx>=0){
-      vd[mk].ventas[idx].pagadoAdmin=chk.checked;
+      const newVal=chk.checked;
+      vd[mk].ventas[idx].pagadoAdmin=newVal;
       window._ventasCache[uid]=vd;
-      // Update directo solo del campo pagado_admin — más confiable que upsert completo
-      DB.from('ventas').update({pagado_admin:chk.checked}).eq('id',ventaId).then(function(r){
-        if(r.error){
-          console.error('toggleVentaPago update error:', r.error);
-          // Fallback: guardar venta completa
-          _saveSingleVenta(uid,vd[mk].ventas[idx],mk);
-        }
+      // Actualizar override en memoria para renderizado inmediato
+      if(!window._pagadoAdminOverrides) window._pagadoAdminOverrides={};
+      window._pagadoAdminOverrides[ventaId]=newVal;
+      // Guardar en configuracion (tabla accesible para admin, cross-device, sin RLS issues)
+      var clave='cc_pagado_admin_'+ventaId;
+      DB.from('configuracion').upsert(
+        {clave:clave, valor:{pagado:newVal,ventaId:ventaId,uid:uid,ts:new Date().toISOString()}, updated_at:new Date().toISOString()},
+        {onConflict:'clave'}
+      ).then(function(r){
+        if(r.error) console.error('pagado_admin save error:', r.error);
+        else console.log('pagado_admin guardado en Supabase:', ventaId, newVal);
       });
-      if(chk.checked) toast('✓ Pago verificado — línea marcada en verde');
+      if(newVal) toast('✓ Pago verificado y guardado en línea');
       renderAdminVentasTable();
     }
   });
