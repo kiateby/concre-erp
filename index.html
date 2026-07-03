@@ -1031,6 +1031,8 @@ select{color:var(--text) !important}
   ::-webkit-scrollbar-track{background:var(--surface2);border-radius:4px}
   ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
   ::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+  /* Ocultar scrollbar horizontal nativo cuando existe la barra fija */
+  .hide-native-hbar::-webkit-scrollbar:horizontal{display:none;height:0}
   .vc-fibra{background:rgba(124,58,237,.1);color:var(--purple)}
   .vc-sello{background:rgba(37,99,235,.1);color:var(--blue)}
   .vc-pulido{background:rgba(16,185,129,.1);color:#059669}
@@ -9491,7 +9493,6 @@ function saveDepositoNum(uid, ventaId, val){
   });
 }
 function toggleVentaPago(uid,ventaId,chk){
-  const y=new Date().getFullYear();
   // Find the month this venta belongs to
   const vd=getVentasData(uid);
   Object.keys(vd).forEach(mk=>{
@@ -9499,7 +9500,14 @@ function toggleVentaPago(uid,ventaId,chk){
     if(idx>=0){
       vd[mk].ventas[idx].pagadoAdmin=chk.checked;
       window._ventasCache[uid]=vd;
-      _saveSingleVenta(uid,vd[mk].ventas[idx],mk);
+      // Update directo solo del campo pagado_admin — más confiable que upsert completo
+      DB.from('ventas').update({pagado_admin:chk.checked}).eq('id',ventaId).then(function(r){
+        if(r.error){
+          console.error('toggleVentaPago update error:', r.error);
+          // Fallback: guardar venta completa
+          _saveSingleVenta(uid,vd[mk].ventas[idx],mk);
+        }
+      });
       if(chk.checked) toast('✓ Pago verificado — línea marcada en verde');
       renderAdminVentasTable();
     }
@@ -10085,7 +10093,7 @@ function renderAdminCxcTable(allVentas,catMap){
   const now=new Date();
   var cxcList=allVentas.filter(function(v){ return v.tipoPago==='CREDITO'&&!v.cxcPagado; });
   if(!cxcList.length){
-    body.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
+    body.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
     return;
   }
   cxcList.sort(function(a,b){
@@ -10107,6 +10115,7 @@ function renderAdminCxcTable(allVentas,catMap){
       +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+p.nombre+'</span></td>'
       +'<td>'+v.cliente+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800">'+fmt(v.subtotal)+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800;color:var(--green)">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+'</td>'
       +'<td style="white-space:nowrap">'+vencStr+'</td>'
       +'<td style="color:'+(vencido?'var(--red)':urgente?'var(--amber)':'var(--green)')+';font-weight:700">'
         +(dias===null?'—':dias<0?'⚠ '+Math.abs(dias)+'d vencido':dias+'d restantes')+'</td>'
@@ -11700,6 +11709,59 @@ function selectProyecto(name){
 // ══════════════════════════════════════════════
 //  ADMIN OWN VENTAS
 // ══════════════════════════════════════════════
+var _editingAdminOwnVentaId = null; // null = crear nueva, string = editar existente
+
+function openEditAdminOwnVenta(vid){
+  var uid = SESSION.id;
+  var vd = getVentasData(uid);
+  var found = null, foundKey = null;
+  Object.keys(vd).forEach(function(mk){
+    var v = (vd[mk].ventas||[]).find(function(x){ return x.id===vid; });
+    if(v){ found=v; foundKey=mk; }
+  });
+  if(!found){ toast('Venta no encontrada'); return; }
+
+  _editingAdminOwnVentaId = vid;
+
+  // Abrir el formulario admin
+  var wrap = document.getElementById('admin-venta-form-wrap');
+  if(!wrap) return;
+
+  // Poblar catálogo igual que toggleAdminVentaForm
+  var sel = document.getElementById('avf-prod');
+  if(sel){
+    sel.innerHTML = '<option value="">— Categoría —</option>';
+    sortAlpha(getCatalogo(),'nombre').forEach(function(c){
+      var o=document.createElement('option'); o.value=c.id; o.textContent=c.nombre; sel.appendChild(o);
+    });
+    sel.value = found.prodId||'';
+    try{ onAdminVentaProdChange(); }catch(e){}
+  }
+
+  // Poblar campos
+  var setF = function(id,val){ var el=document.getElementById(id); if(el) el.value=val||''; };
+  setF('avf-fecha', found.fecha);
+  setF('avf-cantidad', found.cantidad);
+  setF('avf-precio', found.precio>0?found.precio.toLocaleString('es-CR'):'');
+  setF('avf-factura', found.factura);
+  setF('avf-proyecto', found.proyecto);
+  setF('avf-notas', found.notas);
+  setF('avf-tc-used', found.tcUsed>0?found.tcUsed:'525');
+  var ivaEl = document.getElementById('avf-iva'); if(ivaEl) ivaEl.value=found.ivaPct===13?'13':'no';
+  var usdEl = document.getElementById('avf-is-usd'); if(usdEl) usdEl.checked=!!(found.isUsd||found.isUSD);
+  // Mostrar cliente
+  var lbl = document.getElementById('avf-cliente-label');
+  var inp = document.getElementById('avf-cliente'); if(inp) inp.value=found.cliente||'';
+  if(lbl&&found.cliente){lbl.textContent='✓ '+found.cliente;lbl.style.color='var(--text)';}
+
+  // Cambiar botón de guardar a "Actualizar"
+  var saveBtn = wrap.querySelector('button.btnp');
+  if(saveBtn) saveBtn.textContent = '✓ Actualizar venta';
+
+  wrap.style.display = 'block';
+  wrap.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
 function toggleAdminVentaForm(){
   var wrap=document.getElementById('admin-venta-form-wrap');
   if(!wrap) return;
@@ -11853,19 +11915,48 @@ function saveAdminVenta(){
     notas:(document.getElementById('avf-notas')?.value.trim()||''),
     pagadoAdmin:false,cxcPagado:false,ejecutado:false,
     depositoNum:'',
-    isAdminVenta:(SESSION.rol==='superadmin')
+    isAdminVenta:(SESSION.rol==='superadmin'),
+    estado:'activa'
   };
   var uid=SESSION.id;
   var y=parseInt(fecha.split('-')[0]);
   var m=parseInt(fecha.split('-')[1])-1;
+  var mk=y+'-'+pad(m+1);
+
+  // ── MODO EDICIÓN: actualizar venta existente ──
+  if(_editingAdminOwnVentaId){
+    var vdEdit=getVentasData(uid);
+    var editFound=false;
+    Object.keys(vdEdit).forEach(function(emk){
+      var idx=(vdEdit[emk].ventas||[]).findIndex(function(x){return x.id===_editingAdminOwnVentaId;});
+      if(idx>=0){
+        v.id=_editingAdminOwnVentaId; // preservar ID original
+        v.pagadoAdmin=vdEdit[emk].ventas[idx].pagadoAdmin||false; // preservar estado pago
+        vdEdit[emk].ventas[idx]=v;
+        editFound=true;
+      }
+    });
+    if(!editFound){ toast('No se encontró la venta a editar'); return; }
+    window._ventasCache[uid]=vdEdit;
+    _saveSingleVenta(uid, v, mk);
+    _editingAdminOwnVentaId=null;
+    // Restaurar texto del botón
+    var sbtn=document.getElementById('admin-venta-form-wrap')?.querySelector('button.btnp');
+    if(sbtn) sbtn.textContent='✓ Guardar';
+    document.getElementById('admin-venta-form-wrap').style.display='none';
+    renderAdminOwnVentas();
+    renderAdminVentasTable();
+    toast('✓ Venta actualizada');
+    return;
+  }
+
+  // ── MODO CREACIÓN: agregar nueva venta ──
+  v.id='av'+Date.now();
   var mv=getMonthVentas(uid,y,m);
   mv.ventas.push(v);
-  // Actualizar cache en memoria
   var vdA=getVentasData(uid);
-  vdA[y+'-'+pad(m+1)]=mv;
+  vdA[mk]=mv;
   window._ventasCache[uid]=vdA;
-  // Guardar SOLO esta venta en Supabase
-  _saveSingleVenta(uid,v,y+'-'+pad(m+1));
   // Link to CRM
   var avCrmId=document.getElementById('avf-crm-client-id')?.value;
   var avCrmCtId=document.getElementById('avf-crm-contact-id')?.value||'';
@@ -11945,11 +12036,7 @@ function renderAdminOwnVentas(){
     });
     el.querySelectorAll('.admin-edit-btn').forEach(function(btn){
       btn.onclick=function(){
-        var vid=btn.dataset.avid;
-        // Mostrar el ventaForm (que puede estar oculto en la vista admin)
-        var vf=document.getElementById('ventaForm');
-        if(vf){ vf.style.display='block'; vf.scrollIntoView({behavior:'smooth',block:'start'}); }
-        editVenta(vid);
+        openEditAdminOwnVenta(btn.dataset.avid);
       };
     });
   },0);
@@ -22074,7 +22161,7 @@ window.initCalcCONCRE=initCalcCONCRE;
             <table class="atbl" style="min-width:1000px">
               <thead><tr>
                 <th>Colaborador</th><th>Fecha</th><th>Producto</th><th>Cliente</th>
-                <th>Monto</th><th>Vencimiento</th><th>Estado</th><th>Notas</th><th>Acción</th>
+                <th>Subtotal s/IVA</th><th>Total con IVA</th><th>Vencimiento</th><th>Estado</th><th>Notas</th><th>Acción</th>
               </tr></thead>
               <tbody id="av-cxc-body"></tbody>
             </table>
@@ -24076,10 +24163,10 @@ function getLastExportI
   var bar = document.createElement('div');
   bar.setAttribute('data-fixed-hbar','1');
   bar.style.cssText=[
-    'position:fixed','bottom:0','left:0','right:0','height:14px',
+    'position:fixed','bottom:0','left:0','right:0','height:16px',
     'overflow-x:auto','overflow-y:hidden','z-index:9999',
-    'background:rgba(200,200,200,0.95)','border-top:2px solid #bbb',
-    'display:none','box-shadow:0 -1px 4px rgba(0,0,0,.12)'
+    'background:rgba(37,99,235,0.18)','border-top:2px solid rgba(37,99,235,0.5)',
+    'display:none','box-shadow:0 -2px 8px rgba(37,99,235,.15)'
   ].join(';');
   var inner = document.createElement('div');
   inner.style.cssText = 'height:1px;width:100px;pointer-events:none';
@@ -24097,15 +24184,20 @@ function getLastExportI
 
   function attachTo(el){
     if(current === el){ syncWidth(); return; }
-    // Desconectar anterior
+    // Desconectar anterior y restaurar scrollbar nativo
     if(current && current._hbarListener){
       current.removeEventListener('scroll', current._hbarListener);
       current._hbarListener = null;
+      current.style.scrollbarWidth = '';
+      current.classList.remove('hide-native-hbar');
     }
     current = el;
     syncWidth();
     bar.scrollLeft = el.scrollLeft;
     bar.style.display = 'block';
+    // Ocultar scrollbar nativo del contenedor (reemplazado por la barra fija)
+    el.style.scrollbarWidth = 'none'; // Firefox
+    el.classList.add('hide-native-hbar'); // Chrome via CSS
     // Scroll en la tabla → mover barra
     el._hbarListener = function(){
       if(lock) return;
