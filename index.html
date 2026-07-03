@@ -1026,15 +1026,11 @@ select{color:var(--text) !important}
   .vc-concreto{background:rgba(227,24,55,.1);color:var(--red)}
   .vc-adoquin{background:rgba(234,88,12,.12);color:#ea580c}
   /* Scrollbar horizontal siempre visible — sin bajar al fondo de la tabla */
-  /* Scrollbar styling — siempre visible via JS sticky scrollbar */
+  /* Scrollbar styling */
   ::-webkit-scrollbar{height:8px;width:6px}
   ::-webkit-scrollbar-track{background:var(--surface2);border-radius:4px}
   ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
   ::-webkit-scrollbar-thumb:hover{background:var(--text3)}
-  /* Floating sticky scrollbar */
-  .sticky-hscroll-mirror{position:sticky;bottom:0;left:0;right:0;height:12px;overflow-x:auto;overflow-y:hidden;z-index:10;background:var(--surface2);border-top:1px solid var(--border);border-radius:0 0 6px 6px}
-  .sticky-hscroll-mirror::-webkit-scrollbar{height:8px}
-  .sticky-hscroll-mirror > div{height:1px}
   .vc-fibra{background:rgba(124,58,237,.1);color:var(--purple)}
   .vc-sello{background:rgba(37,99,235,.1);color:var(--blue)}
   .vc-pulido{background:rgba(16,185,129,.1);color:#059669}
@@ -2165,7 +2161,7 @@ async function generarCampanaRadar(){
     //    Filtramos por NOMBRE (palabras clave) y también por CATEGORÍA de Google (más confiable que el nombre,
     //    porque una ferretería puede llamarse "Materiales El Constructor" sin la palabra "ferretería").
     var EMPRESAS_EXCLUIDAS = [
-      // Propia empresa
+      // Propia empresa — excluir exactamente "concre" no "concreto"
       'concre',
       // Competencia directa — coincidencia exacta de nombre en minúsculas
       'pavurcon s.a.', 'pavurcon',
@@ -2174,8 +2170,8 @@ async function generarCampanaRadar(){
       'agrecon',
       'renteco',
       'balbeck s.a.', 'balbeck',
-      'alco s.a.', 'alco',
-      'constructora macoma', 'macoma'
+      'alco s.a.',  // solo con "s.a." para no bloquear palabras con "alco"
+      'constructora macoma', 'macoma s.a.'
     ];
 
     // Cargar nombres de prospectos de TODAS las campañas anteriores (sin importar score, para no repetir a nadie ya visto)
@@ -2270,7 +2266,15 @@ async function generarCampanaRadar(){
       }catch(e){ nombre = (s.titulo||s.url||'').slice(0,60); }
       var key = nombre.toLowerCase().trim();
       if(!key || vistosCapas[key]) return;
-      if(EMPRESAS_EXCLUIDAS.some(function(ex){ return key.indexOf(ex)!==-1; })) return;
+    // Exclusión de competencia: coincidencia de palabra completa (no substring parcial)
+    function esCompetencia(nombre){
+      var k=nombre.toLowerCase().replace(/[.,\-]/g,' ').replace(/\s+/g,' ').trim();
+      return EMPRESAS_EXCLUIDAS.some(function(ex){
+        // Coincidencia exacta o como palabra(s) completa(s) — no substring dentro de otra palabra
+        return k===ex || k.startsWith(ex+' ') || k.endsWith(' '+ex) || k.indexOf(' '+ex+' ')!==-1;
+      });
+    }
+    if(esCompetencia(key)) return;
       vistosCapas[key] = true;
       var score = Math.min(90, Math.round((s.score_relevancia||0.5)*80) + 20);
       if(score < scoreMin) return;
@@ -4048,7 +4052,7 @@ function renderAdminHorasTable(uid){
   const diasReg=days.filter(function(d){const r=regU[dkey(d)]||{};return r.entrada;}).length;
   if(sumEl)sumEl.innerHTML=
     '<div class="sc grt" style="min-width:120px"><div class="sclbl">Días reg.</div><div class="scval">'+diasReg+'</div></div>'+
-    '<div class="sc"><div class="sclbl">H. Extra</div><div class="scval red">'+(histAdmin&&histAdmin.monto_extra>0?fmt(histAdmin.monto_extra)+histBadge:totExt.toFixed(1)+'h')+'</div></div>'+
+    '<div class="sc"><div class="sclbl">H. Extra</div><div class="scval red">'+(histAdmin&&histAdmin.monto_extra>0?fmt(mExt)+histBadge:totExt.toFixed(1)+'h')+'</div></div>'+
     '<div class="sc" style="border-color:#1a9e5c"><div class="sclbl" style="color:#1a9e5c">₡ Extra</div><div class="scval" style="color:#1a9e5c">'+fmt(mExt)+'</div></div>'+
     '<div class="sc at"><div class="sclbl">Base Q'+histBadge+'</div><div class="scval amber">'+fmt(salQ)+'</div></div>'+
     '<div class="sc gt"><div class="sclbl">Total liq.</div><div class="scval green">'+fmt(tot)+'</div></div>';
@@ -24047,57 +24051,83 @@ function getLastExportI
 </div>
 
 <script>
-// ── STICKY HORIZONTAL SCROLLBAR ──────────────────────────────────────────────
-// Añade un scrollbar espejo pegado al viewport para contenedores overflow-x,
-// de modo que el usuario no tenga que bajar hasta el fondo de la tabla para desplazarse.
+// ── SCROLLBAR HORIZONTAL SUPERIOR — siempre visible al inicio de la tabla ──────
+// Inserta una barra de scroll ENCIMA de cada tabla con overflow-x,
+// sincronizada bidirecccionalmente. El usuario la ve inmediatamente sin bajar.
 (function(){
-  function initStickyScrollbars(){
-    // Seleccionar todos los contenedores con scroll horizontal
-    var containers = document.querySelectorAll('[style*="overflow-x"]');
-    containers.forEach(function(el){
-      // Saltar si ya tiene mirror o si no tiene scroll real
-      if(el._stickyMirror || el.scrollWidth <= el.clientWidth + 4) return;
-      // Forzar overflow-x:auto para que el scrollbar del contenedor exista
-      el.style.overflowX = 'auto';
-      // Crear el scrollbar espejo
-      var mirror = document.createElement('div');
-      mirror.className = 'sticky-hscroll-mirror';
-      var inner = document.createElement('div');
-      mirror.appendChild(inner);
-      el.parentNode.insertBefore(mirror, el.nextSibling);
-      el._stickyMirror = mirror;
-      // Sincronizar anchos
-      function syncWidth(){
-        inner.style.width = el.scrollWidth + 'px';
+  var mirrors = []; // {mirror, content} para sincronizar
+
+  function buildMirror(el){
+    if(el._topScrollMirror) return; // ya tiene mirror
+
+    var wrapper = document.createElement('div');
+    wrapper.style.cssText = 'overflow-x:auto;overflow-y:hidden;height:14px;margin-bottom:2px;';
+    wrapper.style.background = 'var(--surface2, #f5f5f5)';
+    wrapper.style.borderRadius = '4px 4px 0 0';
+    wrapper.style.borderBottom = '1px solid var(--border, #e0e0e0)';
+
+    var inner = document.createElement('div');
+    inner.style.height = '1px';
+    inner.style.width = el.scrollWidth + 'px';
+    wrapper.appendChild(inner);
+
+    // Insertar ANTES del contenedor scrollable (encima de la tabla)
+    el.parentNode.insertBefore(wrapper, el);
+    el._topScrollMirror = wrapper;
+    el._topScrollInner = inner;
+
+    var lock = false;
+    wrapper.addEventListener('scroll', function(){
+      if(lock) return; lock = true;
+      el.scrollLeft = wrapper.scrollLeft;
+      lock = false;
+    });
+    el.addEventListener('scroll', function(){
+      if(lock) return; lock = true;
+      wrapper.scrollLeft = el.scrollLeft;
+      lock = false;
+    });
+
+    mirrors.push({wrapper: wrapper, inner: inner, el: el});
+  }
+
+  function syncWidths(){
+    mirrors.forEach(function(m){
+      if(m.el.scrollWidth !== parseInt(m.inner.style.width)){
+        m.inner.style.width = m.el.scrollWidth + 'px';
       }
-      syncWidth();
-      // Sincronizar scroll bidireccional
-      var syncing = false;
-      el.addEventListener('scroll', function(){
-        if(syncing) return; syncing = true;
-        mirror.scrollLeft = el.scrollLeft;
-        syncing = false;
-      });
-      mirror.addEventListener('scroll', function(){
-        if(syncing) return; syncing = true;
-        el.scrollLeft = mirror.scrollLeft;
-        syncing = false;
-      });
-      // Resync on resize
-      var ro = new ResizeObserver(syncWidth);
-      ro.observe(el);
     });
   }
-  // Inicializar después del render inicial y también cuando el DOM cambia (render de tablas)
-  document.addEventListener('DOMContentLoaded', function(){
-    setTimeout(initStickyScrollbars, 800);
+
+  function init(){
+    // Buscar todos los divs con overflow-x en sus estilos inline
+    document.querySelectorAll('div[style]').forEach(function(el){
+      var s = el.style.overflowX;
+      if((s === 'auto' || s === 'scroll') && el.scrollWidth > el.clientWidth + 4){
+        buildMirror(el);
+      }
+    });
+    syncWidths();
+  }
+
+  // Inicializar después de que la UI cargue
+  window.addEventListener('load', function(){ setTimeout(init, 600); });
+
+  // Re-aplicar cuando se renderizan tablas dinámicas
+  window.initStickyScrollbars = function(){ setTimeout(init, 150); };
+
+  // MutationObserver con debounce para re-aplicar automáticamente
+  var debounceTimer;
+  var mo = new MutationObserver(function(){
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(function(){
+      init();
+    }, 400);
   });
-  // Re-aplicar cuando se renderizan tablas dinámicas (llamado globalmente)
-  window.initStickyScrollbars = function(){ setTimeout(initStickyScrollbars, 200); };
-  // Observar cambios en el DOM para re-aplicar automáticamente
-  var mo = new MutationObserver(function(){ setTimeout(initStickyScrollbars, 300); });
-  document.addEventListener('DOMContentLoaded', function(){
-    mo.observe(document.body, {childList:true, subtree:true, attributes:false});
+  window.addEventListener('load', function(){
+    mo.observe(document.body, {childList:true, subtree:true});
+    // Sincronizar anchos periódicamente (las tablas pueden cambiar de tamaño)
+    setInterval(syncWidths, 1000);
   });
 })();
 </script>
