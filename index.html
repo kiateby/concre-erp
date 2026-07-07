@@ -9168,7 +9168,7 @@ function renderVentasUser(){
     if(v.ejecutado) estadoBadge+='<span class="v-badge contado" style="font-size:9px">Ejec.</span>';
     return '<tr class="'+rowCls+'">'+
       '<td style="font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'+
-      '<td style="font-family:var(--cond);font-weight:700;text-align:center">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'+
+      '<td style="font-family:var(--cond);font-weight:700;text-align:center">'+((v.cantidad!=null&&v.cantidad!==''&&Number(v.cantidad)!==0?v.cantidad:'—'))+'</td>'+
       '<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(1):fmt(v.precio)):'—')+'</td>'+
       '<td><span class="v-cat '+TIPO_COLORS[p.tipo]+'">'+getVentaDisplayNombre(v,catMap)+'</span></td>'+
       '<td style="font-weight:600">'+escHtml(v.cliente)+'</td>'+
@@ -10000,7 +10000,7 @@ function renderAdminVentasTable(){
       +'<td style="position:sticky;left:220px;z-index:2;background:'+stickyBg+';min-width:140px;white-space:nowrap"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+p.nombre+'</span></td>'
       +'<td style="position:sticky;left:360px;z-index:2;background:'+stickyBg+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(v.cliente)+'</td>'
       +'<td style="position:sticky;left:500px;z-index:2;background:'+stickyBg+';min-width:80px;font-size:11px;color:var(--text3);box-shadow:2px 0 5px rgba(0,0,0,.10)">'+( v.factura||'—')+'</td>'
-      +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'
+      +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+((v.cantidad!=null&&v.cantidad!==''&&Number(v.cantidad)!==0?v.cantidad:'—'))+'</td>'
       +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(1):fmt(v.precio)):'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.subtotal)+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;font-size:12px">'+(v.ivaAmt>0?fmt(v.ivaAmt):'S/IVA')+'</td>'
@@ -11028,7 +11028,7 @@ function renderLiqVentasRef(){
   filteredRows.sort(function(a,b){return a.fecha<b.fecha?-1:1;});
   filteredRows.forEach(function(row){
     var tr=document.createElement('tr');
-    var cantDisplay=row.cantidad&&row.cantidad!=='0'&&row.cantidad!=='1'?row.cantidad:'—';
+    var cantDisplay=row.cantidad!=null&&row.cantidad!==''&&Number(row.cantidad)!==0?row.cantidad:'—';
     tr.innerHTML='<td style="font-size:12px;font-weight:700">'+row.uname+'</td>'
       +'<td style="font-size:12px">'+row.proyecto+'</td>'
       +'<td style="font-size:12px;text-align:center;color:var(--text3)">'+cantDisplay+'</td>'
