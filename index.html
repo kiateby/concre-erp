@@ -3496,9 +3496,7 @@ function injectNotifBell(){
 }
 
 // ── MIGRACIÓN RETROACTIVA: ventas USD con IVA → nueva lógica 1 decimal ──────
-// Corre una sola vez al iniciar (o si hay ventas sin migrar).
-// Recalcula usdTotal, ivaAmt y total usando round a 1 decimal en USD.
-// Solo afecta ventas isUsd===true con ivaPct>0. No toca ventas en colones.
+// También migra claves de comisión mensual de sufijo -2 a -1 para todos los usuarios.
 async function migrateUsdVentasIva(){
   if(!SESSION) return;
   // Solo superadmin y admin pueden ver y corregir ventas de todos los usuarios
@@ -3549,10 +3547,34 @@ async function migrateUsdVentasIva(){
   });
   if(totalFixed>0){
     console.log('migrateUsdVentasIva: '+totalFixed+' ventas corregidas con nueva lógica USD 1 decimal');
-    // Re-renderizar si la pestaña de ventas está activa
     try{ renderVentasUser(); }catch(e){}
     try{ renderAdminVentasTable(); }catch(e){}
   }
+
+  // ── Migrar claves de comisión mensual: -2 → -1 ──────────────────────────────
+  // Versiones anteriores guardaban comis_YYYY-MM-2 para usuarios mensuales.
+  // Ahora debe ser comis_YYYY-MM-1. Renombrar claves existentes en DED de cada usuario.
+  var allUsers = getUsers()||[];
+  allUsers.forEach(function(u){
+    if((u.comisType||'mensual')==='anual') return; // solo mensuales
+    var ded = getDED(u.id)||{};
+    var changed = false;
+    Object.keys(ded).forEach(function(k){
+      if(k.startsWith('comis_')&&k.endsWith('-2')){
+        var newKey = k.slice(0,-2)+'-1';
+        if(!ded[newKey]){ // solo migrar si la clave -1 no existe ya
+          ded[newKey] = ded[k];
+          delete ded[k];
+          changed = true;
+        }
+      }
+    });
+    if(changed){
+      window._dedCache[u.id] = ded;
+      _saveToSupabase('user_ded_'+u.id, ded, 'cc_d_'+u.id);
+      console.log('migrateComisKeys: usuario '+u.id+' — claves de comisión migradas -2→-1');
+    }
+  });
 }
 
 function initApp(){
@@ -8117,6 +8139,44 @@ async function loadVentasFromDB(uid){
       created:row.created_at||''
     });
   });
+
+  // Agregar ventas del backup (configuracion) que NO existen en la tabla ventas de Supabase.
+  // Esto cubre el caso de ventas con ID no-UUID (ej: inv-venta-XXXX) cuyo upsert falla,
+  // pero el backup en configuracion sí se guardó correctamente.
+  var loadedIds={};
+  Object.keys(vd).forEach(function(mk2){
+    (vd[mk2].ventas||[]).forEach(function(v){ loadedIds[v.id]=true; });
+  });
+  var edits=window._ventaEditsCache||{};
+  Object.keys(edits).forEach(function(vid){
+    var e=edits[vid];
+    if(!e||e.uid!==uid) return;       // solo ventas de este usuario
+    if(loadedIds[vid]) return;         // ya está en el cache (cargada de Supabase)
+    // Esta venta está en el backup pero no en Supabase — añadirla directamente
+    var mk2=e.mk||vid;
+    if(!vd[mk2]) vd[mk2]={ventas:[],tc:525,comisVerif:false};
+    vd[mk2].ventas.push({
+      id:vid, fecha:e.fecha||'', prodId:e.prodId||'', subProdId:e.subProdId||'',
+      subProdNombre:e.subProdNombre||'', cantidad:e.cantidad||0,
+      precio:e.precioUnit||0, precioUnit:e.precioUnit||0,
+      subtotal:e.subtotal||0, ivaPct:e.ivaPct||0, ivaAmt:e.ivaAmt||0,
+      iva:e.ivaAmt||0, total:e.total||0, usdTotal:e.usdTotal||0,
+      cliente:e.cliente||'', factura:e.factura||'', proyecto:e.proyecto||'',
+      tipoPago:e.tipoPago||'CONTADO', pago:e.tipoPago||'CONTADO',
+      plazoCredito:e.plazoCredito||0, comision:0,
+      esTercero:e.esTercero||false, tercNombre:e.tercNombre||'',
+      isUsd:e.isUsd||false, isUSD:e.isUsd||false,
+      tcUsed:e.tcUsed||0, usd:e.usd||0,
+      depositoNum:'', notas:e.notas||'', estado:e.estado||'activa',
+      tieneInsumos:e.tieneInsumos||false, insDesc:e.insDesc||'', insMontoNum:e.insMontoNum||0,
+      tienePendiente:e.tienePendiente||false, pendMonto:e.pendMonto||0, pendCancelado:e.pendCancelado||'no',
+      referido:e.referido||'', isAdminVenta:false, pagadoAdmin:false,
+      ejecutado:false, cxcPagado:false, invMovId:e.invMovId||'',
+      _fromBackup:true
+    });
+    console.log('loadVentasFromDB: venta '+vid+' restaurada desde backup (no estaba en Supabase)');
+  });
+
   window._ventasCache[uid]=vd;
   return vd;
 }
@@ -8623,10 +8683,11 @@ function syncComisionToPlanilla(uid,saleYear,saleMonth,allVentas){
     // Se acumula todo el año (Dic-Nov) y se paga completa en diciembre Q1 — sin pago mensual intermedio.
     key='comis_'+saleYear+'-'+pad(saleMonth+1)+'-1';
   } else {
-    // Usuarios MENSUALES: SIN CAMBIOS — mismo comportamiento de siempre (sufijo -2, mes siguiente).
+    // Usuarios MENSUALES: comisión de mes M se paga en Q1 (día 15) del mes M+1.
+    // Sufijo -1 = Q1 del mes siguiente. recalcQ lee comis_YYYY-MM-1 cuando CQ=1.
     var payMonth=saleMonth+1, payYear=saleYear;
     if(payMonth>11){ payMonth=0; payYear++; }
-    key='comis_'+payYear+'-'+pad(payMonth+1)+'-2';
+    key='comis_'+payYear+'-'+pad(payMonth+1)+'-1';
   }
   ded[key]=Math.round(totalComis);
   _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
