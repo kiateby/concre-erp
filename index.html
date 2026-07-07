@@ -13483,11 +13483,11 @@ function renderPagosUsuarios(){
         comisVal=0;
       }
     } else {
-      // Solo Q1 (día 15) muestra comisión, y es la del mes ANTERIOR
+      // Solo Q1 (día 15) muestra comisión, y es la del mes ANTERIOR.
+      // syncComisionToPlanilla guarda con payMonth = saleMonth+1 (el mes actual de la quincena),
+      // por eso la clave usa m (mes actual) y no m-1.
       if(q===1){
-        var mesAnterior=m-1, anioAnterior=y;
-        if(mesAnterior<0){ mesAnterior=11; anioAnterior=y-1; }
-        var comisKeyMensual='comis_'+anioAnterior+'-'+pad(mesAnterior+1)+'-1';
+        var comisKeyMensual='comis_'+y+'-'+pad(m+1)+'-1';
         comisVal=ded[comisKeyMensual]||0;
       } else {
         comisVal=0; // Q2 nunca muestra comisión para usuarios mensuales
