@@ -146,7 +146,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .admin-main.pres-active{padding:0!important;overflow:hidden!important;}
 
 /* Section cards */
-.admin-section{display:none;padding:16px 20px;width:100%;max-width:1280px;margin:0 auto;box-sizing:border-box}
+.admin-section{display:none;padding:16px 20px;width:100%;max-width:min(1600px,100%);margin:0 auto;box-sizing:border-box}
 .admin-section.on{display:block}
 /* Presupuesto section — full viewport, no constraints */
 #sec-presupuesto.on{
@@ -570,7 +570,7 @@ td:not(:first-child){text-align:center}
   /* User vacation tab */
   .vac-layout{display:flex;min-height:calc(100vh - 60px)}
   .vac-sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);padding:20px 16px;display:flex;flex-direction:column;gap:16px}
-  .vac-main{flex:1;padding:14px 18px;overflow-y:auto;max-width:1280px;width:100%}
+  .vac-main{flex:1;padding:14px 18px;overflow-y:auto;max-width:min(1600px,100%);width:100%}
 
   /* Saldo card */
   .saldo-card{
@@ -769,7 +769,7 @@ td:not(:first-child){text-align:center}
   ════════════════════════════════ */
   .fondos-layout{display:flex;min-height:calc(100vh - 60px)}
   .fondos-sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);padding:18px 15px;display:flex;flex-direction:column;gap:16px;overflow-y:auto}
-  .fondos-main{flex:1;padding:14px 18px;overflow-y:auto;background:var(--bg);max-width:1280px;width:100%}
+  .fondos-main{flex:1;padding:14px 18px;overflow-y:auto;background:var(--bg);max-width:min(1600px,100%);width:100%}
 
   /* Resumen card fondos */
   .fondo-resumen-card{background:linear-gradient(135deg,#1e3a5f 0%,#163057 100%);border-radius:var(--r);padding:18px 20px;color:#fff;position:relative;overflow:hidden}
@@ -926,7 +926,7 @@ select{color:var(--text) !important}
   ════════════════════════════════ */
   .ventas-layout{display:flex;min-height:calc(100vh - 60px)}
   .ventas-sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);padding:18px 15px;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
-  .ventas-main{flex:1;padding:14px 18px;overflow-y:auto;background:var(--bg);max-width:1280px;width:100%}
+  .ventas-main{flex:1;padding:14px 18px;overflow-y:auto;background:var(--bg);max-width:min(1600px,100%);width:100%}
 
   /* Summary cards */
   .v-summary-card{background:linear-gradient(135deg,#1e3a5f,#163057);border-radius:var(--r);padding:16px 18px;color:#fff;position:relative;overflow:hidden;margin-bottom:8px}
@@ -1033,6 +1033,129 @@ select{color:var(--text) !important}
   ::-webkit-scrollbar-thumb:hover{background:var(--text3)}
   /* Ocultar scrollbar horizontal nativo cuando existe la barra fija */
   .hide-native-hbar::-webkit-scrollbar:horizontal{display:none;height:0}
+
+/* ════════════════════════════════
+   RESPONSIVE SYSTEM — Mobile → 32"
+════════════════════════════════ */
+
+/* ── Hamburger button (solo visible en móvil) ── */
+.hdr-hamburger{
+  display:none;flex-direction:column;justify-content:center;gap:5px;
+  width:34px;height:34px;background:none;border:none;cursor:pointer;
+  padding:4px;border-radius:6px;flex-shrink:0;
+}
+.hdr-hamburger span{
+  display:block;height:2px;background:var(--gray-dark);border-radius:2px;
+  transition:all .2s;transform-origin:center;
+}
+.hdr-hamburger.open span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+.hdr-hamburger.open span:nth-child(2){opacity:0;transform:scaleX(0)}
+.hdr-hamburger.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+
+/* ── Overlay for mobile nav ── */
+.nav-overlay{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);
+  z-index:195;backdrop-filter:blur(2px);
+}
+.nav-overlay.open{display:block}
+
+/* ── LARGE SCREENS: tablas y grids se expanden ── */
+@media(min-width:1400px){
+  .admin-section{padding:20px 28px}
+  .overview-grid{grid-template-columns:repeat(5,1fr)}
+  .atbl td,.atbl th{padding:9px 14px}
+  .page-title{font-size:28px}
+  .ov-val{font-size:30px}
+  .admin-main{padding:28px}
+}
+@media(min-width:1800px){
+  .admin-section{padding:24px 36px;max-width:100%}
+  .overview-grid{grid-template-columns:repeat(6,1fr)}
+  .atbl td,.atbl th{padding:10px 16px;font-size:13px}
+  .admin-main{padding:32px}
+  .hdr{padding:6px 24px}
+  .htab{padding:5px 11px;font-size:12px}
+}
+@media(min-width:2400px){
+  body{font-size:15px}
+  .admin-section{padding:28px 48px}
+  .overview-grid{grid-template-columns:repeat(8,1fr)}
+  .atbl td,.atbl th{font-size:14px;padding:11px 18px}
+  .ov-val{font-size:34px}
+  .page-title{font-size:32px}
+}
+
+/* ── TABLET: 768px – 1199px ── */
+@media(max-width:1199px){
+  .overview-grid{grid-template-columns:repeat(3,1fr)}
+  .admin-section{padding:14px 16px}
+}
+@media(max-width:900px){
+  .overview-grid{grid-template-columns:repeat(2,1fr)}
+}
+
+/* ── MOBILE: ≤ 767px — hamburger + stacked layouts ── */
+@media(max-width:767px){
+  /* Show hamburger, hide tabs inline */
+  .hdr-hamburger{display:flex}
+  .hdr-tabs{
+    display:none;flex-direction:column;gap:0;
+    position:fixed;top:0;left:0;bottom:0;width:75vw;max-width:280px;
+    background:#fff;z-index:196;padding:60px 12px 20px;
+    overflow-y:auto;box-shadow:4px 0 24px rgba(0,0,0,.18);
+    transform:translateX(-100%);transition:transform .25s cubic-bezier(.4,0,.2,1);
+  }
+  .hdr-tabs.open{
+    display:flex;transform:translateX(0);
+  }
+  .htab{
+    width:100%;text-align:left;padding:11px 14px;border-radius:8px;
+    font-size:13px;border-bottom:1px solid var(--surface2);
+  }
+  .htab.on{color:#fff;background:var(--red)}
+
+  /* Stack overview cards */
+  .overview-grid{grid-template-columns:repeat(2,1fr);gap:8px}
+
+  /* Admin section padding */
+  .admin-section{padding:10px 12px}
+  .admin-main{padding:12px}
+
+  /* Ventas, fondos, vacaciones sidebars → stack */
+  .ventas-layout,.fondos-layout,.vac-layout{flex-direction:column!important}
+  .ventas-sidebar,.fondos-sidebar,.vac-sidebar{
+    width:100%!important;max-width:100%!important;
+    border-right:none!important;border-bottom:1px solid var(--border)!important;
+  }
+  .ventas-main,.fondos-main,.vac-main{padding:10px 12px}
+
+  /* Tables: allow horizontal scroll, compact */
+  .atbl td,.atbl th{padding:7px 8px;font-size:11px}
+  .page-title{font-size:19px}
+  .ov-val{font-size:20px}
+
+  /* Header compact */
+  .hdr{padding:6px 10px;min-height:46px}
+  .hdr-logo .lc{font-size:16px}
+  .hdr-sep{display:none}
+
+  /* Fixed scrollbar más alto para dedos */
+  [data-fixed-hbar]{height:20px!important}
+}
+
+/* ── VERY SMALL: ≤ 400px ── */
+@media(max-width:400px){
+  .overview-grid{grid-template-columns:1fr}
+  .hdr-tabs{width:88vw}
+  .atbl td,.atbl th{padding:6px 7px;font-size:10px}
+}
+
+/* ── Tables: fluid width on large screens ── */
+.atbl{width:100%;border-collapse:separate;border-spacing:0}
+@media(min-width:1200px){
+  /* Allow tables to use full container width, remove forced min-widths where possible */
+  .admin-table-wrap{overflow-x:auto}
+}
   .vc-fibra{background:rgba(124,58,237,.1);color:var(--purple)}
   .vc-sello{background:rgba(37,99,235,.1);color:var(--blue)}
   .vc-pulido{background:rgba(16,185,129,.1);color:#059669}
@@ -20710,7 +20833,7 @@ let PROJ=newProj();
 // ── ESTILOS ───────────────────────────────────────────────────────────────
 const CSS=`
 #sec-calculos{font-family:Arial,sans-serif;background:#F4F5F7;min-height:100vh;color:#2C3E50}
-.cc-wrap{max-width:1150px;margin:0 auto;padding:16px}
+.cc-wrap{max-width:min(1600px,100%);margin:0 auto;padding:16px}
 .cc-hdr{background:#C8102E;color:#fff;padding:14px 20px;border-radius:8px;margin-bottom:16px;display:flex;align-items:center;gap:12px}
 .cc-hdr h2{margin:0;font-size:1.15rem}
 .cc-tabs{display:flex;gap:0;border-bottom:2px solid #E8E8E8;margin-bottom:16px;flex-wrap:wrap}
@@ -21731,9 +21854,13 @@ window.initCalcCONCRE=initCalcCONCRE;
 <div id="appShell" style="display:none;flex-direction:column;min-height:100vh">
 
   <!-- HEADER -->
+  <div class="nav-overlay" id="navOverlay" onclick="closeNavMenu()"></div>
   <header class="hdr">
     <div class="hdr-logo"><span class="lc">CON<span class="lr">C</span>RE</span></div>
     <div class="hdr-sep"></div>
+    <button class="hdr-hamburger" id="navHamburger" onclick="toggleNavMenu()" aria-label="Menú" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
     <nav class="hdr-tabs" id="hdrTabs">
       <!-- populated by JS based on role -->
     </nav>
@@ -24434,7 +24561,38 @@ function getLastExportI
 </div>
 
 <script>
-// ── SCROLLBAR HORIZONTAL FIJO EN VIEWPORT ────────────────────────────────────
+// ── MENÚ HAMBURGUESA — móvil ─────────────────────────────────────────────────
+function toggleNavMenu(){
+  var tabs=document.getElementById('hdrTabs');
+  var btn=document.getElementById('navHamburger');
+  var overlay=document.getElementById('navOverlay');
+  if(!tabs||!btn) return;
+  var isOpen=tabs.classList.contains('open');
+  tabs.classList.toggle('open',!isOpen);
+  btn.classList.toggle('open',!isOpen);
+  btn.setAttribute('aria-expanded',String(!isOpen));
+  if(overlay) overlay.classList.toggle('open',!isOpen);
+  document.body.style.overflow=isOpen?'':'hidden';
+}
+function closeNavMenu(){
+  var tabs=document.getElementById('hdrTabs');
+  var btn=document.getElementById('navHamburger');
+  var overlay=document.getElementById('navOverlay');
+  if(tabs) tabs.classList.remove('open');
+  if(btn){ btn.classList.remove('open'); btn.setAttribute('aria-expanded','false'); }
+  if(overlay) overlay.classList.remove('open');
+  document.body.style.overflow='';
+}
+// Cerrar menú al cambiar de tab en móvil
+document.addEventListener('DOMContentLoaded',function(){
+  document.addEventListener('click',function(e){
+    if(e.target&&e.target.classList.contains('htab')) closeNavMenu();
+  });
+  // Cerrar menú con Escape
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape') closeNavMenu();
+  });
+});
 // Una sola barra fija en la parte inferior de la pantalla (position:fixed;bottom:0).
 // Se sincroniza con la tabla scrollable que esté visible en ese momento.
 (function(){
