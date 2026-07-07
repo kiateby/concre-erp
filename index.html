@@ -1336,37 +1336,33 @@ const sortAlpha=(arr,key='nombre')=>arr.slice().sort((a,b)=>(a[key]||'').localeC
 // ── Helper para cargar DED/REG de OTRO usuario desde Supabase (solo admin) ─
 async function _loadUserDEDForAdmin(uid){
   try{
-    // Cargar DED — usar select() sin .single() para evitar 406
+    if(!window._dedAdminCache) window._dedAdminCache={};
     var rd=await DB.from('configuracion').select('valor').eq('clave','user_ded_'+uid);
     if(!rd.error && rd.data && rd.data.length>0 && rd.data[0].valor){
-      localStorage.setItem('cc_d_'+uid, JSON.stringify(rd.data[0].valor));
+      window._dedAdminCache[uid]=rd.data[0].valor;
     }
-    // Cargar REG
+    // REG también en memoria
+    if(!window._regAdminCache) window._regAdminCache={};
     var rr=await DB.from('configuracion').select('valor').eq('clave','user_horas_'+uid);
     if(!rr.error && rr.data && rr.data.length>0 && rr.data[0].valor){
-      localStorage.setItem('cc_h_'+uid, JSON.stringify(rr.data[0].valor));
+      window._regAdminCache[uid]=rr.data[0].valor;
     }
-  }catch(e){
-    // Si no existe en Supabase, el localStorage local es el fallback
-  }
+  }catch(e){}
 }
 
 // ── Helpers cross-device: REG/DED en Supabase ──────────────────────────
 async function _loadFromSupabase(clave, fallbackLocalKey){
   try{
     var r=await DB.from('configuracion').select('valor').eq('clave',clave);
-    // .select() sin .single() devuelve array — 406 no ocurre
     if(!r.error && r.data && r.data.length>0 && r.data[0].valor &&
        typeof r.data[0].valor==='object'){
       return r.data[0].valor;
     }
   }catch(e){}
-  // No existe en Supabase — leer de localStorage
-  var local=localStorage.getItem(fallbackLocalKey);
-  return local?JSON.parse(local):{};
+  return {}; // No encontrado en Supabase — sin fallback local
 }
 function _saveToSupabase(clave, valor, localKey){
-  localStorage.setItem(localKey, JSON.stringify(valor));
+  // Guardar SOLO en Supabase — sin localStorage (cross-device, sin dependencia local)
   DB.from('configuracion').upsert(
     {clave:clave, valor:valor, updated_at:new Date().toISOString()},
     {onConflict:'clave'}
@@ -1415,11 +1411,15 @@ function saveData(uid){
 // getDED: usa memoria si es el usuario actual, localStorage si es otro usuario
 function getDED(uid){
   if(SESSION&&uid===SESSION.id) return DED;
-  return JSON.parse(localStorage.getItem('cc_d_'+uid)||'{}');
+  // Para otros usuarios: usar cache en memoria cargado desde Supabase al startup
+  // (no localStorage — todo debe ser cross-device desde Supabase)
+  if(window._dedAdminCache && window._dedAdminCache[uid]) return window._dedAdminCache[uid];
+  return {};
 }
 function getREG(uid){
   if(SESSION&&uid===SESSION.id) return REG;
-  return JSON.parse(localStorage.getItem('cc_h_'+uid)||'{}');
+  if(window._regAdminCache && window._regAdminCache[uid]) return window._regAdminCache[uid];
+  return {};
 }
 
 
@@ -3551,35 +3551,67 @@ async function migrateUsdVentasIva(){
     try{ renderAdminVentasTable(); }catch(e){}
   }
 
-  // ── Migrar claves de comisión mensual: -2 → -1 ──────────────────────────────
-  // Versiones anteriores guardaban comis_YYYY-MM-2 para usuarios mensuales.
-  // Ahora debe ser comis_YYYY-MM-1. Renombrar claves existentes en DED de cada usuario.
+  // ── Migrar/recalcular comisiones mensuales desde datos completos de Supabase ──────
+  // En lugar de solo renombrar claves -2→-1, recargamos todas las ventas de cada usuario
+  // para calcular la comisión correcta sobre el total real de ventas de cada mes.
   var allUsers = getUsers()||[];
   var anyCommissionChanged = false;
-  allUsers.forEach(function(u){
-    if((u.comisType||'mensual')==='anual') return; // solo mensuales
-    var ded = getDED(u.id)||{};
-    var changed = false;
-    Object.keys(ded).forEach(function(k){
-      if(k.startsWith('comis_')&&k.endsWith('-2')){
-        var newKey = k.slice(0,-2)+'-1';
-        if(!ded[newKey]){ // solo migrar si la clave -1 no existe ya
-          ded[newKey] = ded[k];
-          delete ded[k];
-          changed = true;
-        }
-      }
-    });
-    if(changed){
-      window._dedCache && (window._dedCache[u.id] = ded);
-      _saveToSupabase('user_ded_'+u.id, ded, 'cc_d_'+u.id);
-      console.log('migrateComisKeys: usuario '+u.id+' — claves de comisión migradas -2→-1');
-      anyCommissionChanged = true;
-    }
+  var monthlyUsers = allUsers.filter(function(u){
+    return u.estado==='activo' && (u.comisType||'mensual')!=='anual';
   });
-  if(anyCommissionChanged){
-    // Re-renderizar tabla de planilla si está activa
-    try{ initPagosUsuarios(); }catch(e){}
+
+  if(monthlyUsers.length > 0){
+    // Recalcular en paralelo para todos los usuarios mensuales
+    await Promise.all(monthlyUsers.map(async function(u){
+      try{
+        // Cargar ventas completas desde Supabase para este usuario
+        var vd = await loadVentasFromDB(u.id);
+        if(!vd || !Object.keys(vd).length) return;
+
+        var ded = getDED(u.id)||{};
+        var changed = false;
+
+        // Para cada mes en las ventas, recalcular la comisión correcta
+        Object.keys(vd).forEach(function(mk){
+          var parts = mk.split('-');
+          var yr = parseInt(parts[0]);
+          var mo = parseInt(parts[1])-1; // 0-indexed
+          var ventas = (vd[mk].ventas||[]);
+          if(!ventas.length) return;
+
+          var fibraCosto = getFibraCosto(mo, yr);
+          var totalComis = Math.round(calcTotalComisionConBase(ventas, fibraCosto, u.id));
+          if(!totalComis) return;
+
+          // Calcular la clave donde debe ir esta comisión (Q1 del mes siguiente)
+          var payMonth = mo+1, payYear = yr;
+          if(payMonth>11){ payMonth=0; payYear++; }
+          var correctKey = 'comis_'+payYear+'-'+pad(payMonth+1)+'-1';
+          var oldKey2    = 'comis_'+payYear+'-'+pad(payMonth+1)+'-2'; // clave vieja
+
+          // Actualizar si el valor es diferente o la clave vieja existe
+          if(ded[correctKey] !== totalComis || ded[oldKey2]){
+            ded[correctKey] = totalComis;
+            if(ded[oldKey2]) delete ded[oldKey2];
+            changed = true;
+          }
+        });
+
+        if(changed){
+          if(!window._dedAdminCache) window._dedAdminCache={};
+          window._dedAdminCache[u.id] = ded;
+          _saveToSupabase('user_ded_'+u.id, ded, 'cc_d_'+u.id);
+          console.log('migrateComis: '+u.id+' — comisiones recalculadas y guardadas');
+          anyCommissionChanged = true;
+        }
+      }catch(e){
+        console.warn('migrateComis error para '+u.id+':', e);
+      }
+    }));
+
+    if(anyCommissionChanged){
+      setTimeout(function(){ try{ initPagosUsuarios(); }catch(e){} }, 500);
+    }
   }
 }
 
