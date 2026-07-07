@@ -1850,10 +1850,23 @@ function isHashedPassword(p){ return typeof p==='string' && p.indexOf('sha256$')
 async function verifyPassword(pass, stored){
   stored = stored==null ? '' : String(stored);
   if(isHashedPassword(stored)){
-    if(!window.crypto||!crypto.subtle) return false;
-    var parts = stored.split('$'); // ['sha256', salt, hash]
-    var rehash = await hashPassword(pass, parts[1]);
-    return rehash===stored;
+    // Intentar verificar con crypto.subtle
+    if(window.crypto && crypto.subtle){
+      try{
+        var parts = stored.split('$'); // ['sha256', salt, hash]
+        if(parts.length!==3) return false;
+        var rehash = await hashPassword(pass, parts[1]);
+        return rehash===stored;
+      }catch(e){
+        console.warn('verifyPassword crypto error:', e);
+        // Si falla crypto, no bloquear el login — loguear el error
+        return false;
+      }
+    }
+    // crypto.subtle no disponible — no podemos verificar el hash
+    // Esto no debería ocurrir en HTTPS moderno; reportar al admin
+    console.error('verifyPassword: crypto.subtle no disponible. Browser:', navigator.userAgent);
+    return false;
   }
   return stored===String(pass); // legacy texto plano
 }
@@ -1897,6 +1910,11 @@ function doLogin(){
     var candidate=all.find(function(x){ return x.username.toLowerCase()===u; });
     if(!candidate){
       if(err){ err.style.display='block'; err.textContent='⚠ Usuario no encontrado'; }
+      return;
+    }
+    // Verificar si crypto está disponible para contraseñas cifradas
+    if(isHashedPassword(candidate.password) && (!window.crypto || !crypto.subtle)){
+      if(err){ err.style.display='block'; err.textContent='⚠ Este navegador no soporta el cifrado requerido. Use Chrome o Safari actualizado.'; }
       return;
     }
     verifyPassword(p, candidate.password).then(function(ok){
