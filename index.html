@@ -3555,6 +3555,7 @@ async function migrateUsdVentasIva(){
   // Versiones anteriores guardaban comis_YYYY-MM-2 para usuarios mensuales.
   // Ahora debe ser comis_YYYY-MM-1. Renombrar claves existentes en DED de cada usuario.
   var allUsers = getUsers()||[];
+  var anyCommissionChanged = false;
   allUsers.forEach(function(u){
     if((u.comisType||'mensual')==='anual') return; // solo mensuales
     var ded = getDED(u.id)||{};
@@ -3570,11 +3571,16 @@ async function migrateUsdVentasIva(){
       }
     });
     if(changed){
-      window._dedCache[u.id] = ded;
+      window._dedCache && (window._dedCache[u.id] = ded);
       _saveToSupabase('user_ded_'+u.id, ded, 'cc_d_'+u.id);
       console.log('migrateComisKeys: usuario '+u.id+' — claves de comisión migradas -2→-1');
+      anyCommissionChanged = true;
     }
   });
+  if(anyCommissionChanged){
+    // Re-renderizar tabla de planilla si está activa
+    try{ initPagosUsuarios(); }catch(e){}
+  }
 }
 
 function initApp(){
@@ -8008,6 +8014,12 @@ function _deleteSingleVenta(ventaId){
   DB.from('ventas').delete().eq('id',ventaId).then(function(r){
     if(r.error) console.error('_deleteSingleVenta:',r.error);
   });
+  // Borrar también el backup en configuracion (evita que la venta reaparezca al recargar)
+  var backupKey='cc_venta_v_'+ventaId;
+  if(window._ventaEditsCache) delete window._ventaEditsCache[ventaId];
+  DB.from('configuracion').delete().eq('clave',backupKey).then(function(r){
+    if(r.error) console.warn('_deleteSingleVenta backup delete error:',r.error);
+  });
 }
 function getMonthVentas(uid,y,m){
   const vd=getVentasData(uid);
@@ -8268,6 +8280,7 @@ function toggleVentaForm(){
   const isOpen=f.style.display==='block';
   f.style.display=isOpen?'none':'block';
   if(!isOpen){
+    clearVentaForm(); // reset todo incluyendo IVA → "Sin IVA" por defecto
     const fd=document.getElementById('vf-fecha');
     if(fd&&!fd.value) fd.value=todayCR();
     buildProdSelect();
