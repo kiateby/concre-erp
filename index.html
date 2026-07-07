@@ -3560,58 +3560,44 @@ async function migrateUsdVentasIva(){
     return u.estado==='activo' && (u.comisType||'mensual')!=='anual';
   });
 
-  if(monthlyUsers.length > 0){
-    // Recalcular en paralelo para todos los usuarios mensuales
-    await Promise.all(monthlyUsers.map(async function(u){
-      try{
-        // Cargar ventas completas desde Supabase para este usuario
-        var vd = await loadVentasFromDB(u.id);
-        if(!vd || !Object.keys(vd).length) return;
-
-        var ded = getDED(u.id)||{};
-        var changed = false;
-
-        // Para cada mes en las ventas, recalcular la comisión correcta
-        Object.keys(vd).forEach(function(mk){
-          var parts = mk.split('-');
-          var yr = parseInt(parts[0]);
-          var mo = parseInt(parts[1])-1; // 0-indexed
-          var ventas = (vd[mk].ventas||[]);
-          if(!ventas.length) return;
-
-          var fibraCosto = getFibraCosto(mo, yr);
-          var totalComis = Math.round(calcTotalComisionConBase(ventas, fibraCosto, u.id));
-          if(!totalComis) return;
-
-          // Calcular la clave donde debe ir esta comisión (Q1 del mes siguiente)
-          var payMonth = mo+1, payYear = yr;
-          if(payMonth>11){ payMonth=0; payYear++; }
-          var correctKey = 'comis_'+payYear+'-'+pad(payMonth+1)+'-1';
-          var oldKey2    = 'comis_'+payYear+'-'+pad(payMonth+1)+'-2'; // clave vieja
-
-          // Actualizar si el valor es diferente o la clave vieja existe
-          if(ded[correctKey] !== totalComis || ded[oldKey2]){
-            ded[correctKey] = totalComis;
-            if(ded[oldKey2]) delete ded[oldKey2];
-            changed = true;
-          }
-        });
-
-        if(changed){
-          if(!window._dedAdminCache) window._dedAdminCache={};
-          window._dedAdminCache[u.id] = ded;
-          _saveToSupabase('user_ded_'+u.id, ded, 'cc_d_'+u.id);
-          console.log('migrateComis: '+u.id+' — comisiones recalculadas y guardadas');
-          anyCommissionChanged = true;
+  monthlyUsers.forEach(function(u){
+    try{
+      var vd = getVentasData(u.id);
+      if(!vd || !Object.keys(vd).length) return;
+      var ded = getDED(u.id)||{};
+      var changed = false;
+      Object.keys(vd).forEach(function(mk){
+        var parts = mk.split('-');
+        var yr = parseInt(parts[0]);
+        var mo = parseInt(parts[1])-1;
+        var ventas = (vd[mk].ventas||[]);
+        if(!ventas.length) return;
+        var fibraCosto = getFibraCosto(mo, yr);
+        var totalComis = Math.round(calcTotalComisionConBase(ventas, fibraCosto, u.id));
+        if(!totalComis) return;
+        var payMonth = mo+1, payYear = yr;
+        if(payMonth>11){ payMonth=0; payYear++; }
+        var correctKey = 'comis_'+payYear+'-'+pad(payMonth+1)+'-1';
+        var oldKey2    = 'comis_'+payYear+'-'+pad(payMonth+1)+'-2';
+        if(ded[correctKey] !== totalComis || ded[oldKey2]){
+          ded[correctKey] = totalComis;
+          if(ded[oldKey2]) delete ded[oldKey2];
+          changed = true;
         }
-      }catch(e){
-        console.warn('migrateComis error para '+u.id+':', e);
+      });
+      if(changed){
+        if(!window._dedAdminCache) window._dedAdminCache={};
+        window._dedAdminCache[u.id] = ded;
+        _saveToSupabase('user_ded_'+u.id, ded, 'cc_d_'+u.id);
+        console.log('migrateComis: '+u.id+' — comisiones recalculadas');
+        anyCommissionChanged = true;
       }
-    }));
-
-    if(anyCommissionChanged){
-      setTimeout(function(){ try{ initPagosUsuarios(); }catch(e){} }, 500);
+    }catch(e){
+      console.warn('migrateComis error para '+u.id+':', e);
     }
+  });
+  if(anyCommissionChanged){
+    setTimeout(function(){ try{ initPagosUsuarios(); }catch(e){} }, 500);
   }
 }
 
