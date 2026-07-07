@@ -146,7 +146,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .admin-main.pres-active{padding:0!important;overflow:hidden!important;}
 
 /* Section cards */
-.admin-section{display:none;padding:16px 20px;width:100%;max-width:min(1600px,100%);margin:0 auto;box-sizing:border-box}
+.admin-section{display:none;padding:16px 20px;width:100%;max-width:100%;margin:0 auto;box-sizing:border-box}
 .admin-section.on{display:block}
 /* Presupuesto section — full viewport, no constraints */
 #sec-presupuesto.on{
@@ -570,7 +570,7 @@ td:not(:first-child){text-align:center}
   /* User vacation tab */
   .vac-layout{display:flex;min-height:calc(100vh - 60px)}
   .vac-sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);padding:20px 16px;display:flex;flex-direction:column;gap:16px}
-  .vac-main{flex:1;padding:14px 18px;overflow-y:auto;max-width:min(1600px,100%);width:100%}
+  .vac-main{flex:1;padding:14px 18px;overflow-y:auto;max-width:100%;width:100%}
 
   /* Saldo card */
   .saldo-card{
@@ -769,7 +769,7 @@ td:not(:first-child){text-align:center}
   ════════════════════════════════ */
   .fondos-layout{display:flex;min-height:calc(100vh - 60px)}
   .fondos-sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);padding:18px 15px;display:flex;flex-direction:column;gap:16px;overflow-y:auto}
-  .fondos-main{flex:1;padding:14px 18px;overflow-y:auto;background:var(--bg);max-width:min(1600px,100%);width:100%}
+  .fondos-main{flex:1;padding:14px 18px;overflow-y:auto;background:var(--bg);max-width:100%;width:100%}
 
   /* Resumen card fondos */
   .fondo-resumen-card{background:linear-gradient(135deg,#1e3a5f 0%,#163057 100%);border-radius:var(--r);padding:18px 20px;color:#fff;position:relative;overflow:hidden}
@@ -926,7 +926,7 @@ select{color:var(--text) !important}
   ════════════════════════════════ */
   .ventas-layout{display:flex;min-height:calc(100vh - 60px)}
   .ventas-sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);padding:18px 15px;display:flex;flex-direction:column;gap:14px;overflow-y:auto}
-  .ventas-main{flex:1;padding:14px 18px;overflow-y:auto;background:var(--bg);max-width:min(1600px,100%);width:100%}
+  .ventas-main{flex:1;padding:14px 18px;overflow-y:auto;background:var(--bg);max-width:100%;width:100%}
 
   /* Summary cards */
   .v-summary-card{background:linear-gradient(135deg,#1e3a5f,#163057);border-radius:var(--r);padding:16px 18px;color:#fff;position:relative;overflow:hidden;margin-bottom:8px}
@@ -1152,9 +1152,81 @@ select{color:var(--text) !important}
 
 /* ── Tables: fluid width on large screens ── */
 .atbl{width:100%;border-collapse:separate;border-spacing:0}
-@media(min-width:1200px){
-  /* Allow tables to use full container width, remove forced min-widths where possible */
-  .admin-table-wrap{overflow-x:auto}
+/* On large screens, remove artificial min-widths so tables expand naturally */
+@media(min-width:1400px){
+  .atbl{table-layout:auto}
+  .admin-table-wrap{overflow-x:auto;width:100%}
+  /* Let each column size to its content naturally */
+  .atbl td,.atbl th{white-space:nowrap}
+}
+@media(min-width:1800px){
+  /* On very large screens, allow text to wrap so more content fits */
+  .atbl td{white-space:normal}
+  .atbl th{white-space:nowrap}
+}
+
+/* ── ALL module content areas: fluid on large screens ── */
+.uu-main,.vac-main,.fondos-main,.ventas-main,
+#gastosModule > div, #invUserModule > div,
+#fibraUserModule > div, #radarUserModule > div {
+  max-width:100% !important;
+  width:100% !important;
+}
+
+/* Admin sections: truly fluid, no artificial cap */
+.admin-section{
+  max-width:100% !important;
+}
+
+/* Large screen padding boost */
+@media(min-width:1800px){
+  .uu-main,.vac-main,.fondos-main,.ventas-main,
+  .admin-main, .admin-section,
+  #gastosModule > div, #invUserModule > div {
+    padding-left:36px !important;
+    padding-right:36px !important;
+  }
+}
+@media(min-width:2400px){
+  .uu-main,.vac-main,.fondos-main,.ventas-main,
+  #gastosModule > div, #invUserModule > div {
+    padding-left:40px !important;
+    padding-right:40px !important;
+  }
+}
+
+/* ── User sidebar: collapses on small screens ── */
+@media(max-width:900px){
+  .user-layout,.vac-layout,.fondos-layout,.ventas-layout{flex-direction:column}
+  .sidebar,.ventas-sidebar,.fondos-sidebar,.vac-sidebar{
+    width:100%!important;max-width:100%!important;
+    border-right:none!important;border-bottom:1px solid var(--border)!important;
+    flex-direction:row!important;flex-wrap:wrap!important;gap:10px!important;
+    padding:12px!important;
+  }
+  .sidebar > div{flex:1;min-width:140px}
+}
+/* Sidebar collapsa completamente en móvil */
+@media(max-width:600px){
+  .sidebar,.ventas-sidebar,.fondos-sidebar,.vac-sidebar{
+    display:none
+  }
+  .uu-main,.ventas-main,.fondos-main,.vac-main{
+    padding:10px 12px!important
+  }
+}
+
+/* ── CRM, Inventario, Radar, Importaciones: full width ── */
+#sec-crm .atbl-wrap,
+#sec-inventario .atbl-wrap,
+#sec-liquidaciones .atbl-wrap,
+[id^="sec-"] .admin-table-wrap{
+  width:100%
+}
+
+/* ── Importaciones resultado tabla: sticky + fluid ── */
+#imp-f-resultado-nueva > div {
+  max-width:100% !important
 }
   .vc-fibra{background:rgba(124,58,237,.1);color:var(--purple)}
   .vc-sello{background:rgba(37,99,235,.1);color:var(--blue)}
@@ -20833,7 +20905,7 @@ let PROJ=newProj();
 // ── ESTILOS ───────────────────────────────────────────────────────────────
 const CSS=`
 #sec-calculos{font-family:Arial,sans-serif;background:#F4F5F7;min-height:100vh;color:#2C3E50}
-.cc-wrap{max-width:min(1600px,100%);margin:0 auto;padding:16px}
+.cc-wrap{max-width:100%;margin:0 auto;padding:16px}
 .cc-hdr{background:#C8102E;color:#fff;padding:14px 20px;border-radius:8px;margin-bottom:16px;display:flex;align-items:center;gap:12px}
 .cc-hdr h2{margin:0;font-size:1.15rem}
 .cc-tabs{display:flex;gap:0;border-bottom:2px solid #E8E8E8;margin-bottom:16px;flex-wrap:wrap}
@@ -23874,22 +23946,22 @@ window.initCalcCONCRE=initCalcCONCRE;
 
 <!-- GASTOS DE PROYECTO MODULE -->
 <div id="fibraUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px)">
-  <div id="sec-fibraplus-user" style="padding:14px 18px;max-width:1400px;margin:0 auto;width:100%"></div>
+  <div id="sec-fibraplus-user" style="padding:14px 18px;width:100%;max-width:100%;margin:0 auto"></div>
 </div>
 
 <!-- RADAR COMERCIAL — vista de usuario, visible solo si superadmin lo autoriza vía tabPerms -->
 <div id="radarUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);overflow-y:auto">
-  <div style="padding:14px 18px;max-width:1400px;margin:0 auto;width:100%"><div id="radar-root-user"></div></div>
+  <div style="padding:14px 18px;width:100%;max-width:100%;margin:0 auto"><div id="radar-root-user"></div></div>
 </div>
 
 <div id="invUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px)">
-  <div style="padding:14px 18px;max-width:1280px;margin:0 auto">
+  <div style="padding:14px 18px;width:100%;max-width:100%;margin:0 auto">
     <div id="inv-root-user"></div>
   </div>
 </div>
 
 <div id="gastosModule" style="display:none;flex:1;min-height:calc(100vh - 60px)">
-  <div style="padding:14px 18px;max-width:1280px;margin:0 auto">
+  <div style="padding:14px 18px;width:100%;max-width:100%;margin:0 auto">
 
     <!-- Header -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
