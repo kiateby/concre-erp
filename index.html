@@ -1453,19 +1453,8 @@ function setUsers(u){
     },{onConflict:'id'}).then(function(r){ if(r.error) console.error('setUsers:',r.error); });
   });
 }
-function defaultUsers(){
-  const u=[
-    {id:'admin', username:'admin', password:'admin', nombre:'Administrador',
-     rol:'superadmin', salario:0, email:'servicioalcliente@concrecr.com',
-     puesto:'Administrador', comisType:'mensual', estado:'activo', tabPerms:null,
-     created:new Date().toISOString()},
-    {id:'usuario', username:'usuario', password:'', nombre:'Usuario Demo',
-     rol:'user', salario:0, email:'', puesto:'',
-     comisType:'mensual', estado:'activo', tabPerms:null,
-     created:new Date().toISOString()},
-  ];
-  setUsers(u); return u;
-}
+// defaultUsers() eliminado por auditoría de seguridad — contenía credencial
+// admin/admin hardcodeada y no era invocado desde ningún lugar del código.
 
 let SESSION = null; // current logged user object
 let CM=new Date().getMonth(), CQ=1;
@@ -1846,6 +1835,52 @@ function initPresupuesto(){
   });
 }
 
+// ── SEGURIDAD: hashing de contraseñas (SHA-256 + salt) ──────────────────────
+// Formato almacenado: sha256$<salt>$<hash hex> — misma columna password, sin cambio de esquema.
+// Compatible hacia atrás: contraseñas legacy en texto plano siguen funcionando
+// y se cifran automáticamente en el primer login exitoso.
+async function hashPassword(pass, salt){
+  salt = salt || Array.from(crypto.getRandomValues(new Uint8Array(8))).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+  var data = new TextEncoder().encode(salt+':'+String(pass));
+  var buf = await crypto.subtle.digest('SHA-256', data);
+  var hex = Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+  return 'sha256$'+salt+'$'+hex;
+}
+function isHashedPassword(p){ return typeof p==='string' && p.indexOf('sha256$')===0; }
+async function verifyPassword(pass, stored){
+  stored = stored==null ? '' : String(stored);
+  if(isHashedPassword(stored)){
+    if(!window.crypto||!crypto.subtle) return false;
+    var parts = stored.split('$'); // ['sha256', salt, hash]
+    var rehash = await hashPassword(pass, parts[1]);
+    return rehash===stored;
+  }
+  return stored===String(pass); // legacy texto plano
+}
+// Migración: cifra todas las contraseñas en texto plano que queden en Supabase.
+// Corre tras el login de un superadmin/admin. No toca contraseñas vacías ni ya cifradas.
+async function migratePasswordHashes(){
+  try{
+    if(!SESSION) return;
+    if(SESSION.rol!=='superadmin' && SESSION.rol!=='admin') return;
+    if(!window.crypto||!crypto.subtle) return;
+    var r=await DB.from('usuarios').select('id,password');
+    if(r.error||!r.data) return;
+    for(var i=0;i<r.data.length;i++){
+      var row=r.data[i];
+      if(row.password && !isHashedPassword(row.password)){
+        var h=await hashPassword(row.password);
+        var up=await DB.from('usuarios').update({password:h, updated_at:new Date().toISOString()}).eq('id',row.id);
+        if(!up.error){
+          var cu=(window._usersCache||[]).find(function(x){return x.id===row.id;});
+          if(cu) cu.password=h;
+          console.log('migratePasswordHashes: contraseña cifrada para '+row.id);
+        }
+      }
+    }
+  }catch(e){ console.warn('migratePasswordHashes:', e); }
+}
+
 function doLogin(){
   const u=document.getElementById('loginUser').value.trim().toLowerCase();
   const p=document.getElementById('loginPass').value;
@@ -1859,22 +1894,38 @@ function doLogin(){
     }
     var all=res.data;
     window._usersCache=all.map(dbRowToUser);
-    var found=all.find(function(x){ return x.username.toLowerCase()===u && x.password===p; });
-    if(!found){
-      var exists=all.find(function(x){ return x.username.toLowerCase()===u; });
-      if(err){
-        err.style.display='block';
-        err.textContent=exists?'⚠ Contraseña incorrecta':'⚠ Usuario no encontrado';
-      }
+    var candidate=all.find(function(x){ return x.username.toLowerCase()===u; });
+    if(!candidate){
+      if(err){ err.style.display='block'; err.textContent='⚠ Usuario no encontrado'; }
       return;
     }
-    SESSION=dbRowToUser(found);
-    // Load all data from Supabase before initializing app
-    loadAllDataFromDB().then(function(){
-      document.getElementById('loginScreen').style.display='none';
-      initApp();
-      // Migración retroactiva: recalcular ventas USD con IVA usando nueva lógica de 1 decimal
-      setTimeout(migrateUsdVentasIva, 2000);
+    verifyPassword(p, candidate.password).then(function(ok){
+      if(!ok){
+        if(err){ err.style.display='block'; err.textContent='⚠ Contraseña incorrecta'; }
+        return;
+      }
+      // Auto-upgrade: si la contraseña estaba en texto plano, cifrarla ahora
+      if(!isHashedPassword(candidate.password) && window.crypto && crypto.subtle){
+        hashPassword(p).then(function(h){
+          DB.from('usuarios').update({password:h, updated_at:new Date().toISOString()}).eq('id',candidate.id).then(function(r2){
+            if(!r2.error){
+              candidate.password=h;
+              var cu=(window._usersCache||[]).find(function(x){return x.id===candidate.id;});
+              if(cu) cu.password=h;
+            }
+          });
+        });
+      }
+      SESSION=dbRowToUser(candidate);
+      // Load all data from Supabase before initializing app
+      loadAllDataFromDB().then(function(){
+        document.getElementById('loginScreen').style.display='none';
+        initApp();
+        // Migración retroactiva: recalcular ventas USD con IVA usando nueva lógica de 1 decimal
+        setTimeout(migrateUsdVentasIva, 2000);
+        // Migración de seguridad: cifrar contraseñas legacy en texto plano
+        setTimeout(migratePasswordHashes, 3500);
+      });
     });
   });
 }
@@ -3574,7 +3625,7 @@ function buildAdminTabs(){
     btn.textContent=b.label;
     btn.onclick=function(){
       showAdminSec(b.id,btn);
-      if(b.extra) eval(b.extra);
+      if(b.extra){ try{ (new Function(b.extra))(); }catch(e){ console.warn('tab extra error:',e); } }
     };
     tabs.appendChild(btn);
   });
@@ -3811,7 +3862,6 @@ function initApp(){
     try{ checkCRMInactiveNotif(); }catch(e){}
     try{ checkExportReminder(); }catch(e){}
     try{ checkPendingSAApprovals(); }catch(e){}
-    try{ checkPendingSAApprovals(); }catch(e){}
     try{ checkTrashReminder(); }catch(e){}
     buildAdminOverview();
     buildUsersTable();
@@ -4014,7 +4064,7 @@ function openUserModal(idx=null){
     var cpWrap2=document.getElementById('fPass-current');
     var cpVal=document.getElementById('fPass-current-val');
     if(cpWrap2) cpWrap2.style.display='block';
-    if(cpVal){ cpVal.textContent='••••••••'; cpVal.dataset.pass=u.password||''; cpVal.dataset.visible='0'; }
+    if(cpVal){ cpVal.textContent='••••••••'; cpVal.dataset.pass=isHashedPassword(u.password)?'🔒 Cifrada — escriba una nueva para cambiarla':(u.password||''); cpVal.dataset.visible='0'; }
     var cpEye=document.getElementById('fPass-current-eye'); if(cpEye) cpEye.textContent='👁';
   }
   document.getElementById('userModal').classList.remove('hidden');
@@ -4068,24 +4118,37 @@ function saveUser(){
     return;
   }
   const users=getUsers();
+  // Validaciones ANTES de cifrar
   if(editingUserIdx===null){
     const exists=users.find(u=>u.username===username);
     if(exists){alert('Ya existe un usuario con ese nombre de usuario');return;}
-    users.push({id:username,username,password:pass,nombre,rol,salario,email,puesto,comisType,estado});
   } else {
-    const u=users[editingUserIdx];
+    const uChk=users[editingUserIdx];
     // Proteger: si el usuario editado era superadmin y quien edita no es superadmin, no cambiar rol
-    if(u.rol==='superadmin'&&SESSION.rol!=='superadmin'){
+    if(uChk.rol==='superadmin'&&SESSION.rol!=='superadmin'){
       alert('Solo un superadmin puede modificar el rol de otro superadmin');return;
     }
-    u.nombre=nombre;u.username=username;u.rol=rol;u.salario=salario;
-    u.email=email;u.puesto=puesto;u.comisType=comisType;u.estado=estado;
-    if(pass&&pass.length>=6)u.password=pass;
-    else if(pass&&pass.length>0){alert('Si cambias la contraseña debe tener al menos 6 caracteres');return;}
+    if(pass&&pass.length>0&&pass.length<6){alert('Si cambias la contraseña debe tener al menos 6 caracteres');return;}
   }
-  setUsers(users);
-  closeModal();buildUsersTable();buildAdminOverview();buildAgGlobal();populateAdminSelectors();
-  toast('✓ Usuario guardado correctamente');
+  // Guardar con contraseña cifrada (SHA-256 + salt)
+  var _finishSaveUser=function(passToStore){
+    if(editingUserIdx===null){
+      users.push({id:username,username,password:passToStore,nombre,rol,salario,email,puesto,comisType,estado});
+    } else {
+      const u=users[editingUserIdx];
+      u.nombre=nombre;u.username=username;u.rol=rol;u.salario=salario;
+      u.email=email;u.puesto=puesto;u.comisType=comisType;u.estado=estado;
+      if(pass&&pass.length>=6)u.password=passToStore;
+    }
+    setUsers(users);
+    closeModal();buildUsersTable();buildAdminOverview();buildAgGlobal();populateAdminSelectors();
+    toast('✓ Usuario guardado correctamente');
+  };
+  if(pass&&window.crypto&&crypto.subtle){
+    hashPassword(pass).then(_finishSaveUser).catch(function(){_finishSaveUser(pass);});
+  } else {
+    _finishSaveUser(pass);
+  }
 }
 function delUser(idx){
   const users=getUsers();
@@ -9042,10 +9105,10 @@ function renderVentasUser(){
         const p=cat.find(c=>c.id===normalizeProdId(v.prodId))||{nombre:v.prodId};
         return '<div class="v-pending-row">'+
           '<span style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+'</span>'+
-          '<span style="font-weight:700">'+v.cliente+'</span>'+
+          '<span style="font-weight:700">'+escHtml(v.cliente)+'</span>'+
           '<span class="v-cat '+TIPO_COLORS[p.tipo||'otros']+'">'+p.nombre+'</span>'+
           '<span style="font-family:var(--cond);font-weight:800;color:var(--blue)">'+fmt(v.pendMonto)+'</span>'+
-          '<span style="font-size:11px;color:var(--text3)">'+v.notas+'</span>'+
+          '<span style="font-size:11px;color:var(--text3)">'+escHtml(v.notas)+'</span>'+
           '</div>';
       }).join('');
     } else {
@@ -9090,7 +9153,7 @@ function renderVentasUser(){
       '<td style="font-family:var(--cond);font-weight:700;text-align:center">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'+
       '<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(1):fmt(v.precio)):'—')+'</td>'+
       '<td><span class="v-cat '+TIPO_COLORS[p.tipo]+'">'+getVentaDisplayNombre(v,catMap)+'</span></td>'+
-      '<td style="font-weight:600">'+v.cliente+'</td>'+
+      '<td style="font-weight:600">'+escHtml(v.cliente)+'</td>'+
       '<td style="font-size:11px;color:var(--text3)">'+( v.factura||'—')+'</td>'+
       '<td style="white-space:nowrap">'+pagoLabel+'</td>'+
       '<td style="font-family:var(--cond);font-weight:800;text-align:right">'
@@ -9115,7 +9178,7 @@ function renderVentasUser(){
       '</td>'+
       '<td style="font-size:11px;color:var(--blue);font-weight:600">'+(v.proyecto||'—')+'</td>'+
       '<td style="font-size:10px;color:var(--text3);max-width:180px">'+
-        (v.notas?'<div style="color:var(--text2);margin-bottom:2px">📝 '+v.notas+'</div>':'')+
+        (v.notas?'<div style="color:var(--text2);margin-bottom:2px">📝 '+escHtml(v.notas)+'</div>':'')+
         (extraStr?'<div>'+extraStr+'</div>':'')+
       '</td>'+
       '<td style="white-space:nowrap">'+estadoBadge+'</td>'+
@@ -9862,7 +9925,7 @@ function renderPendingProjects(allVentas,catMap){
     return '<tr style="background:rgba(37,99,235,.04)">'
       +'<td><strong>'+v.uname+'</strong></td>'
       +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+'</td>'
-      +'<td>'+v.cliente+'</td>'
+      +'<td>'+escHtml(v.cliente)+'</td>'
       +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+getVentaDisplayNombre(v,catMap)+'</span></td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:var(--blue)">'+fmt(v.pendMonto)+'</td>'
       +'<td><span class="vac-badge '+(v.pendCancelado==='si'?'approved':'pending')+'">'+
@@ -9917,7 +9980,7 @@ function renderAdminVentasTable(){
       +'<td style="position:sticky;left:0;z-index:2;background:'+stickyBg+';min-width:130px;white-space:nowrap"><strong>'+v.uname+'</strong></td>'
       +'<td style="position:sticky;left:130px;z-index:2;background:'+stickyBg+';min-width:90px;font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
       +'<td style="position:sticky;left:220px;z-index:2;background:'+stickyBg+';min-width:140px;white-space:nowrap"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+p.nombre+'</span></td>'
-      +'<td style="position:sticky;left:360px;z-index:2;background:'+stickyBg+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+v.cliente+'</td>'
+      +'<td style="position:sticky;left:360px;z-index:2;background:'+stickyBg+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(v.cliente)+'</td>'
       +'<td style="position:sticky;left:500px;z-index:2;background:'+stickyBg+';min-width:80px;font-size:11px;color:var(--text3);box-shadow:2px 0 5px rgba(0,0,0,.10)">'+( v.factura||'—')+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+(v.cantidad&&v.cantidad!=='0'&&v.cantidad!=='1'?v.cantidad:'—')+'</td>'
       +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(1):fmt(v.precio)):'—')+'</td>'
@@ -9928,7 +9991,7 @@ function renderAdminVentasTable(){
       +'<td style="font-family:var(--cond);color:var(--blue);text-align:right">'+fmt(Math.max(0,v.subtotal-(v.insMontoNum||0)))+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:'+(v.esTercero?'var(--amber)':'var(--green)')+';text-align:right">'+(v.esTercero?'Tercero':fmt(comis))+'</td>'
       +'<td style="font-size:10px;color:var(--text3);max-width:160px">'
-        +(v.notas?'<div style="color:var(--text2);margin-bottom:1px">📝 '+v.notas+'</div>':'')
+        +(v.notas?'<div style="color:var(--text2);margin-bottom:1px">📝 '+escHtml(v.notas)+'</div>':'')
         +(extraAdmin.length?'<div>'+extraAdmin.join(' · ')+'</div>':'')
       +'</td>'
       +'<td><span class="'+(v.pagadoAdmin?'vac-badge approved':'vac-badge pending')+'">'+(v.pagadoAdmin?'✓ Pago':'Pend.')+'</span></td>'
@@ -10118,7 +10181,7 @@ function exportVentasUser(){
         (v.esTercero?'Tercero':fmt(comis))+'</span>'+
       '</div></div>'+
       (v.tieneInsumos?'<div style="padding:3px 14px;font-size:10px;color:#d97706">⚠ Insumos excluidos: '+v.insDesc+' — '+fmt(v.insMontoNum)+'</div>':'')+
-      (v.notas?'<div style="padding:3px 14px;font-size:10px;color:#9a9b9d">📝 '+v.notas+'</div>':'');
+      (v.notas?'<div style="padding:3px 14px;font-size:10px;color:#9a9b9d">📝 '+escHtml(v.notas)+'</div>':'');
   }).join('');
 
   const html='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reporte Ventas</title>'+
@@ -10509,7 +10572,7 @@ function renderPendingExec(uid){
     html+='<div class="v-pending-row">'+
       '<span style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+'</span>'+
       '<span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+p.nombre+'</span>'+
-      '<span style="font-weight:700;flex:1">'+v.cliente+'</span>'+
+      '<span style="font-weight:700;flex:1">'+escHtml(v.cliente)+'</span>'+
       '<span style="font-family:var(--cond);font-weight:800;color:var(--blue)">'+fmt(v.pendMonto)+'</span>'+
       canceladoLabel+
       '<button data-vid="'+v.id+'" data-mk="'+v.mk+'" class="exec-btn-pend" style="padding:5px 10px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">✓ Marcar ejecutado</button>'+
@@ -10551,7 +10614,7 @@ function renderCxcUser(uid){
     return '<div class="v-pending-row" style="'+(vencido?'background:rgba(227,24,55,.05)':urgente?'background:rgba(217,119,6,.05)':'')+'">'
       +'<span style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+'</span>'
       +'<span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+p.nombre+'</span>'
-      +'<span style="font-weight:700;flex:1">'+v.cliente+'</span>'
+      +'<span style="font-weight:700;flex:1">'+escHtml(v.cliente)+'</span>'
       +'<span style="font-family:var(--cond);font-weight:800">'+fmt(v.subtotal)+'</span>'
       +'<span style="font-size:11px;color:'+(vencido?'var(--red)':urgente?'var(--amber)':'var(--text3)')+'">'+
         'Vence: '+vencStr+(dias!==null?' ('+Math.abs(dias)+'d '+(dias<0?'vencido':'restantes')+')':'')+'</span>'
@@ -10587,13 +10650,13 @@ function renderAdminCxcTable(allVentas,catMap){
       +'<td><strong>'+v.uname+'</strong></td>'
       +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+'</td>'
       +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+p.nombre+'</span></td>'
-      +'<td>'+v.cliente+'</td>'
+      +'<td>'+escHtml(v.cliente)+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800">'+fmt(v.subtotal)+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:var(--green)">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+'</td>'
       +'<td style="white-space:nowrap">'+vencStr+'</td>'
       +'<td style="color:'+(vencido?'var(--red)':urgente?'var(--amber)':'var(--green)')+';font-weight:700">'
         +(dias===null?'—':dias<0?'⚠ '+Math.abs(dias)+'d vencido':dias+'d restantes')+'</td>'
-      +'<td style="font-size:11px;color:var(--text3)">'+v.notas+'</td>'
+      +'<td style="font-size:11px;color:var(--text3)">'+escHtml(v.notas)+'</td>'
       +'<td style="text-align:center">'
         +'<button data-uid="'+v.uid+'" data-vid="'+v.id+'" class="cxc-pago-btn" '
         +'style="padding:4px 10px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">✓ Pago recibido</button>'
