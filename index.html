@@ -1825,7 +1825,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260709231935';
+var APP_BUILD='20260714150423';
 function checkForNewVersion(){
   fetch(window.location.href,{cache:'no-store'})
     .then(function(r){ return r.text(); })
@@ -17063,23 +17063,48 @@ async function getOrCreateAuditForUser(uid){
   if(!ciclo) return null;
   var seq=ciclo.secuencia||[];
   var punteros=ciclo.punteros||{};
-  var ptr=typeof punteros[uid]==='number'?punteros[uid]:0;
-  if(ptr>=seq.length){ptr=0;}
-  var items3=[]; var usedPtr=ptr;
-  while(items3.length<3&&usedPtr<seq.length){
+  // ── PUNTERO COMPARTIDO: todos los usuarios con acceso a inventario toman ítems
+  // del MISMO puntero global — a cada uno le tocan ítems DISTINTOS, sin repetirse
+  // ninguno entre usuarios hasta agotar toda la secuencia. Al agotarse, se baraja
+  // una secuencia nueva y el ciclo vuelve a comenzar.
+  var ptr;
+  if(typeof punteros.__global==='number'){
+    ptr=punteros.__global;
+  } else {
+    // Migración desde el esquema anterior (punteros por usuario): arrancar en el
+    // máximo avanzado — todo lo anterior a ese punto ya fue auditado por alguien.
+    ptr=0;
+    Object.keys(punteros).forEach(function(k){
+      if(typeof punteros[k]==='number'&&punteros[k]>ptr) ptr=punteros[k];
+    });
+  }
+  var items3=[]; var usedPtr=ptr; var seqChanged=false; var seen={}; var regens=0;
+  while(items3.length<3 && regens<3){
+    if(usedPtr>=seq.length){
+      // Secuencia agotada → nuevo ciclo: barajar de nuevo y comenzar desde cero
+      var pool2=getAuditPool();
+      if(!pool2.length) break;
+      seq=pool2.map(function(i){return i.id;});
+      for(var i2=seq.length-1;i2>0;i2--){var j2=Math.floor(Math.random()*(i2+1));var t2=seq[i2];seq[i2]=seq[j2];seq[j2]=t2;}
+      usedPtr=0; seqChanged=true; regens++;
+      continue;
+    }
     var inv=(window._invItems||[]).find(function(i){return i.id===seq[usedPtr];});
-    if(inv&&inv.activo!==false&&!inv.es_fibra){
+    if(inv&&inv.activo!==false&&!inv.es_fibra&&!seen[inv.id]){
+      seen[inv.id]=true;
       items3.push({item_id:inv.id,nombre:inv.nombre,codigo:inv.codigo||'',tipo:inv.type||'inventario',
         unidad:inv.unidad||'unidad',cantidad_sistema:inv.cantidad||0,cantidad_usuario:null,confirmado:false});
     }
     usedPtr++;
   }
   if(!items3.length) return null;
-  punteros[uid]=usedPtr;
-  // FIX: 'updated_at' no existe en esta tabla — causaba que el UPDATE fallara silenciosamente
-  // y el puntero nunca avanzara, repitiendo los mismos ítems cada semana.
-  var updPtrR=await DB.from('inv_auditoria_ciclos').update({punteros:punteros}).eq('id','global');
-  if(updPtrR.error) console.error('Error guardando puntero de auditoría (se repetirán los ítems):', updPtrR.error);
+  // Guardar puntero compartido (y la secuencia nueva si el ciclo se reinició).
+  // Se limpia el objeto punteros: solo queda __global (los punteros por usuario
+  // del esquema anterior ya fueron absorbidos en la migración de arriba).
+  var updObj={punteros:{__global:usedPtr}};
+  if(seqChanged){ updObj.secuencia=seq; updObj.generado_at=new Date().toISOString(); }
+  var updPtrR=await DB.from('inv_auditoria_ciclos').update(updObj).eq('id','global');
+  if(updPtrR.error) console.error('Error guardando puntero compartido de auditoría (se podrían repetir ítems):', updPtrR.error);
   var audit={id:auditId,uid:uid,semana_key:weekKey,lunes_date:getAuditMondayDate(),
     items:items3,completado:false,completado_at:null,discrepancias:[],
     alerta_enviada:false,superadmin_revisado:false,
