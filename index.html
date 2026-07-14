@@ -1856,7 +1856,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260714151314';
+var APP_BUILD='20260714155740';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2066,6 +2066,8 @@ function doLogin(){
         setTimeout(migratePasswordHashes, 3500);
         // Celebraciones: cumpleaños y aniversario laboral del usuario
         setTimeout(checkCelebrations, 1200);
+        // Alerta a superadmins: colaboradores que celebran hoy
+        setTimeout(checkCelebrationsAdmin, 2200);
       });
     });
   });
@@ -6169,6 +6171,78 @@ function adjustVacSaldo(uid,delta,reason){
   setVacData(uid,vd);
 }
 
+// ── ALERTA PARA SUPERADMINS: celebraciones de colaboradores hoy ──────────────
+// Al iniciar sesión, cada superadmin ve un aviso visual con los colaboradores que
+// cumplen años o aniversario laboral HOY, para poder felicitarlos.
+// Se muestra una vez por día por superadmin (flag en Supabase, cross-device).
+// La alerta personal del propio colaborador (checkCelebrations) no se toca.
+function checkCelebrationsAdmin(_retry){
+  try{
+    if(!SESSION||SESSION.rol!=='superadmin') return;
+    // Si el modal personal está abierto, reintentar en unos segundos (máx 5 veces)
+    if(document.getElementById('celebOverlay')){
+      if((_retry||0)<5) setTimeout(function(){ checkCelebrationsAdmin((_retry||0)+1); },4000);
+      return;
+    }
+    var today=new Date(); today.setHours(0,0,0,0);
+    var y=today.getFullYear();
+    var dayKey=y+'-'+pad(today.getMonth()+1)+'-'+pad(today.getDate());
+    var flagKey='celeb_sa_'+SESSION.id+'_'+dayKey;
+    if(!window._celebShownCache) window._celebShownCache={};
+    if(window._celebShownCache[flagKey]) return; // ya mostrada hoy
+
+    var celebrantes=[];
+    (getUsers()||[]).forEach(function(u){
+      if(u.estado!=='activo') return;
+      if(u.id===SESSION.id) return; // el propio superadmin ya tiene su alerta personal
+      var vd=getVacData(u.id)||{};
+      if(vd.fechaNac){
+        var nac=parseDate(vd.fechaNac);
+        if(nac&&!isNaN(nac.getTime())&&nac.getMonth()===today.getMonth()&&nac.getDate()===today.getDate()){
+          celebrantes.push({nombre:u.nombre||u.id,tipo:'cumple',years:0});
+        }
+      }
+      if(vd.fechaIngreso){
+        var ing=parseDate(vd.fechaIngreso);
+        if(ing&&!isNaN(ing.getTime())&&ing.getMonth()===today.getMonth()&&ing.getDate()===today.getDate()){
+          var yrs=y-ing.getFullYear();
+          if(yrs>0) celebrantes.push({nombre:u.nombre||u.id,tipo:'aniv',years:yrs});
+        }
+      }
+    });
+    if(!celebrantes.length) return;
+
+    // Marcar como mostrada hoy para este superadmin
+    window._celebShownCache[flagKey]=true;
+    _saveToSupabase(flagKey,{shownAt:new Date().toISOString()},'');
+
+    var lista=celebrantes.map(function(cel){
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:#fff;border:1.5px solid #f1e2d0;border-radius:12px;margin-bottom:8px;text-align:left">'
+        +'<span style="font-size:26px">'+(cel.tipo==='cumple'?'🎂':'🏆')+'</span>'
+        +'<div><div style="font-weight:800;color:#1a1a2e;font-size:14.5px">'+escHtml(cel.nombre)+'</div>'
+        +'<div style="font-size:12px;color:#666">'+(cel.tipo==='cumple'
+            ? 'Hoy es su cumpleaños'
+            : 'Hoy cumple '+cel.years+(cel.years===1?' año':' años')+' en CONCRE')+'</div></div>'
+        +'</div>';
+    }).join('');
+
+    var ov=document.createElement('div');
+    ov.className='celeb-overlay'; ov.id='celebAdminOverlay';
+    ov.innerHTML=
+      '<div class="celeb-card">'
+      +'<span class="celeb-emoji">🎉</span>'
+      +'<div class="celeb-title">¡Celebraciones de hoy!</div>'
+      +'<div class="celeb-msg" style="margin-bottom:14px">Estos colaboradores están de fiesta hoy — <strong>no olvides felicitarlos</strong>, un mensaje tuyo hace la diferencia:</div>'
+      +lista
+      +'<button class="celeb-close" style="margin-top:12px" onclick="document.getElementById(\'celebAdminOverlay\').remove()">✓ Entendido, los felicitaré</button>'
+      +'</div>';
+    _celebConfetti(ov);
+    document.body.appendChild(ov);
+  }catch(e){ console.warn('checkCelebrationsAdmin:',e); }
+}
+
+// ── ALERTA PARA SUPERADMINS: fin ─────────────────────────────────────────────
+
 // ── CELEBRACIONES: cumpleaños y aniversario laboral ─────────────────────────
 // Muestra un mensaje festivo en pantalla al usuario que cumple años (nacimiento)
 // o aniversario en la empresa. Se muestra UNA vez por año por tipo (flag en Supabase).
@@ -9150,7 +9224,27 @@ function clearVentaForm(){
   onIvaChange(); calcVentaPreview();
 }
 
+// Validación: si "Mínimo" está marcado, el área real es OBLIGATORIA
+function _validarMinimoVenta(){
+  var chk=document.getElementById('vf-min-chk');
+  if(chk&&chk.checked){
+    var el=document.getElementById('vf-min-area');
+    var a=el?(parseFloat(el.value)||0):0;
+    if(a<=0){
+      toast('⚠ Marcaste "Mínimo" — debes ingresar el Área real del mínimo (m²/ml)');
+      if(el){
+        el.focus();
+        el.style.border='2px solid var(--red)';
+        setTimeout(function(){ el.style.border=''; },2500);
+      }
+      return false;
+    }
+  }
+  return true;
+}
+
 function _doSaveVenta(){
+  if(!_validarMinimoVenta()) return;
   const prodId=document.getElementById('vf-prod').value;
   if(!prodId){ alert('Selecciona una categoría de producto'); return; }
   const subSel=document.getElementById('vf-subprod');
@@ -10280,6 +10374,7 @@ function renderAdminVentasTable(){
       +'<td style="position:sticky;left:220px;z-index:2;background:'+stickyBg+';min-width:140px;white-space:nowrap"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+p.nombre+'</span></td>'
       +'<td style="position:sticky;left:360px;z-index:2;background:'+stickyBg+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(v.cliente)+'</td>'
       +'<td style="position:sticky;left:500px;z-index:2;background:'+stickyBg+';min-width:80px;font-size:11px;color:var(--text3);box-shadow:2px 0 5px rgba(0,0,0,.10)">'+( v.factura||'—')+'</td>'
+      +'<td style="font-size:11px;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(v.proyecto?escHtml(v.proyecto):'')+'">'+(v.proyecto?escHtml(v.proyecto):'—')+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+((v.cantidad!=null&&v.cantidad!==''&&Number(v.cantidad)!==0?v.cantidad:'—'))+'</td>'
       +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(1):fmt(v.precio)):'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.subtotal)+'</td>'
@@ -10304,7 +10399,7 @@ function renderAdminVentasTable(){
       +'<button class="liq-link-btn" data-vuid="'+v.uid+'" data-vid="'+v.id+'" title="Enviar a Liquidaciones" style="margin-left:5px;background:rgba(37,99,235,.1);border:1px solid rgba(37,99,235,.25);color:var(--blue);border-radius:4px;padding:2px 6px;cursor:pointer;font-size:10px;font-weight:700">📋</button>'
       +'</td>'
       +'</tr>';
-  }).join('')||'<tr><td colspan="17" style="text-align:center;color:var(--text3);padding:20px">Sin registros</td></tr>';
+  }).join('')||'<tr><td colspan="18" style="text-align:center;color:var(--text3);padding:20px">Sin registros</td></tr>';
 }
 
 
@@ -10689,6 +10784,7 @@ function saveVenta(){
 }
 
 function updateVenta(){
+  if(!_validarMinimoVenta()) return;
   const uid=SESSION.id;
   const vd=getVentasData(uid);
   const mk=editingVentaMonthKey;
@@ -10739,7 +10835,7 @@ function updateVenta(){
     subtotal,ivaPct,ivaAmt,total:totalFinal,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:plazo,
-    isUsd,usd,tcUsed,
+    isUsd,usd,tcUsed,usdTotal,
     tieneInsumos:insChk,
     insDesc:insChk?document.getElementById('vf-ins-desc').value.trim():'',
     insMontoNum:insChk?parseMon(document.getElementById('vf-ins-monto').value)||0:0,
@@ -17300,7 +17396,7 @@ async function renderAuditAdmin(){
   var audits=allAudits.filter(function(a){
     var esSemanaActual=(a.semana_key===weekKey);
     var tieneDiscrepancia=(a.discrepancias||[]).length>0;
-    var estaRevisada=a.superadmin_revisado||a.completado;
+    var estaRevisada=!!a.superadmin_revisado; // solo cuenta la revisión del superadmin
     if(esSemanaActual) return true; // siempre mostrar la semana actual
     if(tieneDiscrepancia) return true; // discrepancias nunca se ocultan
     if(!estaRevisada) return true; // pendientes nunca se ocultan
@@ -17342,10 +17438,12 @@ async function renderAuditAdmin(){
       }
       html+='</td>';
       html+='<td style="padding:8px;text-align:center">';
-      if(!a.completado&&!a.superadmin_revisado){
-        html+='<button onclick="markAuditRevisada(\''+a.id+'\')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">✓ Marcar revisada</button>';
-      } else if(a.superadmin_revisado||a.completado){
-        html+='<span style="font-size:11px;color:var(--text3)">✓ Revisada</span>';
+      if(!a.superadmin_revisado){
+        // Check propio del superadmin — independiente de si el usuario completó.
+        // En pendientes, marcar revisada también cierra la auditoría (comportamiento original).
+        html+='<button onclick="markAuditRevisada(\''+a.id+'\','+(a.completado?'true':'false')+')" style="background:none;border:1.5px solid var(--green);color:var(--green);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:700">✓ Marcar revisada</button>';
+      } else {
+        html+='<span style="font-size:11px;color:var(--green);font-weight:700">✓ Revisada por superadmin</span>';
       }
       html+='</td></tr>';
       if(disc>0){
@@ -17367,8 +17465,14 @@ function toggleDiscrepanciaDetalle(btn,auditId){
   row.style.display=isOpen?'none':'';
   btn.textContent=isOpen?'Ver':'Ocultar';
 }
-async function markAuditRevisada(auditId){
-  await DB.from('inv_auditoria').update({superadmin_revisado:true,completado:true,completado_at:new Date().toISOString()}).eq('id',auditId);
+async function markAuditRevisada(auditId, yaCompletada){
+  // Si la auditoría ya fue completada por el usuario: solo registrar la revisión del
+  // superadmin (sin pisar completado_at, que es el timestamp real del usuario).
+  // Si sigue pendiente: revisar también la cierra (comportamiento original).
+  var upd = yaCompletada
+    ? {superadmin_revisado:true}
+    : {superadmin_revisado:true,completado:true,completado_at:new Date().toISOString()};
+  await DB.from('inv_auditoria').update(upd).eq('id',auditId);
   toast('✅ Auditoría marcada como revisada');
   var body=_invBody();if(body){var panel=body.querySelector('[style*="Auditorías de Inventario"]');if(panel)panel.remove();}
   renderAuditAdmin();
@@ -23045,6 +23149,7 @@ window.initCalcCONCRE=initCalcCONCRE;
                 <th style="position:sticky;left:220px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:140px">Producto</th>
                 <th style="position:sticky;left:360px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:140px">Cliente</th>
                 <th style="position:sticky;left:500px;z-index:3;background:var(--surface2);white-space:nowrap;min-width:80px;box-shadow:2px 0 5px rgba(0,0,0,.10)">Factura</th>
+                <th>Proyecto</th>
                 <th>Cant.</th><th>Precio unit.</th>
                 <th style="text-align:right">Subtotal</th><th>IVA ₡</th><th style="text-align:right">Total</th>
                 <th>Pago / Plazo</th><th>Base comis.</th><th>Comisión</th>
