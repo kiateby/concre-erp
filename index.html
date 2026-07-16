@@ -1512,7 +1512,7 @@ function setUsers(u){
       nombre:user.nombre, rol:user.rol, salario:user.salario||0,
       email:user.email||'', puesto:user.puesto||'',
       comis_type:user.comisType||'mensual', estado:user.estado||'activo',
-      tab_perms:user.tabPerms||null, updated_at:new Date().toISOString()
+      tab_perms:user.tabPerms||null, ccss_solo_q1:user.ccssSoloQ1||false, updated_at:new Date().toISOString()
     },{onConflict:'id'}).then(function(r){ if(r.error) console.error('setUsers:',r.error); });
   });
 }
@@ -1681,11 +1681,14 @@ async function loadAllDataFromDB(){
       DB.from('liq_subcontratistas').select('*'),
       DB.from('crm_clientes').select('*').order('nombre_empresa'),
       DB.from('crm_links').select('*'),
-      DB.from('papelera').select('*').order('deleted_at',{ascending:false})
+      DB.from('papelera').select('*').order('deleted_at',{ascending:false}),
+      DB.from('proyectos').select('*').order('created_at',{ascending:false})
     ]);
 
     var users=phase1[0], configs=phase1[1], subs=phase1[2];
     var crmC=phase1[3], crmL=phase1[4], trashR=phase1[5];
+    var proysR=phase1[6];
+    window._proyectosCache=(!proysR.error&&proysR.data)?proysR.data:[];
 
     if(!users.error&&users.data) window._usersCache=users.data.map(dbRowToUser);
 
@@ -1723,6 +1726,10 @@ async function loadAllDataFromDB(){
           window._saDemoteCache[row.clave.replace('sa_demote_','')]=row.valor||{};
         if(row.clave&&row.clave.startsWith('celeb_'))
           window._celebShownCache[row.clave]=true;
+        if(row.clave&&row.clave.startsWith('liq_vsel_')){
+          if(!window._liqVselCache) window._liqVselCache={};
+          window._liqVselCache[row.clave.replace('liq_vsel_','')]=row.valor||{};
+        }
         if(row.clave&&row.clave.startsWith('user_ded_'))
           window._dedAdminCache[row.clave.replace('user_ded_','')]=row.valor||{};
         if(row.clave&&row.clave.startsWith('user_horas_'))
@@ -1856,7 +1863,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260714155740';
+var APP_BUILD='20260716200858';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -1910,7 +1917,7 @@ function dbRowToUser(row){
     nombre:row.nombre, rol:row.rol, salario:row.salario||0,
     email:row.email||'', puesto:row.puesto||'',
     comisType:row.comis_type||'mensual', estado:row.estado||'activo',
-    tabPerms:row.tab_perms||null, created:row.created_at||''
+    tabPerms:row.tab_perms||null, ccssSoloQ1:row.ccss_solo_q1||false, created:row.created_at||''
   };
 }
 
@@ -3755,6 +3762,7 @@ function buildAdminTabs(){
     {id:'calculos',      label:'🏗 Cálculos',        extra:'try{initCalcCONCRE();}catch(e){}',  saOnly:true},
     {id:'presupuesto',   label:'🏗 Presupuesto',     extra:'try{initPresupuesto();}catch(e){console.error(e);}', superadmin_only:true},
     {id:'radar',         label:'📡 Radar Comercial', extra:'try{initRadarComercial();}catch(e){console.error(e);}'},
+    {id:'proyectos',     label:'📁 Proyectos',       extra:'try{initProyectosTab("proyAdminRoot");}catch(e){console.error(e);}'},
     {id:'importaciones', label:'🚢 Importaciones',   extra:'try{initImportaciones();}catch(e){console.error(e);}', superadmin_only:true},
   ];
   // Filter tabs based on admin permissions (superadmin sees all)
@@ -3787,6 +3795,7 @@ function buildUserTabs(){
     {id:'ventas',     label:'📊 Ventas'},
     {id:'fondos',     label:'📦 Fondos'},
     {id:'gastos',     label:'🏗 Gastos Proyecto'},
+    {id:'proyectos',  label:'📁 Proyectos'},
     {id:'horas',      label:'⏱ Horas y Planilla'},
     {id:'vacaciones', label:'🌴 Vacaciones'},
     {id:'inventario', label:'📦 Inventario'},
@@ -3821,6 +3830,8 @@ function switchUserTab(tab, btn){
     var ivm=document.getElementById('invUserModule');
     var fpm=document.getElementById('fibraUserModule');
     var rdm=document.getElementById('radarUserModule');
+    var pym=document.getElementById('proyectosUserModule');
+    if(pym) pym.style.display='none';
     if(um) um.style.display='none';
     if(vm) vm.style.display='none';
     if(fm) fm.style.display='none';
@@ -3853,6 +3864,9 @@ function switchUserTab(tab, btn){
     } else if(tab==='radar'){
       if(rdm){ rdm.style.cssText='display:flex;flex:1'; }
       try{ initRadarComercialUser(); }catch(e2){ console.error('initRadarComercialUser error:',e2); }
+    } else if(tab==='proyectos'){
+      if(pym){ pym.style.cssText='display:flex;flex:1;width:100%'; }
+      try{ initProyectosTab('proyectosUserRoot'); }catch(e2){ console.error('initProyectosTab error:',e2); }
     }
   }catch(e){ console.error('switchUserTab error:',e); toast('Error al cambiar pestaña: '+e.message); }
 }
@@ -4207,6 +4221,7 @@ function openUserModal(idx=null){
     document.getElementById('fEmail').value=u.email||'';
     document.getElementById('fPuesto').value=u.puesto||'';
     document.getElementById('fComisType').value=u.comisType||'mensual';
+    var _fcq=document.getElementById('fCcssQ1'); if(_fcq) _fcq.checked=!!u.ccssSoloQ1;
     document.getElementById('fEstado').value=u.estado||'activo';
     // Show current password for editing (masked by default)
     var cpWrap2=document.getElementById('fPass-current');
@@ -4257,6 +4272,7 @@ function saveUser(){
   const email=document.getElementById('fEmail').value.trim();
   const puesto=document.getElementById('fPuesto').value.trim();
   const comisType=document.getElementById('fComisType').value;
+  const ccssSoloQ1=document.getElementById('fCcssQ1')?.checked||false;
   const estado=document.getElementById('fEstado').value;
   if(!nombre||!username){alert('Nombre y usuario son requeridos');return;}
   // Solo superadmin puede asignar rol superadmin
@@ -4281,11 +4297,12 @@ function saveUser(){
   // Guardar con contraseña cifrada (SHA-256 + salt)
   var _finishSaveUser=function(passToStore){
     if(editingUserIdx===null){
-      users.push({id:username,username,password:passToStore,nombre,rol,salario,email,puesto,comisType,estado});
+      users.push({id:username,username,password:passToStore,nombre,rol,salario,email,puesto,comisType,estado,ccssSoloQ1});
     } else {
       const u=users[editingUserIdx];
       u.nombre=nombre;u.username=username;u.rol=rol;u.salario=salario;
       u.email=email;u.puesto=puesto;u.comisType=comisType;u.estado=estado;
+      u.ccssSoloQ1=ccssSoloQ1;
       if(pass&&pass.length>=6)u.password=passToStore;
     }
     setUsers(users);
@@ -4569,7 +4586,7 @@ function renderAdminHorasTable(uid){
     const half=Math.round(histAdmin.deduccion_total/2);
     ccss=half; rb=0; ex=0;
   } else {
-    ccss=dedU.ccss_monto||0; rb=dedU.rb_monto||0; ex=dedU.extra_monto||0;
+    ccss=((u.ccssSoloQ1&&ADMIN_CQ!==1)?0:(dedU.ccss_monto||0)); rb=dedU.rb_monto||0; ex=dedU.extra_monto||0;
   }
   const tot=salQ+mExt-ccss-rb-ex;
 
@@ -5250,7 +5267,7 @@ function recalcQ(){
     if(r.entrada)diasR++;
   });
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
-  const ccss=DED.ccss_monto||0,rb=DED.rb_monto||0,ex=DED.extra_monto||0;
+  const ccss=((SESSION&&SESSION.ccssSoloQ1&&CQ!==1)?0:(DED.ccss_monto||0)),rb=DED.rb_monto||0,ex=DED.extra_monto||0;
   const rk=`${y}-${pad(CM+1)}-${CQ}`;
   const comisRaw=DED[`comis_${rk}`]||0;
   const sesComisType=(SESSION&&SESSION.comisType)||getUsers().find(function(u){return SESSION&&u.id===SESSION.id;})?.comisType||'mensual';
@@ -5673,7 +5690,7 @@ function exportPlanilla(){
   let totExt=0;
   days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);if(j==='libre')return;if(esFechaDeRangoExtra(d)){if(r.quincenaOrigen!==CQ)return;}else{if(r.quincenaOrigen!=null&&r.quincenaOrigen!==CQ)return;}totExt+=calcExt(r.entrada,r.salida,j).ext;});
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
-  const ccss=DED.ccss_monto||0,rb=DED.rb_monto||0,ex=DED.extra_monto||0;
+  const ccss=((SESSION&&SESSION.ccssSoloQ1&&CQ!==1)?0:(DED.ccss_monto||0)),rb=DED.rb_monto||0,ex=DED.extra_monto||0;
   const comis=DED[`comis_${y}-${pad(CM+1)}-${CQ}`]||0;
   const tot=bruto-ccss-rb-ex;
   const emitida=new Date().toLocaleDateString('es-CR');
@@ -7478,6 +7495,14 @@ function addGasto(){
   if(!monto){ alert('Ingresa el monto del gasto'); return; }
   const fecha=document.getElementById('g-fecha').value||todayCR();
 
+  // Proyecto: debe ser uno de la pestaña Proyectos (no texto libre)
+  var _gProy=document.getElementById('g-proyecto').value.trim();
+  if(_gProy && !_validarProyectoGasto(_gProy)){
+    toast('⚠ El proyecto debe seleccionarse de la lista de la pestaña Proyectos');
+    var _gpEl=document.getElementById('g-proyecto');
+    if(_gpEl){ _gpEl.focus(); _gpEl.style.border='2px solid var(--red)'; setTimeout(function(){_gpEl.style.border='';},2500); }
+    return;
+  }
   const g={
     id: GASTO_EDIT_ID || ('g'+Date.now()),
     fecha, cat,
@@ -7883,18 +7908,28 @@ function renderAdminFondos(){
   const type=document.getElementById('af-period-type')?.value||'month';
   if(mselWrap) mselWrap.style.display=type==='month'?'block':'none';
 
-  const {allGastos,allDepositos}=getAdminFondosPeriodData();
+  const {allGastos,allDepositos,type:pType,month:pMonth,year:pYear,users:pUsers}=getAdminFondosPeriodData();
   const totalGast=allGastos.reduce((s,g)=>s+g.monto,0);
   const totalDep=allDepositos.reduce((s,d)=>s+d.monto,0);
   const alertas=allGastos.filter(g=>isAlertGasto(g)); // recalculate with current limits
-  const disponible=totalDep-totalGast;
+  // Saldo anterior acumulado — igual que la vista del usuario (saldoAnterior + dep - gast).
+  // Sin esto, el disponible del admin no coincidía con el del usuario.
+  let saldoAnt=0;
+  try{
+    (pUsers||[]).forEach(function(u){
+      if(pType==='month') saldoAnt+=getSaldoAnterior(u.id,pYear,pMonth)||0;
+      else if(pType==='year') saldoAnt+=getSaldoAnterior(u.id,pYear,0)||0;
+      // type 'all': todo el historial ya está incluido — saldo anterior = 0
+    });
+  }catch(e){ console.warn('saldoAnterior admin fondos:',e); }
+  const disponible=saldoAnt+totalDep-totalGast;
 
   // KPIs
   const kpi=document.getElementById('af-kpi-strip');
   if(kpi) kpi.innerHTML=`
     <div class="kpi-card blue"><div class="kpi-label">Total depositado</div><div class="kpi-val blue">${fmt(totalDep)}</div></div>
     <div class="kpi-card red"><div class="kpi-label">Total gastado</div><div class="kpi-val red">${fmt(totalGast)}</div></div>
-    <div class="kpi-card ${disponible>=0?'green':'red'}"><div class="kpi-label">Disponible</div><div class="kpi-val ${disponible>=0?'green':'red'}">${fmt(disponible)}</div></div>
+    <div class="kpi-card ${disponible>=0?'green':'red'}"><div class="kpi-label">Disponible</div><div class="kpi-val ${disponible>=0?'green':'red'}">${fmt(disponible)}</div>${saldoAnt!==0?`<div class="kpi-sub">incluye saldo anterior ${fmt(saldoAnt)}</div>`:''}</div>
     <div class="kpi-card amber"><div class="kpi-label">Alertas activas</div><div class="kpi-val amber">${alertas.length}</div><div class="kpi-sub">${alertas.length?'Requieren revisión':'Sin alertas'}</div></div>
     <div class="kpi-card gray"><div class="kpi-label">Registros</div><div class="kpi-val">${allGastos.length}</div><div class="kpi-sub">líneas de gasto</div></div>`;
 
@@ -11995,31 +12030,95 @@ function onProjTipoChange(){
   calcLiqPreview();
 }
 
-function loadVentasForProject(existing){
+// Buscar TODAS las ventas (de todos los usuarios) cuyo proyecto coincide EXACTAMENTE
+// con el nombre del proyecto de liquidación. Área = cantidad, o Área real del mínimo
+// si la venta tiene marcada la casilla de Mínimo. Cobro = subtotal sin IVA.
+function buildLiqVentaMatches(nombre){
+  var n=(nombre||'').trim().toLowerCase();
+  if(!n) return [];
+  var out=[];
+  (getUsers()||[]).forEach(function(u){
+    var vd=getVentasData(u.id)||{};
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(v){
+        if(((v.proyecto||'').trim().toLowerCase())!==n) return;
+        var cat=getCatalogo().find(function(x){return x.id===v.prodId;});
+        out.push({
+          ventaId:v.id,
+          prodNombre:(cat?cat.nombre:(v.subProdNombre||v.prodId||'Producto')),
+          cliente:v.cliente||'',
+          subtotal:v.subtotal||0,
+          area:(v.tieneMinimo&&v.minimoArea>0)?v.minimoArea:(parseFloat(v.cantidad)||0),
+          fecha:v.fecha||'',
+          uname:u.nombre||u.id
+        });
+      });
+    });
+  });
+  out.sort(function(a,b){ return (a.fecha||'').localeCompare(b.fecha||''); });
+  return out;
+}
+function getLiqVentaSel(projId){
+  return ((window._liqVselCache||{})[projId])||null;
+}
+function toggleLiqVentaSel(projId,ventaId,checked){
+  if(!window._liqVselCache) window._liqVselCache={};
+  var sel=window._liqVselCache[projId]||{};
+  sel[ventaId]=!!checked;
+  window._liqVselCache[projId]=sel;
+  _saveToSupabase('liq_vsel_'+projId, sel, '');
+  loadVentasForProject(); // re-render y recálculo del cobro
+}
+function loadVentasForProject(legacyLines){
   var el=document.getElementById('proj-ventas-list');
   var sec=document.getElementById('proj-ventas-section');
   if(!el) return;
-  existing=existing||[];
-  if(!existing.length){ if(sec) sec.style.display='none'; return; }
+  var nombre=(document.getElementById('proj-nombre')||{value:''}).value;
+  var matches=buildLiqVentaMatches(nombre);
+  // Fallback: proyectos viejos guardados con líneas incrustadas y sin coincidencias en vivo
+  if(!matches.length && legacyLines && legacyLines.length){
+    matches=legacyLines.map(function(vl){
+      return {ventaId:vl.ventaId||('legacy_'+(vl.fecha||'')+'_'+(vl.subtotal||0)),
+        prodNombre:vl.prodNombre||'',cliente:vl.cliente||'',subtotal:vl.subtotal||0,
+        area:vl.area||0,fecha:vl.fecha||'',uname:vl.uname||''};
+    });
+  }
+  if(!matches.length){ if(sec) sec.style.display='none'; calcLiqPreview(); return; }
   if(sec) sec.style.display='block';
-  el.innerHTML=existing.map(function(vl){
-    return '<div class="liq-venta-line"><span class="liq-venta-tag">Ventas</span>'
-      +'<span style="flex:1;font-size:12px">'+vl.prodNombre+' · '+vl.cliente+'</span>'
+
+  var projId=(LIQ_EDIT_PROJ!==null)
+    ? ((getLiqPeriod(LIQ_SUB,LIQ_PERIOD).proyectos[LIQ_EDIT_PROJ]||{}).id||'_nuevo')
+    : '_nuevo';
+  var sel=getLiqVentaSel(projId); // null = sin selección guardada → todas marcadas
+  var isChecked=function(vid){ return sel===null ? true : (sel[vid]!==false&&sel[vid]!==undefined?!!sel[vid]:sel[vid]===undefined?true:false); };
+  // Simplificar: marcada salvo que esté explícitamente en false
+  isChecked=function(vid){ return !sel || sel[vid]!==false; };
+
+  el.innerHTML=matches.map(function(vl){
+    var chk=isChecked(vl.ventaId);
+    return '<div class="liq-venta-line" style="'+(chk?'':'opacity:.45')+'">'
+      +'<input type="checkbox" '+(chk?'checked':'')+' onchange="toggleLiqVentaSel(\''+projId+'\',\''+vl.ventaId+'\',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--green)" title="Incluir en el Cobro CONCRE">'
+      +'<span class="liq-venta-tag">Ventas</span>'
+      +'<span style="flex:1;font-size:12px">'+escHtml(vl.prodNombre)+' · '+escHtml(vl.cliente)
+      +(vl.uname?' <span style="font-size:10px;color:var(--text3)">('+escHtml(vl.uname)+')</span>':'')+'</span>'
+      +'<span style="font-size:10px;color:var(--text3);white-space:nowrap;margin-right:8px">Área: '+(vl.area>0?vl.area:'—')+'</span>'
       +'<span style="font-family:var(--cond);font-weight:700;color:var(--blue)">'+fmt(vl.subtotal)+'</span></div>';
   }).join('');
-  // Auto-fill cobro/fecha/area in the form from venta lines
-  var totalCobro=existing.reduce(function(s,vl){return s+(vl.subtotal||0);},0);
-  var totalArea=existing.reduce(function(s,vl){return s+(vl.area||0);},0);
-  var fechas=existing.map(function(vl){return vl.fecha;}).filter(Boolean).sort();
+
+  // Cobro CONCRE = SUMA de subtotales SIN IVA de las ventas MARCADAS
+  var seleccionadas=matches.filter(function(vl){return isChecked(vl.ventaId);});
+  var totalCobro=seleccionadas.reduce(function(s,vl){return s+(vl.subtotal||0);},0);
+  var totalArea=seleccionadas.reduce(function(s,vl){return s+(vl.area||0);},0);
+  var fechas=matches.map(function(vl){return vl.fecha;}).filter(Boolean).sort();
   var cobroEl=document.getElementById('proj-cobro');
   var fechaEl=document.getElementById('proj-fecha');
   var areaEl=document.getElementById('proj-area');
-  if(cobroEl && totalCobro>0){
-    cobroEl.value=totalCobro.toLocaleString('es-CR');
+  if(cobroEl){
+    cobroEl.value=totalCobro>0?totalCobro.toLocaleString('es-CR'):'';
     var hint=document.getElementById('proj-cobro-hint');
-    if(hint) hint.style.display='inline';
+    if(hint) hint.style.display=totalCobro>0?'inline':'none';
   }
-  if(fechaEl && fechas.length) fechaEl.value=fechas[0];
+  if(fechaEl && fechas.length && !fechaEl.value) fechaEl.value=fechas[0];
   if(areaEl && totalArea>0) areaEl.value=totalArea;
   calcLiqPreview();
 }
@@ -12576,11 +12675,26 @@ function getProyectosFromVentas(){
   return Object.values(projects).sort(function(a,b){return b.fecha.localeCompare(a.fecha);});
 }
 
+// Fuente combinada para el selector de Ventas:
+// 1) Proyectos de la pestaña Proyectos (más nuevo → más viejo, badge 📁)
+// 2) Proyectos legacy usados en ventas anteriores (alfabético, sin duplicar los de la pestaña)
+function getProyectosCombined(){
+  var tab=getProyectosTab().map(function(p){
+    return {name:p.nombre_completo||p.nombre||'', fecha:(p.created_at||'').split('T')[0], cliente:'', esTab:true};
+  }).filter(function(p){return p.name;});
+  var tabNames={};
+  tab.forEach(function(p){ tabNames[p.name.toLowerCase()]=true; });
+  var legacy=getProyectosFromVentas().filter(function(p){
+    return !tabNames[(p.name||'').toLowerCase()];
+  }).sort(function(a,b){ return a.name.localeCompare(b.name); });
+  return tab.concat(legacy);
+}
+
 function showProyectoList(){
   var dd=document.getElementById('vf-proyecto-dropdown');
   var inp=document.getElementById('vf-proyecto');
   if(!dd||!inp) return;
-  var projects=getProyectosFromVentas();
+  var projects=getProyectosCombined();
   if(!projects.length){ dd.style.display='none'; return; }
   renderProyectoList(projects, inp.value);
   dd.style.display='block';
@@ -12598,7 +12712,7 @@ function showProyectoList(){
 function filterProyectoList(val){
   var dd=document.getElementById('vf-proyecto-dropdown');
   if(!dd) return;
-  var projects=getProyectosFromVentas();
+  var projects=getProyectosCombined();
   if(val){
     projects=projects.filter(function(p){return p.name.toLowerCase().includes(val.toLowerCase());});
   }
@@ -12613,8 +12727,10 @@ function renderProyectoList(projects, val){
   dd.innerHTML=projects.map(function(p){
     var bold=val?p.name.replace(new RegExp('('+val.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')', 'gi'),'<strong>$1</strong>'):p.name;
     return '<div class="proj-dd-item" data-pname="'+encodeURIComponent(p.name)+'" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px">'
-      +'<div style="font-weight:700">'+bold+'</div>'
-      +(p.cliente?'<div style="font-size:10px;color:var(--text3)">Últ: '+p.cliente+' · '+formatDate(parseDate(p.fecha))+'</div>':'')
+      +'<div style="font-weight:700">'+(p.esTab?'📁 ':'')+bold+'</div>'
+      +(p.esTab
+        ? '<div style="font-size:10px;color:var(--blue)">Proyecto registrado'+(p.fecha?' · '+formatDate(parseDate(p.fecha)):'')+'</div>'
+        : (p.cliente?'<div style="font-size:10px;color:var(--text3)">Últ: '+p.cliente+' · '+formatDate(parseDate(p.fecha))+'</div>':''))
       +'</div>';
   }).join('');
   // Wire items via event delegation
@@ -12623,6 +12739,63 @@ function renderProyectoList(projects, val){
     item.onmouseout=function(){ item.style.background=''; };
     item.onclick=function(){ selectProyecto(item.dataset.pname); };
   });
+}
+
+// ── Selector de proyecto en GASTOS: restringido SOLO a la pestaña Proyectos ──
+function _gProyectoSource(){
+  return getProyectosTab().map(function(p){
+    return {name:p.nombre_completo||p.nombre||'', fecha:(p.created_at||'').split('T')[0]};
+  }).filter(function(p){return p.name;});
+}
+function showGProyectoList(){
+  var dd=document.getElementById('g-proyecto-dropdown');
+  var inp=document.getElementById('g-proyecto');
+  if(!dd||!inp) return;
+  _renderGProyectoList(_gProyectoSource(), inp.value);
+  setTimeout(function(){
+    document.addEventListener('click', function handler(e){
+      if(!dd.contains(e.target)&&e.target!==inp){
+        dd.style.display='none';
+        document.removeEventListener('click', handler);
+      }
+    });
+  },0);
+}
+function filterGProyectoList(val){
+  var list=_gProyectoSource();
+  if(val) list=list.filter(function(p){return p.name.toLowerCase().includes(val.toLowerCase());});
+  _renderGProyectoList(list, val);
+}
+function _renderGProyectoList(list, val){
+  var dd=document.getElementById('g-proyecto-dropdown');
+  if(!dd) return;
+  if(!list.length){
+    dd.innerHTML='<div style="padding:10px 12px;font-size:11px;color:var(--text3)">Sin proyectos'+(val?' que coincidan':'')+'. Cree el proyecto primero en la pestaña Proyectos.</div>';
+    dd.style.display='block';
+    return;
+  }
+  dd.innerHTML=list.map(function(p){
+    var bold=val?p.name.replace(new RegExp('('+val.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi'),'<strong>$1</strong>'):p.name;
+    return '<div class="gproj-dd-item" data-pname="'+encodeURIComponent(p.name)+'" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px">'
+      +'<div style="font-weight:700">📁 '+bold+'</div>'
+      +(p.fecha?'<div style="font-size:10px;color:var(--blue)">Registrado '+formatDate(parseDate(p.fecha))+'</div>':'')
+      +'</div>';
+  }).join('');
+  dd.querySelectorAll('.gproj-dd-item').forEach(function(item){
+    item.onmouseover=function(){ item.style.background='var(--surface2)'; };
+    item.onmouseout=function(){ item.style.background=''; };
+    item.onclick=function(){
+      var inp=document.getElementById('g-proyecto');
+      if(inp) inp.value=decodeURIComponent(item.dataset.pname);
+      dd.style.display='none';
+    };
+  });
+  dd.style.display='block';
+}
+function _validarProyectoGasto(nombre){
+  if(!nombre) return true; // proyecto vacío permitido como hasta ahora
+  var n=nombre.trim().toLowerCase();
+  return getProyectosTab().some(function(p){ return (p.nombre_completo||'').toLowerCase()===n; });
 }
 
 function selectProyecto(name){
@@ -14156,7 +14329,8 @@ function renderPagosUsuarios(){
       var ccss=ded.ccss_monto||0;
       var rb=ded.rb_monto||0;
       var extraReb=ded.extra_monto||0;
-      dedTotal=ccss+rb+(q===1?extraReb:0);
+      // Usuarios con "CCSS solo el día 15": la CCSS fija se rebaja completa en Q1 y Q2 queda sin CCSS
+      dedTotal=((u.ccssSoloQ1&&q!==1)?0:ccss)+rb+(q===1?extraReb:0);
     }
 
     // ── 5. TOTALS ──────────────────────────────────────────
@@ -15524,8 +15698,143 @@ function openCRMClientPickerForAdminVenta(){
 //  PERMISOS POR PESTAÑA — TIEMPO REAL
 // ══════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════
+//  PESTAÑA PROYECTOS — catálogo central de proyectos (100% Supabase)
+// ══════════════════════════════════════════════
+var _proyEditId=null;
+function getProyectosTab(){ return window._proyectosCache||[]; }
+function _proyNombreCompleto(n,u,a){ return n.trim()+' — '+u.trim()+' — '+a.trim(); }
+
+function initProyectosTab(rootId){
+  var root=document.getElementById(rootId);
+  if(!root) return;
+  window._proyActiveRoot=rootId;
+  root.innerHTML=
+    '<h1 class="page-title" style="margin-bottom:4px">📁 Proyectos</h1>'
+    +'<div style="font-size:12px;color:var(--text3);margin-bottom:14px">Catálogo central de proyectos — disponibles en Ventas y Gastos de Proyecto</div>'
+    +'<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px">'
+    +'<div id="proy-form-title" style="font-family:var(--cond);font-weight:900;font-size:15px;margin-bottom:10px">➕ Nuevo proyecto</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:10px">'
+    +'<div><div style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Nombre</div>'
+    +'<input class="form-inp" id="proy-nombre" placeholder="Ej. Bodega Alfa" oninput="updateProyPreview()" style="width:100%"></div>'
+    +'<div><div style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Ubicación</div>'
+    +'<input class="form-inp" id="proy-ubicacion" placeholder="Ej. Cartago" oninput="updateProyPreview()" style="width:100%"></div>'
+    +'<div><div style="font-size:10px;font-weight:800;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Actividad realizada</div>'
+    +'<input class="form-inp" id="proy-actividad" placeholder="Ej. Pulido de piso" oninput="updateProyPreview()" style="width:100%"></div>'
+    +'</div>'
+    +'<div id="proy-preview" style="font-size:12px;color:var(--blue);font-weight:700;margin-bottom:10px;min-height:16px"></div>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button onclick="crearProyectoTab()" id="proy-save-btn" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:9px 20px;font-weight:800;cursor:pointer;font-size:13px">💾 Guardar proyecto</button>'
+    +'<button onclick="cancelarEdicionProy()" id="proy-cancel-btn" style="display:none;background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:9px 16px;font-weight:700;cursor:pointer;font-size:13px">✕ Cancelar</button>'
+    +'</div></div>'
+    +'<div id="proy-list"></div>';
+  renderProyectosList();
+}
+function updateProyPreview(){
+  var n=(document.getElementById('proy-nombre')||{}).value||'';
+  var u=(document.getElementById('proy-ubicacion')||{}).value||'';
+  var a=(document.getElementById('proy-actividad')||{}).value||'';
+  var pv=document.getElementById('proy-preview');
+  if(pv) pv.textContent=(n.trim()||u.trim()||a.trim())?('Nombre visible: '+_proyNombreCompleto(n,u,a)):'';
+}
+function crearProyectoTab(){
+  var n=(document.getElementById('proy-nombre')||{}).value||'';
+  var u=(document.getElementById('proy-ubicacion')||{}).value||'';
+  var a=(document.getElementById('proy-actividad')||{}).value||'';
+  if(!n.trim()||!u.trim()||!a.trim()){ toast('⚠ Los tres campos son obligatorios: Nombre, Ubicación y Actividad'); return; }
+  var full=_proyNombreCompleto(n,u,a);
+  var cache=getProyectosTab();
+  // Evitar duplicados exactos
+  var dup=cache.find(function(p){ return p.id!==_proyEditId && (p.nombre_completo||'').toLowerCase()===full.toLowerCase(); });
+  if(dup){ toast('⚠ Ya existe un proyecto con ese nombre completo'); return; }
+  if(_proyEditId){
+    var p=cache.find(function(x){return x.id===_proyEditId;});
+    if(!p){ _proyEditId=null; return; }
+    p.nombre=n.trim(); p.ubicacion=u.trim(); p.actividad=a.trim(); p.nombre_completo=full;
+    DB.from('proyectos').update({nombre:p.nombre,ubicacion:p.ubicacion,actividad:p.actividad,nombre_completo:full})
+      .eq('id',p.id).then(function(r){ if(r.error){ console.error('editarProyecto:',r.error); toast('Error al guardar en la nube'); } });
+    toast('✓ Proyecto actualizado');
+    cancelarEdicionProy();
+  } else {
+    var row={id:'proy_'+Date.now()+Math.floor(Math.random()*1000), nombre:n.trim(), ubicacion:u.trim(),
+      actividad:a.trim(), nombre_completo:full, created_by:SESSION?SESSION.id:'', created_at:new Date().toISOString()};
+    DB.from('proyectos').insert([row]).then(function(r){ if(r.error){ console.error('crearProyecto:',r.error); toast('Error al guardar en la nube'); } });
+    cache.unshift(row);
+    toast('✓ Proyecto creado');
+    ['proy-nombre','proy-ubicacion','proy-actividad'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+    updateProyPreview();
+  }
+  renderProyectosList();
+}
+function editarProyectoTabUI(id){
+  var p=getProyectosTab().find(function(x){return x.id===id;});
+  if(!p) return;
+  if(!(SESSION&&(SESSION.rol==='superadmin'||SESSION.id===p.created_by))){ toast('Solo el superadmin o quien lo creó puede editarlo'); return; }
+  _proyEditId=id;
+  var s=function(i,v){ var el=document.getElementById(i); if(el) el.value=v||''; };
+  s('proy-nombre',p.nombre); s('proy-ubicacion',p.ubicacion); s('proy-actividad',p.actividad);
+  updateProyPreview();
+  var t=document.getElementById('proy-form-title'); if(t) t.textContent='✏ Editar proyecto';
+  var b=document.getElementById('proy-save-btn'); if(b) b.textContent='✓ Actualizar proyecto';
+  var cb=document.getElementById('proy-cancel-btn'); if(cb) cb.style.display='inline-block';
+  var ni=document.getElementById('proy-nombre'); if(ni) ni.focus();
+}
+function cancelarEdicionProy(){
+  _proyEditId=null;
+  ['proy-nombre','proy-ubicacion','proy-actividad'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+  updateProyPreview();
+  var t=document.getElementById('proy-form-title'); if(t) t.textContent='➕ Nuevo proyecto';
+  var b=document.getElementById('proy-save-btn'); if(b) b.textContent='💾 Guardar proyecto';
+  var cb=document.getElementById('proy-cancel-btn'); if(cb) cb.style.display='none';
+}
+function eliminarProyectoTab(id){
+  var p=getProyectosTab().find(function(x){return x.id===id;});
+  if(!p) return;
+  if(!(SESSION&&(SESSION.rol==='superadmin'||SESSION.id===p.created_by))){ toast('Solo el superadmin o quien lo creó puede eliminarlo'); return; }
+  if(!confirm('¿Eliminar el proyecto "'+(p.nombre_completo||p.nombre)+'"?\n\nLas ventas y gastos que ya lo usan conservarán el nombre — solo dejará de aparecer en las listas para registros nuevos.')) return;
+  DB.from('proyectos').delete().eq('id',id).then(function(r){ if(r.error){ console.error('eliminarProyecto:',r.error); toast('Error al eliminar en la nube'); } });
+  window._proyectosCache=getProyectosTab().filter(function(x){return x.id!==id;});
+  if(_proyEditId===id) cancelarEdicionProy();
+  renderProyectosList();
+  toast('Proyecto eliminado');
+}
+function renderProyectosList(){
+  var el=document.getElementById('proy-list');
+  if(!el) return;
+  var list=getProyectosTab();
+  if(!list.length){
+    el.innerHTML='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:24px;text-align:center;color:var(--text3)">Aún no hay proyectos creados. Los proyectos que cree aquí estarán disponibles en Ventas y Gastos de Proyecto.</div>';
+    return;
+  }
+  var users=getUsers();
+  el.innerHTML='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;overflow:hidden">'
+    +'<div style="padding:10px 16px;background:var(--gray-dark);color:#fff;font-family:var(--cond);font-weight:800;font-size:13px">'+list.length+' proyecto'+(list.length!==1?'s':'')+' — de más nuevo a más viejo</div>'
+    +'<div style="overflow-x:auto"><table class="atbl" style="width:100%"><thead><tr>'
+    +'<th>Nombre completo</th><th>Nombre</th><th>Ubicación</th><th>Actividad</th><th>Creado por</th><th>Fecha</th><th style="text-align:center">Acciones</th>'
+    +'</tr></thead><tbody>'
+    +list.map(function(p){
+      var creator=users.find(function(x){return x.id===p.created_by;});
+      var canEdit=SESSION&&(SESSION.rol==='superadmin'||SESSION.id===p.created_by);
+      return '<tr>'
+        +'<td style="font-weight:800">'+escHtml(p.nombre_completo||'')+'</td>'
+        +'<td style="font-size:12px">'+escHtml(p.nombre||'')+'</td>'
+        +'<td style="font-size:12px">'+escHtml(p.ubicacion||'')+'</td>'
+        +'<td style="font-size:12px">'+escHtml(p.actividad||'')+'</td>'
+        +'<td style="font-size:11px;color:var(--text3)">'+escHtml(creator?creator.nombre:(p.created_by||'—'))+'</td>'
+        +'<td style="font-size:11px;color:var(--text3);white-space:nowrap">'+(p.created_at?formatDate(parseDate(String(p.created_at).split('T')[0])):'—')+'</td>'
+        +'<td style="text-align:center;white-space:nowrap">'
+        +(canEdit
+          ? '<button onclick="editarProyectoTabUI(\''+p.id+'\')" style="background:none;border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px;margin-right:4px">✏</button>'
+            +'<button onclick="eliminarProyectoTab(\''+p.id+'\')" style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--red);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:11px">🗑</button>'
+          : '<span style="font-size:10px;color:var(--text3)">—</span>')
+        +'</td></tr>';
+    }).join('')
+    +'</tbody></table></div></div>';
+}
+
 var USER_TAB_DEFS = [
   {id:'ventas',      label:'Ventas'},
+  {id:'proyectos',   label:'Proyectos'},
   {id:'fondos',      label:'Fondos'},
   {id:'gastos',      label:'Gastos Proyecto'},
   {id:'horas',       label:'Horas y Planilla'},
@@ -15536,6 +15845,7 @@ var USER_TAB_DEFS = [
 ];
 var ADMIN_TAB_DEFS = [
   {id:'overview',       label:'Resumen'},
+  {id:'proyectos',      label:'Proyectos'},
   {id:'users',          label:'Usuarios'},
   {id:'horas-admin',    label:'Horas/Planilla'},
   {id:'comisiones',     label:'Comisiones'},
@@ -23165,6 +23475,8 @@ window.initCalcCONCRE=initCalcCONCRE;
 
 
           <!-- LIQUIDACIONES SECTION -->
+          <div id="sec-proyectos" class="admin-section"><div id="proyAdminRoot"></div></div>
+
           <div id="sec-liquidaciones" class="admin-section">
           <div class="page-title">Liquidación de Proyectos</div>
 
@@ -23271,7 +23583,7 @@ window.initCalcCONCRE=initCalcCONCRE;
                 <!-- Row 1: Date + Project + Area -->
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:12px">
                   <div class="liq-field"><span class="liq-label">Fecha</span><input type="date" class="liq-inp" id="proj-fecha"></div>
-                  <div class="liq-field"><span class="liq-label">Nombre del proyecto</span><input type="text" class="liq-inp" id="proj-nombre" placeholder="Ej. Baxter Cartago"></div>
+                  <div class="liq-field"><span class="liq-label">Nombre del proyecto</span><input type="text" class="liq-inp" id="proj-nombre" placeholder="Ej. Baxter Cartago" oninput="loadVentasForProject()"></div>
                   <div class="liq-field"><span class="liq-label">Área m²/ml</span><input type="number" class="liq-inp" id="proj-area" min="0" step="any" placeholder="0"></div>
                 </div>
 
@@ -24083,7 +24395,11 @@ window.initCalcCONCRE=initCalcCONCRE;
               </div>
               <div>
                 <span class="ag-label">Proyecto</span>
-                <input type="text" class="ag-inp" id="g-proyecto" placeholder="Nombre del proyecto">
+                <div style="position:relative">
+                  <input type="text" class="ag-inp" id="g-proyecto" placeholder="Buscar proyecto registrado..." autocomplete="off" onfocus="showGProyectoList()" oninput="filterGProyectoList(this.value)">
+                  <div id="g-proyecto-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1.5px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.15)"></div>
+                </div>
+                <div style="font-size:10px;color:var(--text3);margin-top:3px">Solo proyectos de la pestaña Proyectos — no se permiten proyectos fuera de la lista</div>
               </div>
               <div id="g-otros-wrap" style="display:none">
                 <span class="ag-label">¿Qué comprende "Otros"?</span>
@@ -24235,6 +24551,7 @@ window.initCalcCONCRE=initCalcCONCRE;
             <div>
               <span class="vf-label">Cantidad / M² / ML / KG / UN</span>
               <input type="number" class="vf-inp" id="vf-cantidad" min="0" step="any" oninput="calcVentaPreview()">
+              <div style="font-size:10px;color:var(--amber,#d97706);font-weight:600;margin-top:3px;line-height:1.35">De ser un mínimo marque el check de abajo de 📐 Mínimo e indique el área de ese proyecto.</div>
             </div>
             <div>
               <span class="vf-label">Subtotal s/IVA ₡ <span style="font-size:10px;font-weight:400;color:var(--text3)">(escríbe aquí)</span></span>
@@ -24435,6 +24752,9 @@ window.initCalcCONCRE=initCalcCONCRE;
   </div><!-- /ventasModule -->
 
 <!-- GASTOS DE PROYECTO MODULE -->
+<div id="proyectosUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
+  <div id="proyectosUserRoot" style="flex:1;padding:16px 20px;width:100%;max-width:100%;box-sizing:border-box"></div>
+</div>
 <div id="fibraUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
   <div id="sec-fibraplus-user" style="padding:14px 18px;width:100%;max-width:100%;margin:0 auto"></div>
 </div>
@@ -24654,6 +24974,12 @@ window.initCalcCONCRE=initCalcCONCRE;
             <option value="anual">Acumulativa en diciembre</option>
           </select>
         </div>
+      </div>
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;cursor:pointer;padding:6px 0">
+          <input type="checkbox" id="fCcssQ1" style="width:15px;height:15px;accent-color:var(--red)">
+          CCSS solo el día 15 (Q1) — la deducción CCSS fija se rebaja únicamente en la primera quincena
+        </label>
       </div>
       <div class="form-row">
         <label class="form-label">Estado</label>
