@@ -1863,7 +1863,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260716200858';
+var APP_BUILD='20260716204706';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -12766,8 +12766,9 @@ function filterGProyectoList(val){
   if(val) list=list.filter(function(p){return p.name.toLowerCase().includes(val.toLowerCase());});
   _renderGProyectoList(list, val);
 }
-function _renderGProyectoList(list, val){
-  var dd=document.getElementById('g-proyecto-dropdown');
+function _renderGProyectoList(list, val, ddId, inpId, onPick){
+  ddId=ddId||'g-proyecto-dropdown'; inpId=inpId||'g-proyecto';
+  var dd=document.getElementById(ddId);
   if(!dd) return;
   if(!list.length){
     dd.innerHTML='<div style="padding:10px 12px;font-size:11px;color:var(--text3)">Sin proyectos'+(val?' que coincidan':'')+'. Cree el proyecto primero en la pestaña Proyectos.</div>';
@@ -12785,13 +12786,42 @@ function _renderGProyectoList(list, val){
     item.onmouseover=function(){ item.style.background='var(--surface2)'; };
     item.onmouseout=function(){ item.style.background=''; };
     item.onclick=function(){
-      var inp=document.getElementById('g-proyecto');
-      if(inp) inp.value=decodeURIComponent(item.dataset.pname);
+      var name=decodeURIComponent(item.dataset.pname);
+      var inp=document.getElementById(inpId);
+      if(inp) inp.value=name;
       dd.style.display='none';
+      if(onPick) try{ onPick(name); }catch(e){}
     };
   });
   dd.style.display='block';
 }
+// ── Selector de proyecto en GASTOS DE PROYECTO (form de usuario, gp-*) ──
+function _gpOnPickProyecto(name){
+  // Auto-llenar la ubicación desde el catálogo de la pestaña Proyectos
+  var p=getProyectosTab().find(function(x){return (x.nombre_completo||'')===name;});
+  var ub=document.getElementById('gp-ubicacion');
+  if(p&&ub) ub.value=p.ubicacion||'';
+}
+function showGpProyectoList(){
+  var dd=document.getElementById('gp-proyecto-dropdown');
+  var inp=document.getElementById('gp-proyecto');
+  if(!dd||!inp) return;
+  _renderGProyectoList(_gProyectoSource(), inp.value, 'gp-proyecto-dropdown', 'gp-proyecto', _gpOnPickProyecto);
+  setTimeout(function(){
+    document.addEventListener('click', function handler(e){
+      if(!dd.contains(e.target)&&e.target!==inp){
+        dd.style.display='none';
+        document.removeEventListener('click', handler);
+      }
+    });
+  },0);
+}
+function filterGpProyectoList(val){
+  var list=_gProyectoSource();
+  if(val) list=list.filter(function(p){return p.name.toLowerCase().includes(val.toLowerCase());});
+  _renderGProyectoList(list, val, 'gp-proyecto-dropdown', 'gp-proyecto', _gpOnPickProyecto);
+}
+
 function _validarProyectoGasto(nombre){
   if(!nombre) return true; // proyecto vacío permitido como hasta ahora
   var n=nombre.trim().toLowerCase();
@@ -13344,6 +13374,13 @@ function saveGastoProyecto(){
   var tipoId=document.getElementById('gp-tipo').value;
   if(!encId||!proyecto||!fecha||!tipoId){
     toast('Completa: encargado, proyecto, fecha y tipo'); return;
+  }
+  // El proyecto debe ser uno de la pestaña Proyectos (no texto libre)
+  if(!_validarProyectoGasto(proyecto)){
+    toast('⚠ El proyecto debe seleccionarse de la lista de la pestaña Proyectos');
+    var _gpEl=document.getElementById('gp-proyecto');
+    if(_gpEl){ _gpEl.focus(); _gpEl.style.border='2px solid var(--red)'; setTimeout(function(){_gpEl.style.border='';},2500); }
+    return;
   }
   var subs=getLiqSubs();
   var sub=subs.find(function(s){return s.id===encId;})||{nombre:'?'};
@@ -24798,9 +24835,11 @@ window.initCalcCONCRE=initCalcCONCRE;
             <option value="">— Seleccionar —</option>
           </select>
         </div>
-        <div class="liq-field">
+        <div class="liq-field" style="position:relative">
           <span class="liq-label">Proyecto</span>
-          <input type="text" class="liq-inp" id="gp-proyecto" placeholder="Nombre del proyecto">
+          <input type="text" class="liq-inp" id="gp-proyecto" placeholder="Buscar proyecto registrado..." autocomplete="off" onfocus="showGpProyectoList()" oninput="filterGpProyectoList(this.value)">
+          <div id="gp-proyecto-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1.5px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.15)"></div>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">Solo proyectos de la pestaña Proyectos</div>
         </div>
         <div class="liq-field">
           <span class="liq-label">Ubicación</span>
