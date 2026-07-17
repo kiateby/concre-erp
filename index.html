@@ -1870,7 +1870,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260717005956';
+var APP_BUILD='20260717010416';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -6419,8 +6419,16 @@ function checkAnniversaries(){
 // Solo se toca saldos claramente corruptos (> 100 días) y corre una única vez (flag en nube).
 function fixInflatedVacSaldos(){
   try{
-    if(window._vacFixDone) return;
     if(!SESSION||SESSION.rol!=='superadmin') return;
+    // AUTO-SANACIÓN: el flag "ya corrido" solo cuenta si de verdad NO quedan
+    // saldos corruptos — si aún existen, la corrección corre de nuevo.
+    var hayCorruptos=getUsers().some(function(u){
+      if(u.rol!=='user') return false;
+      var vd=getVacData(u.id);
+      return parseFloat(vd.diasAnuales||0)>0 && parseFloat(vd.saldo||0)>100;
+    });
+    if(window._vacFixDone && !hayCorruptos) return;
+    if(!hayCorruptos && window._vacFixDone===undefined){ /* primera corrida sin corruptos: solo marcar */ }
     if(!window._vacRenewCache) window._vacRenewCache={};
     if(!window._vacLogCache) window._vacLogCache={};
     var corregidos=[];
