@@ -1706,6 +1706,8 @@ async function loadAllDataFromDB(){
       window._dedAdminCache = window._dedAdminCache||{};   // DED de todos (desde fase 1)
       window._regAdminCache = window._regAdminCache||{};   // REG de todos (desde fase 1)
       window._fondosConfCache = {};   // config de fondos por usuario (desde fase 1)
+      window._vacRenewCache = {};     // flags de renovación anual de vacaciones
+      window._vacLogCache = {};       // historial de movimientos de vacaciones por usuario
       configs.data.forEach(function(row){
         if(row.clave==='catalogo'){
           var lc=row.valor;
@@ -1730,11 +1732,11 @@ async function loadAllDataFromDB(){
           if(!window._liqVselCache) window._liqVselCache={};
           window._liqVselCache[row.clave.replace('liq_vsel_','')]=row.valor||{};
         }
-        if(row.clave&&row.clave.startsWith('vac_renew_')){
-          if(!window._vacRenewCache) window._vacRenewCache={};
+        if(row.clave&&row.clave.startsWith('vac_renew_'))
           window._vacRenewCache[row.clave.replace('vac_renew_','')]=row.valor||{};
-        }
-        if(row.clave==='vac_fix_saldos_2026') window._vacFixDone=true;
+        if(row.clave&&row.clave.startsWith('vac_log_'))
+          window._vacLogCache[row.clave.replace('vac_log_','')]=Array.isArray(row.valor)?row.valor:[];
+        if(row.clave==='vac_fix_saldos_2026_v2') window._vacFixDone=true;
         if(row.clave&&row.clave.startsWith('user_ded_'))
           window._dedAdminCache[row.clave.replace('user_ded_','')]=row.valor||{};
         if(row.clave&&row.clave.startsWith('user_horas_'))
@@ -1868,7 +1870,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260717004901';
+var APP_BUILD='20260717005956';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -6190,8 +6192,17 @@ function adjustVacSaldo(uid,delta,reason){
   // Allow negative saldo (debt) - it will be netted on next renewal
   vd.saldo=parseFloat((vd.saldo+delta).toFixed(1));
   if(!vd.log) vd.log=[];
-  vd.log.push({date:new Date().toISOString(),delta,reason,saldo:vd.saldo});
+  const entry={date:new Date().toISOString(),delta:parseFloat(delta.toFixed(1)),reason:reason||'',
+    saldo:vd.saldo, by:(SESSION?(SESSION.nombre||SESSION.id):'sistema')};
+  vd.log.push(entry);
   setVacData(uid,vd);
+  // Historial PERSISTENTE en la nube (configuracion 'vac_log_{uid}') — visible para usuario y superadmin
+  if(!window._vacLogCache) window._vacLogCache={};
+  var log=window._vacLogCache[uid]||[];
+  log.push(entry);
+  if(log.length>200) log=log.slice(-200);
+  window._vacLogCache[uid]=log;
+  _saveToSupabase('vac_log_'+uid, log, '');
 }
 
 // ── ALERTA PARA SUPERADMINS: celebraciones de colaboradores hoy ──────────────
@@ -6410,30 +6421,107 @@ function fixInflatedVacSaldos(){
   try{
     if(window._vacFixDone) return;
     if(!SESSION||SESSION.rol!=='superadmin') return;
-    window._vacFixDone=true;
-    _saveToSupabase('vac_fix_saldos_2026',{at:new Date().toISOString(),by:SESSION.id},'');
+    if(!window._vacRenewCache) window._vacRenewCache={};
+    if(!window._vacLogCache) window._vacLogCache={};
     var corregidos=[];
     getUsers().filter(function(u){return u.rol==='user';}).forEach(function(u){
-      var vd=getVacData(u.id);
-      var anuales=parseFloat(vd.diasAnuales||0);
-      var saldo=parseFloat(vd.saldo||0);
-      if(!anuales||saldo<=100) return; // solo corrupción evidente
-      var base=parseFloat((saldo%anuales).toFixed(1));
-      var correcto=parseFloat((base+anuales).toFixed(1));
-      var delta=parseFloat((correcto-saldo).toFixed(1));
-      adjustVacSaldo(u.id, delta, 'Corrección automática: renovaciones duplicadas por error del sistema');
-      // Asegurar el flag de renovación de este año (ya quedó incluida en el saldo corregido)
-      window._vacRenewCache[u.id]={year:new Date().getFullYear(),at:new Date().toISOString(),dias:anuales,fixed:true};
-      _saveToSupabase('vac_renew_'+u.id, window._vacRenewCache[u.id], '');
-      corregidos.push(u.nombre+': '+saldo+' → '+correcto);
-      console.log('fixInflatedVacSaldos:',u.id,saldo,'→',correcto);
+      try{
+        var vd=getVacData(u.id);
+        var anuales=parseFloat(vd.diasAnuales||0);
+        var saldo=parseFloat(vd.saldo||0);
+        if(!anuales||saldo<=100) return; // solo corrupción evidente (renovaciones duplicadas)
+        // El saldo se infló en múltiplos exactos de los días anuales.
+        // saldo real anterior = saldo mod anuales; correcto = saldo anterior + UNA renovación del aniversario.
+        var base=parseFloat((saldo%anuales).toFixed(1));
+        var correcto=parseFloat((base+anuales).toFixed(1));
+        var delta=parseFloat((correcto-saldo).toFixed(1));
+        adjustVacSaldo(u.id, delta,
+          'Corrección del sistema: se eliminaron renovaciones duplicadas (saldo real anterior '
+          +base+' + '+anuales+' del aniversario = '+correcto+')');
+        window._vacRenewCache[u.id]={year:new Date().getFullYear(),at:new Date().toISOString(),dias:anuales,fixed:true};
+        _saveToSupabase('vac_renew_'+u.id, window._vacRenewCache[u.id], '');
+        corregidos.push(u.nombre+': '+saldo+' → '+correcto);
+        console.log('fixInflatedVacSaldos:',u.id,saldo,'→',correcto);
+      }catch(eu){ console.error('fixInflatedVacSaldos usuario '+u.id+':',eu); }
     });
+    // Marcar como corrido SOLO al terminar el recorrido completo
+    window._vacFixDone=true;
+    _saveToSupabase('vac_fix_saldos_2026_v2',{at:new Date().toISOString(),by:SESSION.id,corregidos:corregidos},'');
     if(corregidos.length){
       setTimeout(function(){
         toast('🔧 Saldos de vacaciones corregidos: '+corregidos.join(' · '));
-      },3000);
+        try{ renderAdminVacSection(); }catch(e){}
+      },2500);
     }
   }catch(e){ console.error('fixInflatedVacSaldos:',e); }
+}
+
+// ── HISTORIAL DE VACACIONES: generación y uso ────────────────────────────────
+// Combina el log persistente (renovaciones, correcciones, ajustes) con las
+// solicitudes aprobadas históricas (uso previo al log). Orden: más nuevo primero.
+function buildVacHistorial(uid){
+  var out=[];
+  var log=(window._vacLogCache||{})[uid]||[];
+  log.forEach(function(e){
+    out.push({date:e.date,delta:e.delta,desc:e.reason||'Movimiento',saldo:e.saldo,by:e.by||''});
+  });
+  // Solicitudes aprobadas anteriores al log (evitar duplicar las ya registradas en el log)
+  var vd=getVacData(uid)||{};
+  (vd.requests||[]).forEach(function(r){
+    var st=r.status||r.estado||'';
+    if(st!=='approved'&&st!=='aprobado') return;
+    var desde=r.desde||r.fechaInicio||'';
+    var yaEnLog=log.some(function(e){ return desde&&(e.reason||'').indexOf(desde)>=0; });
+    if(yaEnLog) return;
+    out.push({date:(r.approvedAt||r.created||desde||'')+'',delta:-(parseFloat(r.dias)||0),
+      desc:'Vacaciones aprobadas del '+(desde?formatDate(parseDate(desde)):'—')
+        +((r.hasta&&r.hasta!==desde)?' al '+formatDate(parseDate(r.hasta)):''),
+      saldo:null, by:r.aprobadoPor||r.approvedBy||''});
+  });
+  out.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  return out;
+}
+function renderVacSaldoLogHtml(uid){
+  var hist=buildVacHistorial(uid);
+  if(!hist.length){
+    return '<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">Sin movimientos registrados aún. Aquí aparecerán las renovaciones de aniversario, vacaciones usadas y ajustes.</div>';
+  }
+  return '<div style="max-height:320px;overflow-y:auto">'
+    +hist.map(function(h){
+      var pos=h.delta>0;
+      var fecha=h.date?formatDate(parseDate(String(h.date).split('T')[0])):'—';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px">'
+        +'<span style="font-size:16px">'+(pos?'🟢':'🔴')+'</span>'
+        +'<div style="flex:1;min-width:0">'
+          +'<div style="font-weight:700;color:var(--text)">'+escHtml(h.desc)+'</div>'
+          +'<div style="font-size:10px;color:var(--text3)">'+fecha+(h.by?' · por '+escHtml(h.by):'')+'</div>'
+        +'</div>'
+        +'<span style="font-family:var(--cond);font-weight:900;font-size:14px;white-space:nowrap;color:'+(pos?'var(--green)':'var(--red)')+'">'+(pos?'+':'')+h.delta.toFixed(1)+' d</span>'
+        +(h.saldo!=null?'<span style="font-size:10px;color:var(--text3);white-space:nowrap">saldo: '+h.saldo.toFixed(1)+'</span>':'')
+        +'</div>';
+    }).join('')
+    +'</div>';
+}
+function renderVacSaldoLogUser(){
+  var el=document.getElementById('vac-saldo-log-body');
+  if(!el||!SESSION) return;
+  el.innerHTML=renderVacSaldoLogHtml(SESSION.id);
+}
+function openVacLogModal(uid){
+  var u=getUsers().find(function(x){return x.id===uid;})||{nombre:uid};
+  var old=document.getElementById('vacLogModal'); if(old) old.remove();
+  var ov=document.createElement('div');
+  ov.id='vacLogModal';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML='<div style="background:var(--surface);border-radius:14px;width:560px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.25);overflow:hidden">'
+    +'<div style="background:var(--gray-dark);padding:14px 18px;display:flex;justify-content:space-between;align-items:center">'
+      +'<span style="font-family:var(--cond);font-size:16px;font-weight:900;color:#fff">📜 Historial de vacaciones — '+escHtml(u.nombre)+'</span>'
+      +'<button onclick="document.getElementById(\'vacLogModal\').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:18px;cursor:pointer">✕</button>'
+    +'</div>'
+    +'<div style="overflow-y:auto">'+renderVacSaldoLogHtml(uid)+'</div>'
+    +'</div>';
+  ov.onclick=function(e){ if(e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
 }
 
 // ── NOTIFICATIONS ──
@@ -7010,6 +7098,7 @@ function renderAdminVacSection(){
         <div class="av-actions">
           <button class="av-btn edit" onclick="openVacEditModal('${u.id}')">✏ Editar</button>
           <button class="av-btn prog" onclick="focusProgVac('${u.id}')">📅 Programar</button>
+          <button class="av-btn" style="border:1.5px solid var(--border);background:var(--surface2)" onclick="openVacLogModal('${u.id}')">📜 Historial</button>
         </div>
       </div>`;
     }).join('')||'<div style="color:var(--text3);padding:20px">Sin colaboradores activos</div>';
@@ -7130,6 +7219,7 @@ function initVacModule(){
   try{ checkAnniversaries(); }catch(e){ console.error('checkAnniversaries:',e); }
   if(SESSION.rol==='user'){
     try{ renderVacUserInfo(); }catch(e){ console.error('renderVacUserInfo:',e); }
+    try{ renderVacSaldoLogUser(); }catch(e){ console.error('renderVacSaldoLogUser:',e); }
     try{ renderVacHistory(); }catch(e){ console.error('renderVacHistory:',e); }
     try{ renderVacCal(); }catch(e){ console.error('renderVacCal:',e); }
     try{ vacUpdatePreview(); }catch(e){ console.error('vacUpdatePreview:',e); }
@@ -24329,6 +24419,14 @@ window.initCalcCONCRE=initCalcCONCRE;
             </div>
           </div>
           <div id="vac-history-body"></div>
+        </div>
+
+        <!-- Historial de saldo: generación y uso -->
+        <div class="vac-hist-wrap" style="margin-top:14px">
+          <div class="vac-hist-hdr">
+            <span class="vhh-title">📜 Historial de saldo — generación y uso</span>
+          </div>
+          <div id="vac-saldo-log-body"></div>
         </div>
 
         <!-- Calendar -->
