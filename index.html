@@ -1870,7 +1870,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260717010416';
+var APP_BUILD='20260717011327';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -6469,12 +6469,18 @@ function fixInflatedVacSaldos(){
 // solicitudes aprobadas históricas (uso previo al log). Orden: más nuevo primero.
 function buildVacHistorial(uid){
   var out=[];
-  var log=(window._vacLogCache||{})[uid]||[];
-  log.forEach(function(e){
-    out.push({date:e.date,delta:e.delta,desc:e.reason||'Movimiento',saldo:e.saldo,by:e.by||''});
-  });
-  // Solicitudes aprobadas anteriores al log (evitar duplicar las ya registradas en el log)
   var vd=getVacData(uid)||{};
+  var anuales=parseFloat(vd.diasAnuales||0);
+  var saldoActual=parseFloat(vd.saldo||0);
+  var log=(window._vacLogCache||{})[uid]||[];
+  var thisYear=new Date().getFullYear();
+
+  // 1) Movimientos del log persistente (renovaciones, ajustes, correcciones, aprobaciones nuevas)
+  log.forEach(function(e){
+    out.push({date:e.date,delta:e.delta,desc:e.reason||'Movimiento',saldo:e.saldo,by:e.by||'',icon:(e.delta>0?'🟢':'🔴')});
+  });
+
+  // 2) Uso histórico: solicitudes aprobadas que no están en el log
   (vd.requests||[]).forEach(function(r){
     var st=r.status||r.estado||'';
     if(st!=='approved'&&st!=='aprobado') return;
@@ -6482,10 +6488,40 @@ function buildVacHistorial(uid){
     var yaEnLog=log.some(function(e){ return desde&&(e.reason||'').indexOf(desde)>=0; });
     if(yaEnLog) return;
     out.push({date:(r.approvedAt||r.created||desde||'')+'',delta:-(parseFloat(r.dias)||0),
-      desc:'Vacaciones aprobadas del '+(desde?formatDate(parseDate(desde)):'—')
+      desc:'Vacaciones tomadas del '+(desde?formatDate(parseDate(desde)):'—')
         +((r.hasta&&r.hasta!==desde)?' al '+formatDate(parseDate(r.hasta)):''),
-      saldo:null, by:r.aprobadoPor||r.approvedBy||''});
+      saldo:null, by:r.aprobadoPor||r.approvedBy||'', icon:'🔴'});
   });
+
+  // 3) Generación por anualidad de ESTE año: si el flag de renovación existe
+  //    pero el movimiento no quedó en el log (ej. corrección por SQL), sintetizarlo
+  var renewFlag=(window._vacRenewCache||{})[uid]||{};
+  if(renewFlag.year===thisYear && anuales>0){
+    var renewEnLog=log.some(function(e){
+      return (e.reason||'').indexOf('Renovación')>=0
+        && e.date && String(e.date).indexOf(String(thisYear))===0;
+    });
+    // La corrección del sistema ya incluye la renovación en su descripción — también cuenta
+    var correccionEnLog=log.some(function(e){ return (e.reason||'').indexOf('Corrección')>=0; });
+    if(!renewEnLog && !correccionEnLog){
+      var anivDate=renewFlag.at||'';
+      if(!anivDate && vd.fechaIngreso){
+        var ing=parseDate(vd.fechaIngreso);
+        if(ing&&!isNaN(ing.getTime())) anivDate=thisYear+'-'+pad(ing.getMonth()+1)+'-'+pad(ing.getDate());
+      }
+      out.push({date:anivDate,delta:(renewFlag.dias||anuales),
+        desc:'Generación por anualidad — aniversario '+thisYear+' (+'+(renewFlag.dias||anuales)+' días anuales)',
+        saldo:null, by:'sistema', icon:'🎉'});
+    }
+  }
+
+  // 4) Saldo inicial: reconstruido como residuo (saldo actual − todos los movimientos conocidos)
+  var sumDeltas=out.reduce(function(s,e){ return s+(e.delta||0); },0);
+  var inicial=parseFloat((saldoActual-sumDeltas).toFixed(1));
+  out.push({date:(vd.fechaIngreso||''),delta:inicial,
+    desc:'Saldo inicial con el que empezó el registro',
+    saldo:null, by:'', icon:'🏁', esInicial:true});
+
   out.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
   return out;
 }
@@ -6498,13 +6534,13 @@ function renderVacSaldoLogHtml(uid){
     +hist.map(function(h){
       var pos=h.delta>0;
       var fecha=h.date?formatDate(parseDate(String(h.date).split('T')[0])):'—';
-      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px">'
-        +'<span style="font-size:16px">'+(pos?'🟢':'🔴')+'</span>'
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px;'+(h.esInicial?'background:var(--surface2)':'')+'">'
+        +'<span style="font-size:16px">'+(h.icon||(pos?'🟢':'🔴'))+'</span>'
         +'<div style="flex:1;min-width:0">'
           +'<div style="font-weight:700;color:var(--text)">'+escHtml(h.desc)+'</div>'
           +'<div style="font-size:10px;color:var(--text3)">'+fecha+(h.by?' · por '+escHtml(h.by):'')+'</div>'
         +'</div>'
-        +'<span style="font-family:var(--cond);font-weight:900;font-size:14px;white-space:nowrap;color:'+(pos?'var(--green)':'var(--red)')+'">'+(pos?'+':'')+h.delta.toFixed(1)+' d</span>'
+        +'<span style="font-family:var(--cond);font-weight:900;font-size:14px;white-space:nowrap;color:'+(h.esInicial?'var(--blue)':(pos?'var(--green)':'var(--red)'))+'">'+(pos&&!h.esInicial?'+':'')+h.delta.toFixed(1)+' d</span>'
         +(h.saldo!=null?'<span style="font-size:10px;color:var(--text3);white-space:nowrap">saldo: '+h.saldo.toFixed(1)+'</span>':'')
         +'</div>';
     }).join('')
