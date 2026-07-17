@@ -1730,6 +1730,11 @@ async function loadAllDataFromDB(){
           if(!window._liqVselCache) window._liqVselCache={};
           window._liqVselCache[row.clave.replace('liq_vsel_','')]=row.valor||{};
         }
+        if(row.clave&&row.clave.startsWith('vac_renew_')){
+          if(!window._vacRenewCache) window._vacRenewCache={};
+          window._vacRenewCache[row.clave.replace('vac_renew_','')]=row.valor||{};
+        }
+        if(row.clave==='vac_fix_saldos_2026') window._vacFixDone=true;
         if(row.clave&&row.clave.startsWith('user_ded_'))
           window._dedAdminCache[row.clave.replace('user_ded_','')]=row.valor||{};
         if(row.clave&&row.clave.startsWith('user_horas_'))
@@ -1863,7 +1868,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260716204706';
+var APP_BUILD='20260717004901';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -4024,6 +4029,7 @@ function initApp(){
     try{ checkExportReminder(); }catch(e){}
     try{ checkPendingSAApprovals(); }catch(e){}
     try{ checkTrashReminder(); }catch(e){}
+    try{ fixInflatedVacSaldos(); }catch(e){ console.error('fixInflatedVacSaldos:',e); }
     try{ checkAnniversaries(); }catch(e){ console.error('checkAnniversaries:',e); }
     buildAdminOverview();
     buildUsersTable();
@@ -6359,8 +6365,12 @@ function checkCelebrations(){
 
 // ── ANNIVERSARY CHECK ──
 function checkAnniversaries(){
+  // Guard de sesión: correr UNA sola vez por sesión (initApp + initVacModule lo invocan)
+  if(window._anivChecked) return;
+  window._anivChecked=true;
   const today=new Date();
   today.setHours(0,0,0,0);
+  if(!window._vacRenewCache) window._vacRenewCache={};
   const users=getUsers().filter(u=>u.rol==='user');
   users.forEach(u=>{
     const vd=getVacData(u.id);
@@ -6369,23 +6379,61 @@ function checkAnniversaries(){
     if(!ingreso||isNaN(ingreso.getTime())) return;
     const diasAnuales=parseFloat(vd.diasAnuales||0);
     if(!diasAnuales) return;
-    // Check if today is the anniversary (same month/day, any year after ingreso)
-    const lastRenew=vd.lastRenewal?parseDate(vd.lastRenewal):null;
-    // Renovar si el aniversario de este año YA PASÓ (o es hoy) y aún no se renovó este año.
-    // Retroactivo: si nadie abrió el sistema el día exacto, se renueva en el siguiente ingreso.
     const thisYearAniv=new Date(today.getFullYear(),ingreso.getMonth(),ingreso.getDate());
-    if(today.getTime()>=thisYearAniv.getTime()){
-      const alreadyDoneThisYear=lastRenew&&lastRenew.getFullYear()===today.getFullYear();
-      if(!alreadyDoneThisYear && today>ingreso){
+    if(today.getTime()>=thisYearAniv.getTime() && today>ingreso){
+      // FUENTE DE VERDAD del flag: configuracion 'vac_renew_{uid}' (persistente cross-device).
+      // El bug anterior: vd.lastRenewal se perdía al recargar (setVacData no guarda ese campo
+      // en vacaciones_saldo) → cada login volvía a sumar los días.
+      const renewFlag=window._vacRenewCache[u.id]||{};
+      const alreadyDoneThisYear=(renewFlag.year===today.getFullYear())
+        || (vd.lastRenewal&&parseDate(vd.lastRenewal)&&parseDate(vd.lastRenewal).getFullYear()===today.getFullYear());
+      if(!alreadyDoneThisYear){
+        // Marcar el flag ANTES de ajustar el saldo (anti doble-ejecución)
+        window._vacRenewCache[u.id]={year:today.getFullYear(),at:new Date().toISOString(),dias:diasAnuales};
+        _saveToSupabase('vac_renew_'+u.id, window._vacRenewCache[u.id], '');
         adjustVacSaldo(u.id, diasAnuales, 'Renovación anual de vacaciones');
         vd.lastRenewal=dkey(today);
         setVacData(u.id,vd);
-        // Notify user
         addNotification(u.id,'🎉','¡Se renovaron tus vacaciones!','Se agregaron '+diasAnuales+' días hábiles a tu saldo.');
         console.log('checkAnniversaries: renovación aplicada a '+u.id+' (+'+diasAnuales+' días)');
       }
     }
   });
+}
+
+// ── CORRECCIÓN ONE-TIME: saldos de vacaciones inflados por el bug de renovación ──
+// El flag de renovación no se persistía → cada login de admin sumaba días de nuevo.
+// Los saldos corruptos crecieron en múltiplos EXACTOS de diasAnuales. Corrección:
+// base = saldo mod diasAnuales; saldo correcto = base + diasAnuales (una renovación legítima).
+// Solo se toca saldos claramente corruptos (> 100 días) y corre una única vez (flag en nube).
+function fixInflatedVacSaldos(){
+  try{
+    if(window._vacFixDone) return;
+    if(!SESSION||SESSION.rol!=='superadmin') return;
+    window._vacFixDone=true;
+    _saveToSupabase('vac_fix_saldos_2026',{at:new Date().toISOString(),by:SESSION.id},'');
+    var corregidos=[];
+    getUsers().filter(function(u){return u.rol==='user';}).forEach(function(u){
+      var vd=getVacData(u.id);
+      var anuales=parseFloat(vd.diasAnuales||0);
+      var saldo=parseFloat(vd.saldo||0);
+      if(!anuales||saldo<=100) return; // solo corrupción evidente
+      var base=parseFloat((saldo%anuales).toFixed(1));
+      var correcto=parseFloat((base+anuales).toFixed(1));
+      var delta=parseFloat((correcto-saldo).toFixed(1));
+      adjustVacSaldo(u.id, delta, 'Corrección automática: renovaciones duplicadas por error del sistema');
+      // Asegurar el flag de renovación de este año (ya quedó incluida en el saldo corregido)
+      window._vacRenewCache[u.id]={year:new Date().getFullYear(),at:new Date().toISOString(),dias:anuales,fixed:true};
+      _saveToSupabase('vac_renew_'+u.id, window._vacRenewCache[u.id], '');
+      corregidos.push(u.nombre+': '+saldo+' → '+correcto);
+      console.log('fixInflatedVacSaldos:',u.id,saldo,'→',correcto);
+    });
+    if(corregidos.length){
+      setTimeout(function(){
+        toast('🔧 Saldos de vacaciones corregidos: '+corregidos.join(' · '));
+      },3000);
+    }
+  }catch(e){ console.error('fixInflatedVacSaldos:',e); }
 }
 
 // ── NOTIFICATIONS ──
@@ -8649,7 +8697,7 @@ function _saveSingleVenta(uid, v, mk){
     tipoPago:v.tipoPago||'CONTADO', plazoCredito:v.plazoCredito||0,
     isUsd:v.isUsd||false, usd:v.usd||0, tcUsed:v.tcUsed||0, usdTotal:v.usdTotal||0,
     tieneInsumos:v.tieneInsumos||false, insDesc:v.insDesc||'', insMontoNum:v.insMontoNum||0,
-    esTercero:v.esTercero||false, tercNombre:v.tercNombre||'',
+    esTercero:v.esTercero||false, tercNombre:v.tercNombre||'', tercMonto:v.tercMonto||0,
     tienePendiente:v.tienePendiente||false, pendMonto:v.pendMonto||0, pendCancelado:v.pendCancelado||'no',
     referido:v.referido||'', notas:v.notas||'', estado:v.estado||'activa',
     tieneMinimo:v.tieneMinimo||false, minimoArea:v.minimoArea||0,
@@ -8761,6 +8809,7 @@ async function loadVentasFromDB(uid,_rows){
         comision:row.comision,
         esTercero:editOverride.esTercero||row.es_tercero||false,
         tercNombre:editOverride.tercNombre||'',
+        tercMonto:editOverride.tercMonto||0,
         isUsd:editOverride.isUsd||row.is_usd||false,
         isUSD:editOverride.isUsd||row.is_usd||false,
         tcUsed:editOverride.tcUsed||row.tc_used||0,
@@ -8855,7 +8904,7 @@ async function loadVentasFromDB(uid,_rows){
       cliente:e.cliente||'', factura:e.factura||'', proyecto:e.proyecto||'',
       tipoPago:e.tipoPago||'CONTADO', pago:e.tipoPago||'CONTADO',
       plazoCredito:e.plazoCredito||0, comision:0,
-      esTercero:e.esTercero||false, tercNombre:e.tercNombre||'',
+      esTercero:e.esTercero||false, tercNombre:e.tercNombre||'', tercMonto:e.tercMonto||0,
       isUsd:e.isUsd||false, isUSD:e.isUsd||false,
       tcUsed:e.tcUsed||0, usd:e.usd||0,
       depositoNum:'', notas:e.notas||'', estado:e.estado||'activa',
@@ -8897,24 +8946,27 @@ function setComisBase(uid,amount){
 // Calculate comision for a single venta line (no base deduction here)
 // Base deduction is applied at the MONTHLY TOTAL level
 function calcComision(venta, fibraCosto){
-  if(venta.esTercero) return 0;
   const pid=normalizeProdId(venta.prodId);
   const cat=getCatalogo().find(function(c){return c.id===pid;})||{comis:5,tipo:'otros'};
   const subtotal=venta.subtotal||0;
   const insumos=venta.insMontoNum||0;
+  // Comisión al tercero: se RESTA de la comisión del vendedor (fuera de base de comisión)
+  const tercDeduc=venta.esTercero?(venta.tercMonto||0):0;
+  var comisBruta;
   if(cat.tipo==='fibra'){
     const kg=parseFloat(venta.cantidad)||0;
     const costKg=fibraCosto||0;
     const costoTotal=kg*costKg;
     const base=Math.max(0,subtotal-costoTotal-insumos);
-    return parseFloat((base*(cat.comis/100)).toFixed(0));
+    comisBruta=base*(cat.comis/100);
+  } else {
+    const base=Math.max(0,subtotal-insumos);
+    comisBruta=base*(cat.comis/100);
   }
-  const base=Math.max(0,subtotal-insumos);
-  return parseFloat((base*(cat.comis/100)).toFixed(0));
+  return parseFloat(Math.max(0,comisBruta-tercDeduc).toFixed(0));
 }
 
 function getVentaNetBase(venta, fibraCosto){
-  if(venta.esTercero) return 0;
   const pid=normalizeProdId(venta.prodId);
   const cat=getCatalogo().find(function(c){return c.id===pid;})||{comis:5,tipo:'otros'};
   const subtotal=venta.subtotal||0;
@@ -9171,22 +9223,20 @@ function calcVentaPreview(){
   var pid=normalizeProdId(prodId);
   var cat=getCatalogo().find(function(x){return x.id===pid;})||{comis:5,tipo:'otros'};
   var fibraCosto=getFibraCosto(VM,VY);
-  var fakeVenta={subtotal:subtotal,insMontoNum:insMontoNum,esTercero:esTercero,prodId:pid,cantidad:document.getElementById('vf-cantidad').value};
+  var tercMontoPrev=esTercero?(parseMon((document.getElementById('vf-terc-monto')||{value:''}).value)||0):0;
+  var fakeVenta={subtotal:subtotal,insMontoNum:insMontoNum,esTercero:esTercero,tercMonto:tercMontoPrev,prodId:pid,cantidad:document.getElementById('vf-cantidad').value};
   var comis=calcComision(fakeVenta,fibraCosto);
   var base=0;
-  if(!esTercero){
-    if(cat.tipo==='fibra'){
-      var kg=parseFloat(document.getElementById('vf-cantidad').value)||0;
-      base=Math.max(0,subtotal-kg*fibraCosto-insMontoNum);
-    } else { base=Math.max(0,subtotal-insMontoNum); }
-  }
+  if(cat.tipo==='fibra'){
+    var kg=parseFloat(document.getElementById('vf-cantidad').value)||0;
+    base=Math.max(0,subtotal-kg*fibraCosto-insMontoNum);
+  } else { base=Math.max(0,subtotal-insMontoNum); }
   var prev=document.getElementById('vf-comis-preview');
   if(prev){
-    if(esTercero){
-      prev.innerHTML='<span style="color:var(--amber);font-weight:700">Comision a tercero - excluida del vendedor</span>';
-    } else if(subtotal>0){
+    if(subtotal>0){
       var nota=insMontoNum>0?' (insumos excluidos: '+fmt(insMontoNum)+')':'';
-      prev.innerHTML='<strong style="color:var(--green)">Comision estimada: '+fmt(comis)+'</strong> &nbsp;|&nbsp; Base: '+fmt(base)+nota+' &nbsp;|&nbsp; '+cat.comis+'%';
+      var notaTerc=esTercero&&tercMontoPrev>0?' &nbsp;|&nbsp; <span style="color:var(--amber)">−'+fmt(tercMontoPrev)+' al tercero</span>':'';
+      prev.innerHTML='<strong style="color:var(--green)">Comision estimada: '+fmt(comis)+'</strong> &nbsp;|&nbsp; Base: '+fmt(base)+nota+' &nbsp;|&nbsp; '+cat.comis+'%'+notaTerc;
     } else {
       prev.innerHTML='<span style="color:var(--text3)">Ingresa subtotal y cantidad para ver el calculo</span>';
     }
@@ -9213,7 +9263,7 @@ function clearVentaForm(){
   document.getElementById('vf-crm-contact-id').value='';
   ['vf-fecha','vf-factura','vf-cliente','vf-referido','vf-notas',
    'vf-usd','vf-tc-used','vf-ins-desc','vf-ins-monto',
-   'vf-pend-monto','vf-terc-nombre'].forEach(id=>{
+   'vf-pend-monto','vf-terc-nombre','vf-terc-monto'].forEach(id=>{
     const e=document.getElementById(id); if(e) e.value='';
   });
   document.getElementById('vf-prod').value='';
@@ -9337,6 +9387,7 @@ function _doSaveVenta(){
     insMontoNum,
     esTercero:tercChk,
     tercNombre:tercChk?document.getElementById('vf-terc-nombre').value.trim():'',
+    tercMonto:tercChk?parseMon(document.getElementById('vf-terc-monto')?.value)||0:0,
     tienePendiente:pendChk,
     pendMonto:pendChk?parseMon(document.getElementById('vf-pend-monto').value)||0:0,
     pendCancelado:pendChk?document.getElementById('vf-pend-cancelado').value:'no',
@@ -9565,7 +9616,7 @@ function renderVentasUser(){
       :'<span class="v-badge credito">Crédito '+(v.plazoCredito>0?v.plazoCredito+'d':'')+'</span>';
     var extraInfo=[];
     if(v.tieneInsumos&&v.insDesc) extraInfo.push('⚠ Ins: '+v.insDesc+(v.insMontoNum?' ('+fmt(v.insMontoNum)+')':''));
-    if(v.esTercero) extraInfo.push('👤 '+( v.tercNombre||'Tercero'));
+    if(v.esTercero) extraInfo.push('👤 '+( v.tercNombre||'Tercero')+(v.tercMonto>0?' ('+fmt(v.tercMonto)+')':''));
     if(v.tienePendiente&&v.pendCancelado!=='si') extraInfo.push('🔵 Pend: '+fmt(v.pendMonto));
     if(v.referido) extraInfo.push('↗ Ref: '+v.referido);
     if(v.isUsd) extraInfo.push('USD '+v.usd+' @ '+v.tcUsed);
@@ -9599,7 +9650,7 @@ function renderVentasUser(){
           })():'')
       +'</td>'+
       '<td style="font-family:var(--cond);font-weight:700;color:var(--green);text-align:right">'+
-        (v.esTercero?'<span style="color:var(--amber);font-size:10px">Tercero</span>':fmt(comis))+
+        fmt(comis)+(v.esTercero&&v.tercMonto>0?'<br><span style="color:var(--amber);font-size:9px">−'+fmt(v.tercMonto)+' tercero</span>':'')+
       '</td>'+
       '<td style="font-size:11px;color:var(--blue);font-weight:600">'+(v.proyecto||'—')+'</td>'+
       '<td style="font-size:10px;color:var(--text3);max-width:180px">'+
@@ -10391,7 +10442,7 @@ function renderAdminVentasTable(){
     const comis=calcComision(v,v.fibraCosto);
     var extraAdmin=[];
     if(v.tieneInsumos&&v.insDesc) extraAdmin.push('⚠ Ins: '+v.insDesc+(v.insMontoNum?' ('+fmt(v.insMontoNum)+')':''));
-    if(v.esTercero) extraAdmin.push('👤 '+(v.tercNombre||'Tercero'));
+    if(v.esTercero) extraAdmin.push('👤 '+(v.tercNombre||'Tercero')+(v.tercMonto>0?' ('+fmt(v.tercMonto)+')':''));
     if(v.tienePendiente&&v.pendCancelado!=='si') extraAdmin.push('🔵 Pend: '+fmt(v.pendMonto));
     if(v.referido) extraAdmin.push('↗ Ref: '+v.referido);
     if(v.isUsd) extraAdmin.push('USD '+v.usd+' @ '+v.tcUsed);
@@ -10417,7 +10468,7 @@ function renderAdminVentasTable(){
       +'<td style="font-family:var(--cond);text-align:right">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+(v.isUsd&&v.usd>0?' <span style="font-size:10px;color:var(--text3)">($'+Number(v.usd).toFixed(1)+')</span>':'')+'</td>'
       +'<td style="white-space:nowrap">'+pagoAdminLabel+'</td>'
       +'<td style="font-family:var(--cond);color:var(--blue);text-align:right">'+fmt(Math.max(0,v.subtotal-(v.insMontoNum||0)))+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:800;color:'+(v.esTercero?'var(--amber)':'var(--green)')+';text-align:right">'+(v.esTercero?'Tercero':fmt(comis))+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800;color:var(--green);text-align:right">'+fmt(comis)+(v.esTercero&&v.tercMonto>0?'<br><span style="color:var(--amber);font-size:9px">−'+fmt(v.tercMonto)+' tercero</span>':'')+'</td>'
       +'<td style="font-size:10px;color:var(--text3);max-width:160px">'
         +(v.notas?'<div style="color:var(--text2);margin-bottom:1px">📝 '+escHtml(v.notas)+'</div>':'')
         +(extraAdmin.length?'<div>'+extraAdmin.join(' · ')+'</div>':'')
@@ -10606,7 +10657,7 @@ function exportVentasUser(){
       '<span style="font-size:10px;color:#9a9b9d">'+ivaTxt+'</span>'+
       '<span class="cr-value">'+fmt(v.subtotal)+'</span>'+
       '<span style="font-family:\'Barlow Condensed\',sans-serif;font-weight:800;font-size:13px;color:#1a9e5c">'+
-        (v.esTercero?'Tercero':fmt(comis))+'</span>'+
+        fmt(comis)+'</span>'+
       '</div></div>'+
       (v.tieneInsumos?'<div style="padding:3px 14px;font-size:10px;color:#d97706">⚠ Insumos excluidos: '+v.insDesc+' — '+fmt(v.insMontoNum)+'</div>':'')+
       (v.notas?'<div style="padding:3px 14px;font-size:10px;color:#9a9b9d">📝 '+escHtml(v.notas)+'</div>':'');
@@ -10793,6 +10844,8 @@ function editVenta(ventaId){
   if(found.esTercero){
     document.getElementById('vf-tercero-wrap').className='vf-tercero-wrap show';
     document.getElementById('vf-terc-nombre').value=found.tercNombre||'';
+    var tmEl=document.getElementById('vf-terc-monto');
+    if(tmEl) tmEl.value=found.tercMonto?found.tercMonto.toLocaleString('es-CR'):'';
   }
   document.getElementById('vf-referido').value=found.referido||'';
   document.getElementById('vf-notas').value=found.notas||'';
@@ -10876,6 +10929,7 @@ function updateVenta(){
     insMontoNum:insChk?parseMon(document.getElementById('vf-ins-monto').value)||0:0,
     esTercero:tercChk,
     tercNombre:tercChk?document.getElementById('vf-terc-nombre').value.trim():'',
+    tercMonto:tercChk?parseMon(document.getElementById('vf-terc-monto')?.value)||0:0,
     tienePendiente:pendChk,
     pendMonto:pendChk?parseMon(document.getElementById('vf-pend-monto').value)||0:0,
     pendCancelado:pendChk?document.getElementById('vf-pend-cancelado').value:'no',
@@ -17629,6 +17683,22 @@ async function getOrCreateAuditForUser(uid){
   await DB.from('inv_auditoria').upsert(audit,{onConflict:'id'});
   return audit;
 }
+// Etiqueta 📦 Inventario / 🔧 Activo para ítems de auditoría.
+// Usa item.tipo si existe; para ítems viejos sin tipo, lo busca en el inventario actual.
+function _auditTipoBadge(item){
+  var tipo=item&&item.tipo;
+  if(!tipo&&item){
+    var inv=(window._invItems||[]).find(function(i){return i.id===item.item_id;});
+    tipo=inv?(inv.type||'inventario'):'inventario';
+  }
+  var esActivo=(tipo==='activo');
+  return '<span style="display:inline-block;padding:2px 8px;border-radius:100px;font-size:10px;font-weight:800;white-space:nowrap;'
+    +(esActivo
+      ? 'background:rgba(124,58,237,.12);color:#7c3aed;border:1px solid rgba(124,58,237,.3)'
+      : 'background:rgba(37,99,235,.10);color:var(--blue);border:1px solid rgba(37,99,235,.25)')
+    +'">'+(esActivo?'🔧 Activo':'📦 Inventario')+'</span>';
+}
+
 async function renderAuditPanel(){
   if(!userHasAuditDuty()) return;
   var body=_invBody();
@@ -17648,7 +17718,7 @@ async function renderAuditPanel(){
   html+='<div style="font-size:11px;color:var(--text3)">Realiza el conteo físico de estos 3 ítems y confirma las cantidades encontradas</div></div></div>';
   html+='<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px"><thead>';
   html+='<tr style="background:var(--surface2)">';
-  ['ÍTEM','CÓDIGO','UNIDAD','CANT. SISTEMA','TU CONTEO FÍSICO','ESTADO'].forEach(function(h){
+  ['ÍTEM','TIPO','CÓDIGO','UNIDAD','CANT. SISTEMA','TU CONTEO FÍSICO','ESTADO'].forEach(function(h){
     html+='<th style="padding:8px 12px;text-align:'+(h==='ÍTEM'?'left':'center')+';font-size:11px;color:var(--text3)">'+h+'</th>';
   });
   html+='</tr></thead><tbody>';
@@ -17656,6 +17726,7 @@ async function renderAuditPanel(){
     var ok=item.confirmado;
     html+='<tr style="border-bottom:1px solid var(--border);'+(ok?'background:rgba(22,163,74,.05)':'')+'">';
     html+='<td style="padding:10px 12px;font-weight:700">'+item.nombre+'</td>';
+    html+='<td style="padding:10px 12px;text-align:center">'+_auditTipoBadge(item)+'</td>';
     html+='<td style="padding:10px 12px;text-align:center;font-size:11px;color:var(--text3)">'+item.codigo+'</td>';
     html+='<td style="padding:10px 12px;text-align:center;font-size:11px">'+item.unidad+'</td>';
     html+='<td style="padding:10px 12px;text-align:center;font-weight:800;color:var(--blue)">'+invFmt(item.cantidad_sistema)+'</td>';
@@ -17777,7 +17848,11 @@ async function renderAuditAdmin(){
       html+='<tr style="border-bottom:1px solid var(--border)">';
       html+='<td style="padding:8px 10px;font-weight:700">'+(u?u.nombre:a.uid)+'</td>';
       html+='<td style="padding:8px;text-align:center;font-size:11px">'+a.semana_key+'</td>';
-      html+='<td style="padding:8px;text-align:center">'+(a.items||[]).length+'</td>';
+      var _itemsTip=(a.items||[]).map(function(it){
+        var t=it.tipo||(((window._invItems||[]).find(function(i){return i.id===it.item_id;})||{}).type)||'inventario';
+        return (t==='activo'?'🔧 ':'📦 ')+it.nombre;
+      }).join(' · ');
+      html+='<td style="padding:8px;text-align:center;cursor:help;text-decoration:underline dotted" title="'+_itemsTip.replace(/"/g,'&quot;')+'">'+(a.items||[]).length+'</td>';
       html+='<td style="padding:8px;text-align:center"><span style="font-size:11px;font-weight:800;color:'+color+'">'+label+'</span></td>';
       html+='<td style="padding:8px;text-align:center;color:'+(disc>0?'var(--red)':'var(--text3)')+'">'+disc;
       if(disc>0){
@@ -17795,7 +17870,8 @@ async function renderAuditAdmin(){
       html+='</td></tr>';
       if(disc>0){
         var detalleFilas=(a.discrepancias||[]).map(function(d){
-          return '<div style="padding:4px 0;border-bottom:1px solid var(--border)"><strong>'+d.nombre+'</strong> — sistema: '+invFmt(d.sistema)+' · contado por '+(d.uNombre||a.uid)+': '+invFmt(d.usuario)+'</div>';
+          var itFound=(a.items||[]).find(function(it){return (d.item_id&&it.item_id===d.item_id)||it.nombre===d.nombre;})||d;
+          return '<div style="padding:4px 0;border-bottom:1px solid var(--border)">'+_auditTipoBadge(itFound)+' <strong>'+d.nombre+'</strong> — sistema: '+invFmt(d.sistema)+' · contado por '+(d.uNombre||a.uid)+': '+invFmt(d.usuario)+'</div>';
         }).join('');
         html+='<tr id="disc-detalle-'+a.id+'" style="display:none"><td colspan="6" style="padding:8px 14px;background:rgba(220,38,38,.05);font-size:11px">'+detalleFilas+'</td></tr>';
       }
@@ -24703,13 +24779,20 @@ window.initCalcCONCRE=initCalcCONCRE;
           <!-- Comisión a tercero -->
           <div class="vf-check-row" onclick="toggleTercero()">
             <input type="checkbox" id="vf-terc-chk" onclick="event.stopPropagation()">
-            <span class="vf-check-label">👤 Comisión a tercero (excluye del cálculo del vendedor)</span>
+            <span class="vf-check-label">👤 Comisión a tercero (fuera de base de comisión)</span>
           </div>
           <div class="vf-tercero-wrap" id="vf-tercero-wrap">
-            <div>
-              <span class="vf-label">Nombre del tercero</span>
-              <input type="text" class="vf-inp" id="vf-terc-nombre" placeholder="Nombre de quien recibe la comisión">
+            <div style="display:grid;grid-template-columns:1fr 200px;gap:10px">
+              <div>
+                <span class="vf-label">Nombre del tercero</span>
+                <input type="text" class="vf-inp" id="vf-terc-nombre" placeholder="Nombre de quien recibe la comisión">
+              </div>
+              <div>
+                <span class="vf-label">Monto comisión al tercero ₡</span>
+                <input type="text" class="vf-inp" id="vf-terc-monto" placeholder="₡ 0" oninput="fmtInp(this);calcVentaPreview()">
+              </div>
             </div>
+            <div style="font-size:10px;color:var(--text3);margin-top:4px">Este monto se resta de la comisión del vendedor en esta venta.</div>
           </div>
 
           <!-- Minimo -->
