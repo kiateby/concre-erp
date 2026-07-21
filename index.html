@@ -1707,6 +1707,7 @@ async function loadAllDataFromDB(){
       window._regAdminCache = window._regAdminCache||{};   // REG de todos (desde fase 1)
       window._fondosConfCache = {};   // config de fondos por usuario (desde fase 1)
       window._vacRenewCache = {};     // flags de renovación anual de vacaciones
+      window._preciosCache = {};      // pestaña Precios e Información
       window._vacLogCache = {};       // historial de movimientos de vacaciones por usuario
       configs.data.forEach(function(row){
         if(row.clave==='catalogo'){
@@ -1734,6 +1735,8 @@ async function loadAllDataFromDB(){
         }
         if(row.clave&&row.clave.startsWith('vac_renew_'))
           window._vacRenewCache[row.clave.replace('vac_renew_','')]=row.valor||{};
+        if(row.clave&&row.clave.startsWith('precios_'))
+          window._preciosCache[row.clave]=row.valor;
         if(row.clave&&row.clave.startsWith('vac_log_'))
           window._vacLogCache[row.clave.replace('vac_log_','')]=Array.isArray(row.valor)?row.valor:[];
         if(row.clave==='vac_fix_saldos_2026_v2') window._vacFixDone=true;
@@ -1870,7 +1873,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260721010753';
+var APP_BUILD='20260721020245';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -3770,6 +3773,7 @@ function buildAdminTabs(){
     {id:'presupuesto',   label:'🏗 Presupuesto',     extra:'try{initPresupuesto();}catch(e){console.error(e);}', superadmin_only:true},
     {id:'radar',         label:'📡 Radar Comercial', extra:'try{initRadarComercial();}catch(e){console.error(e);}'},
     {id:'proyectos',     label:'📁 Proyectos',       extra:'try{initProyectosTab("proyAdminRoot");}catch(e){console.error(e);}'},
+    {id:'precios',       label:'📚 Precios e Info',   extra:'try{initPreciosTab("preciosAdminRoot");}catch(e){console.error(e);}', superadmin_only:true},
     {id:'importaciones', label:'🚢 Importaciones',   extra:'try{initImportaciones();}catch(e){console.error(e);}', superadmin_only:true},
   ];
   // Filter tabs based on admin permissions (superadmin sees all)
@@ -3808,6 +3812,7 @@ function buildUserTabs(){
     {id:'inventario', label:'📦 Inventario'},
     {id:'fibraplus',  label:'🧮 FibraPlus54'},
     {id:'radar',      label:'📡 Radar Comercial', optIn:true}, // requiere autorización EXPLÍCITA de superadmin (a diferencia de las demás pestañas)
+    {id:'precios',    label:'📚 Precios e Info', optIn:true}, // oculta por defecto — superadmin decide quién la ve (solo documentos y listas publicadas)
   ];
   var visible=allTabs.filter(function(t){
     if(t.optIn) return perms[t.id]===true; // oculta por defecto — solo visible si superadmin la activó explícitamente
@@ -3839,6 +3844,8 @@ function switchUserTab(tab, btn){
     var rdm=document.getElementById('radarUserModule');
     var pym=document.getElementById('proyectosUserModule');
     if(pym) pym.style.display='none';
+    var prm=document.getElementById('preciosUserModule');
+    if(prm) prm.style.display='none';
     if(um) um.style.display='none';
     if(vm) vm.style.display='none';
     if(fm) fm.style.display='none';
@@ -3874,6 +3881,9 @@ function switchUserTab(tab, btn){
     } else if(tab==='proyectos'){
       if(pym){ pym.style.cssText='display:flex;flex:1;width:100%'; }
       try{ initProyectosTab('proyectosUserRoot'); }catch(e2){ console.error('initProyectosTab error:',e2); }
+    } else if(tab==='precios'){
+      if(prm){ prm.style.cssText='display:flex;flex:1;width:100%'; }
+      try{ initPreciosTab('preciosUserRoot'); }catch(e2){ console.error('initPreciosTab error:',e2); }
     }
   }catch(e){ console.error('switchUserTab error:',e); toast('Error al cambiar pestaña: '+e.message); }
 }
@@ -16123,6 +16133,432 @@ function openCRMClientPickerForAdminVenta(){
 //  PERMISOS POR PESTAÑA — TIEMPO REAL
 // ══════════════════════════════════════════════════════════════
 
+
+// ══════════════════════════════════════════════════════════════
+//  PESTAÑA PRECIOS E INFORMACIÓN
+//  Calculadoras (solo superadmin) + Listas publicadas + Documentos
+//  Todo persiste en Supabase (configuracion 'precios_*' + Storage 'documentos')
+// ══════════════════════════════════════════════════════════════
+var PRECIOS_SEED = {"coloc": {"rangos": ["Mínimo −150", "Mínimo −300", "300 a 500", "500 a 700", "700 a 900"], "zonas": [{"zona": "GAM", "filas": [{"nombre": "Chorrea", "valores": [{"p": 4.0, "m": 140000.0}, {"p": 5.0, "m": 175000.0}, {"p": 6.0, "m": 270000.0}, {"p": 8.0, "m": 400000.0}, {"p": 10.0, "m": 500000.0}]}, {"nombre": "Acabado", "valores": [{"p": 1.0, "m": 35000.0}, {"p": 2.0, "m": 90000.0}, {"p": 3.0, "m": 135000.0}, {"p": 4.0, "m": 200000.0}, {"p": 5.0, "m": 300000.0}]}, {"nombre": "Cortes", "valores": [{"p": 1.0, "m": 35000.0}, {"p": 2.0, "m": 70000.0}, {"p": 3.0, "m": 105000.0}, {"p": 3.0, "m": 105000.0}, {"p": 4.0, "m": 140000.0}]}, {"nombre": "Hospedaje", "valores": [{"p": 0, "m": 0.0}, {"p": 0, "m": 0.0}, {"p": 0, "m": 0}, {"p": 0, "m": 0}, {"p": 0, "m": 0}]}, {"nombre": "transporte", "valores": [{"p": 1.0, "m": 25000.0}, {"p": 1.0, "m": 25000.0}, {"p": 1.0, "m": 25000.0}, {"p": 2.0, "m": 50000.0}, {"p": 2.0, "m": 50000.0}]}, {"nombre": "Comida", "valores": [{"p": 1.0, "m": 12600.0}, {"p": 1.0, "m": 16800.0}, {"p": 1.0, "m": 46200.0}, {"p": 1.0, "m": 58800.0}, {"p": 1.0, "m": 71400.0}]}, {"nombre": "Bodega", "valores": [{"p": 1.0, "m": 30000.0}, {"p": 1.0, "m": 30000.0}, {"p": 1.0, "m": 30000.0}, {"p": 1.0, "m": 30000.0}, {"p": 1.0, "m": 30000.0}]}, {"nombre": "Camión", "valores": [{"p": 0, "m": 40000.0}, {"p": 0, "m": 40000.0}, {"p": 0, "m": 40000.0}, {"p": 0, "m": 40000.0}, {"p": 0, "m": 40000.0}]}, {"nombre": "encargado", "valores": [{"p": 1.0, "m": 80000.0}, {"p": 1.0, "m": 120000.0}, {"p": 1.0, "m": 150000.0}, {"p": 1.0, "m": 180000.0}, {"p": 1.0, "m": 220000.0}]}]}, {"zona": "Intermedia", "filas": [{"nombre": "Chorrea", "valores": [{"p": 4.0, "m": 180000.0}, {"p": 5.0, "m": 225000.0}, {"p": 6.0, "m": 300000.0}, {"p": 8.0, "m": 440000.0}, {"p": 10.0, "m": 550000.0}]}, {"nombre": "Acabado", "valores": [{"p": 1.0, "m": 35000.0}, {"p": 2.0, "m": 90000.0}, {"p": 3.0, "m": 150000.0}, {"p": 4.0, "m": 220000.0}, {"p": 5.0, "m": 325000.0}]}, {"nombre": "Cortes", "valores": [{"p": 1.0, "m": 35000.0}, {"p": 1.0, "m": 35000.0}, {"p": 3.0, "m": 105000.0}, {"p": 3.0, "m": 105000.0}, {"p": 4.0, "m": 140000.0}]}, {"nombre": "Hospedaje", "valores": [{"p": 0.0, "m": 0.0}, {"p": 0.0, "m": 0.0}, {"p": 0.0, "m": 0.0}, {"p": 0.0, "m": 0.0}, {"p": 0.0, "m": 0.0}]}, {"nombre": "transporte", "valores": [{"p": 1.0, "m": 45000.0}, {"p": 1.0, "m": 45000.0}, {"p": 1.0, "m": 45000.0}, {"p": 2.0, "m": 90000.0}, {"p": 2.0, "m": 90000.0}]}, {"nombre": "Comida", "valores": [{"p": 1.0, "m": 29400.0}, {"p": 1.0, "m": 37800.0}, {"p": 1.0, "m": 71400.0}, {"p": 1.0, "m": 92400.0}, {"p": 1.0, "m": 113400.0}]}, {"nombre": "Bodega", "valores": [{"p": 1.0, "m": 40000.0}, {"p": 1.0, "m": 40000.0}, {"p": 1.0, "m": 40000.0}, {"p": 1.0, "m": 40000.0}, {"p": 1.0, "m": 40000.0}]}, {"nombre": "Camión", "valores": [{"p": 0, "m": 60000.0}, {"p": 0, "m": 60000.0}, {"p": 0, "m": 60000.0}, {"p": 0, "m": 60000.0}, {"p": 0, "m": 60000.0}]}, {"nombre": "encargado", "valores": [{"p": 1.0, "m": 90000.0}, {"p": 1.0, "m": 130000.0}, {"p": 1.0, "m": 160000.0}, {"p": 1.0, "m": 190000.0}, {"p": 1.0, "m": 240000.0}]}]}, {"zona": "Fuera GAM", "filas": [{"nombre": "Chorrea", "valores": [{"p": 4.0, "m": 220000.0}, {"p": 5.0, "m": 300000.0}, {"p": 6.0, "m": 390000.0}, {"p": 8.0, "m": 520000.0}, {"p": 10.0, "m": 650000.0}]}, {"nombre": "Acabado", "valores": [{"p": 1.0, "m": 45000.0}, {"p": 2.0, "m": 100000.0}, {"p": 3.0, "m": 195000.0}, {"p": 4.0, "m": 300000.0}, {"p": 5.0, "m": 425000.0}]}, {"nombre": "Cortes", "valores": [{"p": 1.0, "m": 35000.0}, {"p": 2.0, "m": 70000.0}, {"p": 3.0, "m": 105000.0}, {"p": 3.0, "m": 105000.0}, {"p": 4.0, "m": 140000.0}]}, {"nombre": "Hospedaje", "valores": [{"p": 1.0, "m": 30000.0}, {"p": 1.0, "m": 40000.0}, {"p": 1.0, "m": 50000.0}, {"p": 1.0, "m": 60000.0}, {"p": 1.0, "m": 70000.0}]}, {"nombre": "transporte", "valores": [{"p": 1.0, "m": 70000.0}, {"p": 1.0, "m": 70000.0}, {"p": 1.0, "m": 70000.0}, {"p": 2.0, "m": 140000.0}, {"p": 2.0, "m": 140000.0}]}, {"nombre": "Comida", "valores": [{"p": 1.0, "m": 50400.0}, {"p": 1.0, "m": 67200.0}, {"p": 1.0, "m": 84000.0}, {"p": 1.0, "m": 105000.0}, {"p": 1.0, "m": 130200.0}]}, {"nombre": "Bodega", "valores": [{"p": 1.0, "m": 60000.0}, {"p": 1.0, "m": 60000.0}, {"p": 1.0, "m": 60000.0}, {"p": 1.0, "m": 60000.0}, {"p": 1.0, "m": 60000.0}]}, {"nombre": "Camión", "valores": [{"p": 0, "m": 80000.0}, {"p": 0, "m": 80000.0}, {"p": 0, "m": 80000.0}, {"p": 0, "m": 80000.0}, {"p": 0, "m": 80000.0}]}, {"nombre": "encargado", "valores": [{"p": 1.0, "m": 110000.0}, {"p": 1.0, "m": 150000.0}, {"p": 1.0, "m": 180000.0}, {"p": 1.0, "m": 210000.0}, {"p": 1.0, "m": 260000.0}]}]}], "pcts": {"equipos": 5, "impuestos": 10, "margen": 35, "comision": 5}, "areasM2": [150, 300, 500, 700, 900], "notas": "Matrices editables celda por celda. La cadena Subtotal → Equipos % → Impuestos % → Margen % → Comisión % → Total → ₡/m² se calcula automáticamente."}, "ajustada": {"titulo": "Precios 2026 — Colocación de concreto", "secciones": [{"titulo": "Colocación de concreto", "columnas": ["Mínimo de 0 a 150 m2 con cortes", "Mínimo de 0 a 150 m2 SIN cortes", "Mínimo de 151 a 300 m2 con cortes", "Mínimo de 151 a 300 m2 SIN cortes", "Hasta 800 m2 por entrada", "Más de 800 m2 por entrada"], "filas": [{"nombre": "Colocación GAM formal", "valores": [650000.0, 600000.0, 800000.0, 700000.0, 1850.0, 1750.0]}, {"nombre": "Colocación GAM con planicidad 25/35", "valores": [700000.0, 650000.0, 850000.0, 800000.0, 2200.0, 2100.0]}, {"nombre": "Colocación GAM Zonas Francas SIN planicidad", "valores": [700000.0, 650000.0, 850000.0, 800000.0, 2100.0, 2000.0]}, {"nombre": "Colocación GAM Zonas Francas con planicidad 25/35", "valores": [750000.0, 700000.0, 900000.0, 850000.0, 2350.0, 2250.0]}, {"nombre": "Colocación Fuera del GAM (puntarenas, limon, Guanacaste, Libería, Turrialba, San Carlos, Dota)", "valores": [850000.0, 725000.0, 1000000.0, 900000.0, 2500.0, 2400.0]}, {"nombre": "Colocación Zona intermedia (Puriscal, Guapiles, Tierra Blanca, San Ramón, Vara Blanca, Sarchí, Esparza) En general bajo 2 parametros, 1-destinos que no superen las 1.5  horas de viaje bajo presas normales, 2- no requiera hospedaje", "valores": [750000.0, 700000.0, 850000.0, 800000.0, 2200.0, 2100.0]}, {"nombre": "Colocación Zona Fronteriza (corredores, paso canoas, Los Chiles, La Cruz, Golfito) O Zona Turistica (Tamarindo, Santa Teresa, Cobano, Puerto Viejo, La fortuna)", "valores": [950000.0, 900000.0, 1200000.0, 1100000.0, 2900.0, 2800.0]}]}, {"titulo": "Informales, proyectos que cumplan con poca o mínima regulación en materia de seguridad, CCSS, INS, y facturación--Adicional que el  requerimiento técnico sea bajo o casi nulo", "columnas": ["Mínimo de 0 a 150 m2 con cortes", "Mínimo de 0 a 150 m2 SIN cortes", "Mínimo de 151 a 300 m2 con cortes", "Mínimo de 151 a 300 m2 SIN cortes", "Hasta 800 m2 por entrada", "Más de 800 m2 por entrada"], "filas": [{"nombre": "Colocación GAM informales", "valores": [600000.0, 550000.0, 750000.0, 650000.0, 1750.0, 1650.0]}, {"nombre": "Colocación Fuera del GAM (puntarenas, limon, Guanacaste, Libería, Turrialba, San Carlos, Dota)", "valores": [850000.0, 750000.0, 950000.0, 900000.0, 2100.0, 2000.0]}, {"nombre": "Colocación Zona intermedia (Puriscal, Guapiles, Tierra Blanca, San Ramón, Vara Blanca, Sarchí, Esparza) En general bajo 2 parametros, 1-destinos que no superen las 1.5  horas de viaje bajo presas normales, 2- no requiera hospedaje", "valores": [700000.0, 650000.0, 800000.0, 750000.0, 2100.0, 2000.0]}, {"nombre": "Colocación Zona Fronteriza (corredores, paso canoas, Los Chiles, La Cruz, Golfito) O Zona Turistica (Tamarindo, Santa Teresa, Cobano, Puerto Viejo, La fortuna)", "valores": [900000.0, 800000.0, 1100000.0, 1000000.0, 2800.0, 2700.0]}]}, {"titulo": "Actividades regulares", "columnas": [], "filas": [{"nombre": "Cortes GAM y Zona Intermedia", "valores": [900.0, "", "", "", "", ""]}, {"nombre": "Cortes fuera GAM, Zona Turistica y zona fronteriza", "valores": [1100.0, "", "", "", "", ""]}, {"nombre": "Curador todas las zonas", "valores": [200.0, "", "", "", "", ""]}, {"nombre": "Sellos de juntas GAM y Zona Intermedia", "valores": [2000.0, "", "", "", "", ""]}, {"nombre": "Sellos de juntas fuera GAM, Zona Turistica y zona fronteriza", "valores": [2500.0, "", "", "", "", ""]}, {"nombre": "Mínimo Sellos de juntas (175 ml) GAM y Zona Intermedia", "valores": [350000.0, "", "", "", "", ""]}, {"nombre": "Mínimo Sellos de juntas (175 ml) fuera GAM, Zona Turistica y zona fronteriza", "valores": [450000.0, "", "", "", "", ""]}]}, {"titulo": "Pulidos GAM", "columnas": ["Mínimo de 0 a 100 m2", "De 101 a 200 m2", "De 201 a 500m2", "De 501 en adelante", "", ""], "filas": [{"nombre": "Densificado", "valores": [400000.0, 4000.0, 2200.0, 1900.0, "", ""]}, {"nombre": "CONCRE-Brillo", "valores": [450000.0, 4500.0, 2600.0, 2200.0, "", ""]}, {"nombre": "Crystal CONCRE", "valores": [500000.0, 5000.0, 3000.0, 2600.0, "", ""]}, {"nombre": "Pulido Superficial", "valores": [550000.0, 5500.0, 4000.0, 3500.0, "", ""]}, {"nombre": "Pulido Intermedio", "valores": [650000.0, 6500.0, 6000.0, 5000.0, "", ""]}, {"nombre": "Pulido Profundo", "valores": [750000.0, 7500.0, 7000.0, 6000.0, "", ""]}]}, {"titulo": "Pulidos Zona Intermedia", "columnas": ["Mínimo de 0 a 100 m2", "De 101 a 200 m2", "De 201 a 500m2", "De 501 en adelante", "", ""], "filas": [{"nombre": "Densificado", "valores": [450000.0, 4500.0, 2800.0, 2000.0, "", ""]}, {"nombre": "CONCRE-Brillo", "valores": [500000.0, 5000.0, 3000.0, 2700.0, "", ""]}, {"nombre": "Crystal CONCRE", "valores": [600000.0, 6000.0, 3200.0, 3200.0, "", ""]}, {"nombre": "Pulido Superficial", "valores": [700000.0, 7000.0, 3500.0, 3700.0, "", ""]}, {"nombre": "Pulido Intermedio", "valores": [800000.0, 8000.0, 5000.0, 4500.0, "", ""]}, {"nombre": "Pulido Profundo", "valores": [900000.0, 9000.0, 6000.0, 5500.0, "", ""]}]}, {"titulo": "Pulidos Fuera GAM, Zona costera, Zona fronteriza", "columnas": ["Mínimo de 0 a 100 m2", "De 101 a 200 m2", "De 201 a 500m2", "De 501 en adelante", "", ""], "filas": [{"nombre": "Densificado", "valores": [450000.0, 4500.0, 3000.0, 2500.0, "", ""]}, {"nombre": "CONCRE-Brillo", "valores": [450000.0, 4500.0, 3500.0, 3000.0, "", ""]}, {"nombre": "Crystal CONCRE", "valores": [500000.0, 5000.0, 4000.0, 3500.0, "", ""]}, {"nombre": "Pulido Superficial", "valores": [600000.0, 6000.0, 4500.0, 4500.0, "", ""]}, {"nombre": "Pulido Intermedio", "valores": [700000.0, 7000.0, 6000.0, 5500.0, "", ""]}, {"nombre": "Pulido Profundo", "valores": [800000.0, 8000.0, 7000.0, 6500.0, "", ""]}]}, {"titulo": "Acera y cordón de caño GAM", "columnas": ["Precio por m2 o ml", "Precio Mínimo  (150m2 acera, 120ml cordón)", "Notas mínimo", "", "", ""], "filas": [{"nombre": "Colocación de aceras escoboneada, con orillero y tiburoneado", "valores": [3000.0, 450000.0, 0, "", "", ""]}, {"nombre": "Colocación de cordón de caño tipo pecho de paloma", "valores": [4000.0, 480000.0, 0, "", "", ""]}]}, {"titulo": "Acera y cordón de caño Zona intermedia", "columnas": ["Precio por m2 o ml", "Precio Mínimo  (150m2 acera, 120ml cordón)", "Notas mínimo", "", "", ""], "filas": [{"nombre": "Colocación de aceras escoboneada, con orillero y tiburoneado", "valores": [3500.0, 525000.0, 0, "", "", ""]}, {"nombre": "Colocación de cordón de caño tipo pecho de paloma", "valores": [4500.0, 540000.0, 0, "", "", ""]}]}]}, "pulidos": {"rendimientos": [{"nombre": "densificado", "m2dia": 300.0}, {"nombre": "crystal concre", "m2dia": 200.0}, {"nombre": "pulido superficial", "m2dia": 150.0}, {"nombre": "pulido intermedio", "m2dia": 100.0}], "personal": [{"nombre": "personal", "gam": 0, "fueraGam": 0}, {"nombre": "encargado 1", "gam": 50000.0, "fueraGam": 60000.0}, {"nombre": "operario 1", "gam": 45000.0, "fueraGam": 55000.0}, {"nombre": "operario 2", "gam": 45000.0, "fueraGam": 55000.0}, {"nombre": "operario 3", "gam": 45000.0, "fueraGam": 55000.0}], "costos": [{"nombre": "transporte gam", "monto": 35000.0}, {"nombre": "fuera gam", "monto": 70000.0}, {"nombre": "comidas", "monto": 4500.0}, {"nombre": "chofer gam", "monto": 25000.0}, {"nombre": "chofer fuera gam", "monto": 40000.0}, {"nombre": "camion gam", "monto": 30000.0}], "insumosPct": {"densificado": 15, "crystal": 20, "pulidos": 25}, "pcts": {"margen": 35, "comision": 10}}, "equipos": {"categorias": [{"nombre": "Equipos Excalibur", "moneda": "CRC", "items": [{"nombre": "Plancha Vibratoria motor honda 160GX", "sinIva": 433628.32}, {"nombre": "Compactador de bota motor Robin Subaru EH12", "sinIva": 774336.28}, {"nombre": "Sierra de corte disco de hasta 18 pulgadas motor honda 390GX", "sinIva": 707964.6}]}, {"nombre": "Equipos Dynamic", "moneda": "CRC", "items": [{"nombre": "Alisadora de concreto 36\" motor honda 270 GX", "sinIva": 884955.75}, {"nombre": "Alisadora de concreto 24\" motor honda 160 GX", "sinIva": 707964.6}, {"nombre": "Manguera 1 pulgada, 4mts", "sinIva": 79646.02}, {"nombre": "Manguera 1,5 pulgadas, 4mts", "sinIva": 88495.58}, {"nombre": "Manguera 2 pulgadas, 4mts", "sinIva": 97345.13}, {"nombre": "Vibrador de concreto con punta de 1 pulgada", "sinIva": 176991.15}, {"nombre": "Vibrador de concreto con punta de 1,5 pulgadas", "sinIva": 185840.71}, {"nombre": "Vibrador de concreto con punta de 2 pulgadas", "sinIva": 194690.27}, {"nombre": "Sierra Soffcut motor Honda GX160", "sinIva": 1250000.0}]}, {"nombre": "Insumos", "moneda": "CRC", "items": [{"nombre": "Flotas 1,5 mts largo, con cabeza móvil y 3 tubos (Dynamic)", "sinIva": 243362.83}, {"nombre": "Aspas de lujado 24” juego de 4 unidades", "sinIva": 17699.12}, {"nombre": "Aspas de lujado 36” combi juego de 4 unidades", "sinIva": 22123.89}, {"nombre": "Aspas de lujado 36” rectangulares juego de 4 unidades", "sinIva": 19469.03}, {"nombre": "Aspas de lujado 42” combi juego de 4 unidades", "sinIva": 26548.67}, {"nombre": "Aspas de lujado 42” rectangulares juego de 4 unidades", "sinIva": 23893.81}, {"nombre": "Aspas de Nylon 36” juego de 4 unidades", "sinIva": 75000.0}, {"nombre": "Disco de corte de concreto punta diamante 14\" para Sierra de corte", "sinIva": 48672.57}, {"nombre": "Disco de corte de concreto punta diamante 16\" para Sierra de corte", "sinIva": 57522.12}, {"nombre": "Disco de corte de concreto punta diamante 18\" para Sierra de corte", "sinIva": 79646.02}, {"nombre": "Disco de corte de concreto soffcut de 6\" CON guía metálica", "sinIva": 53097.35}, {"nombre": "Disco de corte de concreto soffcut de 6\" SIN guía metálica", "sinIva": 35398.23}, {"nombre": "Fichas pulido flexibles 4” en grid de 50, 100, 200, 400, 800 y 1500", "sinIva": 4867.26}, {"nombre": "Fichas pulido flexibles 5” en grid de 50, 100, 200, 400, 800 y 1500", "sinIva": 5309.73}, {"nombre": "Fichas pulido metálicas 4” en grid de 30, 60 y 120", "sinIva": 26548.67}, {"nombre": "Fichas pulido rígidas 4” en grid de 50, 100, 200, 400, 800 y 1500", "sinIva": 7079.65}, {"nombre": "Fichas pulido rígidas 8” en grid de 50, 100, 200, 400, 800 y 1500", "sinIva": 21238.94}, {"nombre": "Plato de 24” alisador de concreto", "sinIva": 44247.79}, {"nombre": "Plato de 36” alisador de concreto", "sinIva": 48672.57}, {"nombre": "Plato de 36” alisador DOBLE de concreto", "sinIva": 53097.35}, {"nombre": "Plato de 42” alisador de concreto", "sinIva": 53097.35}, {"nombre": "Plato de 42” alisador DOBLE de concreto", "sinIva": 53097.35}, {"nombre": "Curador transparente 5 galones", "sinIva": 20353.98}, {"nombre": "Curador transparente estañón", "sinIva": 132743.36}, {"nombre": "Densificador concreto 5 galones", "sinIva": 53097.35}, {"nombre": "Densificador concreto estañón", "sinIva": 331858.41}, {"nombre": "Cristalizante pisos kit 2 cubetas", "sinIva": 175000.0}, {"nombre": "Cristalizante pisos kit 1 cubeta", "sinIva": 97345.13}]}, {"nombre": "Item Repuesto/Consumible", "moneda": "CRC", "items": [{"nombre": "Acelerador Brincon", "sinIva": 13274.34}, {"nombre": "Abanico ventilador motor GX160", "sinIva": 7522.12}, {"nombre": "Acelerador plancha", "sinIva": 8849.56}, {"nombre": "Apagador vibrador", "sinIva": 17699.12}, {"nombre": "Arrancador motor GX160", "sinIva": 17699.12}, {"nombre": "Base para plancha compactadora", "sinIva": 57522.12}, {"nombre": "Botón on/off GX160", "sinIva": 4867.26}, {"nombre": "Caja rotador plancha", "sinIva": 66371.68}, {"nombre": "Carbones vibrador", "sinIva": 6637.17}, {"nombre": "Carburador GX160", "sinIva": 28318.58}, {"nombre": "Carburador GX270", "sinIva": 39823.01}, {"nombre": "Clutch brincon", "sinIva": 30973.45}, {"nombre": "Cobertor de bota Brincon", "sinIva": 44247.79}, {"nombre": "Cobertor Faja Plancha", "sinIva": 26548.67}, {"nombre": "Cobertor motor GX160", "sinIva": 22123.89}, {"nombre": "Cobertor superficial Brincon", "sinIva": 35398.23}, {"nombre": "Codal magnesio 3 mts", "sinIva": 53097.35}, {"nombre": "Dientes texturizador ( 30 unidades)", "sinIva": 26548.67}, {"nombre": "Engranes internos compactador de bota", "sinIva": 39823.01}, {"nombre": "Filtro aire brincon", "sinIva": 15486.73}, {"nombre": "Hules (2 unidades) para base de plancha (precio 2 unidades)", "sinIva": 13274.34}, {"nombre": "Mufla Brincon", "sinIva": 26548.67}, {"nombre": "Base para mufla de brincon", "sinIva": 26548.67}, {"nombre": "Tanque agua de Plancha", "sinIva": 39823.01}, {"nombre": "Tanque Combustible brincon", "sinIva": 35398.23}, {"nombre": "Zapata brincon", "sinIva": 39823.01}]}, {"nombre": "Herramienta manual", "moneda": "CRC", "items": [{"nombre": "Adaptador de MARIPOSA con rosca PEQUEÑA A PIN", "sinIva": 9292.04}, {"nombre": "Adaptador de rosca tradicional con Hembra a PIN", "sinIva": 15929.2}, {"nombre": "Adaptador de rosca tradicional con MACHO a PIN", "sinIva": 17699.12}, {"nombre": "Bump Cutter de 3m con cabeza móvil y 3 tubos (1.82 m c/u)", "sinIva": 221238.94}, {"nombre": "Cabeza fija tipo Bull Float 8805", "sinIva": 17699.12}, {"nombre": "Cabeza fija tipo Bull Float 8806", "sinIva": 17699.12}, {"nombre": "Cabeza fija tipo Bull Float 8807", "sinIva": 22123.89}, {"nombre": "Cabeza fija tipo Bull Float 8808", "sinIva": 22123.89}, {"nombre": "Cabeza móvil tipo Rock and Roll", "sinIva": 26548.67}, {"nombre": "Cabeza móvil tipo Worm", "sinIva": 33185.84}, {"nombre": "Check Rod de 3m con cabeza móvil y 3 tubos (1.82 m c/u)", "sinIva": 221238.94}, {"nombre": "Clip para flota (doble boton) ( 5 UNIDADES MINIMO, precio de 5 unidades)", "sinIva": 15929.2}, {"nombre": "Escobon para concreto en aluminio 36\" (91.4cm), con cabeza fija y mango", "sinIva": 48672.57}, {"nombre": "Escobon para concreto en madera 80 cm, con mango", "sinIva": 44247.79}, {"nombre": "Flota de canal 3 m, con cabeza móvil y 3 tubos (1.82 m c/u)", "sinIva": 221238.94}, {"nombre": "Flota fina acabado acero azul 91.5 cm, solo flota sin cabeza ni tubos", "sinIva": 92920.35}, {"nombre": "Flota fina acabado acero azul 1.22m, solo flota sin cabeza ni tubos", "sinIva": 101769.91}, {"nombre": "Flota fina acabado acero azul 1.52m, solo flota sin cabeza ni tubos", "sinIva": 110619.47}, {"nombre": "Flota fina acabado acero azul 1.82m, solo flota sin cabeza ni tubos", "sinIva": 119469.03}, {"nombre": "Flota magnesio de 36\" (91.5 cm) X 8\" con 3 tubos (1.8 m c/u), cabeza móvil  y estuche", "sinIva": 163716.81}, {"nombre": "Flota magnesio de 48\" (1.22 m) X 8\" con 3 tubos (1.8 m c/u), cabeza móvil y estuche", "sinIva": 172566.37}, {"nombre": "Flota magnesio de 60\" (1.52 m) X 8\" con 3 tubos (1.8 m c/u), cabeza móvil  y estuche", "sinIva": 199115.04}, {"nombre": "Orillero manual, Acero azul 10 cm ancho, 15 cm largo, espiga de 1 cm prof.", "sinIva": 13274.34}, {"nombre": "Panchin de magnesio 40.5 cm largo", "sinIva": 17699.12}, {"nombre": "Panchin de magnesio 45.7 cm largo", "sinIva": 19469.03}, {"nombre": "Panchin de magnesio 50.8 cm largo", "sinIva": 21238.94}, {"nombre": "Raspador para limpieza piso 10 cm tamaño cabeza", "sinIva": 18141.59}, {"nombre": "Raspador para limpieza piso 35 cm tamaño cabeza", "sinIva": 26548.67}, {"nombre": "Rodillo para fibra o textura 91.5 cm largo, 12.7 cm ancho", "sinIva": 221238.94}, {"nombre": "Set de tensoras para Check Rod o Bump Cutter", "sinIva": 66371.68}, {"nombre": "Texturizador de 3/4\" espaciamiento, 36\" (91.5cm largo) cabeza fija y 2 tubos de 1.82 cm", "sinIva": 88495.58}, {"nombre": "Texturizador de 3/4\" espaciamiento, 48\" (1.22m largo) cabeza fija y 2 tubos de 1.82 cm", "sinIva": 119469.03}, {"nombre": "Tiburon con palo, 18cm X 11 cm, espiga de 3.2 cm, con 2 palos", "sinIva": 88495.58}, {"nombre": "Tiburon manual, 18cm X 11 cm, espiga de 2.54 cm", "sinIva": 48672.57}, {"nombre": "Tubo de aluminio para flota o otros de pin 1.83 m diametro de 1-3/4 pulgada", "sinIva": 13716.81}, {"nombre": "Zapatos con picos 30 cm x 14 cm con correa ajustable", "sinIva": 22123.89}]}, {"nombre": "Equipos bajo pedido especial", "moneda": "USD", "items": [{"nombre": "Laser screw grande LS", "sinIva": 102000.0}, {"nombre": "Laser screw pequeño LS", "sinIva": 42200.0}, {"nombre": "Codal Vibratorio (Motor, manillas y 6 m extensión total)", "sinIva": 3550.0}, {"nombre": "Extensión Codal Vibratorio (2m)", "sinIva": 750.0}, {"nombre": "Extensión Codal Vibratorio (1m)", "sinIva": 450.0}, {"nombre": "Helicoptero Doble QUM 65 (24 pulgadas)", "sinIva": 5350.0}, {"nombre": "Helicoptero Doble QUM 78 (36 pulgadas)", "sinIva": 8750.0}, {"nombre": "Helicoptero Doble QUM 80 (36 pulgadas)", "sinIva": 6300.0}, {"nombre": "Helicoptero Doble QUM 96 (46 pulgadas)", "sinIva": 11100.0}, {"nombre": "Helicoptero Doble hidráulico 78 (36 pulgadas)", "sinIva": 14750.0}, {"nombre": "Helicoptero Doble hidráulico 96 (46 pulgadas)", "sinIva": 17850.0}, {"nombre": "Sierra corte  500 (135kg)", "sinIva": 2250.0}, {"nombre": "Sierra corte 400 (122kg)", "sinIva": 2000.0}, {"nombre": "Pulidora alta 220v (pads, brillo)", "sinIva": 4050.0}, {"nombre": "Pulidora de baja a alta revolución 220v (fichas de resina o metálicas)", "sinIva": 5800.0}, {"nombre": "Escarificadora 250 (136 kg)", "sinIva": 2850.0}, {"nombre": "Escarificadora 300 (200kg)", "sinIva": 3900.0}, {"nombre": "Rodillo compactador sencillo (305kg)", "sinIva": 3450.0}, {"nombre": "Rodillo compactador doble (520kg)", "sinIva": 5200.0}, {"nombre": "Carro Rodillo compactador doble (2 ton)", "sinIva": 21000.0}, {"nombre": "Plancha 455kg", "sinIva": 5300.0}, {"nombre": "Plancha 180kg", "sinIva": 3250.0}, {"nombre": "Sptaryer de Mortero", "sinIva": 10500.0}, {"nombre": "Cargadora Compacta con balde", "sinIva": 45000.0}, {"nombre": "Brazo para cargadora compacta (backhoe)", "sinIva": 9750.0}, {"nombre": "Martillo (rompedor) para cargadora compacta", "sinIva": 6000.0}]}]}};
+
+function _pGet(k, def){
+  var v=(window._preciosCache||{})['precios_'+k];
+  return (v===undefined||v===null)?def:v;
+}
+function _pSet(k, val){
+  if(!window._preciosCache) window._preciosCache={};
+  window._preciosCache['precios_'+k]=val;
+  _saveToSupabase('precios_'+k, val, '');
+}
+function _pFmt(n, moneda){
+  n=parseFloat(n)||0;
+  if(moneda==='USD') return '$'+n.toLocaleString('es-CR',{maximumFractionDigits:2});
+  return '\u20A1'+Math.round(n).toLocaleString('es-CR');
+}
+var _preciosView='';
+function initPreciosTab(rootId){
+  var root=document.getElementById(rootId);
+  if(!root) return;
+  window._preciosRoot=rootId;
+  var isSA=SESSION&&SESSION.rol==='superadmin';
+  var tabs=isSA
+    ? [['coloc','🧮 Colocación'],['pulidos','🪞 Pulidos'],['ajustada','📋 Lista ajustada'],['equipos','🔧 Equipos'],['pub','📤 Publicadas'],['docs','📄 Documentos']]
+    : [['pub','📋 Listas de precios'],['docs','📄 Documentos']];
+  if(!_preciosView||!tabs.some(function(t){return t[0]===_preciosView;})) _preciosView=tabs[0][0];
+  root.innerHTML=
+    '<h1 class="page-title" style="margin-bottom:4px">📚 Precios e Información</h1>'
+    +(isSA?'<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Las calculadoras y variables son privadas — los usuarios autorizados solo ven Listas publicadas y Documentos.</div>':'<div style="margin-bottom:10px"></div>')
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">'
+    +tabs.map(function(t){
+      return '<button onclick="_preciosView=\''+t[0]+'\';initPreciosTab(\''+rootId+'\')" style="padding:7px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;border:1.5px solid '+(_preciosView===t[0]?'var(--red)':'var(--border)')+';background:'+(_preciosView===t[0]?'var(--red)':'var(--surface)')+';color:'+(_preciosView===t[0]?'#fff':'var(--text)')+'">'+t[1]+'</button>';
+    }).join('')
+    +'</div>'
+    +'<div id="precios-body"></div>';
+  var body=document.getElementById('precios-body');
+  if(_preciosView==='coloc'&&isSA) renderPreciosColoc(body);
+  else if(_preciosView==='pulidos'&&isSA) renderPreciosPulidos(body);
+  else if(_preciosView==='ajustada'&&isSA) renderPreciosAjustada(body);
+  else if(_preciosView==='equipos'&&isSA) renderPreciosEquipos(body);
+  else if(_preciosView==='pub') renderPreciosPublicadas(body);
+  else if(_preciosView==='docs') renderPreciosDocs(body);
+}
+
+// ── 🧮 CALCULADORA COLOCACIÓN ────────────────────────────────────────────────
+function _colocData(){ return _pGet('coloc', JSON.parse(JSON.stringify(PRECIOS_SEED.coloc))); }
+function renderPreciosColoc(body){
+  var d=_colocData();
+  var html='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px">'
+    +'<div style="font-weight:900;font-family:var(--cond);font-size:14px;margin-bottom:8px">Porcentajes de la cadena de precio</div>'
+    +'<div style="display:flex;gap:14px;flex-wrap:wrap">'
+    +[['equipos','Equipos %'],['impuestos','Impuestos %'],['margen','Margen %'],['comision','Comisión %']].map(function(p){
+      return '<label style="font-size:11px;font-weight:700">'+p[1]+'<br><input type="number" step="0.5" value="'+(d.pcts[p[0]]||0)+'" onchange="_colocSetPct(\''+p[0]+'\',this.value)" style="width:80px;padding:5px;border:1.5px solid var(--border);border-radius:6px;margin-top:2px"></label>';
+    }).join('')
+    +'</div>'
+    +'<div style="font-size:10px;color:var(--text3);margin-top:6px">Cadena: Subtotal → +Equipos% → +Impuestos% → +Margen% → Subtotal 2 → +Comisión% → Total → ₡/m² (área de referencia por rango: '+d.areasM2.join(' / ')+' m²)</div>'
+    +'</div>';
+  d.zonas.forEach(function(z,zi){
+    html+='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden">'
+      +'<div style="background:var(--gray-dark);color:#fff;padding:10px 14px;font-family:var(--cond);font-weight:900">📍 '+escHtml(z.zona)+'</div>'
+      +'<div style="overflow-x:auto"><table class="atbl" style="width:100%;font-size:11px"><thead><tr><th style="text-align:left">Rubro</th>';
+    d.rangos.forEach(function(r){ html+='<th colspan="2" style="text-align:center">'+escHtml(r)+'</th>'; });
+    html+='</tr><tr><th></th>';
+    d.rangos.forEach(function(){ html+='<th style="font-size:9px">Pers.</th><th style="font-size:9px">Monto ₡</th>'; });
+    html+='</tr></thead><tbody>';
+    z.filas.forEach(function(f,fi){
+      html+='<tr><td style="font-weight:800">'+escHtml(f.nombre)+'</td>';
+      f.valores.forEach(function(v,vi){
+        html+='<td><input type="number" value="'+(v.p||0)+'" onchange="_colocSetCell('+zi+','+fi+','+vi+',\'p\',this.value)" style="width:44px;padding:3px;border:1px solid var(--border);border-radius:4px;font-size:10px"></td>'
+          +'<td><input type="number" value="'+(v.m||0)+'" onchange="_colocSetCell('+zi+','+fi+','+vi+',\'m\',this.value)" style="width:82px;padding:3px;border:1px solid var(--border);border-radius:4px;font-size:10px"></td>';
+      });
+      html+='</tr>';
+    });
+    // Cadena calculada
+    var subt=[0,0,0,0,0];
+    z.filas.forEach(function(f){ f.valores.forEach(function(v,vi){ subt[vi]+=(parseFloat(v.m)||0); }); });
+    var chain=function(label,vals,color){
+      var h='<tr style="background:var(--surface2)"><td style="font-weight:900;color:'+color+'">'+label+'</td>';
+      vals.forEach(function(v){ h+='<td></td><td style="font-family:var(--cond);font-weight:900;color:'+color+';white-space:nowrap">'+_pFmt(v)+'</td>'; });
+      return h+'</tr>';
+    };
+    var eq=subt.map(function(s){return s*d.pcts.equipos/100;});
+    var im=subt.map(function(s){return s*d.pcts.impuestos/100;});
+    var mg=subt.map(function(s){return s*d.pcts.margen/100;});
+    var st2=subt.map(function(s,i){return s+eq[i]+im[i]+mg[i];});
+    var co=st2.map(function(s){return s*d.pcts.comision/100;});
+    var tot=st2.map(function(s,i){return s+co[i];});
+    html+=chain('Subtotal',subt,'var(--text)');
+    html+=chain('Equipos '+d.pcts.equipos+'%',eq,'var(--text3)');
+    html+=chain('Impuestos '+d.pcts.impuestos+'%',im,'var(--text3)');
+    html+=chain('Margen '+d.pcts.margen+'%',mg,'var(--text3)');
+    html+=chain('Subtotal 2',st2,'var(--blue)');
+    html+=chain('Comisión '+d.pcts.comision+'%',co,'var(--text3)');
+    html+=chain('TOTAL',tot,'var(--red)');
+    var h2='<tr style="background:rgba(22,163,74,.08)"><td style="font-weight:900;color:var(--green)">₡ / m²</td>';
+    tot.forEach(function(t,i){ var a=d.areasM2[i]||1; h2+='<td></td><td style="font-family:var(--cond);font-weight:900;color:var(--green)">'+_pFmt(t/a)+'</td>'; });
+    html+=h2+'</tr></tbody></table></div></div>';
+  });
+  body.innerHTML=html;
+}
+function _colocSetPct(k,v){
+  var d=_colocData(); d.pcts[k]=parseFloat(v)||0; _pSet('coloc',d);
+  initPreciosTab(window._preciosRoot);
+}
+function _colocSetCell(zi,fi,vi,campo,v){
+  var d=_colocData(); d.zonas[zi].filas[fi].valores[vi][campo]=parseFloat(v)||0; _pSet('coloc',d);
+  initPreciosTab(window._preciosRoot);
+}
+
+// ── 🪞 PULIDOS ───────────────────────────────────────────────────────────────
+function _pulidosData(){ return _pGet('pulidos', JSON.parse(JSON.stringify(PRECIOS_SEED.pulidos))); }
+function renderPreciosPulidos(body){
+  var d=_pulidosData();
+  var editList=function(titulo,arr,campos,fnKey){
+    var h='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:12px;flex:1;min-width:250px">'
+      +'<div style="font-weight:900;font-family:var(--cond);margin-bottom:6px">'+titulo+'</div><table style="width:100%;font-size:11px">';
+    arr.forEach(function(item,i){
+      h+='<tr><td style="font-weight:700;padding:2px">'+escHtml(item.nombre)+'</td>';
+      campos.forEach(function(cp){
+        h+='<td style="padding:2px"><input type="number" value="'+(item[cp]||0)+'" onchange="_pulidosSetItem(\''+fnKey+'\','+i+',\''+cp+'\',this.value)" style="width:78px;padding:3px;border:1px solid var(--border);border-radius:4px;font-size:10px"></td>';
+      });
+      h+='</tr>';
+    });
+    return h+'</table></div>';
+  };
+  var html='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px">'
+    +editList('Rendimientos (m²/día)',d.rendimientos,['m2dia'],'rendimientos')
+    +editList('Personal (₡/día) — GAM / Fuera GAM',d.personal,['gam','fueraGam'],'personal')
+    +editList('Costos por día',d.costos,['monto'],'costos')
+    +'<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:12px;min-width:230px">'
+    +'<div style="font-weight:900;font-family:var(--cond);margin-bottom:6px">Insumos % y cadena</div>'
+    +'<table style="font-size:11px">'
+    +Object.keys(d.insumosPct).map(function(k){
+      return '<tr><td style="font-weight:700;padding:2px">Insumos '+k+' %</td><td><input type="number" value="'+d.insumosPct[k]+'" onchange="_pulidosSetPct(\'insumosPct\',\''+k+'\',this.value)" style="width:60px;padding:3px;border:1px solid var(--border);border-radius:4px"></td></tr>';
+    }).join('')
+    +'<tr><td style="font-weight:700;padding:2px">Margen %</td><td><input type="number" value="'+d.pcts.margen+'" onchange="_pulidosSetPct(\'pcts\',\'margen\',this.value)" style="width:60px;padding:3px;border:1px solid var(--border);border-radius:4px"></td></tr>'
+    +'<tr><td style="font-weight:700;padding:2px">Comisión %</td><td><input type="number" value="'+d.pcts.comision+'" onchange="_pulidosSetPct(\'pcts\',\'comision\',this.value)" style="width:60px;padding:3px;border:1px solid var(--border);border-radius:4px"></td></tr>'
+    +'</table></div></div>';
+  // Tabla calculada GAM y Fuera GAM
+  ['gam','fueraGam'].forEach(function(zona){
+    var persSum=d.personal.reduce(function(s,p){return s+(parseFloat(p[zona])||0);},0);
+    var cost=function(n){ var it=d.costos.find(function(x){return x.nombre.toLowerCase().indexOf(n)>=0&&(zona==='gam'?x.nombre.toLowerCase().indexOf('fuera')<0:x.nombre.toLowerCase().indexOf('fuera')>=0);}); return it?it.monto:0; };
+    var base=persSum+cost('transporte')+cost('camion')+cost('chofer');
+    var html2='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden">'
+      +'<div style="background:var(--gray-dark);color:#fff;padding:9px 14px;font-family:var(--cond);font-weight:900">'+(zona==='gam'?'📍 GAM':'📍 Fuera GAM')+' — costo base/día: '+_pFmt(base)+' (personal '+_pFmt(persSum)+' + transporte + camión + chofer)</div>'
+      +'<div style="overflow-x:auto"><table class="atbl" style="width:100%;font-size:11px"><thead><tr><th style="text-align:left">Actividad</th><th>Rend. m²/día</th><th>Insumos</th><th>Subtotal</th><th>Margen '+d.pcts.margen+'%</th><th>Subtotal 2</th><th>Comisión '+d.pcts.comision+'%</th><th>Total/día</th><th style="color:var(--green)">₡/m²</th></tr></thead><tbody>';
+    d.rendimientos.forEach(function(r){
+      var nm=r.nombre.toLowerCase();
+      var insK=nm.indexOf('densificado')>=0?'densificado':(nm.indexOf('crystal')>=0?'crystal':'pulidos');
+      var ins=base*(d.insumosPct[insK]||0)/100;
+      var st=base+ins, mg=st*d.pcts.margen/100, st2=st+mg, co=st2*d.pcts.comision/100, tot=st2+co;
+      var m2=parseFloat(r.m2dia)||1;
+      html2+='<tr><td style="font-weight:800">'+escHtml(r.nombre)+'</td><td style="text-align:center">'+m2+'</td>'
+        +'<td>'+_pFmt(ins)+'</td><td>'+_pFmt(st)+'</td><td>'+_pFmt(mg)+'</td><td>'+_pFmt(st2)+'</td><td>'+_pFmt(co)+'</td>'
+        +'<td style="font-weight:900;color:var(--red)">'+_pFmt(tot)+'</td>'
+        +'<td style="font-weight:900;color:var(--green)">'+_pFmt(tot/m2)+'</td></tr>';
+    });
+    html+=html2+'</tbody></table></div></div>';
+  });
+  body.innerHTML=html;
+}
+function _pulidosSetItem(key,i,campo,v){
+  var d=_pulidosData(); d[key][i][campo]=parseFloat(v)||0; _pSet('pulidos',d); initPreciosTab(window._preciosRoot);
+}
+function _pulidosSetPct(grupo,k,v){
+  var d=_pulidosData(); d[grupo][k]=parseFloat(v)||0; _pSet('pulidos',d); initPreciosTab(window._preciosRoot);
+}
+
+// ── 📋 LISTA AJUSTADA (la que se publica) ───────────────────────────────────
+function _ajustadaData(){ return _pGet('ajustada', JSON.parse(JSON.stringify(PRECIOS_SEED.ajustada))); }
+function renderPreciosAjustada(body){
+  var d=_ajustadaData();
+  var html='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">'
+    +'<div style="font-size:11px;color:var(--text3)">Esta es la lista curada que se publica a los usuarios. Edite valores y nombres a mano; use la calculadora como referencia.</div>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button onclick="_ajustadaAddSeccion()" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:12px">➕ Sección</button>'
+    +'<button onclick="publicarLista(\'coloc\')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-weight:800;cursor:pointer;font-size:12px">📤 Publicar lista de colocación</button>'
+    +'</div></div>';
+  d.secciones.forEach(function(s,si){
+    html+='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden">'
+      +'<div style="background:var(--gray-dark);padding:8px 12px;display:flex;gap:8px;align-items:center">'
+      +'<input value="'+escHtml(s.titulo)+'" onchange="_ajustadaSet('+si+',-1,-1,\'titulo\',this.value)" style="flex:1;background:transparent;border:none;color:#fff;font-family:var(--cond);font-weight:900;font-size:14px">'
+      +'<button onclick="_ajustadaAddFila('+si+')" style="background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">➕ Fila</button>'
+      +'<button onclick="_ajustadaDelSeccion('+si+')" style="background:rgba(239,68,68,.3);border:none;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">🗑</button>'
+      +'</div><div style="overflow-x:auto"><table class="atbl" style="width:100%;font-size:11px"><thead><tr><th style="text-align:left;min-width:200px">Concepto</th>';
+    for(var ci2=0;ci2<6;ci2++){
+      html+='<th><input value="'+escHtml((s.columnas&&s.columnas[ci2])||'')+'" onchange="_ajustadaSetCol('+si+','+ci2+',this.value)" placeholder="Columna" style="width:110px;padding:3px;border:1px solid var(--border);border-radius:4px;font-size:9px;text-align:center"></th>';
+    }
+    html+='<th></th></tr></thead><tbody>';
+    s.filas.forEach(function(f,fi){
+      html+='<tr><td><input value="'+escHtml(f.nombre)+'" onchange="_ajustadaSet('+si+','+fi+',-1,\'nombre\',this.value)" style="width:100%;min-width:190px;padding:4px;border:1px solid var(--border);border-radius:4px;font-weight:700;font-size:11px"></td>';
+      for(var vi2=0;vi2<6;vi2++){
+        var val=(f.valores&&f.valores[vi2]!==undefined)?f.valores[vi2]:'';
+        html+='<td><input value="'+escHtml(String(val))+'" onchange="_ajustadaSet('+si+','+fi+','+vi2+',\'valor\',this.value)" style="width:105px;padding:4px;border:1px solid var(--border);border-radius:4px;font-size:11px;text-align:right"></td>';
+      }
+      html+='<td><button onclick="_ajustadaDelFila('+si+','+fi+')" style="background:none;border:none;color:var(--red);cursor:pointer">✕</button></td></tr>';
+    });
+    html+='</tbody></table></div></div>';
+  });
+  body.innerHTML=html;
+}
+function _ajustadaSet(si,fi,vi,campo,v){
+  var d=_ajustadaData();
+  if(campo==='titulo') d.secciones[si].titulo=v;
+  else if(campo==='nombre') d.secciones[si].filas[fi].nombre=v;
+  else if(campo==='valor'){
+    if(!d.secciones[si].filas[fi].valores) d.secciones[si].filas[fi].valores=[];
+    var num=parseFloat(String(v).replace(/[^0-9.\-]/g,''));
+    d.secciones[si].filas[fi].valores[vi]=(v===''?'':(isNaN(num)?v:num));
+  }
+  _pSet('ajustada',d);
+}
+function _ajustadaSetCol(si,ci,v){
+  var d=_ajustadaData();
+  if(!d.secciones[si].columnas) d.secciones[si].columnas=[];
+  d.secciones[si].columnas[ci]=v; _pSet('ajustada',d);
+}
+function _ajustadaAddFila(si){
+  var d=_ajustadaData(); d.secciones[si].filas.push({nombre:'Nuevo concepto',valores:['','','','','','']});
+  _pSet('ajustada',d); initPreciosTab(window._preciosRoot);
+}
+function _ajustadaDelFila(si,fi){
+  var d=_ajustadaData(); d.secciones[si].filas.splice(fi,1); _pSet('ajustada',d); initPreciosTab(window._preciosRoot);
+}
+function _ajustadaAddSeccion(){
+  var d=_ajustadaData(); d.secciones.push({titulo:'Nueva sección',columnas:['','','','','',''],filas:[]});
+  _pSet('ajustada',d); initPreciosTab(window._preciosRoot);
+}
+function _ajustadaDelSeccion(si){
+  if(!confirm('¿Eliminar esta sección completa?')) return;
+  var d=_ajustadaData(); d.secciones.splice(si,1); _pSet('ajustada',d); initPreciosTab(window._preciosRoot);
+}
+
+// ── 🔧 EQUIPOS ───────────────────────────────────────────────────────────────
+function _equiposData(){ return _pGet('equipos', JSON.parse(JSON.stringify(PRECIOS_SEED.equipos))); }
+function renderPreciosEquipos(body){
+  var d=_equiposData();
+  var html='<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">'
+    +'<div style="font-size:11px;color:var(--text3)">Precio SIN IVA editable — CON IVA (+13%) y Tasa 0 (CON IVA +10%) se calculan solos.</div>'
+    +'<div style="display:flex;gap:8px">'
+    +'<button onclick="_equiposAddCat()" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:12px">➕ Categoría</button>'
+    +'<button onclick="publicarLista(\'equipos\')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-weight:800;cursor:pointer;font-size:12px">📤 Publicar lista de equipos</button>'
+    +'</div></div>';
+  d.categorias.forEach(function(cat,ci){
+    html+='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden">'
+      +'<div style="background:var(--gray-dark);padding:8px 12px;display:flex;gap:8px;align-items:center">'
+      +'<input value="'+escHtml(cat.nombre)+'" onchange="_equiposSetCat('+ci+',\'nombre\',this.value)" style="flex:1;background:transparent;border:none;color:#fff;font-family:var(--cond);font-weight:900;font-size:14px">'
+      +'<select onchange="_equiposSetCat('+ci+',\'moneda\',this.value)" style="border-radius:6px;padding:3px 6px;font-size:11px"><option value="CRC"'+(cat.moneda==='CRC'?' selected':'')+'>₡ Colones</option><option value="USD"'+(cat.moneda==='USD'?' selected':'')+'>$ Dólares</option></select>'
+      +'<button onclick="_equiposAddItem('+ci+')" style="background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">➕ Ítem</button>'
+      +'<button onclick="_equiposDelCat('+ci+')" style="background:rgba(239,68,68,.3);border:none;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11px">🗑</button>'
+      +'</div><div style="overflow-x:auto"><table class="atbl" style="width:100%;font-size:11px"><thead><tr><th style="text-align:left">Ítem ('+cat.items.length+')</th><th>Precio SIN IVA</th><th>CON IVA (+13%)</th><th>Tasa 0 (+10%)</th><th></th></tr></thead><tbody>';
+    cat.items.forEach(function(it,ii){
+      var sin=parseFloat(it.sinIva)||0, con=sin*1.13, t0=con*1.10;
+      html+='<tr><td><input value="'+escHtml(it.nombre)+'" onchange="_equiposSetItem('+ci+','+ii+',\'nombre\',this.value)" style="width:100%;min-width:240px;padding:4px;border:1px solid var(--border);border-radius:4px;font-size:11px"></td>'
+        +'<td><input type="number" step="0.01" value="'+sin+'" onchange="_equiposSetItem('+ci+','+ii+',\'sinIva\',this.value)" style="width:110px;padding:4px;border:1px solid var(--border);border-radius:4px;text-align:right"></td>'
+        +'<td style="font-family:var(--cond);font-weight:800;color:var(--blue)">'+_pFmt(con,cat.moneda)+'</td>'
+        +'<td style="font-family:var(--cond);font-weight:800;color:var(--amber,#d97706)">'+_pFmt(t0,cat.moneda)+'</td>'
+        +'<td><button onclick="_equiposDelItem('+ci+','+ii+')" style="background:none;border:none;color:var(--red);cursor:pointer">✕</button></td></tr>';
+    });
+    html+='</tbody></table></div></div>';
+  });
+  body.innerHTML=html;
+}
+function _equiposSetCat(ci,campo,v){ var d=_equiposData(); d.categorias[ci][campo]=v; _pSet('equipos',d); if(campo==='moneda') initPreciosTab(window._preciosRoot); }
+function _equiposSetItem(ci,ii,campo,v){
+  var d=_equiposData(); d.categorias[ci].items[ii][campo]=(campo==='sinIva'?(parseFloat(v)||0):v);
+  _pSet('equipos',d); if(campo==='sinIva') initPreciosTab(window._preciosRoot);
+}
+function _equiposAddItem(ci){ var d=_equiposData(); d.categorias[ci].items.push({nombre:'Nuevo ítem',sinIva:0}); _pSet('equipos',d); initPreciosTab(window._preciosRoot); }
+function _equiposDelItem(ci,ii){ var d=_equiposData(); d.categorias[ci].items.splice(ii,1); _pSet('equipos',d); initPreciosTab(window._preciosRoot); }
+function _equiposAddCat(){ var d=_equiposData(); d.categorias.push({nombre:'Nueva categoría',moneda:'CRC',items:[]}); _pSet('equipos',d); initPreciosTab(window._preciosRoot); }
+function _equiposDelCat(ci){ if(!confirm('¿Eliminar la categoría completa?')) return; var d=_equiposData(); d.categorias.splice(ci,1); _pSet('equipos',d); initPreciosTab(window._preciosRoot); }
+
+// ── 📤 PUBLICAR + VISTA PUBLICADA + PDF ─────────────────────────────────────
+function publicarLista(cual){
+  var snap={publishedAt:new Date().toISOString(),by:SESSION.nombre||SESSION.id};
+  if(cual==='coloc') snap.data=_ajustadaData();
+  else snap.data=_equiposData();
+  _pSet('pub_'+cual, snap);
+  toast('📤 Lista publicada — los usuarios autorizados ya ven esta versión');
+}
+function _pubHtml(cual){
+  var pub=_pGet('pub_'+cual,null);
+  if(!pub) return '<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Aún no se ha publicado esta lista.</div>';
+  var h='<div style="font-size:10px;color:var(--text3);margin-bottom:8px">Publicada: '+formatDate(parseDate(pub.publishedAt.split('T')[0]))+' por '+escHtml(pub.by||'')+'</div>';
+  if(cual==='coloc'){
+    var d=pub.data;
+    h+='<div style="font-family:var(--cond);font-weight:900;font-size:18px;margin-bottom:10px">'+escHtml(d.titulo||'Lista de precios')+'</div>';
+    d.secciones.forEach(function(s){
+      h+='<div style="margin-bottom:14px"><div style="background:#E31837;color:#fff;padding:7px 12px;font-family:var(--cond);font-weight:900;border-radius:8px 8px 0 0">'+escHtml(s.titulo)+'</div>'
+        +'<table style="width:100%;border-collapse:collapse;font-size:11px;border:1px solid #ddd"><thead><tr><th style="text-align:left;padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">Concepto</th>';
+      (s.columnas||[]).forEach(function(col){ if(col) h+='<th style="padding:5px 8px;border:1px solid #ddd;background:#f5f5f5;font-size:9px">'+escHtml(col)+'</th>'; });
+      h+='</tr></thead><tbody>';
+      s.filas.forEach(function(f){
+        h+='<tr><td style="padding:5px 8px;border:1px solid #ddd;font-weight:700">'+escHtml(f.nombre)+'</td>';
+        (s.columnas||[]).forEach(function(col,i){
+          if(!col) return;
+          var v=(f.valores&&f.valores[i]!==undefined&&f.valores[i]!=='')?f.valores[i]:'';
+          h+='<td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:700">'+(typeof v==='number'?_pFmt(v):escHtml(String(v)))+'</td>';
+        });
+        h+='</tr>';
+      });
+      h+='</tbody></table></div>';
+    });
+  } else {
+    var de=pub.data;
+    h+='<div style="font-family:var(--cond);font-weight:900;font-size:18px;margin-bottom:10px">Lista de precios — Equipos e insumos</div>';
+    de.categorias.forEach(function(cat){
+      h+='<div style="margin-bottom:14px"><div style="background:#E31837;color:#fff;padding:7px 12px;font-family:var(--cond);font-weight:900;border-radius:8px 8px 0 0">'+escHtml(cat.nombre)+(cat.moneda==='USD'?' (US$)':'')+'</div>'
+        +'<table style="width:100%;border-collapse:collapse;font-size:11px;border:1px solid #ddd"><thead><tr><th style="text-align:left;padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">Ítem</th><th style="padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">Efectivo/Transf. SIN IVA</th><th style="padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">CON IVA</th><th style="padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">Tasa 0 (6 meses)</th></tr></thead><tbody>';
+      cat.items.forEach(function(it){
+        var sin=parseFloat(it.sinIva)||0;
+        h+='<tr><td style="padding:5px 8px;border:1px solid #ddd">'+escHtml(it.nombre)+'</td>'
+          +'<td style="padding:5px 8px;border:1px solid #ddd;text-align:right">'+_pFmt(sin,cat.moneda)+'</td>'
+          +'<td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:700">'+_pFmt(sin*1.13,cat.moneda)+'</td>'
+          +'<td style="padding:5px 8px;border:1px solid #ddd;text-align:right;font-weight:700">'+_pFmt(sin*1.13*1.10,cat.moneda)+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    });
+  }
+  return h;
+}
+function renderPreciosPublicadas(body){
+  body.innerHTML=
+    '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'
+    +'<button onclick="imprimirListaPDF(\'coloc\')" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:12px">🖨 PDF Colocación</button>'
+    +'<button onclick="imprimirListaPDF(\'equipos\')" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:12px">🖨 PDF Equipos</button>'
+    +'</div>'
+    +'<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px">'+_pubHtml('coloc')+'</div>'
+    +'<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px">'+_pubHtml('equipos')+'</div>';
+}
+function imprimirListaPDF(cual){
+  var w=window.open('','_blank');
+  if(!w){ toast('Permita ventanas emergentes para generar el PDF'); return; }
+  w.document.write('<html><head><title>CONCRE — Lista de precios</title>'
+    +'<style>body{font-family:Arial,sans-serif;padding:24px;color:#1a1a2e} table{page-break-inside:auto} tr{page-break-inside:avoid}</style>'
+    +'</head><body>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #E31837;padding-bottom:8px;margin-bottom:14px">'
+    +'<div style="font-size:22px;font-weight:900">CON<span style="color:#E31837">CRE</span></div>'
+    +'<div style="font-size:10px;color:#666">Generado: '+new Date().toLocaleDateString('es-CR')+'</div></div>'
+    +_pubHtml(cual)
+    +'</body></html>');
+  w.document.close();
+  setTimeout(function(){ w.print(); },400);
+}
+
+// ── 📄 DOCUMENTOS (Supabase Storage bucket "documentos") ────────────────────
+function renderPreciosDocs(body){
+  var docs=_pGet('docs',[]);
+  var isSA=SESSION&&SESSION.rol==='superadmin';
+  var html='';
+  if(isSA){
+    html+='<div style="background:var(--surface);border:1.5px dashed var(--border2);border-radius:12px;padding:16px;margin-bottom:14px;text-align:center">'
+      +'<div style="font-weight:800;margin-bottom:8px">📎 Subir documento (PDF, imagen, etc.)</div>'
+      +'<input type="file" id="precios-doc-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.docx" style="font-size:12px">'
+      +'<button onclick="subirPreciosDoc()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-weight:800;cursor:pointer;font-size:12px;margin-left:8px">⬆ Subir</button>'
+      +'<div id="precios-doc-status" style="font-size:11px;color:var(--text3);margin-top:6px"></div>'
+      +'</div>';
+  }
+  if(!docs.length){
+    html+='<div style="padding:20px;text-align:center;color:var(--text3);font-size:12px">Sin documentos aún.'+(isSA?' Suba manuales, fichas técnicas, listas en PDF, documentos de visitas a campo, etc.':'')+'</div>';
+  } else {
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">';
+    docs.forEach(function(doc,i){
+      var ico=doc.nombre.toLowerCase().endsWith('.pdf')?'📕':(doc.nombre.match(/\.(png|jpe?g|webp)$/i)?'🖼':'📄');
+      html+='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:12px;display:flex;gap:10px;align-items:center">'
+        +'<span style="font-size:26px">'+ico+'</span>'
+        +'<div style="flex:1;min-width:0"><div style="font-weight:800;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escHtml(doc.nombre)+'">'+escHtml(doc.nombre)+'</div>'
+        +'<div style="font-size:9px;color:var(--text3)">'+(doc.size?(Math.round(doc.size/1024)+' KB · '):'')+formatDate(parseDate((doc.uploadedAt||'').split('T')[0]))+'</div></div>'
+        +'<a href="'+doc.url+'" target="_blank" style="background:var(--blue);color:#fff;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;text-decoration:none">Ver</a>'
+        +(isSA?'<button onclick="borrarPreciosDoc('+i+')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px">🗑</button>':'')
+        +'</div>';
+    });
+    html+='</div>';
+  }
+  body.innerHTML=html;
+}
+async function subirPreciosDoc(){
+  var inp=document.getElementById('precios-doc-file');
+  var st=document.getElementById('precios-doc-status');
+  if(!inp||!inp.files||!inp.files[0]){ toast('Seleccione un archivo primero'); return; }
+  var file=inp.files[0];
+  if(file.size>50*1024*1024){ toast('Máximo 50 MB por archivo'); return; }
+  if(st) st.textContent='⏳ Subiendo '+file.name+'...';
+  try{
+    var path=Date.now()+'_'+file.name.replace(/[^a-zA-Z0-9._\-]/g,'_');
+    var r=await DB.storage.from('documentos').upload(path, file, {upsert:false});
+    if(r.error) throw r.error;
+    var pub=DB.storage.from('documentos').getPublicUrl(path);
+    var url=(pub&&pub.data&&pub.data.publicUrl)||'';
+    var docs=_pGet('docs',[]);
+    docs.unshift({id:'doc_'+Date.now(),nombre:file.name,path:path,url:url,size:file.size,
+      uploadedAt:new Date().toISOString(),by:SESSION.nombre||SESSION.id});
+    _pSet('docs',docs);
+    if(st) st.textContent='';
+    toast('✅ Documento subido');
+    initPreciosTab(window._preciosRoot);
+  }catch(e){
+    console.error('subirPreciosDoc:',e);
+    if(st) st.textContent='';
+    var msg=String((e&&e.message)||e);
+    if(msg.toLowerCase().indexOf('bucket')>=0||msg.toLowerCase().indexOf('not found')>=0){
+      toast('⚠ Falta crear el bucket "documentos" en Supabase Storage — vea las instrucciones entregadas');
+    } else {
+      toast('Error al subir: '+msg);
+    }
+  }
+}
+async function borrarPreciosDoc(i){
+  var docs=_pGet('docs',[]);
+  var doc=docs[i];
+  if(!doc) return;
+  if(!confirm('¿Eliminar el documento "'+doc.nombre+'"?')) return;
+  try{ await DB.storage.from('documentos').remove([doc.path]); }catch(e){ console.warn(e); }
+  docs.splice(i,1);
+  _pSet('docs',docs);
+  initPreciosTab(window._preciosRoot);
+  toast('Documento eliminado');
+}
+
 // ══════════════════════════════════════════════
 //  PESTAÑA PROYECTOS — catálogo central de proyectos (100% Supabase)
 // ══════════════════════════════════════════════
@@ -16260,6 +16696,7 @@ function renderProyectosList(){
 var USER_TAB_DEFS = [
   {id:'ventas',      label:'Ventas'},
   {id:'proyectos',   label:'Proyectos'},
+  {id:'precios',     label:'Precios e Información'},
   {id:'fondos',      label:'Fondos'},
   {id:'gastos',      label:'Gastos Proyecto'},
   {id:'horas',       label:'Horas y Planilla'},
@@ -16271,6 +16708,7 @@ var USER_TAB_DEFS = [
 var ADMIN_TAB_DEFS = [
   {id:'overview',       label:'Resumen'},
   {id:'proyectos',      label:'Proyectos'},
+  {id:'precios',        label:'Precios e Información'},
   {id:'users',          label:'Usuarios'},
   {id:'horas-admin',    label:'Horas/Planilla'},
   {id:'comisiones',     label:'Comisiones'},
@@ -23924,6 +24362,8 @@ window.initCalcCONCRE=initCalcCONCRE;
           <!-- LIQUIDACIONES SECTION -->
           <div id="sec-proyectos" class="admin-section"><div id="proyAdminRoot"></div></div>
 
+          <div id="sec-precios" class="admin-section"><div id="preciosAdminRoot"></div></div>
+
           <div id="sec-liquidaciones" class="admin-section">
           <div class="page-title">Liquidación de Proyectos</div>
 
@@ -25223,6 +25663,9 @@ window.initCalcCONCRE=initCalcCONCRE;
   </div><!-- /ventasModule -->
 
 <!-- GASTOS DE PROYECTO MODULE -->
+<div id="preciosUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
+  <div id="preciosUserRoot" style="flex:1;padding:16px 20px;width:100%;max-width:100%;box-sizing:border-box"></div>
+</div>
 <div id="proyectosUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
   <div id="proyectosUserRoot" style="flex:1;padding:16px 20px;width:100%;max-width:100%;box-sizing:border-box"></div>
 </div>
