@@ -1870,7 +1870,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260717011327';
+var APP_BUILD='20260721010753';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -8832,6 +8832,9 @@ function _saveSingleVenta(uid, v, mk){
     isUsd:v.isUsd||false, usd:v.usd||0, tcUsed:v.tcUsed||0, usdTotal:v.usdTotal||0,
     tieneInsumos:v.tieneInsumos||false, insDesc:v.insDesc||'', insMontoNum:v.insMontoNum||0,
     esTercero:v.esTercero||false, tercNombre:v.tercNombre||'', tercMonto:v.tercMonto||0,
+    pendPagada:v.pendPagada||false, pendEjecutada:v.pendEjecutada||false, pendCanceladaChk:v.pendCanceladaChk||false,
+    pendPagadaAt:v.pendPagadaAt||'', pendEjecutadaAt:v.pendEjecutadaAt||'', pendCanceladaAt:v.pendCanceladaAt||'',
+    pendResuelta:v.pendResuelta||false, pendResueltaAt:v.pendResueltaAt||'', pendOrigen:v.pendOrigen||'',
     tienePendiente:v.tienePendiente||false, pendMonto:v.pendMonto||0, pendCancelado:v.pendCancelado||'no',
     referido:v.referido||'', notas:v.notas||'', estado:v.estado||'activa',
     tieneMinimo:v.tieneMinimo||false, minimoArea:v.minimoArea||0,
@@ -8944,6 +8947,12 @@ async function loadVentasFromDB(uid,_rows){
         esTercero:editOverride.esTercero||row.es_tercero||false,
         tercNombre:editOverride.tercNombre||'',
         tercMonto:editOverride.tercMonto||0,
+        pendPagada:editOverride.pendPagada||false, pendEjecutada:editOverride.pendEjecutada||false,
+        pendCanceladaChk:editOverride.pendCanceladaChk||false,
+        pendPagadaAt:editOverride.pendPagadaAt||'', pendEjecutadaAt:editOverride.pendEjecutadaAt||'',
+        pendCanceladaAt:editOverride.pendCanceladaAt||'',
+        pendResuelta:editOverride.pendResuelta||false, pendResueltaAt:editOverride.pendResueltaAt||'',
+        pendOrigen:editOverride.pendOrigen||'',
         isUsd:editOverride.isUsd||row.is_usd||false,
         isUSD:editOverride.isUsd||row.is_usd||false,
         tcUsed:editOverride.tcUsed||row.tc_used||0,
@@ -9039,6 +9048,9 @@ async function loadVentasFromDB(uid,_rows){
       tipoPago:e.tipoPago||'CONTADO', pago:e.tipoPago||'CONTADO',
       plazoCredito:e.plazoCredito||0, comision:0,
       esTercero:e.esTercero||false, tercNombre:e.tercNombre||'', tercMonto:e.tercMonto||0,
+      pendPagada:e.pendPagada||false, pendEjecutada:e.pendEjecutada||false, pendCanceladaChk:e.pendCanceladaChk||false,
+      pendPagadaAt:e.pendPagadaAt||'', pendEjecutadaAt:e.pendEjecutadaAt||'', pendCanceladaAt:e.pendCanceladaAt||'',
+      pendResuelta:e.pendResuelta||false, pendResueltaAt:e.pendResueltaAt||'', pendOrigen:e.pendOrigen||'',
       isUsd:e.isUsd||false, isUSD:e.isUsd||false,
       tcUsed:e.tcUsed||0, usd:e.usd||0,
       depositoNum:'', notas:e.notas||'', estado:e.estado||'activa',
@@ -9079,7 +9091,17 @@ function setComisBase(uid,amount){
 
 // Calculate comision for a single venta line (no base deduction here)
 // Base deduction is applied at the MONTHLY TOTAL level
+// ── PROYECTOS PENDIENTES DE EJECUTAR ─────────────────────────────────────────
+// Una venta pendiente ACTIVA (aún no ejecutada) NO cuenta para comisión ni para
+// totales de ventas: el cliente podría cancelarla. Cuenta solo cuando el usuario
+// marca Pagada + Ejecutada (entonces se muda al mes de ejecución).
+function esPendienteActiva(v){
+  return !!(v && v.tienePendiente && v.pendCancelado!=='si' && !v.pendResuelta);
+}
+function vNoPend(v){ return !esPendienteActiva(v); }
+
 function calcComision(venta, fibraCosto){
+  if(esPendienteActiva(venta)) return 0; // pendiente no ejecutado: sin comisión aún
   const pid=normalizeProdId(venta.prodId);
   const cat=getCatalogo().find(function(c){return c.id===pid;})||{comis:5,tipo:'otros'};
   const subtotal=venta.subtotal||0;
@@ -9101,6 +9123,7 @@ function calcComision(venta, fibraCosto){
 }
 
 function getVentaNetBase(venta, fibraCosto){
+  if(esPendienteActiva(venta)) return 0; // pendiente no ejecutado: fuera de la base
   const pid=normalizeProdId(venta.prodId);
   const cat=getCatalogo().find(function(c){return c.id===pid;})||{comis:5,tipo:'otros'};
   const subtotal=venta.subtotal||0;
@@ -9383,6 +9406,9 @@ function cerrarVentaForm(){
   renderVentasUser();
 }
 function clearVentaForm(){
+  // Limpiar proyecto y cerrar su dropdown (evita residuos entre ventas)
+  var _cpEl=document.getElementById('vf-proyecto'); if(_cpEl) _cpEl.value='';
+  var _cpDd=document.getElementById('vf-proyecto-dropdown'); if(_cpDd) _cpDd.style.display='none';
   // Reset CRM client button
   var lbl=document.getElementById('vf-cliente-label');
   if(lbl){
@@ -9592,6 +9618,148 @@ function syncComisionToPlanilla(uid,saleYear,saleMonth,allVentas){
   _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
 }
 
+// ══ CUADRO DE PROYECTOS PENDIENTES DE EJECUTAR (usuario dueño) ══════════════
+function _pendBuscarVenta(uid, ventaId){
+  var vd=getVentasData(uid), out=null;
+  Object.keys(vd).forEach(function(mk){
+    var v=(vd[mk].ventas||[]).find(function(x){return x.id===ventaId;});
+    if(v&&!out) out={v:v, mk:mk, vd:vd};
+  });
+  return out;
+}
+function _pendNotifSuperadmins(icon,title,msg){
+  try{
+    getUsers().filter(function(u){return u.rol==='superadmin';}).forEach(function(sa){
+      addNotification(sa.id, icon, title, msg);
+    });
+  }catch(e){}
+}
+function renderPendExecList(){
+  var el=document.getElementById('v-pend-exec-list');
+  if(!el||!SESSION) return;
+  var uid=SESSION.id;
+  barrerPendientes48h(uid);
+  var vd=getVentasData(uid);
+  var cat=getCatalogo();
+  var rows=[];
+  var now=Date.now();
+  Object.keys(vd).sort().forEach(function(mk){
+    (vd[mk].ventas||[]).forEach(function(v){
+      var activa=esPendienteActiva(v);
+      var resueltaReciente=v.pendResuelta&&v.pendResueltaAt&&(now-new Date(v.pendResueltaAt).getTime())<48*3600*1000;
+      var canceladaReciente=v.pendCanceladaChk&&v.pendCanceladaAt&&(now-new Date(v.pendCanceladaAt).getTime())<48*3600*1000;
+      if(!activa&&!resueltaReciente&&!canceladaReciente) return;
+      rows.push({v:v,mk:mk,activa:activa,resuelta:resueltaReciente,cancelada:v.pendCanceladaChk});
+    });
+  });
+  if(!rows.length){
+    el.innerHTML='<div style="padding:14px;text-align:center;color:var(--text3);font-size:12px">Sin proyectos pendientes de ejecutar. Las ventas marcadas con 🔵 Proyecto pendiente aparecerán aquí hasta que se ejecuten.</div>';
+    return;
+  }
+  el.innerHTML=rows.map(function(r){
+    var v=r.v;
+    var p=cat.find(function(x){return x.id===normalizeProdId(v.prodId);})||{nombre:v.prodId};
+    var origen=r.mk.split('-');
+    var mesNombre=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(origen[1])-1]||'';
+    var estado='';
+    var checks='';
+    if(r.cancelada){
+      var hrs=Math.max(0,48-Math.floor((Date.now()-new Date(v.pendCanceladaAt).getTime())/3600000));
+      estado='<span style="font-size:10px;font-weight:800;color:var(--red)">✖ CANCELADA — se enviará a papelera en '+hrs+'h</span>';
+    } else if(r.resuelta){
+      estado='<span style="font-size:10px;font-weight:800;color:var(--green)">✅ EJECUTADA — sumada a ventas de este mes</span>';
+    } else {
+      checks='<label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">'
+        +'<input type="checkbox" '+(v.pendPagada?'checked':'')+' onchange="marcarPendCheck(\''+v.id+'\',\'pagada\',this)" style="width:14px;height:14px;accent-color:var(--green)">💰 Pagada</label>'
+        +'<label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">'
+        +'<input type="checkbox" '+(v.pendEjecutada?'checked':'')+' onchange="marcarPendCheck(\''+v.id+'\',\'ejecutada\',this)" style="width:14px;height:14px;accent-color:var(--blue)">🏗 Ejecutada</label>'
+        +'<label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;color:var(--red)">'
+        +'<input type="checkbox" onchange="marcarPendCheck(\''+v.id+'\',\'cancelada\',this)" style="width:14px;height:14px;accent-color:var(--red)">✖ Cancelada</label>';
+    }
+    return '<div style="display:flex;align-items:center;gap:12px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap;'
+      +(r.cancelada?'background:rgba(239,68,68,.05)':(r.resuelta?'background:rgba(22,163,74,.05)':''))+'">'
+      +'<div style="flex:1;min-width:180px">'
+        +'<div style="font-weight:800">'+escHtml(p.nombre)+' · '+escHtml(v.cliente||'—')+'</div>'
+        +'<div style="font-size:10px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+' · mes origen: '+mesNombre+' '+origen[0]
+        +(v.proyecto?' · '+escHtml(v.proyecto):'')+'</div>'
+      +'</div>'
+      +'<span style="font-family:var(--cond);font-weight:900;color:var(--blue);white-space:nowrap">'+fmt(v.subtotal)+'</span>'
+      +'<div style="display:flex;gap:10px;align-items:center">'+(checks||estado)+'</div>'
+      +'</div>';
+  }).join('');
+}
+function marcarPendCheck(ventaId, tipo, el){
+  var uid=SESSION.id;
+  var found=_pendBuscarVenta(uid, ventaId);
+  if(!found){ toast('Venta no encontrada'); return; }
+  var v=found.v;
+  var uName=SESSION.nombre||uid;
+  if(tipo==='cancelada'){
+    if(el.checked && !confirm('¿Marcar este proyecto como CANCELADO?\n\nLa venta se enviará a la papelera en 48 horas.')){ el.checked=false; return; }
+    v.pendCanceladaChk=el.checked;
+    v.pendCanceladaAt=el.checked?new Date().toISOString():'';
+    if(el.checked) _pendNotifSuperadmins('✖','Proyecto pendiente CANCELADO', uName+' marcó como cancelado el proyecto pendiente de '+(v.cliente||'')+' ('+fmt(v.subtotal)+'). Se enviará a papelera en 48h.');
+  } else if(tipo==='pagada'){
+    v.pendPagada=el.checked;
+    v.pendPagadaAt=el.checked?new Date().toISOString():'';
+    if(el.checked) _pendNotifSuperadmins('💰','Proyecto pendiente: pagado', uName+' marcó como PAGADO el proyecto pendiente de '+(v.cliente||'')+' ('+fmt(v.subtotal)+').');
+  } else if(tipo==='ejecutada'){
+    v.pendEjecutada=el.checked;
+    v.pendEjecutadaAt=el.checked?new Date().toISOString():'';
+    if(el.checked) _pendNotifSuperadmins('🏗','Proyecto pendiente: ejecutado', uName+' marcó como EJECUTADO el proyecto pendiente de '+(v.cliente||'')+' ('+fmt(v.subtotal)+').');
+  }
+  // ¿Se resuelve? Pagada + Ejecutada (y no cancelada) → mudar al mes actual y activar en cálculos
+  if(v.pendPagada && v.pendEjecutada && !v.pendCanceladaChk){
+    resolverVentaPendiente(uid, ventaId);
+  } else {
+    _saveSingleVenta(uid, v, found.mk);
+    renderPendExecList();
+  }
+}
+function resolverVentaPendiente(uid, ventaId){
+  var found=_pendBuscarVenta(uid, ventaId);
+  if(!found) return;
+  var v=found.v, mkOld=found.mk, vd=found.vd;
+  var hoy=todayCR();
+  var nowD=new Date();
+  var mkNew=nowD.getFullYear()+'-'+pad(nowD.getMonth()+1);
+  v.pendOrigen=mkOld;
+  v.pendResuelta=true;
+  v.pendResueltaAt=new Date().toISOString();
+  v.tienePendiente=false; // deja de ser pendiente: cuenta en ventas y comisión
+  v.fecha=hoy;            // se muda al mes/año de ejecución
+  if(mkNew!==mkOld){
+    var idx=(vd[mkOld].ventas||[]).findIndex(function(x){return x.id===ventaId;});
+    if(idx>=0) vd[mkOld].ventas.splice(idx,1);
+    if(!vd[mkNew]) vd[mkNew]={ventas:[],tc:(vd[mkOld]&&vd[mkOld].tc)||525,comisVerif:false};
+    vd[mkNew].ventas.push(v);
+    window._ventasCache[uid]=vd;
+  }
+  _saveSingleVenta(uid, v, mkNew);
+  var uName=SESSION.nombre||uid;
+  _pendNotifSuperadmins('✅','Proyecto pendiente EJECUTADO y sumado', uName+': el proyecto de '+(v.cliente||'')+' ('+fmt(v.subtotal)+') se ejecutó — sumado a ventas y comisión de este mes.');
+  toast('✅ Proyecto ejecutado — la venta ahora suma en ventas y comisión de este mes');
+  renderVentasUser();
+}
+function barrerPendientes48h(uid){
+  try{
+    var vd=getVentasData(uid);
+    var now=Date.now();
+    var aBorrar=[];
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(v){
+        if(v.pendCanceladaChk&&v.pendCanceladaAt&&(now-new Date(v.pendCanceladaAt).getTime())>=48*3600*1000){
+          aBorrar.push(v.id);
+        }
+      });
+    });
+    aBorrar.forEach(function(vid){
+      safeDeleteVenta(uid, vid);
+      _pendNotifSuperadmins('🗑','Proyecto cancelado enviado a papelera','Venta pendiente cancelada hace 48h — movida a la papelera (recuperable).');
+    });
+  }catch(e){ console.warn('barrerPendientes48h:',e); }
+}
+
 function delVenta(id){
   if(!confirm('¿Eliminar esta venta? El administrador será notificado y podrá revisarla.')) return;
   safeDeleteVenta(SESSION.id, id);
@@ -9601,6 +9769,7 @@ function delVenta(id){
 
 // ── RENDER USER ──
 function renderVentasUser(){
+  try{ renderPendExecList(); }catch(e){ console.error('renderPendExecList:',e); }
   if(!SESSION) return;
   const uid=SESSION.id;
   const mv=getMonthVentas(uid,VY,VM);
@@ -9617,12 +9786,12 @@ function renderVentasUser(){
   buildVentasMonthPills();
 
   // Totals
-  const totalVentas=ventas.reduce((s,v)=>s+v.subtotal,0);
+  const totalVentas=ventas.filter(vNoPend).reduce((s,v)=>s+v.subtotal,0);
   const totalNetBase=ventas.reduce(function(s,v){return s+getVentaNetBase(v,fibraCosto);},0);
   const rawComis=ventas.reduce(function(s,v){return s+calcComision(v,fibraCosto);},0);
   const baseDeduccion=getComisBase(SESSION.id);
   const totalComis=calcTotalComisionConBase(ventas,fibraCosto,SESSION.id);
-  const baseComis=ventas.reduce((s,v)=>s+Math.max(0,v.subtotal-(v.insMontoNum||0)),0);
+  const baseComis=ventas.filter(vNoPend).reduce((s,v)=>s+Math.max(0,v.subtotal-(v.insMontoNum||0)),0);
 
   const tv=document.getElementById('v-total-mes');
   if(tv) tv.textContent=fmt(totalVentas);
@@ -9948,7 +10117,7 @@ function renderResumenCategorias(allVentas, catMap){
       return false;
     });
     var cantidad=cvs.reduce(function(s,v){ return s+(parseFloat(v.cantidad)||0); },0);
-    var subtotal=cvs.reduce(function(s,v){ return s+(v.subtotal||0); },0);
+    var subtotal=cvs.filter(vNoPend).reduce(function(s,v){ return s+(v.subtotal||0); },0);
     // ejecutado = subtotal (ya está sin IVA — ivaAmt es separado en este sistema)
     var ejecutado=subtotal;
     var pendiente=cvs.filter(function(v){ return v.tienePendiente&&v.pendCancelado!=='si'; }).reduce(function(s,v){ return s+(v.pendMonto||0); },0);
@@ -10059,7 +10228,7 @@ function renderAdminVentas(){
   const cat=getCatalogo();
   const catMap=Object.fromEntries(cat.map(c=>[c.id,c]));
 
-  const totalV=allVentas.reduce((s,v)=>s+v.subtotal,0);
+  const totalV=allVentas.filter(vNoPend).reduce((s,v)=>s+v.subtotal,0);
   const totalComis=allVentas.reduce((s,v)=>s+calcComision(v,v.fibraCosto),0);
   const totalPend=allVentas.filter(v=>v.tienePendiente&&v.pendCancelado!=='si').reduce((s,v)=>s+v.pendMonto,0);
   const pendCount=allVentas.filter(v=>v.tienePendiente&&v.pendCancelado!=='si').length;
@@ -10436,7 +10605,7 @@ function renderComisVerifTable(users){
         verifKey=year+(type==='year'?'-all':'-total');
       }
       const fibraCosto=getFibraCosto(month,year);
-      const totalV=ventas.reduce(function(s,v){return s+v.subtotal;},0);
+      const totalV=ventas.filter(vNoPend).reduce(function(s,v){return s+v.subtotal;},0);
       const rawC=ventas.reduce(function(s,v){return s+calcComision(v,fibraCosto);},0);
       const baseDeducAdmin=getComisBase(u.id);
       const totalC=calcTotalComisionConBase(ventas,fibraCosto,u.id);
@@ -10531,17 +10700,39 @@ function toggleComisVerif(uid,key,chk){
 function renderPendingProjects(allVentas,catMap){
   const body=document.getElementById('av-pending-body');
   if(!body) return;
-  const pend=allVentas.filter(v=>v.tienePendiente&&v.pendCancelado!=='si');
+  // TODOS los meses y años (no solo el período seleccionado): los pendientes
+  // permanecen visibles hasta ejecutarse o eliminarse, sin importar cuándo se crearon.
+  var pend=[];
+  getUsers().forEach(function(u){
+    var vd=getVentasData(u.id)||{};
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(v){
+        if(esPendienteActiva(v)||v.pendCanceladaChk){
+          pend.push(Object.assign({uname:u.nombre||u.id},v));
+        }
+      });
+    });
+  });
+  pend.sort(function(a,b){ return (b.fecha||'').localeCompare(a.fecha||''); });
   body.innerHTML=pend.length?pend.map(v=>{
     const p=catMap[normalizeProdId(v.prodId)]||{nombre:v.prodId};
-    return '<tr style="background:rgba(37,99,235,.04)">'
+    // Estados marcados por el usuario dueño (informativos — independientes del control PAGO del superadmin)
+    var estados='';
+    if(v.pendCanceladaChk) estados+='<span style="font-size:9px;font-weight:800;color:var(--red);display:block">✖ Cancelada por usuario</span>';
+    else{
+      estados+=v.pendPagada?'<span style="font-size:9px;font-weight:800;color:var(--green);display:block">💰 Pagada (usuario)</span>':'';
+      estados+=v.pendEjecutada?'<span style="font-size:9px;font-weight:800;color:var(--blue);display:block">🏗 Ejecutada (usuario)</span>':'';
+      if(!estados) estados='<span style="font-size:9px;color:var(--text3);display:block">Sin avances del usuario</span>';
+    }
+    return '<tr style="background:'+(v.pendCanceladaChk?'rgba(239,68,68,.05)':'rgba(37,99,235,.04)')+'">'
       +'<td><strong>'+v.uname+'</strong></td>'
       +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+'</td>'
       +'<td>'+escHtml(v.cliente)+'</td>'
-      +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+getVentaDisplayNombre(v,catMap)+'</span></td>'
+      +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+getVentaDisplayNombre(v,catMap)+'</span>'
+        +'<div style="font-size:9px;color:var(--text3)">'+fmt(v.subtotal)+' subtotal</div></td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:var(--blue)">'+fmt(v.pendMonto)+'</td>'
-      +'<td><span class="vac-badge '+(v.pendCancelado==='si'?'approved':'pending')+'">'+
-      (v.pendCancelado==='si'?'Cancelado':'Pendiente')+'</span></td></tr>';
+      +'<td><span class="vac-badge '+(v.pendCanceladaChk?'rejected':'pending')+'">'+
+      (v.pendCanceladaChk?'Cancelado':'Pendiente')+'</span>'+estados+'</td></tr>';
   }).join(''):'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px">Sin proyectos pendientes de ejecutar</td></tr>';
 }
 
@@ -10769,7 +10960,7 @@ function exportVentasUser(){
   const fibraCosto=getFibraCosto(VM,VY);
   const cat=getCatalogo();
   const catMap=Object.fromEntries(cat.map(c=>[c.id,c]));
-  const totalV=ventas.reduce((s,v)=>s+v.subtotal,0);
+  const totalV=ventas.filter(vNoPend).reduce((s,v)=>s+v.subtotal,0);
   const totalNetBase=ventas.reduce(function(s,v){return s+getVentaNetBase(v,fibraCosto);},0);
   const rawComis=ventas.reduce(function(s,v){return s+calcComision(v,fibraCosto);},0);
   const baseDeduccion=getComisBase(SESSION.id);
@@ -10833,7 +11024,7 @@ function exportVentasUser(){
   '<div class="cb">'+
   '<div class="sum-grid">'+
   '<div class="sum-card"><div class="sum-label">Total ventas</div><div class="sum-val">'+fmt(totalV)+'</div></div>'+
-  '<div class="sum-card"><div class="sum-label">Base comisión</div><div class="sum-val" style="color:#2563eb">'+fmt(ventas.reduce((s,v)=>s+Math.max(0,v.subtotal-(v.insMontoNum||0)),0))+'</div></div>'+
+  '<div class="sum-card"><div class="sum-label">Base comisión</div><div class="sum-val" style="color:#2563eb">'+fmt(ventas.filter(vNoPend).reduce((s,v)=>s+Math.max(0,v.subtotal-(v.insMontoNum||0)),0))+'</div></div>'+
   '<div class="sum-card" style="background:rgba(26,158,92,.05);border-color:rgba(26,158,92,.25)"><div class="sum-label" style="color:#1a9e5c">Comisión estimada</div><div class="sum-val" style="color:#1a9e5c">'+fmt(totalComis)+'</div><div style="font-size:10px;color:#9a9b9d;margin-top:4px">Pago: 15 de '+MES[payM]+' '+payY+'</div></div>'+
   '</div>'+
   '<div class="st">Detalle de ventas</div>'+
@@ -10907,6 +11098,12 @@ function editVenta(ventaId){
     if(v){ found=v; foundKey=mk; }
   });
   if(!found){ toast('Venta no encontrada'); return; }
+
+  // FIX: limpiar TODO el formulario antes de poblar — sin esto, campos que no se
+  // poblaban explícitamente (ej. Proyecto) conservaban valores de la venta anterior
+  // ingresada, contaminando la edición con datos incorrectos.
+  clearVentaForm();
+
   editingVentaId=ventaId;
   editingVentaMonthKey=foundKey;
 
@@ -10928,6 +11125,8 @@ function editVenta(ventaId){
     editLbl.parentElement.style.background='rgba(26,158,92,.05)';
   }
   document.getElementById('vf-factura').value=found.factura||'';
+  var _vfProy=document.getElementById('vf-proyecto');
+  if(_vfProy) _vfProy.value=found.proyecto||'';
   document.getElementById('vf-cantidad').value=found.cantidad||'';
   document.getElementById('vf-precio').value=found.precio?found.precio.toLocaleString('es-CR'):'';
   document.getElementById('vf-iva').value=found.ivaPct===0?'no':found.ivaPct===13?'13':'custom';
@@ -12230,6 +12429,7 @@ function buildLiqVentaMatches(nombre){
     Object.keys(vd).forEach(function(mk){
       (vd[mk].ventas||[]).forEach(function(v){
         if(((v.proyecto||'').trim().toLowerCase())!==n) return;
+        if(esPendienteActiva(v)) return; // pendiente no ejecutado: aún no se cobra
         var cat=getCatalogo().find(function(x){return x.id===v.prodId;});
         out.push({
           ventaId:v.id,
@@ -24984,6 +25184,15 @@ window.initCalcCONCRE=initCalcCONCRE;
         <div class="v-pending-section" id="v-cxc-section" style="display:none;border-left-color:var(--amber)">
           <div class="v-pending-title" style="color:var(--amber)">⏳ Proyectos a crédito — por cobrar</div>
           <div id="v-cxc-list"></div>
+        </div>
+
+        <!-- Proyectos pendientes de ejecutar (siempre visible) -->
+        <div class="ventas-section" style="margin-bottom:14px;border:1.5px solid rgba(37,99,235,.35)">
+          <div class="ventas-hdr" style="background:rgba(37,99,235,.08)">
+            <span class="ventas-hdr-title" style="color:var(--blue)">⏳ Proyectos pendientes de ejecutar</span>
+            <span style="font-size:10px;color:var(--text3)">No suman a ventas ni comisión hasta ejecutarse</span>
+          </div>
+          <div id="v-pend-exec-list"></div>
         </div>
 
         <!-- Sales table -->
