@@ -1873,7 +1873,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260721020245';
+var APP_BUILD='20260723235224';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -8826,7 +8826,8 @@ function _saveSingleVenta(uid, v, mk){
     notas: v.notas||'',
     estado: v.estado||'activo',
     is_admin_venta: v.isAdminVenta||false,
-    pagado_admin: v.pagadoAdmin||false
+    pagado_admin: v.pagadoAdmin||false,
+    inv_mov_id: v.invMovId||''
   };
 
   // ── BACKUP GARANTIZADO en configuracion (cross-device, sin RLS issues) ──
@@ -8845,6 +8846,7 @@ function _saveSingleVenta(uid, v, mk){
     pendPagada:v.pendPagada||false, pendEjecutada:v.pendEjecutada||false, pendCanceladaChk:v.pendCanceladaChk||false,
     pendPagadaAt:v.pendPagadaAt||'', pendEjecutadaAt:v.pendEjecutadaAt||'', pendCanceladaAt:v.pendCanceladaAt||'',
     pendResuelta:v.pendResuelta||false, pendResueltaAt:v.pendResueltaAt||'', pendOrigen:v.pendOrigen||'',
+    invMovId:v.invMovId||'',
     tienePendiente:v.tienePendiente||false, pendMonto:v.pendMonto||0, pendCancelado:v.pendCancelado||'no',
     referido:v.referido||'', notas:v.notas||'', estado:v.estado||'activa',
     tieneMinimo:v.tieneMinimo||false, minimoArea:v.minimoArea||0,
@@ -25649,8 +25651,8 @@ window.initCalcCONCRE=initCalcCONCRE;
           <table class="atbl" style="width:100%;min-width:900px">
             <thead><tr style="font-size:10px">
               <th style="padding:5px 6px">Fecha</th><th style="padding:5px 6px">Cant.</th><th style="padding:5px 6px">Precio</th><th style="padding:5px 6px">Producto</th><th style="padding:5px 6px">Cliente</th><th style="padding:5px 6px">Fact.</th>
-              <th style="padding:5px 6px">Pago</th><th style="text-align:center;padding:5px 6px">IVA</th>
-              <th style="text-align:right;padding:5px 6px">Subtotal</th><th style="text-align:right;padding:5px 6px">Total</th>
+              <th style="padding:5px 6px">Pago</th><th style="text-align:right;padding:5px 6px">Subtotal</th>
+              <th style="text-align:center;padding:5px 6px">IVA</th><th style="text-align:right;padding:5px 6px">Total</th>
               <th style="text-align:right;padding:5px 6px">Comisión</th><th style="padding:5px 6px">Proyecto</th><th style="padding:5px 6px">Notas</th><th style="padding:5px 6px">Estado</th><th style="padding:5px 6px"></th>
             </tr></thead>
             <tbody id="v-ventas-list"></tbody>
