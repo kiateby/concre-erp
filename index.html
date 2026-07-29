@@ -1873,7 +1873,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260729151857';
+var APP_BUILD='20260729152741';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -6055,18 +6055,31 @@ function setVacData(uid,d){
     sabado_libre:d.sabadoLibre||false,
     updated_at:new Date().toISOString()
   };
-  // DELETE + INSERT: funciona sin depender de restricción UNIQUE.
-  // Elimina TODAS las filas del uid (incluyendo duplicados acumulados) y
-  // luego inserta la fila actualizada — garantiza exactamente una fila por usuario.
-  DB.from('vacaciones_saldo').delete().eq('uid',uid).then(function(del){
-    if(del.error){ console.error('setVacData delete:',del.error); }
-    DB.from('vacaciones_saldo').insert(_payload).then(function(ins){
-      if(ins.error){
-        console.error('setVacData insert:',ins.error);
-        toast('Error guardando datos: '+(ins.error.message||'ver consola'));
+  DB.from('vacaciones_saldo')
+    .upsert(_payload,{onConflict:'uid'})
+    .select('uid,sexo,saldo,cedula')
+    .then(function(r){
+      if(r.error){
+        console.error('setVacData upsert error:',r.error);
+        toast('Error guardando vacaciones: '+r.error.message);
+        return;
       }
+      // Recargar el cache desde lo que realmente quedó en la BD
+      // (garantiza que la UI refleja el dato real, no el dato local)
+      DB.from('vacaciones_saldo').select('*').eq('uid',uid).single().then(function(chk){
+        if(!chk.error&&chk.data){
+          window._vacCache[uid]=Object.assign({},window._vacCache[uid],{
+            saldo:chk.data.saldo||0,
+            cedula:chk.data.cedula||'',
+            fechaNac:chk.data.fecha_nac||'',
+            sexo:chk.data.sexo||'',
+            fechaIngreso:chk.data.fecha_ingreso||'',
+            diasAnuales:chk.data.dias_anuales||0,
+            sabadoLibre:chk.data.sabado_libre||false
+          });
+        }
+      });
     });
-  });
   // Upsert solicitudes with correct field mapping
   if(d.requests&&d.requests.length>0){
     var rows=(d.requests||[]).map(function(r){
