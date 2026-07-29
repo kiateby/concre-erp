@@ -1873,7 +1873,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260729150300';
+var APP_BUILD='20260729151857';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -6044,7 +6044,6 @@ function getVacData(uid){
 function setVacData(uid,d){
   if(!window._vacCache) window._vacCache={};
   window._vacCache[uid]=d;
-  // Save ALL fields to vacaciones_saldo — not just saldo
   var _payload={
     uid:uid,
     saldo:d.saldo||0,
@@ -6056,26 +6055,18 @@ function setVacData(uid,d){
     sabado_libre:d.sabadoLibre||false,
     updated_at:new Date().toISOString()
   };
-  DB.from('vacaciones_saldo').upsert(_payload,{onConflict:'uid'})
-    .then(function(r){
-      if(r.error){
-        console.error('setVac saldo:',r.error);
-        toast('⚠ Error guardando datos de vacaciones en la nube: '+(r.error.message||'ver consola'));
-        return;
+  // DELETE + INSERT: funciona sin depender de restricción UNIQUE.
+  // Elimina TODAS las filas del uid (incluyendo duplicados acumulados) y
+  // luego inserta la fila actualizada — garantiza exactamente una fila por usuario.
+  DB.from('vacaciones_saldo').delete().eq('uid',uid).then(function(del){
+    if(del.error){ console.error('setVacData delete:',del.error); }
+    DB.from('vacaciones_saldo').insert(_payload).then(function(ins){
+      if(ins.error){
+        console.error('setVacData insert:',ins.error);
+        toast('Error guardando datos: '+(ins.error.message||'ver consola'));
       }
-      // VERIFICACIÓN: releer la fila real de Supabase para confirmar que quedó guardada
-      // (evita confiar solo en "sin error" — prueba directa de que el dato persiste)
-      DB.from('vacaciones_saldo').select('sexo,saldo,dias_anuales').eq('uid',uid).single().then(function(chk){
-        if(chk.error){
-          toast('⚠ No se pudo verificar el guardado — revisa e intenta de nuevo');
-          return;
-        }
-        if((chk.data.sexo||'')!==(d.sexo||'')){
-          console.error('setVacData: verificación falló — se guardó',JSON.stringify(_payload),'pero Supabase tiene',JSON.stringify(chk.data));
-          toast('❌ El sexo NO quedó guardado en la nube (Supabase devuelve "'+(chk.data.sexo||'vacío')+'"). Ejecuta fix_vacaciones_saldo_definitivo.sql y vuelve a intentar.');
-        }
-      });
     });
+  });
   // Upsert solicitudes with correct field mapping
   if(d.requests&&d.requests.length>0){
     var rows=(d.requests||[]).map(function(r){
@@ -6914,14 +6905,14 @@ function vacUpdatePreview(){
     ${tipo==='full'?'<br>Del '+formatDate(fromDate)+' al '+formatDate(toDate):'<br>Medio día: '+formatDate(fromDate)}
     ${feriadosEnRango.length?'<br><span class="warn">⚠ Excluidos del conteo: '+feriadosEnRango.join(', ')+'</span>':''}
     <br><span class="${statusCls}">${statusMsg}</span>`;
-  // Disable/enable submit button based on saldo
+  // Deshabilitar el botón solo si se superaría el límite de -10 días
   var sb=document.querySelector('button[onclick*="vacSubmitRequest"]');
   if(sb){
-    var canSubmit=saldo>0&&saldo>=dias;
+    var canSubmit=(saldoActual-dias)>=-10;
     sb.disabled=!canSubmit;
     sb.style.opacity=canSubmit?'1':'0.4';
     sb.style.cursor=canSubmit?'pointer':'not-allowed';
-    sb.title=canSubmit?'Enviar solicitud':'Saldo insuficiente ('+saldo.toFixed(1)+'d disponibles)';
+    sb.title=canSubmit?'Enviar solicitud':'Esta solicitud superaría el límite de −10 días acumulados';
   }
 }
 
