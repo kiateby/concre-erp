@@ -1478,19 +1478,45 @@ function dbError(msg){
 // ══════════════════════════════════════════════
 // Feriados estrictamente obligatorios - Código de Trabajo CR + Ley 8442
 // NO incluye: 10 oct (descansa), 19 mar, 11 ago, 2 ago (trasladables/no obligatorios)
+// Feriados de pago obligatorio — Código de Trabajo CR + Ley 8442
+// 9 feriados de PAGO OBLIGATORIO — Artículo 148 Código de Trabajo CR
+// (actualizado según Ley 9875-2020 y legislación vigente)
+// NO incluidos (pago NO obligatorio): 2-ago Virgen de los Ángeles,
+// 12-oct Día de las Culturas (eliminado como feriado por reforma 2020)
 const FERIADOS={
-  '01-01':'Año Nuevo',          // obligatorio
-  '04-11':'Batalla de Rivas',   // obligatorio
-  '05-01':'Día del Trabajo',    // obligatorio
-  '07-25':'Anexión Guanacaste', // obligatorio
-  '08-02':'Virgen de los Ángeles', // obligatorio
-  '08-15':'Día de la Madre',    // obligatorio
-  '09-15':'Independencia',      // obligatorio
-  '12-25':'Navidad',            // obligatorio
+  '01-01':'Año Nuevo',
+  '04-11':'Batalla de Rivas',
+  '05-01':'Día del Trabajo',
+  '07-25':'Anexión de Guanacaste',
+  '08-15':'Día de la Madre',
+  '09-15':'Día de la Independencia',
+  '12-25':'Navidad',
 };
-// Semana Santa 2026: SOLO Jueves, Viernes y Sábado Santo (obligatorios)
-// Miércoles y Domingo NO son feriados de ley
-const SS26=['04-02','04-03','04-04']; // Jue 2, Vie 3, Sáb 4 de abril 2026
+// Semana Santa: Jueves y Viernes Santo (obligatorios por Código de Trabajo CR).
+// Se calculan con el algoritmo de Butcher para cada año.
+function _calcSemanaSanta(y){
+  var a=y%19,b=Math.floor(y/100),c=y%100;
+  var d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25);
+  var g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30;
+  var i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7;
+  var m=Math.floor((a+11*h+22*l)/451);
+  var month=Math.floor((h+l-7*m+114)/31);
+  var day=((h+l-7*m+114)%31)+1;
+  // Domingo de Pascua → restar 3 (jueves) y 2 (viernes)
+  var dom=new Date(y,month-1,day);
+  var jue=new Date(dom); jue.setDate(dom.getDate()-3);
+  var vie=new Date(dom); vie.setDate(dom.getDate()-2);
+  return [pad(jue.getMonth()+1)+'-'+pad(jue.getDate()),
+          pad(vie.getMonth()+1)+'-'+pad(vie.getDate())];
+}
+function isFeriadoVac(date){
+  var k=pad(date.getMonth()+1)+'-'+pad(date.getDate());
+  if(FERIADOS[k]) return true;
+  // Jueves y Viernes Santo del año correspondiente
+  var ss=_calcSemanaSanta(date.getFullYear());
+  if(ss.includes(k)) return true;
+  return false;
+}
 const MES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Setiembre','Octubre','Noviembre','Diciembre'];
 const DIA=['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
 const EMPRESA={nombre:'CONCRE',cedula:'3-101-846556',telefono:'+506 8584-3352',correo:'servicioalcliente@concrecr.com'};
@@ -1873,7 +1899,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260729154022';
+var APP_BUILD='20260729154923';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -4938,7 +4964,9 @@ function todayCR(){
 function isFer(d){
   const k=`${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   if(FERIADOS[k])return FERIADOS[k];
-  if(SS26.includes(k)&&d.getFullYear()===2026)return'Semana Santa';
+  // Jueves y Viernes Santo calculados dinámicamente para cualquier año
+  const ss=_calcSemanaSanta(d.getFullYear());
+  if(ss.includes(k))return'Semana Santa';
   return null;
 }
 function defJornada(d,entrada,salida){
@@ -6161,13 +6189,6 @@ function getAllVacRequests(){
 }
 
 // ── DATE UTILITIES ──
-function isFeriadoVac(date){
-  const k=pad(date.getMonth()+1)+'-'+pad(date.getDate());
-  if(FERIADOS[k]) return true;
-  if(SS26.includes(k)&&date.getFullYear()===2026) return true;
-  return false;
-}
-
 function isDomingo(date){ return date.getDay()===0; }
 
 function isSabadoFree(uid){
@@ -6185,7 +6206,7 @@ function isNonWorkingDay(date,uid){
 
 function countWorkingDays(from,to,uid,tipo){
   // Count working days between from and to (inclusive), excluding feriados/domingos/sabados
-  if(tipo==='half') return 0.5;
+  if(tipo==='half') return isNonWorkingDay(from,uid)?0:0.5;
   let count=0;
   const d=new Date(from);
   while(d<=to){
@@ -6899,6 +6920,13 @@ function vacUpdatePreview(){
   let dias=0;
   let toDate=fromDate;
   if(tipo==='half'){
+    if(isNonWorkingDay(fromDate,uid)){
+      dias=0;
+      preview.innerHTML='<span class="warn">⚠ '+formatDate(fromDate)+' es feriado de pago obligatorio o día de descanso — no descuenta saldo. No necesitas solicitar vacaciones para este día.</span>';
+      var sb=document.querySelector('button[onclick*="vacSubmitRequest"]');
+      if(sb){ sb.disabled=true; sb.style.opacity='0.4'; }
+      return;
+    }
     dias=0.5;
   } else {
     toDate=hasta?parseDate(hasta):fromDate;
@@ -6967,7 +6995,14 @@ function vacSubmitRequest(){
   if(ingreso&&fromDate<ingreso){ alert('No puedes solicitar vacaciones antes de tu fecha de ingreso.'); return; }
   const toDate=parseDate(hasta);
   if(tipo==='full'&&toDate<fromDate){ alert('La fecha de fin no puede ser antes del inicio.'); return; }
-  const dias=tipo==='half'?0.5:countWorkingDays(fromDate,toDate,uid,'full');
+  const dias=tipo==='half'
+    ? (isNonWorkingDay(fromDate,uid) ? 0 : 0.5)  // feriado/domingo → no descuenta
+    : countWorkingDays(fromDate,toDate,uid,'full');
+  // Bloquear si el medio día cae en feriado o domingo
+  if(tipo==='half'&&isNonWorkingDay(fromDate,uid)){
+    alert('El día seleccionado ('+formatDate(fromDate)+') es feriado de pago obligatorio o día de descanso — no se descuenta de tu saldo de vacaciones. No es necesario solicitar vacaciones para ese día.');
+    return;
+  }
   const saldoActual=getVacSaldo(uid);
   const saldoResultante=parseFloat((saldoActual-dias).toFixed(1));
   // Se permite solicitar aunque el saldo quede negativo (el superadmin decide si aprueba),
