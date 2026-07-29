@@ -1873,7 +1873,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260729152741';
+var APP_BUILD='20260729154022';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2085,6 +2085,8 @@ function doLogin(){
         setTimeout(checkCelebrations, 1200);
         // Alerta a superadmins: colaboradores que celebran hoy
         setTimeout(checkCelebrationsAdmin, 2200);
+        // Refresco rápido de la campana (cada 60s)
+        _startNotifRefresh();
       });
     });
   });
@@ -6626,14 +6628,28 @@ function addNotification(uid,icon,title,msg){
   var row={id:'n'+Date.now()+Math.floor(Math.random()*100000),uid:uid,
     icon:icon||'🔔',title:title||'',msg:msg||'',read:false,
     created_at:new Date().toISOString()};
-  // INSERT directo de la fila nueva — llega a Supabase sin pisar notificaciones
-  // existentes del destinatario (antes: delete-all + insert-all destruía las demás)
   DB.from('notificaciones').insert([row]).then(function(r){
-    if(r.error) console.error('addNotification:',r.error);
+    if(r.error){
+      console.error('addNotification INSERT falló (uid='+uid+'):',r.error);
+      // Si falla la inserción remota, al menos queda en el cache local de esta sesión
+    }
   });
+  // Actualizar cache en memoria del destinatario (funciona en la misma sesión)
   var n=getNotifications(uid);
   n.unshift({id:row.id,icon:row.icon,title:row.title,msg:row.msg,read:false,time:row.created_at,created_at:row.created_at});
   setNotifications(uid,n.slice(0,30));
+  // Si el destinatario es el usuario activo en esta sesión, actualizar la campana de inmediato
+  if(SESSION&&SESSION.id===uid) renderNotifBell();
+}
+
+// Refresco rápido de la campana cada 60 segundos (independiente del autoRefresh de 3 min)
+// para que las notificaciones de eventos (vacaciones, etc.) aparezcan sin tanta demora
+function _startNotifRefresh(){
+  if(window._notifRefreshInterval) return; // ya corriendo
+  window._notifRefreshInterval=setInterval(function(){
+    if(!SESSION) return;
+    reloadNotifications(SESSION.id).then(function(){ renderNotifBell(); });
+  }, 60*1000);
 }
 
 // Recargar notificaciones del usuario desde Supabase al cache en memoria
@@ -7256,47 +7272,84 @@ function focusProgVac(uid){
 
 // ── VAC EDIT MODAL ──
 let vacEditUID='';
-function openVacEditModal(uid){
+async function openVacEditModal(uid){
   vacEditUID=uid;
-  const users=getUsers();
-  const u=users.find(x=>x.id===uid)||{};
-  const vd=getVacData(uid);
+  const u=getUsers().find(x=>x.id===uid)||{};
+  // Leer DIRECTAMENTE de Supabase — nunca del cache.
+  // Esto elimina cualquier problema de datos viejos o compartidos entre usuarios.
+  var dbRow=null;
+  try{
+    var _r=await DB.from('vacaciones_saldo').select('*').eq('uid',uid).maybeSingle();
+    if(!_r.error&&_r.data) dbRow=_r.data;
+  }catch(e){ console.error('openVacEditModal read:',e); }
   document.getElementById('ve-nombre').value=u.nombre||'';
-  document.getElementById('ve-cedula').value=vd.cedula||'';
-  document.getElementById('ve-fechaNac').value=vd.fechaNac||'';
-  var _veSexoEl=document.getElementById('ve-sexo');
-  if(_veSexoEl){ _veSexoEl.selectedIndex=0; _veSexoEl.value=''; _veSexoEl.value=vd.sexo||''; }
+  document.getElementById('ve-cedula').value=dbRow?dbRow.cedula||'':'';
+  document.getElementById('ve-fechaNac').value=dbRow?dbRow.fecha_nac||'':'';
+  var _sel=document.getElementById('ve-sexo');
+  if(_sel){ _sel.selectedIndex=0; _sel.value=''; _sel.value=dbRow&&dbRow.sexo?dbRow.sexo:''; }
   document.getElementById('ve-puesto').value=u.puesto||'';
   document.getElementById('ve-salario').value=u.salario?u.salario.toLocaleString('es-CR'):'';
-  document.getElementById('ve-fechaIngreso').value=vd.fechaIngreso||'';
-  document.getElementById('ve-diasAnuales').value=vd.diasAnuales||'';
-  document.getElementById('ve-saldo').value=getVacSaldo(uid);
-  document.getElementById('ve-sabadoLibre').value=vd.sabadoLibre?'1':'0';
+  document.getElementById('ve-fechaIngreso').value=dbRow?dbRow.fecha_ingreso||'':'';
+  document.getElementById('ve-diasAnuales').value=dbRow?dbRow.dias_anuales||'':'';
+  document.getElementById('ve-saldo').value=dbRow?dbRow.saldo||0:0;
+  document.getElementById('ve-sabadoLibre').value=dbRow&&dbRow.sabado_libre?'1':'0';
   document.getElementById('vacEditModal').classList.remove('hidden');
 }
 function closeVacEditModal(){ document.getElementById('vacEditModal').classList.add('hidden'); }
-function saveVacEdit(){
+async function saveVacEdit(){
   const uid=vacEditUID;
+  if(!uid){ toast('Error: sin usuario seleccionado'); return; }
   const users=getUsers();
   const ui=users.findIndex(x=>x.id===uid);
-  if(ui<0) return;
-  // Update user record
-  users[ui].puesto=document.getElementById('ve-puesto').value;
-  users[ui].salario=parseMon(document.getElementById('ve-salario').value)||users[ui].salario;
-  setUsers(users);
-  // Update vac data
-  const vd=getVacData(uid);
-  vd.cedula=document.getElementById('ve-cedula').value;
-  vd.fechaNac=document.getElementById('ve-fechaNac').value;
-  vd.sexo=document.getElementById('ve-sexo').value;
-  vd.fechaIngreso=document.getElementById('ve-fechaIngreso').value;
-  vd.diasAnuales=parseFloat(document.getElementById('ve-diasAnuales').value)||0;
-  vd.saldo=parseFloat(document.getElementById('ve-saldo').value)||0;
-  vd.sabadoLibre=document.getElementById('ve-sabadoLibre').value==='1';
-  setVacData(uid,vd);
+  // Leer valores del formulario
+  var sexo=document.getElementById('ve-sexo').value;
+  var cedula=document.getElementById('ve-cedula').value.trim();
+  var fechaNac=document.getElementById('ve-fechaNac').value;
+  var fechaIngreso=document.getElementById('ve-fechaIngreso').value;
+  var diasAnuales=parseFloat(document.getElementById('ve-diasAnuales').value)||0;
+  var saldo=parseFloat(document.getElementById('ve-saldo').value)||0;
+  var sabadoLibre=document.getElementById('ve-sabadoLibre').value==='1';
+  var puesto=document.getElementById('ve-puesto').value.trim();
+  var payload={
+    uid:uid, sexo:sexo, cedula:cedula, fecha_nac:fechaNac,
+    fecha_ingreso:fechaIngreso, dias_anuales:diasAnuales,
+    saldo:saldo, sabado_libre:sabadoLibre, updated_at:new Date().toISOString()
+  };
+  // Intentar UPDATE primero — si no existe la fila, hacer INSERT
+  var ok=false;
+  try{
+    var upd=await DB.from('vacaciones_saldo').update(payload).eq('uid',uid).select('uid');
+    if(!upd.error&&upd.data&&upd.data.length>0){
+      ok=true;
+    } else {
+      var ins=await DB.from('vacaciones_saldo').insert(payload);
+      if(!ins.error) ok=true;
+      else { toast('Error al guardar: '+ins.error.message); return; }
+    }
+  }catch(e){ toast('Error: '+e.message); return; }
+  // Confirmar leyendo de vuelta lo que quedó en la BD
+  var confirmado='';
+  try{
+    var chk=await DB.from('vacaciones_saldo').select('sexo,cedula,saldo').eq('uid',uid).maybeSingle();
+    if(!chk.error&&chk.data) confirmado=chk.data.sexo||'';
+  }catch(e){}
+  // Actualizar cache con los datos reales guardados
+  if(!window._vacCache) window._vacCache={};
+  window._vacCache[uid]=Object.assign(window._vacCache[uid]||{},{
+    sexo:confirmado, cedula:cedula, fechaNac:fechaNac,
+    fechaIngreso:fechaIngreso, diasAnuales:diasAnuales,
+    saldo:saldo, sabadoLibre:sabadoLibre
+  });
+  // Actualizar usuario
+  if(ui>=0){
+    users[ui].puesto=puesto;
+    users[ui].salario=parseMon(document.getElementById('ve-salario').value)||users[ui].salario;
+    setUsers(users);
+  }
   closeVacEditModal();
   renderAdminVacSection();
-  toast('✓ Datos de vacaciones actualizados para '+users[ui].nombre);
+  var sexoLabel=sexo==='M'?'Masculino':sexo==='F'?'Femenino':sexo==='O'?'Otro':'Sin especificar';
+  toast(ok?'✓ Guardado — sexo: '+sexoLabel:(ui>=0?users[ui].nombre:''));
 }
 
 // ── INIT VACATION MODULE ──
