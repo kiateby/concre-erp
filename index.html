@@ -1873,7 +1873,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260729144001';
+var APP_BUILD='20260729144844';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -7246,8 +7246,8 @@ function openVacEditModal(uid){
   document.getElementById('ve-nombre').value=u.nombre||'';
   document.getElementById('ve-cedula').value=vd.cedula||'';
   document.getElementById('ve-fechaNac').value=vd.fechaNac||'';
-  document.getElementById('ve-sexo').value=''; // reset explícito antes de asignar — evita cualquier residuo visual del modal anterior
-  document.getElementById('ve-sexo').value=vd.sexo||'';
+  var _veSexoEl=document.getElementById('ve-sexo');
+  if(_veSexoEl){ _veSexoEl.selectedIndex=0; _veSexoEl.value=''; _veSexoEl.value=vd.sexo||''; }
   document.getElementById('ve-puesto').value=u.puesto||'';
   document.getElementById('ve-salario').value=u.salario?u.salario.toLocaleString('es-CR'):'';
   document.getElementById('ve-fechaIngreso').value=vd.fechaIngreso||'';
@@ -18707,8 +18707,13 @@ async function markAuditRevisada(auditId, yaCompletada){
   var upd = yaCompletada
     ? {superadmin_revisado:true, superadmin_revisado_at:_nowIso}
     : {superadmin_revisado:true, superadmin_revisado_at:_nowIso, completado:true,completado_at:_nowIso};
-  await DB.from('inv_auditoria').update(upd).eq('id',auditId);
-  toast('✅ Auditoría marcada como revisada');
+  var _r=await DB.from('inv_auditoria').update(upd).eq('id',auditId);
+  if(_r.error){
+    console.error('markAuditRevisada:',_r.error);
+    toast('Error guardando en la nube: '+(_r.error.message||'ver consola'));
+    return;
+  }
+  toast('Auditoria marcada como revisada');
   var body=_invBody();if(body){var panel=body.querySelector('[style*="Auditorías de Inventario"]');if(panel)panel.remove();}
   renderAuditAdmin();
 }
