@@ -1676,7 +1676,7 @@ async function loadAllDataFromDB(){
   try {
     // ── FASE 1: Datos globales en PARALELO ──────────────────────────────────
     var phase1=await Promise.all([
-      DB.from('usuarios').select('*'),
+      DB.from('usuarios').select('*').order('nombre'),
       DB.from('configuracion').select('*'),
       DB.from('liq_subcontratistas').select('*'),
       DB.from('crm_clientes').select('*').order('nombre_empresa'),
@@ -1873,7 +1873,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260723235224';
+var APP_BUILD='20260729143340';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2101,7 +2101,7 @@ function startAutoRefresh(){
       var _isAdm=(SESSION.rol==='admin'||SESSION.rol==='superadmin');
       var _jobs=[
         reloadNotifications(SESSION.id).then(function(){ try{renderNotifBell();}catch(e){} }),
-        DB.from('usuarios').select('*').then(function(ur){
+        DB.from('usuarios').select('*').order('nombre').then(function(ur){
           if(!ur.error&&ur.data) window._usersCache=ur.data.map(dbRowToUser);
         }),
         DB.from('crm_clientes').select('*').order('nombre_empresa').then(function(cr){
@@ -4181,8 +4181,8 @@ function buildUsersTable(){
     <td><span class="badge ${u.comisType==='mensual'?'mensual':'anual'}">${u.comisType==='mensual'?'Mensual':'Dic. (acum.)'}</span></td>
     <td><span class="badge ${u.estado==='activo'?'mensual':'anual'}">${u.estado}</span></td>
     <td><div class="tbl-actions">
-      <button class="tbl-btn edit" onclick="openUserModal(${i})">✏ Editar</button>
-      ${u.username!=='admin'?`<button class="tbl-btn del" onclick="delUser(${i})">🗑</button>`:''}
+      <button class="tbl-btn edit" onclick="openUserModal('${u.id}')">✏ Editar</button>
+      ${u.username!=='admin'?`<button class="tbl-btn del" onclick="delUser('${u.id}')">🗑</button>`:''}
     </div></td>
   </tr>`).join('');
 }
@@ -4206,10 +4206,15 @@ function toggleFPassNew(){
   if(inp.type==='password'){ inp.type='text'; if(btn) btn.textContent='🙈'; }
   else { inp.type='password'; if(btn) btn.textContent='👁'; }
 }
-function openUserModal(idx=null){
-  editingUserIdx=idx;
+function openUserModal(userId=null){
+  // FIX: identificar al usuario por ID, no por posición en el array.
+  // El bug anterior (botón "Editar" desplazado) ocurría porque _usersCache
+  // se recarga en segundo plano (autoRefresh) sin garantía de orden estable
+  // (Supabase no devuelve un orden fijo sin ORDER BY) — el índice quedaba
+  // apuntando a otro usuario distinto del que se veía en la fila.
+  editingUserIdx=userId;
   const users=getUsers();
-  document.getElementById('modalTitle').textContent=idx===null?'Nuevo usuario':'Editar usuario';
+  document.getElementById('modalTitle').textContent=userId===null?'Nuevo usuario':'Editar usuario';
   // Agregar opción superadmin dinámicamente ANTES de asignar el valor
   var fRolSel=document.getElementById('fRol');
   if(fRolSel){
@@ -4221,7 +4226,7 @@ function openUserModal(idx=null){
       fRolSel.appendChild(saOpt);
     }
   }
-  if(idx===null){
+  if(userId===null){
     ['fNombre','fUser','fPass','fSalario','fEmail','fPuesto'].forEach(id=>document.getElementById(id).value='');
     document.getElementById('fRol').value='user';
     document.getElementById('fComisType').value='mensual';
@@ -4230,7 +4235,8 @@ function openUserModal(idx=null){
     var cpWrap=document.getElementById('fPass-current');
     if(cpWrap) cpWrap.style.display='none';
   } else {
-    const u=users[idx];
+    const u=users.find(x=>x.id===userId);
+    if(!u){ toast('Usuario no encontrado — recarga la página'); return; }
     document.getElementById('fNombre').value=u.nombre;
     document.getElementById('fUser').value=u.username;
     document.getElementById('fPass').value='';
@@ -4251,9 +4257,9 @@ function openUserModal(idx=null){
   document.getElementById('userModal').classList.remove('hidden');
   // Render tab perms UI
   var tabPermsWrap=document.getElementById('user-modal-tab-perms');
-  if(tabPermsWrap&&idx!==null){
+  if(tabPermsWrap&&userId!==null){
     var allUsers2=getUsers();
-    var u=allUsers2[idx];
+    var u=allUsers2.find(x=>x.id===userId);
     tabPermsWrap.innerHTML=renderUserTabPermsRow(u.id);
     tabPermsWrap.style.display='block';
     // Show promote/demote superadmin button
@@ -4305,7 +4311,8 @@ function saveUser(){
     const exists=users.find(u=>u.username===username);
     if(exists){alert('Ya existe un usuario con ese nombre de usuario');return;}
   } else {
-    const uChk=users[editingUserIdx];
+    const uChk=users.find(x=>x.id===editingUserIdx);
+    if(!uChk){ alert('Usuario no encontrado — recarga la página e intenta de nuevo'); return; }
     // Proteger: si el usuario editado era superadmin y quien edita no es superadmin, no cambiar rol
     if(uChk.rol==='superadmin'&&SESSION.rol!=='superadmin'){
       alert('Solo un superadmin puede modificar el rol de otro superadmin');return;
@@ -4317,7 +4324,8 @@ function saveUser(){
     if(editingUserIdx===null){
       users.push({id:username,username,password:passToStore,nombre,rol,salario,email,puesto,comisType,estado,ccssSoloQ1});
     } else {
-      const u=users[editingUserIdx];
+      const u=users.find(x=>x.id===editingUserIdx);
+      if(!u) return;
       u.nombre=nombre;u.username=username;u.rol=rol;u.salario=salario;
       u.email=email;u.puesto=puesto;u.comisType=comisType;u.estado=estado;
       u.ccssSoloQ1=ccssSoloQ1;
@@ -4333,9 +4341,9 @@ function saveUser(){
     _finishSaveUser(pass);
   }
 }
-function delUser(idx){
+function delUser(userId){
   const users=getUsers();
-  const u=users[idx];
+  const u=users.find(x=>x.id===userId);
   if(!u) return;
   if(!confirm('¿Eliminar a '+u.nombre+'? Esta acción no se puede deshacer.')) return;
   // Delete from Supabase FIRST — only update cache on success
@@ -6048,7 +6056,12 @@ function setVacData(uid,d){
     sabado_libre:d.sabadoLibre||false,
     updated_at:new Date().toISOString()
   },{onConflict:'uid'})
-    .then(function(r){ if(r.error) console.error('setVac saldo:',r.error); });
+    .then(function(r){
+      if(r.error){
+        console.error('setVac saldo:',r.error);
+        toast('⚠ Error guardando datos de vacaciones en la nube: '+(r.error.message||'ver consola'));
+      }
+    });
   // Upsert solicitudes with correct field mapping
   if(d.requests&&d.requests.length>0){
     var rows=(d.requests||[]).map(function(r){
@@ -6922,12 +6935,11 @@ function vacSubmitRequest(){
   if(tipo==='full'&&toDate<fromDate){ alert('La fecha de fin no puede ser antes del inicio.'); return; }
   const dias=tipo==='half'?0.5:countWorkingDays(fromDate,toDate,uid,'full');
   const saldoActual=getVacSaldo(uid);
-  if(saldoActual<=0){
-    alert('No tienes días de vacaciones disponibles. Saldo actual: '+saldoActual.toFixed(1)+' días.');
-    return;
-  }
-  if(saldoActual<dias){
-    alert('Saldo insuficiente. Necesitas '+dias.toFixed(1)+' días pero tienes '+saldoActual.toFixed(1)+' días disponibles.');
+  const saldoResultante=parseFloat((saldoActual-dias).toFixed(1));
+  // Se permite solicitar aunque el saldo quede negativo (el superadmin decide si aprueba),
+  // con un límite de hasta -10 días acumulados para mantener un control razonable.
+  if(saldoResultante<-10){
+    alert('Esta solicitud dejaría tu saldo en '+saldoResultante.toFixed(1)+' días, superando el límite permitido de -10 días. Ajusta las fechas o consulta con tu superadmin.');
     return;
   }
   if(!vd.requests) vd.requests=[];
@@ -7234,6 +7246,7 @@ function openVacEditModal(uid){
   document.getElementById('ve-nombre').value=u.nombre||'';
   document.getElementById('ve-cedula').value=vd.cedula||'';
   document.getElementById('ve-fechaNac').value=vd.fechaNac||'';
+  document.getElementById('ve-sexo').value=''; // reset explícito antes de asignar — evita cualquier residuo visual del modal anterior
   document.getElementById('ve-sexo').value=vd.sexo||'';
   document.getElementById('ve-puesto').value=u.puesto||'';
   document.getElementById('ve-salario').value=u.salario?u.salario.toLocaleString('es-CR'):'';
