@@ -1873,7 +1873,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260729144844';
+var APP_BUILD='20260729150300';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -6045,7 +6045,7 @@ function setVacData(uid,d){
   if(!window._vacCache) window._vacCache={};
   window._vacCache[uid]=d;
   // Save ALL fields to vacaciones_saldo — not just saldo
-  DB.from('vacaciones_saldo').upsert({
+  var _payload={
     uid:uid,
     saldo:d.saldo||0,
     cedula:d.cedula||'',
@@ -6055,12 +6055,26 @@ function setVacData(uid,d){
     dias_anuales:d.diasAnuales||0,
     sabado_libre:d.sabadoLibre||false,
     updated_at:new Date().toISOString()
-  },{onConflict:'uid'})
+  };
+  DB.from('vacaciones_saldo').upsert(_payload,{onConflict:'uid'})
     .then(function(r){
       if(r.error){
         console.error('setVac saldo:',r.error);
         toast('⚠ Error guardando datos de vacaciones en la nube: '+(r.error.message||'ver consola'));
+        return;
       }
+      // VERIFICACIÓN: releer la fila real de Supabase para confirmar que quedó guardada
+      // (evita confiar solo en "sin error" — prueba directa de que el dato persiste)
+      DB.from('vacaciones_saldo').select('sexo,saldo,dias_anuales').eq('uid',uid).single().then(function(chk){
+        if(chk.error){
+          toast('⚠ No se pudo verificar el guardado — revisa e intenta de nuevo');
+          return;
+        }
+        if((chk.data.sexo||'')!==(d.sexo||'')){
+          console.error('setVacData: verificación falló — se guardó',JSON.stringify(_payload),'pero Supabase tiene',JSON.stringify(chk.data));
+          toast('❌ El sexo NO quedó guardado en la nube (Supabase devuelve "'+(chk.data.sexo||'vacío')+'"). Ejecuta fix_vacaciones_saldo_definitivo.sql y vuelve a intentar.');
+        }
+      });
     });
   // Upsert solicitudes with correct field mapping
   if(d.requests&&d.requests.length>0){
@@ -18533,7 +18547,17 @@ async function renderAuditPanel(){
     html+='<button onclick="submitAudit(\''+audit.id+'\')" style="background:var(--green);color:#fff;border:none;border-radius:8px;padding:10px 24px;cursor:pointer;font-size:14px;font-weight:800;width:100%">✅ Enviar auditoría completa</button>';
   }
   html+='</div>';
-  body.innerHTML=html+body.innerHTML;
+  // Contenedor FIJO — se reemplaza siempre, nunca se apila (mismo fix que el panel admin)
+  var _userPanelId='inv-audit-user-panel';
+  var _existingU=document.getElementById(_userPanelId);
+  if(_existingU){
+    _existingU.innerHTML=html;
+  } else {
+    var _wrapU=document.createElement('div');
+    _wrapU.id=_userPanelId;
+    _wrapU.innerHTML=html;
+    body.insertBefore(_wrapU, body.firstChild);
+  }
 }
 async function confirmAuditItem(auditId,idx){
   var input=document.getElementById('audit-qty-'+idx);
@@ -18591,6 +18615,9 @@ async function renderAuditAdmin(){
   checkOverdueAudits();
   var r=await DB.from('inv_auditoria').select('*').order('created_at',{ascending:false});
   var body=_invBody(); if(!body) return;
+  // Contenedor FIJO y único para este panel — se reemplaza siempre, nunca se apila
+  // (antes: body.innerHTML=html+body.innerHTML duplicaba la tabla en cada render)
+  var _panelId='inv-audit-admin-panel';
   var allAudits=(!r.error&&r.data)?r.data:[];
   var pool=getAuditPool();
   var weekKey=getAuditWeekKey();
@@ -18690,7 +18717,15 @@ async function renderAuditAdmin(){
     html+='</tbody></table>';
   }
   html+='</div>';
-  body.innerHTML=html+body.innerHTML;
+  var _existing=document.getElementById(_panelId);
+  if(_existing){
+    _existing.innerHTML=html;
+  } else {
+    var _wrap=document.createElement('div');
+    _wrap.id=_panelId;
+    _wrap.innerHTML=html;
+    body.insertBefore(_wrap, body.firstChild);
+  }
 }
 function toggleDiscrepanciaDetalle(btn,auditId){
   var row=document.getElementById('disc-detalle-'+auditId);
@@ -18714,8 +18749,7 @@ async function markAuditRevisada(auditId, yaCompletada){
     return;
   }
   toast('Auditoria marcada como revisada');
-  var body=_invBody();if(body){var panel=body.querySelector('[style*="Auditorías de Inventario"]');if(panel)panel.remove();}
-  renderAuditAdmin();
+  renderAuditAdmin(); // ahora reemplaza su propio contenedor — no requiere limpieza manual
 }
 
 // ══════════════════════════════════════════════════════════════
