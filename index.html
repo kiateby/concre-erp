@@ -1873,7 +1873,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260729143340';
+var APP_BUILD='20260729144001';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -18598,14 +18598,28 @@ async function renderAuditAdmin(){
 
   // Ocultar de semanas ANTERIORES (no la actual) las que ya están revisadas Y sin discrepancias.
   // Las que tienen discrepancia, o siguen pendientes, se mantienen visibles sin importar la semana.
+  // Backfill silencioso: auditorías ya revisadas ANTES de este cambio no tienen marca
+  // de fecha de revisión — se les asigna AHORA para que el conteo de 3 días arranque
+  // a partir de este momento (nunca desaparecen de golpe al desplegar el cambio).
+  var _backfillPromises=[];
+  allAudits.forEach(function(a){
+    if(a.superadmin_revisado && !a.superadmin_revisado_at){
+      a.superadmin_revisado_at=new Date().toISOString();
+      _backfillPromises.push(DB.from('inv_auditoria').update({superadmin_revisado_at:a.superadmin_revisado_at}).eq('id',a.id));
+    }
+  });
+  if(_backfillPromises.length) Promise.all(_backfillPromises).catch(function(e){console.warn('backfill revisado_at:',e);});
+
   var audits=allAudits.filter(function(a){
-    var esSemanaActual=(a.semana_key===weekKey);
-    var tieneDiscrepancia=(a.discrepancias||[]).length>0;
     var estaRevisada=!!a.superadmin_revisado; // solo cuenta la revisión del superadmin
-    if(esSemanaActual) return true; // siempre mostrar la semana actual
-    if(tieneDiscrepancia) return true; // discrepancias nunca se ocultan
-    if(!estaRevisada) return true; // pendientes nunca se ocultan
-    return false; // semana anterior, revisada, sin discrepancia → ocultar
+    // Revisada por superadmin: desaparece 3 días después de la revisión,
+    // sin importar si es la semana actual o si tuvo discrepancias.
+    if(estaRevisada){
+      if(!a.superadmin_revisado_at) return true; // por si acaso, mientras se aplica el backfill
+      var diasDesdeRevision=(Date.now()-new Date(a.superadmin_revisado_at).getTime())/(1000*60*60*24);
+      return diasDesdeRevision<3;
+    }
+    return true; // no revisada: siempre visible hasta que se revise o resuelva
   });
 
   var html='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">';
@@ -18641,12 +18655,9 @@ async function renderAuditAdmin(){
       }).join(' · ');
       html+='<td style="padding:8px;text-align:center;cursor:help;text-decoration:underline dotted" title="'+_itemsTip.replace(/"/g,'&quot;')+'">'+(a.items||[]).length+'</td>';
       html+='<td style="padding:8px;text-align:center"><span style="font-size:11px;font-weight:800;color:'+color+'">'+label+'</span></td>';
-      html+='<td style="padding:8px;text-align:center;color:'+(disc>0?'var(--red)':'var(--text3)')+'">'+disc;
-      if(disc>0){
-        html+=' <button onclick="toggleDiscrepanciaDetalle(this,\''+a.id+'\')" style="background:none;border:1px solid var(--red);color:var(--red);border-radius:5px;padding:1px 6px;cursor:pointer;font-size:10px;margin-left:4px">Ver</button>';
-      }
-      html+='</td>';
+      html+='<td style="padding:8px;text-align:center;color:'+(disc>0?'var(--red)':'var(--text3)')+'">'+disc+'</td>';
       html+='<td style="padding:8px;text-align:center">';
+      html+='<button onclick="toggleDiscrepanciaDetalle(this,\''+a.id+'\')" style="background:none;border:1px solid var(--border2);color:var(--text2);border-radius:6px;padding:3px 9px;cursor:pointer;font-size:10px;font-weight:700;margin-right:4px">🔍 Ver detalle</button>';
       if(!a.superadmin_revisado){
         // Check propio del superadmin — independiente de si el usuario completó.
         // En pendientes, marcar revisada también cierra la auditoría (comportamiento original).
@@ -18655,13 +18666,26 @@ async function renderAuditAdmin(){
         html+='<span style="font-size:11px;color:var(--green);font-weight:700">✓ Revisada por superadmin</span>';
       }
       html+='</td></tr>';
-      if(disc>0){
-        var detalleFilas=(a.discrepancias||[]).map(function(d){
-          var itFound=(a.items||[]).find(function(it){return (d.item_id&&it.item_id===d.item_id)||it.nombre===d.nombre;})||d;
-          return '<div style="padding:4px 0;border-bottom:1px solid var(--border)">'+_auditTipoBadge(itFound)+' <strong>'+d.nombre+'</strong> — sistema: '+invFmt(d.sistema)+' · contado por '+(d.uNombre||a.uid)+': '+invFmt(d.usuario)+'</div>';
-        }).join('');
-        html+='<tr id="disc-detalle-'+a.id+'" style="display:none"><td colspan="6" style="padding:8px 14px;background:rgba(220,38,38,.05);font-size:11px">'+detalleFilas+'</td></tr>';
-      }
+      // Detalle COMPLETO ítem por ítem — lo mismo que ve el usuario al hacer su conteo
+      // (no solo las discrepancias), para que superadmin pueda consultar con propiedad.
+      var detFilas=(a.items||[]).map(function(item){
+        var match=item.cantidad_usuario!=null && Number(item.cantidad_usuario)===Number(item.cantidad_sistema);
+        var contado=item.cantidad_usuario!=null?invFmt(item.cantidad_usuario):'<span style="color:var(--text3)">sin confirmar</span>';
+        return '<tr style="border-bottom:1px solid var(--border)">'
+          +'<td style="padding:6px 10px">'+_auditTipoBadge(item)+' '+item.nombre+'</td>'
+          +'<td style="padding:6px 10px;text-align:center;font-size:10px;color:var(--text3)">'+(item.codigo||'—')+'</td>'
+          +'<td style="padding:6px 10px;text-align:center;font-size:10px;color:var(--text3)">'+(item.unidad||'—')+'</td>'
+          +'<td style="padding:6px 10px;text-align:center;font-weight:800;color:var(--blue)">'+invFmt(item.cantidad_sistema)+'</td>'
+          +'<td style="padding:6px 10px;text-align:center;font-weight:800;color:'+(item.cantidad_usuario==null?'var(--text3)':(match?'var(--green)':'var(--red)'))+'">'+contado+'</td>'
+          +'<td style="padding:6px 10px;text-align:center">'+(item.cantidad_usuario==null?'⏳ Sin contar':(match?'✅ Coincide':'⚠ Discrepancia'))+'</td>'
+          +'</tr>';
+      }).join('');
+      html+='<tr id="disc-detalle-'+a.id+'" style="display:none"><td colspan="6" style="padding:10px 14px;background:var(--surface2)">'
+        +'<div style="font-size:11px;font-weight:800;margin-bottom:6px;color:var(--text3)">Detalle completo del conteo — igual a lo que vio '+(u?u.nombre:a.uid)+'</div>'
+        +'<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr style="background:var(--surface)">'
+        +'<th style="padding:5px 10px;text-align:left">Ítem</th><th style="padding:5px 10px">Código</th><th style="padding:5px 10px">Unidad</th>'
+        +'<th style="padding:5px 10px">Cant. sistema</th><th style="padding:5px 10px">Contado por usuario</th><th style="padding:5px 10px">Estado</th>'
+        +'</tr></thead><tbody>'+detFilas+'</tbody></table></td></tr>';
     });
     html+='</tbody></table>';
   }
@@ -18673,15 +18697,16 @@ function toggleDiscrepanciaDetalle(btn,auditId){
   if(!row) return;
   var isOpen=row.style.display!=='none';
   row.style.display=isOpen?'none':'';
-  btn.textContent=isOpen?'Ver':'Ocultar';
+  btn.textContent=isOpen?'🔍 Ver detalle':'🔼 Ocultar detalle';
 }
 async function markAuditRevisada(auditId, yaCompletada){
   // Si la auditoría ya fue completada por el usuario: solo registrar la revisión del
   // superadmin (sin pisar completado_at, que es el timestamp real del usuario).
   // Si sigue pendiente: revisar también la cierra (comportamiento original).
+  var _nowIso=new Date().toISOString();
   var upd = yaCompletada
-    ? {superadmin_revisado:true}
-    : {superadmin_revisado:true,completado:true,completado_at:new Date().toISOString()};
+    ? {superadmin_revisado:true, superadmin_revisado_at:_nowIso}
+    : {superadmin_revisado:true, superadmin_revisado_at:_nowIso, completado:true,completado_at:_nowIso};
   await DB.from('inv_auditoria').update(upd).eq('id',auditId);
   toast('✅ Auditoría marcada como revisada');
   var body=_invBody();if(body){var panel=body.querySelector('[style*="Auditorías de Inventario"]');if(panel)panel.remove();}
