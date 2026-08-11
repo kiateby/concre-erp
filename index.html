@@ -1780,6 +1780,14 @@ async function loadAllDataFromDB(){
           window._pagadoAdminOverrides[vid]=!!(row.valor.pagado);
         }
         // Ediciones de ventas guardadas como backup
+        if(row.clave&&row.clave.startsWith('abonos_cliente_')){
+          if(!window._abonosCache) window._abonosCache={};
+          window._abonosCache[row.clave.replace('abonos_cliente_','')]=Array.isArray(row.valor)?row.valor:[];
+        }
+        if(row.clave&&row.clave.startsWith('cc_deposito_')&&row.valor){
+          if(!window._depositoOverrides) window._depositoOverrides={};
+          window._depositoOverrides[row.clave.replace('cc_deposito_','')]=row.valor.deposito||'';
+        }
         if(row.clave&&row.clave.startsWith('cc_venta_v_')&&row.valor&&row.valor.id){
           window._ventaEditsCache[row.valor.id]=row.valor;
         }
@@ -1899,7 +1907,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260729154923';
+var APP_BUILD='20260811175340';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -4843,6 +4851,18 @@ function buildAgGlobal(){
     <td><button class="tbl-btn view" onclick="exportAguinaldoUser('${u.id}')">⬇ Colilla</button></td>
   </tr>`;
   }).join('')||'<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:20px">Sin usuarios</td></tr>';
+  // Fila de TOTAL de aguinaldos
+  if(users.length){
+    var _totAg=users.reduce(function(s,u){ return s+calcAgTotal(u.id,u.salario,mesesAg); },0);
+    var _totSal=users.reduce(function(s,u){ return s+(u.salario||0); },0);
+    document.getElementById('agTbody').innerHTML+=
+      '<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
+      +'<td style="font-weight:900;font-family:var(--cond);font-size:13px">TOTAL ('+users.length+' colaborador'+(users.length!==1?'es':'')+')</td>'
+      +'<td style="font-family:var(--cond);font-weight:900">'+fmt(_totSal)+'</td>'
+      +'<td></td>'
+      +'<td style="font-family:var(--cond);font-weight:900;font-size:18px;color:var(--amber)">'+fmt(_totAg)+'</td>'
+      +'<td></td></tr>';
+  }
 }
 
 function exportGlobalCSV(){
@@ -8946,7 +8966,9 @@ function _saveSingleVenta(uid, v, mk){
     estado: v.estado||'activo',
     is_admin_venta: v.isAdminVenta||false,
     pagado_admin: v.pagadoAdmin||false,
-    inv_mov_id: v.invMovId||''
+    inv_mov_id: v.invMovId||'',
+    cxc_pagado: v.cxcPagado||false,
+    cxc_pagado_date: v.cxcPagadoDate||null
   };
 
   // ── BACKUP GARANTIZADO en configuracion (cross-device, sin RLS issues) ──
@@ -10392,6 +10414,7 @@ function renderAdminVentas(){
   // Pending projects
   renderPendingProjects(allVentas,catMap);
   renderAdminCxcTable(allVentas,catMap);
+  renderSaldosPorCliente(allVentas);
   cleanupOldCxc();
   // Detail table
   renderAdminVentasTable();
@@ -10872,7 +10895,24 @@ function renderAdminVentasTable(){
   const catFilter=document.getElementById('av-cat-filter')?.value||'all';
   const cat=getCatalogo();
   const catMap=Object.fromEntries(cat.map(c=>[c.id,c]));
-  const filtered=catFilter==='all'?allVentas:allVentas.filter(v=>(catMap[normalizeProdId(v.prodId)]?.tipo||'otros')===catFilter);
+  var filtered=catFilter==='all'?allVentas:allVentas.filter(v=>(catMap[normalizeProdId(v.prodId)]?.tipo||'otros')===catFilter);
+  // AGRUPAR POR FACTURA dentro del mismo mes: las ventas que comparten número de
+  // factura en un mismo mes quedan juntas. Orden: mes (más nuevo primero) →
+  // número de factura → fecha. Las sin factura van al final de cada mes.
+  filtered=filtered.slice().sort(function(a,b){
+    var ma=(a.fecha||'').slice(0,7), mb=(b.fecha||'').slice(0,7);
+    if(ma!==mb) return mb.localeCompare(ma); // mes más reciente primero
+    var fa=(a.factura||'').trim(), fb=(b.factura||'').trim();
+    if(!fa&&fb) return 1;   // sin factura al final
+    if(fa&&!fb) return -1;
+    if(fa!==fb){
+      // Comparación numérica cuando ambos son números (10 antes que 100)
+      var na=parseFloat(fa), nb=parseFloat(fb);
+      if(!isNaN(na)&&!isNaN(nb)&&String(na)===fa&&String(nb)===fb) return na-nb;
+      return fa.localeCompare(fb,'es',{numeric:true});
+    }
+    return (a.fecha||'').localeCompare(b.fecha||'');
+  });
   const body=document.getElementById('av-detail-body');
   if(!body) return;
   // Wire liquidacion buttons after render
@@ -10931,7 +10971,7 @@ function renderAdminVentasTable(){
       +'</td>'
       +'<td><span class="'+(v.pagadoAdmin?'vac-badge approved':'vac-badge pending')+'">'+(v.pagadoAdmin?'✓ Pago':'Pend.')+'</span></td>'
       +'<td style="white-space:nowrap"><input type="text" '
-        +'value="'+(v.depositoNum||'')+'" '
+        +'value="'+(((window._depositoOverrides||{})[v.id])!==undefined?(window._depositoOverrides[v.id]||''):(v.depositoNum||''))+'" '
         +'placeholder="# depósito" '
         +'data-vuid="'+v.uid+'" data-vid="'+v.id+'" class="dep-num-inp" '
         +'style="width:110px;font-size:11px;padding:3px 7px;border:1.5px solid var(--border2);border-radius:5px;font-family:var(--sans)">'
@@ -10954,6 +10994,17 @@ function saveDepositoNum(uid, ventaId, val){
       window._ventasCache[uid]=vd;
       _saveSingleVenta(uid,vd[mk].ventas[idx2],mk);
     }
+  });
+  // Guardado REDUNDANTE en configuracion — mismo mecanismo probado del check ✓ Pago.
+  // Garantiza que el número de depósito persista aunque la escritura en la tabla
+  // ventas falle (RLS/columna). Se lee de vuelta en el arranque.
+  if(!window._depositoOverrides) window._depositoOverrides={};
+  window._depositoOverrides[ventaId]=val;
+  DB.from('configuracion').upsert(
+    {clave:'cc_deposito_'+ventaId, valor:{deposito:val,ventaId:ventaId,uid:uid,ts:new Date().toISOString()}, updated_at:new Date().toISOString()},
+    {onConflict:'clave'}
+  ).then(function(r){
+    if(r.error) console.error('deposito save error:',r.error);
   });
 }
 function toggleVentaPago(uid,ventaId,chk){
@@ -11577,7 +11628,7 @@ function renderAdminCxcTable(allVentas,catMap){
   const now=new Date();
   var cxcList=allVentas.filter(function(v){ return v.tipoPago==='CREDITO'&&!v.cxcPagado; });
   if(!cxcList.length){
-    body.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
+    body.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
     return;
   }
   cxcList.sort(function(a,b){
@@ -11596,6 +11647,7 @@ function renderAdminCxcTable(allVentas,catMap){
     html+='<tr style="'+(vencido?'background:rgba(227,24,55,.06)':urgente?'background:rgba(217,119,6,.06)':'')+'">'
       +'<td><strong>'+v.uname+'</strong></td>'
       +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+'</td>'
+      +'<td style="font-weight:800;font-family:var(--cond)">'+(v.factura?escHtml(v.factura):'—')+'</td>'
       +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+p.nombre+'</span></td>'
       +'<td>'+escHtml(v.cliente)+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800">'+fmt(v.subtotal)+'</td>'
@@ -11609,6 +11661,14 @@ function renderAdminCxcTable(allVentas,catMap){
         +'style="padding:4px 10px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">✓ Pago recibido</button>'
       +'</td></tr>';
   });
+  // Fila de TOTALES al final de la tabla
+  var _totSub=cxcList.reduce(function(s,v){return s+(v.subtotal||0);},0);
+  var _totCon=cxcList.reduce(function(s,v){return s+(v.total||(v.subtotal||0)+(v.ivaAmt||0));},0);
+  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
+    +'<td colspan="5" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL PENDIENTE DE COBRO ('+cxcList.length+' factura'+(cxcList.length!==1?'s':'')+')</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--amber)">'+fmt(_totSub)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--red)">'+fmt(_totCon)+'</td>'
+    +'<td colspan="4"></td></tr>';
   body.innerHTML=html;
   // Wire buttons
   body.querySelectorAll('.cxc-pago-btn').forEach(function(btn){
@@ -11616,6 +11676,112 @@ function renderAdminCxcTable(allVentas,catMap){
   });
 }
 
+
+// ══════════════════════════════════════════════
+//  SALDOS POR CLIENTE — cuentas por cobrar con abonos
+// ══════════════════════════════════════════════
+function _getAbonosCliente(clienteKey){
+  return ((window._abonosCache||{})[clienteKey])||[];
+}
+function _totalAbonos(clienteKey){
+  return _getAbonosCliente(clienteKey).reduce(function(s,a){ return s+(a.monto||0); },0);
+}
+function renderSaldosPorCliente(allVentas){
+  var body=document.getElementById('av-saldos-cliente-body');
+  if(!body) return;
+  // Agrupar TODAS las ventas a crédito NO cobradas por cliente (histórico completo,
+  // sin filtro de período — es deuda acumulada)
+  var porCliente={};
+  getUsers().forEach(function(u){
+    var vd=getVentasData(u.id)||{};
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(v){
+        if(v.tipoPago!=='CREDITO') return;
+        if(v.cxcPagado) return; // ya cobrada: se descuenta automáticamente
+        var cli=(v.cliente||'Sin cliente').trim();
+        var key=cli.toLowerCase();
+        if(!porCliente[key]) porCliente[key]={nombre:cli,facturas:0,subtotal:0,total:0};
+        porCliente[key].facturas++;
+        porCliente[key].subtotal+=(v.subtotal||0);
+        porCliente[key].total+=(v.total||(v.subtotal||0)+(v.ivaAmt||0));
+      });
+    });
+  });
+  var lista=Object.keys(porCliente).map(function(k){
+    var o=porCliente[k]; o.key=k;
+    o.abonado=_totalAbonos(k);
+    o.saldo=o.total-o.abonado;
+    return o;
+  }).filter(function(o){ return o.facturas>0; })
+    .sort(function(a,b){ return b.saldo-a.saldo; });
+
+  if(!lista.length){
+    body.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:16px">Sin saldos pendientes por cliente</td></tr>';
+    return;
+  }
+  var html=lista.map(function(o){
+    var abonos=_getAbonosCliente(o.key);
+    var histHtml='';
+    if(abonos.length){
+      histHtml='<tr id="abono-hist-'+o.key.replace(/[^a-z0-9]/g,'_')+'" style="display:none"><td colspan="7" style="background:var(--surface2);padding:8px 14px">'
+        +'<div style="font-size:11px;font-weight:800;margin-bottom:5px;color:var(--text3)">Historial de abonos</div>'
+        +abonos.slice().reverse().map(function(a){
+          return '<div style="display:flex;gap:12px;align-items:center;padding:4px 0;border-bottom:1px solid var(--border);font-size:11px">'
+            +'<span style="font-family:var(--cond);font-weight:900;color:var(--green);min-width:90px">'+fmt(a.monto)+'</span>'
+            +'<span style="min-width:130px">Depósito: <strong>'+escHtml(a.deposito||'—')+'</strong></span>'
+            +'<span style="color:var(--text3);min-width:100px">'+formatDate(parseDate((a.fecha||'').split('T')[0]))+'</span>'
+            +'<span style="color:var(--text3)">Por: '+escHtml(a.by||'')+'</span>'
+            +'</div>';
+        }).join('')
+        +'</td></tr>';
+    }
+    var safeKey=o.key.replace(/[^a-z0-9]/g,'_');
+    return '<tr'+(o.saldo<=0?' style="background:rgba(22,163,74,.06)"':'')+'>'
+      +'<td><strong>'+escHtml(o.nombre)+'</strong>'
+        +(abonos.length?'<button onclick="var e=document.getElementById(\'abono-hist-'+safeKey+'\');e.style.display=e.style.display===\'none\'?\'\':\'none\'" style="margin-left:6px;background:none;border:1px solid var(--border2);border-radius:4px;padding:1px 6px;cursor:pointer;font-size:9px;font-weight:700">📜 '+abonos.length+'</button>':'')
+      +'</td>'
+      +'<td style="text-align:center">'+o.facturas+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800">'+fmt(o.subtotal)+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800">'+fmt(o.total)+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800;color:var(--green)">'+(o.abonado>0?fmt(o.abonado):'—')+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:'+(o.saldo<=0?'var(--green)':'var(--red)')+'">'+fmt(o.saldo)+'</td>'
+      +'<td style="text-align:center;white-space:nowrap">'
+        +'<input type="text" id="abono-monto-'+safeKey+'" placeholder="Monto" oninput="fmtInp(this)" style="width:90px;font-size:11px;padding:3px 6px;border:1.5px solid var(--border2);border-radius:5px;margin-right:3px">'
+        +'<input type="text" id="abono-dep-'+safeKey+'" placeholder="# depósito" style="width:90px;font-size:11px;padding:3px 6px;border:1.5px solid var(--border2);border-radius:5px;margin-right:3px">'
+        +'<button onclick="aplicarAbonoCliente(\''+o.key+'\',\''+safeKey+'\')" style="padding:4px 10px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:11px;font-weight:800;cursor:pointer">+ Abonar</button>'
+      +'</td></tr>'+histHtml;
+  }).join('');
+  // Fila de TOTALES
+  var tSub=lista.reduce(function(s,o){return s+o.subtotal;},0);
+  var tTot=lista.reduce(function(s,o){return s+o.total;},0);
+  var tAbo=lista.reduce(function(s,o){return s+o.abonado;},0);
+  var tSal=lista.reduce(function(s,o){return s+o.saldo;},0);
+  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--red)">'
+    +'<td colspan="2" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL POR COBRAR ('+lista.length+' cliente'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px">'+fmt(tSub)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px">'+fmt(tTot)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--green)">'+fmt(tAbo)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:16px;color:var(--red)">'+fmt(tSal)+'</td>'
+    +'<td></td></tr>';
+  body.innerHTML=html;
+}
+function aplicarAbonoCliente(clienteKey, safeKey){
+  var mEl=document.getElementById('abono-monto-'+safeKey);
+  var dEl=document.getElementById('abono-dep-'+safeKey);
+  var monto=parseMon(mEl?mEl.value:'')||0;
+  var dep=(dEl?dEl.value.trim():'');
+  if(monto<=0){ toast('Ingrese el monto del abono'); if(mEl) mEl.focus(); return; }
+  if(!dep){ toast('Ingrese el número de depósito del abono'); if(dEl) dEl.focus(); return; }
+  if(!confirm('¿Aplicar abono de '+fmt(monto)+' (depósito '+dep+')?')) return;
+  if(!window._abonosCache) window._abonosCache={};
+  var lista=window._abonosCache[clienteKey]||[];
+  lista.push({id:'ab'+Date.now(), monto:monto, deposito:dep,
+    fecha:new Date().toISOString(), by:SESSION.nombre||SESSION.id});
+  window._abonosCache[clienteKey]=lista;
+  _saveToSupabase('abonos_cliente_'+clienteKey, lista, '');
+  toast('✓ Abono de '+fmt(monto)+' aplicado');
+  renderAdminVentas();
+}
 
 function adminMarcarCxcPagado(uid,ventaId){
   if(!confirm('¿Confirmar pago recibido? La venta desaparecerá del seguimiento en 7 días.')) return;
@@ -13398,6 +13564,21 @@ function openEditAdminOwnVenta(vid){
   setF('avf-tc-used', found.tcUsed>0?found.tcUsed:'525');
   var ivaEl = document.getElementById('avf-iva'); if(ivaEl) ivaEl.value=found.ivaPct===13?'13':'no';
   var usdEl = document.getElementById('avf-is-usd'); if(usdEl) usdEl.checked=!!(found.isUsd||found.isUSD);
+  // Poblar los checks completos (insumos, tercero, pendiente, mínimo, referido)
+  var setChk=function(id,val){ var el=document.getElementById(id); if(el) el.checked=!!val; };
+  setChk('avf-ins-chk', found.tieneInsumos);
+  setF('avf-ins-desc', found.insDesc);
+  setF('avf-ins-monto', found.insMontoNum>0?found.insMontoNum.toLocaleString('es-CR'):'');
+  setChk('avf-terc-chk', found.esTercero);
+  setF('avf-terc-nombre', found.tercNombre);
+  setF('avf-terc-monto', found.tercMonto>0?found.tercMonto.toLocaleString('es-CR'):'');
+  setChk('avf-pend-chk', found.tienePendiente);
+  setF('avf-pend-monto', found.pendMonto>0?found.pendMonto.toLocaleString('es-CR'):'');
+  var pcEl=document.getElementById('avf-pend-cancelado'); if(pcEl) pcEl.value=found.pendCancelado||'no';
+  setChk('avf-min-chk', found.tieneMinimo);
+  setF('avf-min-area', found.minimoArea||'');
+  setF('avf-referido', found.referido);
+  try{ toggleAdminIns(); toggleAdminTercero(); toggleAdminPend(); toggleAdminMinimo(); }catch(e){}
   // Mostrar cliente
   var lbl = document.getElementById('avf-cliente-label');
   var inp = document.getElementById('avf-cliente'); if(inp) inp.value=found.cliente||'';
@@ -13417,6 +13598,15 @@ function toggleAdminVentaForm(){
   var isOpen=wrap.style.display!=='none';
   wrap.style.display=isOpen?'none':'block';
   if(!isOpen){
+    // Limpiar los checks y campos nuevos al abrir un formulario en blanco
+    ['avf-ins-chk','avf-terc-chk','avf-pend-chk','avf-min-chk'].forEach(function(id){
+      var el=document.getElementById(id); if(el) el.checked=false;
+    });
+    ['avf-ins-desc','avf-ins-monto','avf-terc-nombre','avf-terc-monto',
+     'avf-pend-monto','avf-min-area','avf-referido'].forEach(function(id){
+      var el=document.getElementById(id); if(el) el.value='';
+    });
+    try{ toggleAdminIns(); toggleAdminTercero(); toggleAdminPend(); toggleAdminMinimo(); }catch(e){}
     // Populate category selector (always rebuild with new catalog)
     var sel=document.getElementById('avf-prod');
     if(sel){
@@ -13508,6 +13698,24 @@ function calcAdminVentaPreview(){
   if(el) el.textContent='Subtotal: '+fmt(sub)+(ivaPct?' + IVA '+fmt(sub*ivaPct/100)+' = '+fmt(total):'')+(isUsd&&usdAmt>0?' ($'+usdAmt.toFixed(1)+')':'');
 }
 
+// Toggles de los checks del formulario de venta del administrador
+function toggleAdminPend(){
+  var w=document.getElementById('avf-pendiente-wrap');
+  if(w) w.className=document.getElementById('avf-pend-chk').checked?'vf-pendiente-wrap show':'vf-pendiente-wrap';
+}
+function toggleAdminIns(){
+  var w=document.getElementById('avf-insumos-wrap');
+  if(w) w.className=document.getElementById('avf-ins-chk').checked?'vf-tercero-wrap show':'vf-tercero-wrap';
+}
+function toggleAdminTercero(){
+  var w=document.getElementById('avf-tercero-wrap');
+  if(w) w.className=document.getElementById('avf-terc-chk').checked?'vf-tercero-wrap show':'vf-tercero-wrap';
+}
+function toggleAdminMinimo(){
+  var w=document.getElementById('avf-minimo-wrap');
+  if(w) w.className=document.getElementById('avf-min-chk').checked?'vf-tercero-wrap show':'vf-tercero-wrap';
+}
+
 function saveAdminVenta(){
   var fecha=document.getElementById('avf-fecha')?.value;
   var prodId=document.getElementById('avf-prod')?.value;
@@ -13525,6 +13733,16 @@ function saveAdminVenta(){
     var avlbl=document.getElementById('avf-cliente-label');
     if(avlbl){ avlbl.parentElement.style.borderColor='var(--red)'; avlbl.parentElement.style.background='rgba(227,24,55,.04)'; }
     return;
+  }
+  // Área del mínimo obligatoria si el check está marcado (misma regla que usuario)
+  var _amChk=document.getElementById('avf-min-chk');
+  if(_amChk&&_amChk.checked){
+    var _amEl=document.getElementById('avf-min-area');
+    if(!(parseFloat(_amEl?.value)>0)){
+      toast('⚠ Marcaste "Mínimo" — debes ingresar el Área real del mínimo (m²/ml)');
+      if(_amEl){ _amEl.focus(); _amEl.style.border='2px solid var(--red)'; setTimeout(function(){_amEl.style.border='';},2500); }
+      return;
+    }
   }
   var isUsd=document.getElementById('avf-is-usd')?.checked||false;
   var ivaSel=document.getElementById('avf-iva')?.value;
@@ -13556,10 +13774,18 @@ function saveAdminVenta(){
     tipoPago:(document.getElementById('avf-tipo-pago')?.value||'CONTADO'),
     plazoCredito:0,
     isUsd:isUsd,usd:usdAmt,tcUsed:tcUsed,
-    tieneInsumos:false,insDesc:'',insMontoNum:0,
-    esTercero:false,tercNombre:'',
-    tienePendiente:false,pendMonto:0,pendCancelado:'no',
-    referido:'',
+    tieneInsumos:(document.getElementById('avf-ins-chk')?.checked||false),
+    insDesc:(document.getElementById('avf-ins-chk')?.checked?(document.getElementById('avf-ins-desc')?.value.trim()||''):''),
+    insMontoNum:(document.getElementById('avf-ins-chk')?.checked?(parseMon(document.getElementById('avf-ins-monto')?.value)||0):0),
+    esTercero:(document.getElementById('avf-terc-chk')?.checked||false),
+    tercNombre:(document.getElementById('avf-terc-chk')?.checked?(document.getElementById('avf-terc-nombre')?.value.trim()||''):''),
+    tercMonto:(document.getElementById('avf-terc-chk')?.checked?(parseMon(document.getElementById('avf-terc-monto')?.value)||0):0),
+    tienePendiente:(document.getElementById('avf-pend-chk')?.checked||false),
+    pendMonto:(document.getElementById('avf-pend-chk')?.checked?(parseMon(document.getElementById('avf-pend-monto')?.value)||0):0),
+    pendCancelado:(document.getElementById('avf-pend-chk')?.checked?(document.getElementById('avf-pend-cancelado')?.value||'no'):'no'),
+    tieneMinimo:(document.getElementById('avf-min-chk')?.checked||false),
+    minimoArea:(document.getElementById('avf-min-chk')?.checked?(parseFloat(document.getElementById('avf-min-area')?.value)||0):0),
+    referido:(document.getElementById('avf-referido')?.value.trim()||''),
     proyecto:(document.getElementById('avf-proyecto')?.value.trim()||''),
     notas:(document.getElementById('avf-notas')?.value.trim()||''),
     pagadoAdmin:false,cxcPagado:false,ejecutado:false,
@@ -24339,7 +24565,50 @@ window.initCalcCONCRE=initCalcCONCRE;
               <input type="hidden" id="avf-usd" value="0">
               <div class="vf-grid-3" style="margin-bottom:10px">
                 
+              <!-- Checks completos (mismos que el formulario de usuario) -->
+              <div class="vf-check-row" onclick="document.getElementById('avf-pend-chk').click()">
+                <input type="checkbox" id="avf-pend-chk" onchange="toggleAdminPend()" onclick="event.stopPropagation()">
+                <span class="vf-check-label">🔵 Proyecto pendiente de ejecutar</span>
+              </div>
+              <div class="vf-pendiente-wrap" id="avf-pendiente-wrap">
+                <div class="vf-grid-2">
+                  <div><span class="vf-label">Monto pendiente ₡</span><input type="text" class="vf-inp" id="avf-pend-monto" placeholder="0" oninput="fmtInp(this)"></div>
+                  <div><span class="vf-label">Cancelado</span><select class="vf-sel" id="avf-pend-cancelado"><option value="no">No</option><option value="si">Sí</option></select></div>
+                </div>
+              </div>
+              <div class="vf-check-row" onclick="document.getElementById('avf-ins-chk').click()">
+                <input type="checkbox" id="avf-ins-chk" onchange="toggleAdminIns();calcAdminVentaPreview()" onclick="event.stopPropagation()">
+                <span class="vf-check-label">⚠ Lleva insumos (fuera de base de comisión)</span>
+              </div>
+              <div class="vf-tercero-wrap" id="avf-insumos-wrap">
+                <div class="vf-grid-2">
+                  <div><span class="vf-label">Descripción insumos</span><input type="text" class="vf-inp" id="avf-ins-desc" placeholder="Ej. Sellador, fibra"></div>
+                  <div><span class="vf-label">Monto insumos ₡</span><input type="text" class="vf-inp" id="avf-ins-monto" placeholder="0" oninput="fmtInp(this);calcAdminVentaPreview()"></div>
+                </div>
+              </div>
+              <div class="vf-check-row" onclick="document.getElementById('avf-terc-chk').click()">
+                <input type="checkbox" id="avf-terc-chk" onchange="toggleAdminTercero();calcAdminVentaPreview()" onclick="event.stopPropagation()">
+                <span class="vf-check-label">👤 Comisión a tercero (fuera de base de comisión)</span>
+              </div>
+              <div class="vf-tercero-wrap" id="avf-tercero-wrap">
+                <div class="vf-grid-2">
+                  <div><span class="vf-label">Nombre del tercero</span><input type="text" class="vf-inp" id="avf-terc-nombre" placeholder="Nombre de quien recibe la comisión"></div>
+                  <div><span class="vf-label">Monto comisión al tercero ₡</span><input type="text" class="vf-inp" id="avf-terc-monto" placeholder="₡ 0" oninput="fmtInp(this);calcAdminVentaPreview()"></div>
+                </div>
+              </div>
+              <div class="vf-check-row" id="avf-min-row" onclick="document.getElementById('avf-min-chk').click()">
+                <input type="checkbox" id="avf-min-chk" onchange="toggleAdminMinimo()" onclick="event.stopPropagation()">
+                <span class="vf-check-label">📐 Mínimo <span style="font-weight:400;color:var(--text3);font-size:11px">(el cobro aplica un área mínima — solo informativo)</span></span>
+              </div>
+              <div class="vf-tercero-wrap" id="avf-minimo-wrap">
+                <div><span class="vf-label">Área real del mínimo (m²/ml)</span><input type="number" class="vf-inp" id="avf-min-area" min="0" step="any" placeholder="Ej: 15"></div>
+                <div style="font-size:10px;color:var(--text3);margin-top:3px">Este dato es solo de referencia — no altera subtotales ni comisiones.</div>
+              </div>
+              <div class="vf-grid-2" style="margin-bottom:10px">
+                <div><span class="vf-label">Referido</span><input type="text" class="vf-inp" id="avf-referido" placeholder="Opcional"></div>
                 <div><span class="vf-label">Notas</span><input type="text" class="vf-inp" id="avf-notas" placeholder="Opcional"></div>
+              </div>
+              <div style="display:none"><input type="text" id="avf-notas-old"></div>
                 <div style="display:flex;flex-direction:column;gap:4px">
                   <span class="vf-label">Vista previa</span>
                   <div id="avf-preview" style="font-family:var(--cond);font-size:13px;font-weight:800;padding:6px 9px;background:var(--surface2);border:1px solid var(--border);border-radius:6px">₡0</div>
@@ -24493,10 +24762,25 @@ window.initCalcCONCRE=initCalcCONCRE;
             </div>
             <table class="atbl" style="min-width:1000px">
               <thead><tr>
-                <th>Colaborador</th><th>Fecha</th><th>Producto</th><th>Cliente</th>
+                <th>Colaborador</th><th>Fecha</th><th>Factura</th><th>Producto</th><th>Cliente</th>
                 <th>Subtotal s/IVA</th><th>Total con IVA</th><th>Vencimiento</th><th>Estado</th><th>Notas</th><th>Acción</th>
               </tr></thead>
               <tbody id="av-cxc-body"></tbody>
+            </table>
+          </div>
+
+          <!-- Saldos por cliente con abonos -->
+          <div class="admin-table-wrap" style="margin-bottom:14px">
+            <div class="admin-table-hdr" style="border-bottom-color:var(--red)">
+              <span class="ath-title">🧾 Saldos por cliente — cuentas por cobrar</span>
+              <span style="font-size:11px;color:rgba(255,255,255,.5)">Deuda histórica acumulada por cliente · aplique abonos parciales</span>
+            </div>
+            <table class="atbl" style="min-width:1000px">
+              <thead><tr>
+                <th>Cliente</th><th>Facturas</th><th>Subtotal s/IVA</th><th>Total con IVA</th>
+                <th>Abonos aplicados</th><th>Saldo pendiente</th><th style="text-align:center">Aplicar abono</th>
+              </tr></thead>
+              <tbody id="av-saldos-cliente-body"></tbody>
             </table>
           </div>
 
