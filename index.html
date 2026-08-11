@@ -1907,7 +1907,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260811175340';
+var APP_BUILD='20260811180923';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -9068,6 +9068,10 @@ async function loadVentasFromDB(uid,_rows){
     var configOverride=window._pagadoAdminOverrides&&window._pagadoAdminOverrides.hasOwnProperty(row.id)
       ? window._pagadoAdminOverrides[row.id] : null;
     var pagadoAdminFinal = configOverride!==null ? configOverride : (row.pagado_admin||false);
+    // Override del número de depósito guardado en configuracion (respaldo redundante)
+    var depOverride=(window._depositoOverrides&&window._depositoOverrides.hasOwnProperty(row.id))
+      ? window._depositoOverrides[row.id] : null;
+    var depositoFinal = depOverride!==null ? depOverride : (row.deposito_num||'');
 
     // Aplicar override de edición de venta si existe en _ventaEditsCache
     var editOverride=window._ventaEditsCache&&window._ventaEditsCache[row.id];
@@ -9110,7 +9114,7 @@ async function loadVentasFromDB(uid,_rows){
         isUSD:editOverride.isUsd||row.is_usd||false,
         tcUsed:editOverride.tcUsed||row.tc_used||0,
         usd:editOverride.usd||row.usd||0,
-        depositoNum:row.deposito_num||'',
+        depositoNum:depositoFinal,
         notas:editOverride.notas||row.notas||'',
         estado:editOverride.estado||row.estado||'activo',
         tieneInsumos:editOverride.tieneInsumos||false,
@@ -9132,6 +9136,9 @@ async function loadVentasFromDB(uid,_rows){
     vd[mk].ventas.push({
       id:row.id,
       fecha:row.fecha,
+      // 'precio' es alias de precioUnit — sin él, la validación de venta completa
+      // fallaba al recargar y marcaba ventas ya completadas como INCOMPLETAS
+      precio:row.precio_unit||0,
       prodId:row.prod_id,
       subProdId:row.sub_prod_id||'',
       subProdNombre:row.sub_prod_nombre||'',
@@ -9157,7 +9164,7 @@ async function loadVentasFromDB(uid,_rows){
       isUSD:row.is_usd||false,
       tcUsed:row.tc_used||0,
       usd:row.usd||0,
-      depositoNum:row.deposito_num||'',
+      depositoNum:depositoFinal,
       notas:row.notas||'',
       estado:row.estado||'activo',
       isAdminVenta:row.is_admin_venta||false,
@@ -10063,7 +10070,7 @@ function renderVentasUser(){
     const p=catMap[normalizeProdId(v.prodId)]||{nombre:v.prodId,tipo:'otros'};
     const comis=calcComision(v,fibraCosto);
     var rowCls='venta-row';
-    if(v.estado==='incompleta'||(v.invMovId&&(!v.prodId||!v.cliente||!v.precio))) rowCls+=' venta-incompleta';
+    if(v.estado==='incompleta') rowCls+=' venta-incompleta';
     else if(v.pagadoAdmin) rowCls+=' pagada';
     else if(v.tienePendiente&&v.pendCancelado!=='si') rowCls+=' pendiente-exec';
     else if(v.esTercero) rowCls+=' tercero';
@@ -13885,7 +13892,11 @@ function renderAdminOwnVentas(){
     +'</tr></thead><tbody>'
     +ventas.map(function(v){
       var p=cat[v.prodId]||{nombre:v.prodId||'Sin producto',tipo:'otros'};
-      var isIncompleta=v.estado==='incompleta'||!v.prodId||!v.cliente||!v.precio;
+      // INCOMPLETA se determina por el estado explícito de la venta.
+      // Antes también miraba prodId/cliente/precio, pero al recargar desde Supabase
+      // algunos de esos campos podían venir vacíos y marcaba como incompletas
+      // ventas que ya habían sido completadas correctamente.
+      var isIncompleta=(v.estado==='incompleta');
       return '<tr style="'+(isIncompleta?'background:rgba(234,88,12,.06);':'')+'">'
         +'<td style="font-size:11px;white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
         +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo]||'vc-otros')+'">'+(p.nombre||'—')+'</span>'
