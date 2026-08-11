@@ -1701,23 +1701,6 @@ async function loadAllDataFromDB(){
 
   try {
     // ── FASE 1: Datos globales en PARALELO ──────────────────────────────────
-    // Helper genérico: trae TODAS las filas de una tabla superando el límite
-    // de 1000 filas por consulta que aplica Supabase por defecto.
-    window._loadAllRows=async function(tabla, orderCol){
-      var all=[], from=0, size=1000;
-      for(var iP=0; iP<50; iP++){
-        var q=DB.from(tabla).select('*');
-        if(orderCol) q=q.order(orderCol);
-        var r=await q.range(from, from+size-1);
-        if(r.error){ console.error(tabla+' page error:',r.error); break; }
-        var rows=r.data||[];
-        all=all.concat(rows);
-        if(rows.length<size) break;
-        from+=size;
-      }
-      return {data:all, error:null};
-    };
-
     // CRÍTICO: configuracion puede superar las 1000 filas (límite por defecto de
     // Supabase). Si se trunca, se pierden overrides como cc_pagado_admin_* y el
     // estado de pago vuelve a "pendiente" al recargar. Se pagina para traer TODO.
@@ -1738,9 +1721,9 @@ async function loadAllDataFromDB(){
       DB.from('usuarios').select('*').order('nombre'),
       _loadAllConfig(),
       DB.from('liq_subcontratistas').select('*'),
-      DB.from('crm_clientes').select('*').order('nombre_empresa'),
-      DB.from('crm_links').select('*'),
-      DB.from('papelera').select('*').order('deleted_at',{ascending:false}),
+      loadAllRows('crm_clientes','nombre_empresa'),
+      loadAllRows('crm_links'),
+      loadAllRows('papelera','deleted_at',false),
       DB.from('proyectos').select('*').order('created_at',{ascending:false})
     ]);
 
@@ -1879,12 +1862,12 @@ async function loadAllDataFromDB(){
         // ── BATCH: una sola query por tabla para TODOS los usuarios ──
         // (antes: ~9 queries por usuario; ahora: 6 en total)
         promises.push(Promise.all([
-          window._loadAllRows('ventas','fecha'),
+          loadAllRows('ventas','fecha'),
           DB.from('vacaciones_saldo').select('*'),
-          DB.from('vacaciones_solicitudes').select('*'),
-          window._loadAllRows('gastos_proyecto','fecha'),
-          window._loadAllRows('fondos_gastos'),
-          window._loadAllRows('notificaciones')
+          loadAllRows('vacaciones_solicitudes'),
+          loadAllRows('gastos_proyecto','fecha'),
+          loadAllRows('fondos_gastos'),
+          loadAllRows('notificaciones')
         ]).then(function(b){
           var ventasAll=(b[0]&&b[0].data)||[];
           var salAll   =(b[1]&&b[1].data)||[];
@@ -1917,7 +1900,7 @@ async function loadAllDataFromDB(){
         promises.push(loadVacFromDB(uid));
         promises.push(loadFondosFromDB(uid));
         promises.push(loadGastosFromDB(uid));
-        promises.push(DB.from('notificaciones').select('*').eq('uid',uid).then(function(r){
+        promises.push(DB.from('notificaciones').select('*').eq('uid',uid).order('created_at',{ascending:false}).limit(100).then(function(r){
           var notifs=(!r.error&&r.data)?r.data.map(_mapNotif):[];
           notifs.sort(function(a,c){return (c.created_at||'')<(a.created_at||'')?-1:1;});
           setNotifications(uid, notifs.slice(0,30));
@@ -1940,7 +1923,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260811181849';
+var APP_BUILD='20260811182203';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2173,7 +2156,7 @@ function startAutoRefresh(){
         DB.from('usuarios').select('*').order('nombre').then(function(ur){
           if(!ur.error&&ur.data) window._usersCache=ur.data.map(dbRowToUser);
         }),
-        DB.from('crm_clientes').select('*').order('nombre_empresa').then(function(cr){
+        loadAllRows('crm_clientes','nombre_empresa').then(function(cr){
           if(!cr.error&&cr.data&&cr.data.length>0){
             window._crmClientsCache=cr.data.map(function(row){
               return {id:row.id,nombreEmpresa:row.nombre_empresa,cedula:row.cedula,
@@ -2184,7 +2167,7 @@ function startAutoRefresh(){
             });
           }
         }),
-        DB.from('crm_links').select('*').then(function(lkr){
+        loadAllRows('crm_links').then(function(lkr){
           if(!lkr.error&&lkr.data) window._crmLinksCache=lkr.data.map(function(row){
             return {ventaId:row.venta_id,clienteId:row.cliente_id,
               contactoId:row.contacto_id,autoMatched:row.auto_matched};
@@ -2404,9 +2387,9 @@ function initRadarComercialUser(){
 
 async function loadRadarFromDB(){
   try{
-    var cr = await DB.from('radar_campanas').select('*').order('created_at',{ascending:false});
+    var cr = await loadAllRows('radar_campanas','created_at',false);
     if(!cr.error && cr.data) _radarCampanas = cr.data;
-    var pr = await DB.from('radar_prospectos').select('*').order('score',{ascending:false});
+    var pr = await loadAllRows('radar_prospectos','score',false);
     if(!pr.error && pr.data) _radarProspectos = pr.data;
   }catch(e){ console.warn('loadRadarFromDB:', e); }
 }
@@ -2664,7 +2647,16 @@ async function generarCampanaRadar(){
     // Cargar nombres de prospectos de TODAS las campañas anteriores (sin importar score, para no repetir a nadie ya visto)
     var prospectosAnteriores = {};
     try{
-      var rPrev = await DB.from('radar_prospectos').select('nombre,señal_detectada');
+      var _rpAll=[], _rpF=0;
+      for(var _rpI=0;_rpI<50;_rpI++){
+        var _rpR=await DB.from('radar_prospectos').select('nombre,señal_detectada').range(_rpF,_rpF+999);
+        if(_rpR.error) break;
+        var _rpRows=_rpR.data||[];
+        _rpAll=_rpAll.concat(_rpRows);
+        if(_rpRows.length<1000) break;
+        _rpF+=1000;
+      }
+      var rPrev = {data:_rpAll, error:null};
       if(!rPrev.error && rPrev.data){
         rPrev.data.forEach(function(pp){
           var k = (pp.nombre||'').toLowerCase().trim();
@@ -3211,11 +3203,11 @@ async function initImportaciones(){
 
 async function loadImportacionesFromDB(){
   try{
-    var rp = await DB.from('imp_proveedores').select('*').order('nombre');
+    var rp = await loadAllRows('imp_proveedores','nombre');
     if(!rp.error && rp.data) _impProveedores = rp.data;
-    var rpr = await DB.from('imp_productos').select('*').order('nombre');
+    var rpr = await loadAllRows('imp_productos','nombre');
     if(!rpr.error && rpr.data) _impProductos = rpr.data;
-    var ri = await DB.from('imp_importaciones').select('*').order('fecha',{ascending:false});
+    var ri = await loadAllRows('imp_importaciones','fecha',false);
     if(!ri.error && ri.data) _impImportaciones = ri.data;
   }catch(e){ console.warn('loadImportacionesFromDB:', e); }
 }
@@ -3697,7 +3689,7 @@ async function impGuardarImportacion(){
 
 async function impCargarLineasParaEdicion(importacionId){
   try{
-    var r = await DB.from('imp_lineas').select('*').eq('importacion_id', importacionId);
+    var r = await loadAllRowsEq('imp_lineas','importacion_id', importacionId);
     if(!r.error && r.data){
       _impLineasActuales = r.data.map(function(l){
         return { producto_id:l.producto_id, cantidad:l.cantidad, precio_unitario:l.precio_unitario, margen:l.margen };
@@ -3742,7 +3734,7 @@ function renderImpHistorial(){
 async function impVerDetalle(importacionId){
   var imp = _impImportaciones.find(function(i){return i.id===importacionId;});
   if(!imp) return;
-  var r = await DB.from('imp_lineas').select('*').eq('importacion_id', importacionId);
+  var r = await loadAllRowsEq('imp_lineas','importacion_id', importacionId);
   var lineas = (!r.error && r.data) ? r.data.map(function(l){
     return { producto_id:l.producto_id, cantidad:l.cantidad, precio_unitario:l.precio_unitario, margen:l.margen };
   }) : [];
@@ -5010,6 +5002,41 @@ td:last-child{border-left:2px solid rgba(26,158,92,.2)}
 // Fecha actual en zona horaria de Costa Rica (UTC-6, sin DST).
 // Vercel corre en UTC — después de las 6pm CR, new Date() ya da el día siguiente.
 // Usar esta función en TODOS los lugares donde se necesite la fecha de hoy como default.
+// ══════════════════════════════════════════════
+//  CARGA PAGINADA — evita el límite de 1000 filas de Supabase
+//  Supabase/PostgREST devuelve máximo 1000 filas por consulta. Sin paginar,
+//  las tablas grandes se truncan silenciosamente y se "pierden" datos.
+// ══════════════════════════════════════════════
+async function loadAllRows(tabla, orderCol, ascending){
+  var all=[], from=0, size=1000;
+  for(var i=0;i<100;i++){
+    var q=DB.from(tabla).select('*');
+    if(orderCol) q=q.order(orderCol, ascending===false?{ascending:false}:undefined);
+    var r=await q.range(from, from+size-1);
+    if(r.error){ console.error('loadAllRows '+tabla+':',r.error); return {data:all,error:r.error}; }
+    var rows=r.data||[];
+    all=all.concat(rows);
+    if(rows.length<size) break;
+    from+=size;
+  }
+  return {data:all, error:null};
+}
+// Igual que loadAllRows pero con un filtro .eq()
+async function loadAllRowsEq(tabla, col, val, orderCol){
+  var all=[], from=0, size=1000;
+  for(var i=0;i<100;i++){
+    var q=DB.from(tabla).select('*').eq(col,val);
+    if(orderCol) q=q.order(orderCol);
+    var r=await q.range(from, from+size-1);
+    if(r.error){ console.error('loadAllRowsEq '+tabla+':',r.error); return {data:all,error:r.error}; }
+    var rows=r.data||[];
+    all=all.concat(rows);
+    if(rows.length<size) break;
+    from+=size;
+  }
+  return {data:all, error:null};
+}
+
 function todayCR(){
   return new Date().toLocaleDateString('en-CA',{timeZone:'America/Costa_Rica'});
   // Devuelve 'YYYY-MM-DD' — formato correcto para inputs type=date
@@ -6192,7 +6219,7 @@ async function loadVacFromDB(uid,_pre){
   } else {
     var _both=await Promise.all([
       DB.from('vacaciones_saldo').select('*').eq('uid',uid).single(),
-      DB.from('vacaciones_solicitudes').select('*').eq('uid',uid)
+      loadAllRowsEq('vacaciones_solicitudes','uid',uid)
     ]);
     s=_both[0]; r=_both[1];
   }
@@ -6729,7 +6756,7 @@ function _startNotifRefresh(){
 // Recargar notificaciones del usuario desde Supabase al cache en memoria
 async function reloadNotifications(uid){
   try{
-    var r=await DB.from('notificaciones').select('*').eq('uid',uid).order('created_at',{ascending:false});
+    var r=await DB.from('notificaciones').select('*').eq('uid',uid).order('created_at',{ascending:false}).limit(100);
     if(!r.error&&r.data){
       var notifs=r.data.slice(0,30).map(function(x){
         return {id:x.id,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',
@@ -7547,7 +7574,7 @@ async function loadFondosFromDB(uid,_gastosRows){
   if(_gastosRows){
     g={data:_gastosRows.filter(function(r){return r.uid===uid;}),error:null};
   } else {
-    g=await DB.from('fondos_gastos').select('*').eq('uid',uid);
+    g=await loadAllRowsEq('fondos_gastos','uid',uid);
   }
   if(!g.error&&g.data&&g.data.length>0){
     g.data.forEach(function(x){
@@ -11969,7 +11996,7 @@ function setLiqData(subId,d){
   }
 }
 async function loadLiqFromDB(subId){
-  var {data,error}=await DB.from('liq_proyectos').select('*').eq('sub_id',subId);
+  var {data,error}=await loadAllRowsEq('liq_proyectos','sub_id',subId);
   if(error&&error.status!==406){ console.error('loadLiq:',error); }
   var d={};
   (data||[]).forEach(function(row){
@@ -14033,7 +14060,7 @@ async function loadGastosFromDB(uid,_rows){
     data=_rows.filter(function(r){return r.uid===uid;});
     error=null;
   } else {
-    var _q=await DB.from('gastos_proyecto').select('*').eq('uid',uid).order('fecha');
+    var _q=await loadAllRowsEq('gastos_proyecto','uid',uid,'fecha');
     data=_q.data; error=_q.error;
   }
   if(error&&error.status!==406){ console.error('loadGastos:',error); }
@@ -14689,7 +14716,7 @@ function markSubPagado(subId, periodKey, pagado){
 
 // ── Historial de pagos a subcontratistas ──
 async function loadLiqPagosHistorial(){
-  var r=await DB.from('liq_pagos_historial').select('*').order('fecha_pago',{ascending:false});
+  var r=await loadAllRows('liq_pagos_historial','fecha_pago',false);
   if(r.error) console.error('loadLiqPagosHistorial:',r.error);
   window._liqPagosHistorial=r.data||[];
 }
@@ -14780,7 +14807,17 @@ window._planillaHistCache = {}; // {uid: {'YYYY-MM': {salario_override, monto_ex
 async function loadPlanillaHist(){
   // Load historical planilla data for ALL users from Supabase
   try {
-    var r = await DB.from('configuracion').select('clave,valor').like('clave','planilla_hist_%');
+    // Paginado: planilla_hist crece 1 fila por usuario por mes — con los años supera 1000
+    var _ph=[], _pf=0;
+    for(var _pi=0;_pi<50;_pi++){
+      var _pr=await DB.from('configuracion').select('clave,valor').like('clave','planilla_hist_%').range(_pf,_pf+999);
+      if(_pr.error){ console.error('planilla_hist page:',_pr.error); break; }
+      var _prows=_pr.data||[];
+      _ph=_ph.concat(_prows);
+      if(_prows.length<1000) break;
+      _pf+=1000;
+    }
+    var r = {data:_ph, error:null};
     if(r.error){ console.error('loadPlanillaHist:', r.error); return; }
     window._planillaHistCache = {};
     (r.data||[]).forEach(function(row){
@@ -15300,7 +15337,7 @@ function setCRMClients(d){
     if(r.error) console.error('setCRMClients:',r.error);
     else {
       // After save, reload ALL clients from Supabase to ensure cache is complete
-      DB.from('crm_clientes').select('*').order('nombre_empresa').then(function(r2){
+      loadAllRows('crm_clientes','nombre_empresa').then(function(r2){
         if(!r2.error&&r2.data&&r2.data.length>0){
           window._crmClientsCache=r2.data.map(function(row){
             return {id:row.id,nombreEmpresa:row.nombre_empresa,cedula:row.cedula,
@@ -15343,8 +15380,8 @@ async function loadCRMFromDB(){
     return; // already loaded from Phase 1
   }
   // Fallback: fresh query (first login or cache cleared)
-  var c1=await DB.from('crm_clientes').select('*').order('nombre_empresa');
-  var c2=await DB.from('crm_links').select('*');
+  var c1=await loadAllRows('crm_clientes','nombre_empresa');
+  var c2=await loadAllRows('crm_links');
   if(!c1.error&&c1.data){
     window._crmClientsCache=c1.data.map(function(row){
       return {id:row.id,nombreEmpresa:row.nombre_empresa,cedula:row.cedula,
@@ -17332,7 +17369,7 @@ function setTrash(d){
 }
 
 async function loadTrashFromDB(){
-  var {data,error}=await DB.from('papelera').select('*').order('deleted_at',{ascending:false});
+  var {data,error}=await loadAllRows('papelera','deleted_at',false);
   if(error&&error.status!==406){ console.error('loadTrash:',error); }
   window._trashCache=(data||[]).map(function(row){
     return {id:row.id,type:row.type,uid:row.uid,uNombre:row.u_nombre,
@@ -18543,7 +18580,7 @@ function invNextMovNum(itemId){
 async function loadInvFromDB(){
   // Cargar items — tabla principal
   try{
-    var r1=await DB.from('inv_items').select('*').order('nombre');
+    var r1=await loadAllRows('inv_items','nombre');
     if(r1.error){
       console.error('inv_items error (status='+r1.error.status+'):', r1.error.message);
     } else {
@@ -18554,19 +18591,19 @@ async function loadInvFromDB(){
 
   // Lotes
   try{
-    var r2=await DB.from('inv_lotes').select('*').order('created_at');
+    var r2=await loadAllRows('inv_lotes','created_at');
     if(!r2.error && r2.data) window._invLotes=r2.data;
   }catch(e){}
 
   // Movimientos
   try{
-    var r3=await DB.from('inv_movimientos').select('*').order('created_at',{ascending:false});
+    var r3=await loadAllRows('inv_movimientos','created_at',false);
     if(!r3.error && r3.data) window._invMovs=r3.data;
   }catch(e){}
 
   // Alertas
   try{
-    var r4=await DB.from('inv_alertas').select('*').eq('resuelta',false).order('created_at',{ascending:false});
+    var r4=await loadAllRowsEq('inv_alertas','resuelta',false,null);
     if(!r4.error && r4.data) window._invAlertas=r4.data;
   }catch(e){}
 
@@ -18969,7 +19006,7 @@ async function submitAudit(auditId){
 }
 async function checkOverdueAudits(){
   if(!SESSION||SESSION.rol!=='superadmin') return;
-  var r=await DB.from('inv_auditoria').select('*').eq('completado',false).eq('alerta_enviada',false);
+  var r=await DB.from('inv_auditoria').select('*').eq('completado',false).eq('alerta_enviada',false).range(0,4999);
   if(r.error||!r.data) return;
   var now=new Date();
   for(var i=0;i<r.data.length;i++){
@@ -18987,7 +19024,7 @@ async function checkOverdueAudits(){
 async function renderAuditAdmin(){
   if(!SESSION||SESSION.rol!=='superadmin') return;
   checkOverdueAudits();
-  var r=await DB.from('inv_auditoria').select('*').order('created_at',{ascending:false});
+  var r=await loadAllRows('inv_auditoria','created_at',false);
   var body=_invBody(); if(!body) return;
   // Contenedor FIJO y único para este panel — se reemplaza siempre, nunca se apila
   // (antes: body.innerHTML=html+body.innerHTML duplicaba la tabla en cada render)
@@ -20182,7 +20219,7 @@ function icMesKey(){
 
 // ══ LOADERS ══
 async function loadICFromDB(){
-  var r1=await DB.from('ic_proyectos').select('*').eq('estado','activo').order('updated_at',{ascending:false});
+  var r1=await DB.from('ic_proyectos').select('*').eq('estado','activo').order('updated_at',{ascending:false}).range(0,4999);
   var r2=await DB.from('ic_actualizaciones').select('*').order('created_at',{ascending:false}).limit(20);
   var r3=await DB.from('ic_uso_mensual').select('*').eq('mes_key',icMesKey()).single();
   if(!r1.error) _icProyectos=r1.data||[];
