@@ -1717,6 +1717,9 @@ async function loadAllDataFromDB(){
       console.log('configuracion: '+all.length+' filas cargadas');
       return {data:all, error:null};
     };
+    // Cargar PRIMERO los estados de pago/depósito con consulta dedicada,
+    // así ya están disponibles cuando se mapeen las ventas en la fase 2.
+    try{ await loadPagoOverrides(); }catch(e){ console.error('loadPagoOverrides:',e); }
     var phase1=await Promise.all([
       DB.from('usuarios').select('*').order('nombre'),
       _loadAllConfig(),
@@ -1735,7 +1738,11 @@ async function loadAllDataFromDB(){
     if(!users.error&&users.data) window._usersCache=users.data.map(dbRowToUser);
 
     if(!configs.error&&configs.data){
-      window._pagadoAdminOverrides = {};
+      // NO reiniciar _pagadoAdminOverrides ni _depositoOverrides: ya vienen cargados
+      // por loadPagoOverrides() con consulta dedicada. Reiniciarlos aquí borraba
+      // los estados de pago y por eso volvían a "Pendiente" al recargar.
+      window._pagadoAdminOverrides = window._pagadoAdminOverrides || {};
+      window._depositoOverrides = window._depositoOverrides || {};
       window._ventaEditsCache = {}; // ediciones de ventas guardadas como backup
       window._comisVerifCache = {};   // {uid: {key:bool}} verificación de comisiones
       window._comisBaseCache = {};    // {uid: amount} base de deducción de comisión
@@ -1923,7 +1930,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260811182203';
+var APP_BUILD='20260811182505';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -5007,6 +5014,36 @@ td:last-child{border-left:2px solid rgba(26,158,92,.2)}
 //  Supabase/PostgREST devuelve máximo 1000 filas por consulta. Sin paginar,
 //  las tablas grandes se truncan silenciosamente y se "pierden" datos.
 // ══════════════════════════════════════════════
+// Carga DEDICADA de los estados de pago (✓ Pago) y números de depósito.
+// Consulta propia con .like() — independiente de la carga general de configuracion,
+// para que estos datos críticos nunca se pierdan por truncamiento u orden de carga.
+async function loadPagoOverrides(){
+  window._pagadoAdminOverrides = window._pagadoAdminOverrides || {};
+  window._depositoOverrides = window._depositoOverrides || {};
+  var patrones=[['cc_pagado_admin_%','pago'],['cc_deposito_%','dep']];
+  for(var pi=0; pi<patrones.length; pi++){
+    var pref=patrones[pi][0], tipo=patrones[pi][1];
+    var from=0;
+    for(var i=0;i<50;i++){
+      var r=await DB.from('configuracion').select('clave,valor').like('clave',pref).range(from,from+999);
+      if(r.error){ console.error('loadPagoOverrides '+pref+':',r.error); break; }
+      var rows=r.data||[];
+      rows.forEach(function(row){
+        if(!row.valor) return;
+        if(tipo==='pago'){
+          window._pagadoAdminOverrides[row.clave.replace('cc_pagado_admin_','')]=!!row.valor.pagado;
+        } else {
+          window._depositoOverrides[row.clave.replace('cc_deposito_','')]=row.valor.deposito||'';
+        }
+      });
+      if(rows.length<1000) break;
+      from+=1000;
+    }
+  }
+  console.log('Estados de pago cargados: '+Object.keys(window._pagadoAdminOverrides).length
+    +' · Depósitos: '+Object.keys(window._depositoOverrides).length);
+}
+
 async function loadAllRows(tabla, orderCol, ascending){
   var all=[], from=0, size=1000;
   for(var i=0;i<100;i++){
@@ -11045,14 +11082,14 @@ function renderAdminVentasTable(){
         +(v.notas?'<div style="color:var(--text2);margin-bottom:1px">📝 '+escHtml(v.notas)+'</div>':'')
         +(extraAdmin.length?'<div>'+extraAdmin.join(' · ')+'</div>':'')
       +'</td>'
-      +'<td><span class="'+(v.pagadoAdmin?'vac-badge approved':'vac-badge pending')+'">'+(v.pagadoAdmin?'✓ Pago':'Pend.')+'</span></td>'
+      +'<td><span class="'+(_esPagado(v)?'vac-badge approved':'vac-badge pending')+'">'+(_esPagado(v)?'✓ Pago':'Pend.')+'</span></td>'
       +'<td style="white-space:nowrap"><input type="text" '
         +'value="'+(((window._depositoOverrides||{})[v.id])!==undefined?(window._depositoOverrides[v.id]||''):(v.depositoNum||''))+'" '
         +'placeholder="# depósito" '
         +'data-vuid="'+v.uid+'" data-vid="'+v.id+'" class="dep-num-inp" '
         +'style="width:110px;font-size:11px;padding:3px 7px;border:1.5px solid var(--border2);border-radius:5px;font-family:var(--sans)">'
       +'</td>'
-      +'<td style="text-align:center;white-space:nowrap"><input type="checkbox" '+(v.pagadoAdmin?'checked':'')
+      +'<td style="text-align:center;white-space:nowrap"><input type="checkbox" '+(_esPagado(v)?'checked':'')
       +' onchange="toggleVentaPago(\''+v.uid+'\',\''+v.id+'\',this)" style="accent-color:var(--green);width:15px;height:15px;cursor:pointer">'
       +'<button class="liq-link-btn" data-vuid="'+v.uid+'" data-vid="'+v.id+'" title="Enviar a Liquidaciones" style="margin-left:5px;background:rgba(37,99,235,.1);border:1px solid rgba(37,99,235,.25);color:var(--blue);border-radius:4px;padding:2px 6px;cursor:pointer;font-size:10px;font-weight:700">📋</button>'
       +'</td>'
@@ -11083,6 +11120,15 @@ function saveDepositoNum(uid, ventaId, val){
     if(r.error) console.error('deposito save error:',r.error);
   });
 }
+// Estado de pago: el override de configuracion manda sobre el campo de la venta.
+// Mismo patrón que el número de depósito (que sí persiste correctamente).
+function _esPagado(v){
+  if(!v) return false;
+  var ov=window._pagadoAdminOverrides;
+  if(ov&&Object.prototype.hasOwnProperty.call(ov,v.id)) return !!ov[v.id];
+  return !!v.pagadoAdmin;
+}
+
 function toggleVentaPago(uid,ventaId,chk){
   const vd=getVentasData(uid);
   Object.keys(vd).forEach(mk=>{
