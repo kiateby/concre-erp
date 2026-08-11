@@ -1701,9 +1701,42 @@ async function loadAllDataFromDB(){
 
   try {
     // ── FASE 1: Datos globales en PARALELO ──────────────────────────────────
+    // Helper genérico: trae TODAS las filas de una tabla superando el límite
+    // de 1000 filas por consulta que aplica Supabase por defecto.
+    window._loadAllRows=async function(tabla, orderCol){
+      var all=[], from=0, size=1000;
+      for(var iP=0; iP<50; iP++){
+        var q=DB.from(tabla).select('*');
+        if(orderCol) q=q.order(orderCol);
+        var r=await q.range(from, from+size-1);
+        if(r.error){ console.error(tabla+' page error:',r.error); break; }
+        var rows=r.data||[];
+        all=all.concat(rows);
+        if(rows.length<size) break;
+        from+=size;
+      }
+      return {data:all, error:null};
+    };
+
+    // CRÍTICO: configuracion puede superar las 1000 filas (límite por defecto de
+    // Supabase). Si se trunca, se pierden overrides como cc_pagado_admin_* y el
+    // estado de pago vuelve a "pendiente" al recargar. Se pagina para traer TODO.
+    var _loadAllConfig=async function(){
+      var all=[], from=0, size=1000;
+      for(var iPage=0; iPage<50; iPage++){
+        var r=await DB.from('configuracion').select('*').range(from, from+size-1);
+        if(r.error){ console.error('configuracion page error:',r.error); break; }
+        var rows=r.data||[];
+        all=all.concat(rows);
+        if(rows.length<size) break;
+        from+=size;
+      }
+      console.log('configuracion: '+all.length+' filas cargadas');
+      return {data:all, error:null};
+    };
     var phase1=await Promise.all([
       DB.from('usuarios').select('*').order('nombre'),
-      DB.from('configuracion').select('*'),
+      _loadAllConfig(),
       DB.from('liq_subcontratistas').select('*'),
       DB.from('crm_clientes').select('*').order('nombre_empresa'),
       DB.from('crm_links').select('*'),
@@ -1846,12 +1879,12 @@ async function loadAllDataFromDB(){
         // ── BATCH: una sola query por tabla para TODOS los usuarios ──
         // (antes: ~9 queries por usuario; ahora: 6 en total)
         promises.push(Promise.all([
-          DB.from('ventas').select('*').order('fecha'),
+          window._loadAllRows('ventas','fecha'),
           DB.from('vacaciones_saldo').select('*'),
           DB.from('vacaciones_solicitudes').select('*'),
-          DB.from('gastos_proyecto').select('*').order('fecha'),
-          DB.from('fondos_gastos').select('*'),
-          DB.from('notificaciones').select('*')
+          window._loadAllRows('gastos_proyecto','fecha'),
+          window._loadAllRows('fondos_gastos'),
+          window._loadAllRows('notificaciones')
         ]).then(function(b){
           var ventasAll=(b[0]&&b[0].data)||[];
           var salAll   =(b[1]&&b[1].data)||[];
@@ -1907,7 +1940,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260811180923';
+var APP_BUILD='20260811181849';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -9051,8 +9084,17 @@ async function loadVentasFromDB(uid,_rows){
     data=_rows.filter(function(r){return r.uid===uid;});
     error=null;
   } else {
-    var _q=await DB.from('ventas').select('*').eq('uid',uid).order('fecha');
-    data=_q.data; error=_q.error;
+    // Paginado: evita el corte de 1000 filas de Supabase en usuarios con historial largo
+    var _all=[], _from=0;
+    for(var _p=0;_p<50;_p++){
+      var _q=await DB.from('ventas').select('*').eq('uid',uid).order('fecha').range(_from,_from+999);
+      if(_q.error){ error=_q.error; break; }
+      var _rows=_q.data||[];
+      _all=_all.concat(_rows);
+      if(_rows.length<1000) break;
+      _from+=1000;
+    }
+    data=_all;
   }
   // 406 = no rows / RLS empty — treat as empty, not a failure
   if(error&&error.code!=='PGRST116'&&error.status!==406){
@@ -11034,6 +11076,9 @@ function toggleVentaPago(uid,ventaId,chk){
         if(r.error) console.error('pagado_admin save error:', r.error);
         else console.log('pagado_admin guardado en Supabase:', ventaId, newVal);
       });
+      // Guardar TAMBIÉN en la tabla ventas (columna pagado_admin) — doble respaldo:
+      // si el override de configuracion no llegara, la fila de ventas conserva el estado.
+      try{ _saveSingleVenta(uid, vd[mk].ventas[idx], mk); }catch(e){ console.error('toggleVentaPago save:',e); }
       if(newVal) toast('✓ Pago verificado y guardado en línea');
       renderAdminVentasTable();
     }
