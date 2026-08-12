@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260812152412';
+var APP_BUILD='20260812153058';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -6879,6 +6879,10 @@ function clearAllNotifications(uid){
   DB.from('notificaciones').delete().eq('uid',uid).then(function(r){
     if(r.error) console.error('clearAllNotifications:',r.error);
   });
+  // Borrar también los respaldos en configuracion de este usuario
+  (getNotifications(uid)||[]).forEach(function(n){
+    if(n&&n.id) DB.from('configuracion').delete().eq('clave','notif_'+n.id).then(function(){});
+  });
   setNotifications(uid,[]);
   renderNotifPanel();
   renderNotifBell();
@@ -6892,6 +6896,16 @@ function markAllRead(uid){
   // Update quirúrgico en Supabase — solo el flag read de este uid
   DB.from('notificaciones').update({read:true}).eq('uid',uid).then(function(r){
     if(r.error) console.error('markAllRead:',r.error);
+  });
+  // Actualizar también los respaldos para que no reaparezcan como no leídas
+  n.forEach(function(x){
+    if(!x||!x.id) return;
+    DB.from('configuracion').select('clave,valor').eq('clave','notif_'+x.id).limit(1).then(function(rb){
+      if(!rb.error&&rb.data&&rb.data.length>0&&rb.data[0].valor){
+        var v=rb.data[0].valor; v.read=true;
+        DB.from('configuracion').upsert({clave:'notif_'+x.id,valor:v,updated_at:new Date().toISOString()},{onConflict:'clave'}).then(function(){});
+      }
+    });
   });
   renderNotifBell();
   renderNotifPanel();
@@ -6937,6 +6951,11 @@ function deleteOneNotif(uid,idx){
   if(item&&item.id){
     DB.from('notificaciones').delete().eq('id',item.id).then(function(r){
       if(r.error) console.error('deleteOneNotif:',r.error);
+    });
+    // Borrar TAMBIÉN el respaldo en configuracion — sin esto la notificación
+    // reaparecía al recargar la campana (se restauraba desde el respaldo).
+    DB.from('configuracion').delete().eq('clave','notif_'+item.id).then(function(r2){
+      if(r2.error) console.error('deleteOneNotif respaldo:',r2.error);
     });
   }
   renderNotifPanel();
@@ -7526,20 +7545,27 @@ async function openVacEditModal(uid){
   const u=getUsers().find(x=>x.id===uid)||{};
   var dbRow=null;
   try{
-    var _r=await DB.from('vacaciones_saldo').select('*').eq('uid',uid).maybeSingle();
-    if(!_r.error&&_r.data) dbRow=_r.data;
+    // .limit(1) en vez de .maybeSingle() — compatible con cualquier versión del cliente
+    var _r=await DB.from('vacaciones_saldo').select('*').eq('uid',uid).limit(1);
+    if(!_r.error&&_r.data&&_r.data.length>0) dbRow=_r.data[0];
   }catch(e){ console.error('openVacEditModal read:',e); }
-  // SEXO: se guarda en 'configuracion' (clave vac_sexo_{uid}) — la columna 'sexo'
-  // de vacaciones_saldo falló repetidamente. Se lee SIEMPRE fresco desde la nube
-  // para este usuario específico, evitando que muestre el valor de otro colaborador.
+  // SEXO: se guarda en 'configuracion' (clave vac_sexo_{uid}).
   var sexoVal='';
   try{
-    var _rs=await DB.from('configuracion').select('valor').eq('clave','vac_sexo_'+uid).maybeSingle();
-    if(!_rs.error&&_rs.data&&_rs.data.valor) sexoVal=_rs.data.valor.sexo||'';
+    var _rs=await DB.from('configuracion').select('clave,valor').eq('clave','vac_sexo_'+uid).limit(1);
+    if(_rs.error){
+      console.error('openVacEditModal sexo READ error:',_rs.error);
+    } else if(_rs.data&&_rs.data.length>0&&_rs.data[0].valor){
+      var _v=_rs.data[0].valor;
+      // El valor puede venir como objeto {sexo:'M'} o como texto plano 'M'
+      sexoVal=(typeof _v==='string')?_v:(_v.sexo||'');
+    }
   }catch(e){ console.error('openVacEditModal sexo:',e); }
-  if(!sexoVal&&dbRow&&dbRow.sexo) sexoVal=dbRow.sexo; // migración: valor viejo si existiera
+  if(!sexoVal&&dbRow&&dbRow.sexo) sexoVal=dbRow.sexo; // migración desde la columna vieja
+  if(!sexoVal&&window._vacSexoCache&&window._vacSexoCache[uid]) sexoVal=window._vacSexoCache[uid];
   if(!window._vacSexoCache) window._vacSexoCache={};
   window._vacSexoCache[uid]=sexoVal;
+  console.log('openVacEditModal uid='+uid+' sexo leído="'+sexoVal+'"');
   document.getElementById('ve-nombre').value=u.nombre||'';
   document.getElementById('ve-cedula').value=dbRow?dbRow.cedula||'':'';
   document.getElementById('ve-fechaNac').value=dbRow?dbRow.fecha_nac||'':'';
@@ -7588,19 +7614,26 @@ async function saveVacEdit(){
     saldo:saldo, sabado_libre:sabadoLibre, updated_at:new Date().toISOString()
   };
   // ── SEXO: guardar en configuracion (independiente de vacaciones_saldo) ──
+  if(!window._vacSexoCache) window._vacSexoCache={};
+  window._vacSexoCache[uid]=sexo; // cache inmediato para esta sesión
   try{
-    var _rsex=await DB.from('configuracion').upsert(
-      {clave:'vac_sexo_'+uid, valor:{sexo:sexo,uid:uid,ts:new Date().toISOString()}, updated_at:new Date().toISOString()},
-      {onConflict:'clave'}
-    );
-    if(_rsex.error){
-      console.error('saveVacEdit sexo:',_rsex.error);
-      toast('⚠ No se pudo guardar el sexo: '+_rsex.error.message);
+    var _payloadSexo={clave:'vac_sexo_'+uid, valor:{sexo:sexo,uid:uid,ts:new Date().toISOString()}, updated_at:new Date().toISOString()};
+    var _rsex=await DB.from('configuracion').upsert(_payloadSexo,{onConflict:'clave'}).select('clave');
+    if(_rsex.error||!_rsex.data||_rsex.data.length===0){
+      console.error('saveVacEdit sexo UPSERT falló:',_rsex.error||'sin filas');
+      // Reintento con DELETE + INSERT (por si el upsert no funciona)
+      await DB.from('configuracion').delete().eq('clave','vac_sexo_'+uid);
+      var _rIns=await DB.from('configuracion').insert(_payloadSexo).select('clave');
+      if(_rIns.error||!_rIns.data||_rIns.data.length===0){
+        console.error('saveVacEdit sexo INSERT falló:',_rIns.error);
+        toast('❌ El sexo NO se pudo guardar en la nube — revise la consola (F12)');
+      } else {
+        console.log('saveVacEdit: sexo guardado vía INSERT');
+      }
     } else {
-      if(!window._vacSexoCache) window._vacSexoCache={};
-      window._vacSexoCache[uid]=sexo;
+      console.log('saveVacEdit: sexo "'+sexo+'" guardado para '+uid);
     }
-  }catch(e){ console.error('saveVacEdit sexo:',e); }
+  }catch(e){ console.error('saveVacEdit sexo:',e); toast('❌ Error guardando sexo: '+e.message); }
   // El resto de campos va a vacaciones_saldo. Se quita 'sexo' del payload para que,
   // si esa columna no existe en la tabla, no haga fallar TODO el guardado.
   delete payload.sexo;
@@ -7619,8 +7652,11 @@ async function saveVacEdit(){
   // Confirmar el sexo leyendo de vuelta desde configuracion
   var confirmado='';
   try{
-    var chk=await DB.from('configuracion').select('valor').eq('clave','vac_sexo_'+uid).maybeSingle();
-    if(!chk.error&&chk.data&&chk.data.valor) confirmado=chk.data.valor.sexo||'';
+    var chk=await DB.from('configuracion').select('clave,valor').eq('clave','vac_sexo_'+uid).limit(1);
+    if(!chk.error&&chk.data&&chk.data.length>0&&chk.data[0].valor){
+      var _cv=chk.data[0].valor;
+      confirmado=(typeof _cv==='string')?_cv:(_cv.sexo||'');
+    }
   }catch(e){}
   if(confirmado!==sexo){
     console.error('saveVacEdit: verificación de sexo falló — esperado "'+sexo+'", guardado "'+confirmado+'"');
