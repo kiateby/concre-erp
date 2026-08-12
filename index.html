@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260812153058';
+var APP_BUILD='20260812153428';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -7571,19 +7571,25 @@ async function openVacEditModal(uid){
   document.getElementById('ve-fechaNac').value=dbRow?dbRow.fecha_nac||'':'';
   var _sel=document.getElementById('ve-sexo');
   if(_sel){
-    // Reset TOTAL antes de asignar — evita que quede el valor del colaborador anterior
+    // Asignar por índice de opción (más confiable que .value)
     _sel.selectedIndex=0;
-    _sel.value='';
-    for(var _oi=0;_oi<_sel.options.length;_oi++) _sel.options[_oi].selected=false;
     if(sexoVal){
-      _sel.value=sexoVal;
-      // Si el value no coincidió con ninguna opción, buscarla manualmente
-      if(_sel.value!==sexoVal){
-        for(var _oj=0;_oj<_sel.options.length;_oj++){
-          if(_sel.options[_oj].value===sexoVal){ _sel.selectedIndex=_oj; break; }
-        }
+      for(var _oj=0;_oj<_sel.options.length;_oj++){
+        if(_sel.options[_oj].value===sexoVal){ _sel.selectedIndex=_oj; break; }
       }
     }
+    // Si el select fue convertido en "buscador" (applySearchableSelects), su valor
+    // real queda oculto tras un botón visual — hay que actualizar ese botón también.
+    try{
+      var _wrap=_sel.closest('.srch-wrap')||_sel.parentElement;
+      var _lbl=_wrap?_wrap.querySelector('.srch-lbl'):null;
+      if(_lbl){
+        var _opt=_sel.options[_sel.selectedIndex];
+        _lbl.textContent=_opt?_opt.textContent:'— Seleccionar —';
+      }
+    }catch(e){}
+    // Notificar el cambio por si algún componente escucha el evento
+    try{ _sel.dispatchEvent(new Event('change',{bubbles:true})); }catch(e){}
   }
   document.getElementById('ve-puesto').value=u.puesto||'';
   document.getElementById('ve-salario').value=u.salario?u.salario.toLocaleString('es-CR'):'';
@@ -21004,7 +21010,11 @@ function applySearchableSelects(){
     'avf-iva','proj-tipo','ag-user-filter','ag-tipo-filter',
     'crm-top-freq-period','crm-top-monto-period',
     'vac-tipo','vac-hist-filter','g-cat','vf-iva','v-filter-cat','lim-user-sel',
-    'vac-prog-user'];
+    'vac-prog-user',
+    // Modal "Datos de vacaciones — colaborador": estos selects se llenan por código.
+    // Al convertirlos en buscadores, el botón visual no reflejaba el valor asignado
+    // (el sexo se guardaba y leía bien, pero la casilla se veía vacía).
+    've-sexo','ve-sabadoLibre'];
   document.querySelectorAll('select').forEach(function(sel){
     if(sel.id&&!sel.dataset.srch&&SKIP.indexOf(sel.id)<0) makeSearchable(sel);
   });
