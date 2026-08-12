@@ -1782,6 +1782,10 @@ async function loadAllDataFromDB(){
           if(!window._liqVselCache) window._liqVselCache={};
           window._liqVselCache[row.clave.replace('liq_vsel_','')]=row.valor||{};
         }
+        if(row.clave&&row.clave.startsWith('vac_sexo_')){
+          if(!window._vacSexoCache) window._vacSexoCache={};
+          window._vacSexoCache[row.clave.replace('vac_sexo_','')]=(row.valor&&row.valor.sexo)||'';
+        }
         if(row.clave&&row.clave.startsWith('vac_renew_'))
           window._vacRenewCache[row.clave.replace('vac_renew_','')]=row.valor||{};
         if(row.clave&&row.clave.startsWith('precios_'))
@@ -1927,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260812150116';
+var APP_BUILD='20260812152412';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -5019,7 +5023,8 @@ td:last-child{border-left:2px solid rgba(26,158,92,.2)}
 async function loadPagoOverrides(){
   window._pagadoAdminOverrides = window._pagadoAdminOverrides || {};
   window._depositoOverrides = window._depositoOverrides || {};
-  var patrones=[['cc_pagado_admin_%','pago'],['cc_deposito_%','dep']];
+  window._cxcPagadoOverrides = window._cxcPagadoOverrides || {};
+  var patrones=[['cc_pagado_admin_%','pago'],['cc_deposito_%','dep'],['cc_cxc_pagado_%','cxc']];
   for(var pi=0; pi<patrones.length; pi++){
     var pref=patrones[pi][0], tipo=patrones[pi][1];
     var from=0;
@@ -5031,6 +5036,9 @@ async function loadPagoOverrides(){
         if(!row.valor) return;
         if(tipo==='pago'){
           window._pagadoAdminOverrides[row.clave.replace('cc_pagado_admin_','')]=!!row.valor.pagado;
+        } else if(tipo==='cxc'){
+          window._cxcPagadoOverrides[row.clave.replace('cc_cxc_pagado_','')]=
+            {pagado:!!row.valor.pagado, fecha:row.valor.fecha||null};
         } else {
           window._depositoOverrides[row.clave.replace('cc_deposito_','')]=row.valor.deposito||'';
         }
@@ -5818,7 +5826,7 @@ function exportComisionesResumen(){
   const yr = new Date().getFullYear();
   const isAdmin = SESSION.rol==='admin';
   const users = isAdmin
-    ? getUsers().filter(u=>u.rol==='user')
+    ? getUsers().filter(u=>u.rol==='user'&&tieneAccesoVentas(u))
     : [SESSION];
 
   const emitida = new Date().toLocaleDateString('es-CR');
@@ -7516,18 +7524,41 @@ let vacEditUID='';
 async function openVacEditModal(uid){
   vacEditUID=uid;
   const u=getUsers().find(x=>x.id===uid)||{};
-  // Leer DIRECTAMENTE de Supabase — nunca del cache.
-  // Esto elimina cualquier problema de datos viejos o compartidos entre usuarios.
   var dbRow=null;
   try{
     var _r=await DB.from('vacaciones_saldo').select('*').eq('uid',uid).maybeSingle();
     if(!_r.error&&_r.data) dbRow=_r.data;
   }catch(e){ console.error('openVacEditModal read:',e); }
+  // SEXO: se guarda en 'configuracion' (clave vac_sexo_{uid}) — la columna 'sexo'
+  // de vacaciones_saldo falló repetidamente. Se lee SIEMPRE fresco desde la nube
+  // para este usuario específico, evitando que muestre el valor de otro colaborador.
+  var sexoVal='';
+  try{
+    var _rs=await DB.from('configuracion').select('valor').eq('clave','vac_sexo_'+uid).maybeSingle();
+    if(!_rs.error&&_rs.data&&_rs.data.valor) sexoVal=_rs.data.valor.sexo||'';
+  }catch(e){ console.error('openVacEditModal sexo:',e); }
+  if(!sexoVal&&dbRow&&dbRow.sexo) sexoVal=dbRow.sexo; // migración: valor viejo si existiera
+  if(!window._vacSexoCache) window._vacSexoCache={};
+  window._vacSexoCache[uid]=sexoVal;
   document.getElementById('ve-nombre').value=u.nombre||'';
   document.getElementById('ve-cedula').value=dbRow?dbRow.cedula||'':'';
   document.getElementById('ve-fechaNac').value=dbRow?dbRow.fecha_nac||'':'';
   var _sel=document.getElementById('ve-sexo');
-  if(_sel){ _sel.selectedIndex=0; _sel.value=''; _sel.value=dbRow&&dbRow.sexo?dbRow.sexo:''; }
+  if(_sel){
+    // Reset TOTAL antes de asignar — evita que quede el valor del colaborador anterior
+    _sel.selectedIndex=0;
+    _sel.value='';
+    for(var _oi=0;_oi<_sel.options.length;_oi++) _sel.options[_oi].selected=false;
+    if(sexoVal){
+      _sel.value=sexoVal;
+      // Si el value no coincidió con ninguna opción, buscarla manualmente
+      if(_sel.value!==sexoVal){
+        for(var _oj=0;_oj<_sel.options.length;_oj++){
+          if(_sel.options[_oj].value===sexoVal){ _sel.selectedIndex=_oj; break; }
+        }
+      }
+    }
+  }
   document.getElementById('ve-puesto').value=u.puesto||'';
   document.getElementById('ve-salario').value=u.salario?u.salario.toLocaleString('es-CR'):'';
   document.getElementById('ve-fechaIngreso').value=dbRow?dbRow.fecha_ingreso||'':'';
@@ -7556,6 +7587,23 @@ async function saveVacEdit(){
     fecha_ingreso:fechaIngreso, dias_anuales:diasAnuales,
     saldo:saldo, sabado_libre:sabadoLibre, updated_at:new Date().toISOString()
   };
+  // ── SEXO: guardar en configuracion (independiente de vacaciones_saldo) ──
+  try{
+    var _rsex=await DB.from('configuracion').upsert(
+      {clave:'vac_sexo_'+uid, valor:{sexo:sexo,uid:uid,ts:new Date().toISOString()}, updated_at:new Date().toISOString()},
+      {onConflict:'clave'}
+    );
+    if(_rsex.error){
+      console.error('saveVacEdit sexo:',_rsex.error);
+      toast('⚠ No se pudo guardar el sexo: '+_rsex.error.message);
+    } else {
+      if(!window._vacSexoCache) window._vacSexoCache={};
+      window._vacSexoCache[uid]=sexo;
+    }
+  }catch(e){ console.error('saveVacEdit sexo:',e); }
+  // El resto de campos va a vacaciones_saldo. Se quita 'sexo' del payload para que,
+  // si esa columna no existe en la tabla, no haga fallar TODO el guardado.
+  delete payload.sexo;
   // Intentar UPDATE primero — si no existe la fila, hacer INSERT
   var ok=false;
   try{
@@ -7568,12 +7616,15 @@ async function saveVacEdit(){
       else { toast('Error al guardar: '+ins.error.message); return; }
     }
   }catch(e){ toast('Error: '+e.message); return; }
-  // Confirmar leyendo de vuelta lo que quedó en la BD
+  // Confirmar el sexo leyendo de vuelta desde configuracion
   var confirmado='';
   try{
-    var chk=await DB.from('vacaciones_saldo').select('sexo,cedula,saldo').eq('uid',uid).maybeSingle();
-    if(!chk.error&&chk.data) confirmado=chk.data.sexo||'';
+    var chk=await DB.from('configuracion').select('valor').eq('clave','vac_sexo_'+uid).maybeSingle();
+    if(!chk.error&&chk.data&&chk.data.valor) confirmado=chk.data.valor.sexo||'';
   }catch(e){}
+  if(confirmado!==sexo){
+    console.error('saveVacEdit: verificación de sexo falló — esperado "'+sexo+'", guardado "'+confirmado+'"');
+  }
   // Actualizar cache con los datos reales guardados
   if(!window._vacCache) window._vacCache={};
   window._vacCache[uid]=Object.assign(window._vacCache[uid]||{},{
@@ -10356,7 +10407,8 @@ function initAdminVentas(){
   renderAdminOwnVentas(); // Admin own sales table
   const sel=document.getElementById('av-user-sel');
   if(sel&&sel.options.length===1){
-    sortAlpha(getUsers().filter(u=>u.rol==='user'),'nombre').forEach(u=>{
+    // Solo colaboradores CON acceso a la pestaña de Ventas
+    sortAlpha(getUsers().filter(u=>u.rol==='user'&&tieneAccesoVentas(u)),'nombre').forEach(u=>{
       const o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; sel.appendChild(o);
     });
   }
@@ -10555,7 +10607,8 @@ function renderResumenCategorias(allVentas, catMap){
 function initResumenFilters(){
   var sel=document.getElementById('av-res-user');
   if(!sel) return;
-  var users=window._usersCache||[];
+  // Solo quienes tienen acceso a Ventas (admin/superadmin siempre incluidos)
+  var users=(window._usersCache||[]).filter(function(u){ return tieneAccesoVentas(u); });
   var prevVal=sel.value||'all';
   sel.innerHTML='<option value="all">Todos los usuarios</option>';
   users.forEach(function(u){
@@ -10732,7 +10785,7 @@ function renderRanking(allVentas, catMap){
 function initTrendSelectors(){
   const sel=document.getElementById('av-trend-user');
   if(sel&&sel.options.length===1){
-    sortAlpha(getUsers().filter(function(u){return u.rol==='user';}),'nombre').forEach(function(u){
+    sortAlpha(getUsers().filter(function(u){return u.rol==='user'&&tieneAccesoVentas(u);}),'nombre').forEach(function(u){
       var o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre; sel.appendChild(o);
     });
   }
@@ -10749,7 +10802,7 @@ function renderTrendChart(){
   const year=parseInt(document.getElementById('av-trend-year')?.value||2026);
   const filterUid=document.getElementById('av-trend-user')?.value||'all';
   const users=filterUid==='all'
-    ?getUsers().filter(function(u){return u.rol==='user';})
+    ?getUsers().filter(function(u){return (u.rol==='user'&&tieneAccesoVentas(u))||u.rol==='admin'||u.rol==='superadmin';})
     :[getUsers().find(function(u){return u.id===filterUid;})].filter(Boolean);
 
   // Build month totals for each user (Jan=0 to Dec=11)
@@ -11251,6 +11304,20 @@ function saveDepositoNum(uid, ventaId, val){
 }
 // Estado de pago: el override de configuracion manda sobre el campo de la venta.
 // Mismo patrón que el número de depósito (que sí persiste correctamente).
+// Estado de cobro de un crédito: el override manda sobre el campo de la venta.
+function _esCxcPagado(v){
+  if(!v) return false;
+  var ov=window._cxcPagadoOverrides;
+  if(ov&&Object.prototype.hasOwnProperty.call(ov,v.id)) return !!ov[v.id].pagado;
+  return !!v.cxcPagado;
+}
+function _cxcPagadoFecha(v){
+  if(!v) return null;
+  var ov=window._cxcPagadoOverrides;
+  if(ov&&ov[v.id]&&ov[v.id].fecha) return ov[v.id].fecha;
+  return v.cxcPagadoDate||null;
+}
+
 function _esPagado(v){
   if(!v) return false;
   var ov=window._pagadoAdminOverrides;
@@ -11278,11 +11345,28 @@ function toggleVentaPago(uid,ventaId,chk){
         if(r.error) console.error('pagado_admin save error:', r.error);
         else console.log('pagado_admin guardado en Supabase:', ventaId, newVal);
       });
+      // VÍNCULO con Créditos pendientes de cobro: al marcar ✓ Pago en el Detalle,
+      // la venta a crédito queda también marcada como cobrada allá (y arranca el
+      // conteo de 7 días para desaparecer). Al desmarcar, vuelve a pendiente.
+      if(vd[mk].ventas[idx].tipoPago==='CREDITO'){
+        vd[mk].ventas[idx].cxcPagado=newVal;
+        vd[mk].ventas[idx].cxcPagadoDate=newVal?new Date().toISOString():null;
+        // Respaldo en configuracion (mecanismo probado, independiente de la tabla)
+        DB.from('configuracion').upsert(
+          {clave:'cc_cxc_pagado_'+ventaId,
+           valor:{pagado:newVal,fecha:vd[mk].ventas[idx].cxcPagadoDate,ventaId:ventaId,uid:uid},
+           updated_at:new Date().toISOString()},
+          {onConflict:'clave'}
+        ).then(function(r){ if(r.error) console.error('cxc_pagado save:',r.error); });
+        if(!window._cxcPagadoOverrides) window._cxcPagadoOverrides={};
+        window._cxcPagadoOverrides[ventaId]={pagado:newVal,fecha:vd[mk].ventas[idx].cxcPagadoDate};
+      }
       // Guardar TAMBIÉN en la tabla ventas (columna pagado_admin) — doble respaldo:
       // si el override de configuracion no llegara, la fila de ventas conserva el estado.
       try{ _saveSingleVenta(uid, vd[mk].ventas[idx], mk); }catch(e){ console.error('toggleVentaPago save:',e); }
       if(newVal) toast('✓ Pago verificado y guardado en línea');
       renderAdminVentasTable();
+      try{ renderAdminVentas(); }catch(e){} // refresca Créditos pendientes y Saldos por cliente
     }
   });
 }
@@ -11509,8 +11593,8 @@ function cleanupOldCxc(){
     Object.keys(vd).forEach(mk=>{
       if(!vd[mk].ventas) return;
       vd[mk].ventas=vd[mk].ventas.filter(v=>{
-        if(v.cxcPagado&&v.cxcPagadoDate){
-          const paid=new Date(v.cxcPagadoDate);
+        if(_esCxcPagado(v)&&_cxcPagadoFecha(v)){
+          const paid=new Date(_cxcPagadoFecha(v));
           const diffDays=(now-paid)/(1000*60*60*24);
           if(diffDays>7){ changed=true; return false; } // remove after 7 days
         }
@@ -11791,6 +11875,20 @@ function marcarCxcPagado(ventaId, monthKey){
   if(idx<0) return;
   vd[monthKey].ventas[idx].cxcPagado=true;
   vd[monthKey].ventas[idx].cxcPagadoDate=new Date().toISOString();
+  // Vínculo inverso: marcar también ✓ Pago en el Detalle completo
+  vd[monthKey].ventas[idx].pagadoAdmin=true;
+  if(!window._pagadoAdminOverrides) window._pagadoAdminOverrides={};
+  window._pagadoAdminOverrides[ventaId]=true;
+  if(!window._cxcPagadoOverrides) window._cxcPagadoOverrides={};
+  window._cxcPagadoOverrides[ventaId]={pagado:true,fecha:vd[monthKey].ventas[idx].cxcPagadoDate};
+  DB.from('configuracion').upsert(
+    {clave:'cc_pagado_admin_'+ventaId, valor:{pagado:true,ventaId:ventaId,uid:uid,ts:new Date().toISOString()}, updated_at:new Date().toISOString()},
+    {onConflict:'clave'}
+  ).then(function(){});
+  DB.from('configuracion').upsert(
+    {clave:'cc_cxc_pagado_'+ventaId, valor:{pagado:true,fecha:vd[monthKey].ventas[idx].cxcPagadoDate,ventaId:ventaId,uid:uid}, updated_at:new Date().toISOString()},
+    {onConflict:'clave'}
+  ).then(function(){});
   window._ventasCache[uid]=vd;
   _saveSingleVenta(uid,vd[monthKey].ventas[idx],monthKey);
   renderVentasUser();
@@ -11880,7 +11978,16 @@ function renderAdminCxcTable(allVentas,catMap){
   const body=document.getElementById('av-cxc-body');
   if(!body) return;
   const now=new Date();
-  var cxcList=allVentas.filter(function(v){ return v.tipoPago==='CREDITO'&&!v.cxcPagado; });
+  // Incluye pendientes + las cobradas en los últimos 7 días (desaparecen luego).
+  // Usa _esCxcPagado para reflejar de inmediato el check ✓ Pago del Detalle completo.
+  var cxcList=allVentas.filter(function(v){
+    if(v.tipoPago!=='CREDITO') return false;
+    if(!_esCxcPagado(v)) return true; // pendiente
+    var f=_cxcPagadoFecha(v);
+    if(!f) return true;
+    var dias=(Date.now()-new Date(f).getTime())/(1000*60*60*24);
+    return dias<7; // cobrada: visible 7 días más
+  });
   if(!cxcList.length){
     body.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
     return;
@@ -11898,7 +12005,8 @@ function renderAdminCxcTable(allVentas,catMap){
     const vencStr=venc?formatDate(venc):'—';
     const vencido=dias!==null&&dias<0;
     const urgente=dias!==null&&dias<=7&&dias>=0;
-    html+='<tr style="'+(vencido?'background:rgba(227,24,55,.06)':urgente?'background:rgba(217,119,6,.06)':'')+'">'
+    var _cobrada=_esCxcPagado(v);
+    html+='<tr style="'+(_cobrada?'background:rgba(22,163,74,.08)':(vencido?'background:rgba(227,24,55,.06)':urgente?'background:rgba(217,119,6,.06)':''))+'">'
       +'<td><strong>'+v.uname+'</strong></td>'
       +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+'</td>'
       +'<td style="font-weight:800;font-family:var(--cond)">'+(v.factura?escHtml(v.factura):'—')+'</td>'
@@ -11907,19 +12015,28 @@ function renderAdminCxcTable(allVentas,catMap){
       +'<td style="font-family:var(--cond);font-weight:800">'+fmt(v.subtotal)+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:var(--green)">'+fmt(v.total||v.subtotal+(v.ivaAmt||0))+'</td>'
       +'<td style="white-space:nowrap">'+vencStr+'</td>'
-      +'<td style="color:'+(vencido?'var(--red)':urgente?'var(--amber)':'var(--green)')+';font-weight:700">'
-        +(dias===null?'—':dias<0?'⚠ '+Math.abs(dias)+'d vencido':dias+'d restantes')+'</td>'
+      +'<td style="color:'+(_cobrada?'var(--green)':(vencido?'var(--red)':urgente?'var(--amber)':'var(--green)'))+';font-weight:700">'
+        +(_cobrada
+          ? '<span style="font-size:11px">✅ COBRADO</span>'
+          : (dias===null?'—':dias<0?'⚠ '+Math.abs(dias)+'d vencido':dias+'d restantes'))+'</td>'
       +'<td style="font-size:11px;color:var(--text3)">'+escHtml(v.notas)+'</td>'
       +'<td style="text-align:center">'
-        +'<button data-uid="'+v.uid+'" data-vid="'+v.id+'" class="cxc-pago-btn" '
-        +'style="padding:4px 10px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">✓ Pago recibido</button>'
+        +(_cobrada
+          ? (function(){
+              var f=_cxcPagadoFecha(v);
+              var quedan=f?Math.max(0,7-Math.floor((Date.now()-new Date(f).getTime())/(1000*60*60*24))):7;
+              return '<span style="font-size:10px;color:var(--text3);font-weight:700">Sale en '+quedan+'d</span>';
+            })()
+          : '<button data-uid="'+v.uid+'" data-vid="'+v.id+'" class="cxc-pago-btn" '
+            +'style="padding:4px 10px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">✓ Pago recibido</button>')
       +'</td></tr>';
   });
   // Fila de TOTALES al final de la tabla
-  var _totSub=cxcList.reduce(function(s,v){return s+(v.subtotal||0);},0);
-  var _totCon=cxcList.reduce(function(s,v){return s+(v.total||(v.subtotal||0)+(v.ivaAmt||0));},0);
+  var _pendientes=cxcList.filter(function(v){ return !_esCxcPagado(v); });
+  var _totSub=_pendientes.reduce(function(s,v){return s+(v.subtotal||0);},0);
+  var _totCon=_pendientes.reduce(function(s,v){return s+(v.total||(v.subtotal||0)+(v.ivaAmt||0));},0);
   html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
-    +'<td colspan="5" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL PENDIENTE DE COBRO ('+cxcList.length+' factura'+(cxcList.length!==1?'s':'')+')</td>'
+    +'<td colspan="5" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL PENDIENTE DE COBRO ('+_pendientes.length+' factura'+(_pendientes.length!==1?'s':'')+')</td>'
     +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--amber)">'+fmt(_totSub)+'</td>'
     +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--red)">'+fmt(_totCon)+'</td>'
     +'<td colspan="4"></td></tr>';
@@ -11951,7 +12068,7 @@ function renderSaldosPorCliente(allVentas){
     Object.keys(vd).forEach(function(mk){
       (vd[mk].ventas||[]).forEach(function(v){
         if(v.tipoPago!=='CREDITO') return;
-        if(v.cxcPagado) return; // ya cobrada: se descuenta automáticamente
+        if(_esCxcPagado(v)) return; // ya cobrada: se descuenta automáticamente
         var cli=(v.cliente||'Sin cliente').trim();
         var key=cli.toLowerCase();
         if(!porCliente[key]) porCliente[key]={nombre:cli,facturas:0,subtotal:0,total:0};
