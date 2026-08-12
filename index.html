@@ -1907,11 +1907,8 @@ async function loadAllDataFromDB(){
         promises.push(loadVacFromDB(uid));
         promises.push(loadFondosFromDB(uid));
         promises.push(loadGastosFromDB(uid));
-        promises.push(DB.from('notificaciones').select('*').eq('uid',uid).order('created_at',{ascending:false}).limit(100).then(function(r){
-          var notifs=(!r.error&&r.data)?r.data.map(_mapNotif):[];
-          notifs.sort(function(a,c){return (c.created_at||'')<(a.created_at||'')?-1:1;});
-          setNotifications(uid, notifs.slice(0,30));
-        }));
+        // Usa reloadNotifications: lee la tabla Y el respaldo en configuracion
+        promises.push(reloadNotifications(uid));
       }
 
       await Promise.all(promises);
@@ -1930,7 +1927,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260811182505';
+var APP_BUILD='20260812150116';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2142,6 +2139,8 @@ function doLogin(){
         setTimeout(checkCelebrations, 1200);
         // Alerta a superadmins: colaboradores que celebran hoy
         setTimeout(checkCelebrationsAdmin, 2200);
+        // Notificaciones en la campana de las celebraciones de hoy
+        setTimeout(notifyCelebrationsToBell, 2600);
         // Refresco rápido de la campana (cada 60s)
         _startNotifRefresh();
       });
@@ -6391,6 +6390,45 @@ function adjustVacSaldo(uid,delta,reason){
 // cumplen años o aniversario laboral HOY, para poder felicitarlos.
 // Se muestra una vez por día por superadmin (flag en Supabase, cross-device).
 // La alerta personal del propio colaborador (checkCelebrations) no se toca.
+// Notificar a superadmins en la campana sobre celebraciones de hoy (una vez al día)
+function notifyCelebrationsToBell(){
+  try{
+    if(!SESSION||SESSION.rol!=='superadmin') return;
+    var today=new Date(); today.setHours(0,0,0,0);
+    var y=today.getFullYear();
+    var dayKey=y+'-'+pad(today.getMonth()+1)+'-'+pad(today.getDate());
+    var flagKey='celebnotif_'+SESSION.id+'_'+dayKey;
+    if(!window._celebShownCache) window._celebShownCache={};
+    if(window._celebShownCache[flagKey]) return;
+    var hayAlguno=false;
+    (getUsers()||[]).forEach(function(u){
+      if(u.estado!=='activo') return;
+      var vd=getVacData(u.id)||{};
+      if(vd.fechaNac){
+        var nac=parseDate(vd.fechaNac);
+        if(nac&&!isNaN(nac.getTime())&&nac.getMonth()===today.getMonth()&&nac.getDate()===today.getDate()){
+          addNotification(SESSION.id,'🎂','Cumpleaños hoy','Hoy es el cumpleaños de '+(u.nombre||u.id)+' — ¡no olvides felicitarlo!');
+          hayAlguno=true;
+        }
+      }
+      if(vd.fechaIngreso){
+        var ing=parseDate(vd.fechaIngreso);
+        if(ing&&!isNaN(ing.getTime())&&ing.getMonth()===today.getMonth()&&ing.getDate()===today.getDate()){
+          var yrs=y-ing.getFullYear();
+          if(yrs>0){
+            addNotification(SESSION.id,'🏆','Aniversario laboral hoy',(u.nombre||u.id)+' cumple '+yrs+(yrs===1?' año':' años')+' en CONCRE — ¡felicítalo!');
+            hayAlguno=true;
+          }
+        }
+      }
+    });
+    if(hayAlguno){
+      window._celebShownCache[flagKey]=true;
+      _saveToSupabase(flagKey,{shownAt:new Date().toISOString()},'');
+    }
+  }catch(e){ console.warn('notifyCelebrationsToBell:',e); }
+}
+
 function checkCelebrationsAdmin(_retry){
   try{
     if(!SESSION||SESSION.rol!=='superadmin') return;
@@ -6766,10 +6804,18 @@ function addNotification(uid,icon,title,msg){
   var row={id:'n'+Date.now()+Math.floor(Math.random()*100000),uid:uid,
     icon:icon||'🔔',title:title||'',msg:msg||'',read:false,
     created_at:new Date().toISOString()};
-  DB.from('notificaciones').insert([row]).then(function(r){
-    if(r.error){
-      console.error('addNotification INSERT falló (uid='+uid+'):',r.error);
-      // Si falla la inserción remota, al menos queda en el cache local de esta sesión
+  DB.from('notificaciones').insert([row]).select('id').then(function(r){
+    if(r.error||!r.data||r.data.length===0){
+      console.error('addNotification: el INSERT en notificaciones NO se guardó (uid='+uid+')',r.error||'sin filas devueltas');
+      // RESPALDO: guardar en configuracion, que siempre acepta escrituras.
+      // reloadNotifications() las recupera de ahí si la tabla falló.
+      DB.from('configuracion').upsert(
+        {clave:'notif_'+row.id, valor:row, updated_at:new Date().toISOString()},
+        {onConflict:'clave'}
+      ).then(function(r2){
+        if(r2.error) console.error('addNotification respaldo también falló:',r2.error);
+        else console.log('addNotification: guardada en respaldo (configuracion) para uid='+uid);
+      });
     }
   });
   // Actualizar cache en memoria del destinatario (funciona en la misma sesión)
@@ -6793,15 +6839,32 @@ function _startNotifRefresh(){
 // Recargar notificaciones del usuario desde Supabase al cache en memoria
 async function reloadNotifications(uid){
   try{
+    var notifs=[];
+    // 1) Tabla principal
     var r=await DB.from('notificaciones').select('*').eq('uid',uid).order('created_at',{ascending:false}).limit(100);
     if(!r.error&&r.data){
-      var notifs=r.data.slice(0,30).map(function(x){
+      notifs=r.data.map(function(x){
         return {id:x.id,icon:x.icon||'🔔',title:x.title||'',msg:x.msg||'',
           read:x.read||false,time:x.created_at||x.time,created_at:x.created_at};
       });
-      setNotifications(uid,notifs);
     }
-  }catch(e){}
+    // 2) Respaldo en configuracion (notificaciones que no pudieron entrar en la tabla)
+    try{
+      var rb=await DB.from('configuracion').select('clave,valor').like('clave','notif_%').limit(1000);
+      if(!rb.error&&rb.data){
+        var yaTengo={};
+        notifs.forEach(function(n){ yaTengo[n.id]=true; });
+        rb.data.forEach(function(row){
+          var v=row.valor;
+          if(!v||v.uid!==uid||yaTengo[v.id]) return;
+          notifs.push({id:v.id,icon:v.icon||'🔔',title:v.title||'',msg:v.msg||'',
+            read:v.read||false,time:v.created_at,created_at:v.created_at});
+        });
+      }
+    }catch(e2){}
+    notifs.sort(function(a,b){ return (b.created_at||'').localeCompare(a.created_at||''); });
+    setNotifications(uid,notifs.slice(0,30));
+  }catch(e){ console.warn('reloadNotifications:',e); }
 }
 
 function clearAllNotifications(uid){
@@ -6871,6 +6934,32 @@ function deleteOneNotif(uid,idx){
   renderNotifPanel();
   renderNotifBell();
 }
+
+// Diagnóstico: prueba si las notificaciones realmente se guardan en la nube.
+// Ejecutar desde la consola del navegador con: probarNotificaciones()
+window.probarNotificaciones=async function(){
+  if(!SESSION){ console.log('Sin sesión'); return; }
+  var testRow={id:'ntest'+Date.now(),uid:SESSION.id,icon:'🧪',title:'Prueba de notificación',
+    msg:'Si ves esto en la campana, el sistema funciona.',read:false,created_at:new Date().toISOString()};
+  console.log('1) Intentando INSERT en tabla notificaciones...');
+  var r=await DB.from('notificaciones').insert([testRow]).select('id');
+  if(r.error){
+    console.error('   ❌ FALLÓ:',r.error.message);
+    console.log('   → La tabla notificaciones está bloqueada (RLS). Ejecute fix_notificaciones_rls.sql');
+  } else if(!r.data||r.data.length===0){
+    console.warn('   ⚠ Sin error pero no devolvió filas — probablemente bloqueado por RLS silenciosamente');
+  } else {
+    console.log('   ✅ OK — la tabla acepta escrituras');
+  }
+  console.log('2) Probando respaldo en configuracion...');
+  var r2=await DB.from('configuracion').upsert({clave:'notif_'+testRow.id,valor:testRow,updated_at:new Date().toISOString()},{onConflict:'clave'});
+  console.log(r2.error?('   ❌ FALLÓ: '+r2.error.message):'   ✅ OK — el respaldo funciona');
+  console.log('3) Recargando campana...');
+  await reloadNotifications(SESSION.id);
+  renderNotifBell(); renderNotifPanel();
+  console.log('   Notificaciones en campana ahora:',getNotifications(SESSION.id).length);
+  console.log('Abra la campana — debería ver la notificación de prueba 🧪');
+};
 
 function toggleNotifPanel(){
   const panel=document.getElementById('notifPanel');
@@ -9849,6 +9938,13 @@ function _doSaveVenta(){
 
   // Link to CRM if client selected
   try{ linkVentaToCRMAfterSave(v.id); }catch(e){}
+  // Avisar a superadmins en la campana sobre la nueva venta
+  try{
+    getUsers().filter(function(x){return x.rol==='superadmin'&&x.id!==SESSION.id;}).forEach(function(sa){
+      addNotification(sa.id,'💰','Nueva venta registrada',
+        (SESSION.nombre||SESSION.id)+' registró una venta de '+(v.cliente||'')+' por '+fmt(v.subtotal||0));
+    });
+  }catch(e){}
   clearVentaForm();
   document.getElementById('ventaForm').style.display='none';
   renderVentasUser();
@@ -10305,6 +10401,16 @@ function getAllVentasPeriodData(){
   return allVentas;
 }
 
+// ¿Este usuario tiene acceso a la pestaña de Ventas?
+// Misma regla que buildUserTabs: visible salvo restricción explícita (perms.ventas===false).
+// Los admin/superadmin siempre cuentan (registran ventas propias).
+function tieneAccesoVentas(u){
+  if(!u) return false;
+  if(u.rol==='admin'||u.rol==='superadmin') return true;
+  var perms=u.tabPerms||{};
+  return perms.ventas!==false;
+}
+
 function getAdminVentasPeriodData(){
   const type=document.getElementById('av-period-type')?.value||'month';
   const _mval=document.getElementById('av-month-sel')?.value;
@@ -10312,11 +10418,14 @@ function getAdminVentasPeriodData(){
   const year=parseInt(document.getElementById('av-year-sel')?.value||2026);
   const filterUid=document.getElementById('av-user-sel')?.value||'all';
   // For comisiones: only rol=user. For allVentas: also include admins with own sales
-  const comisUsers=filterUid==='all'?getUsers().filter(u=>u.rol==='user'):[getUsers().find(u=>u.id===filterUid)].filter(Boolean);
+  // Solo colaboradores CON acceso a la pestaña de Ventas — al otorgar el acceso,
+  // el usuario aparece automáticamente en estas estadísticas y controles.
+  const comisUsers=filterUid==='all'
+    ?getUsers().filter(u=>u.rol==='user'&&tieneAccesoVentas(u))
+    :[getUsers().find(u=>u.id===filterUid)].filter(Boolean);
+  // Admin y superadmin SIEMPRE incluidos (registran ventas propias)
   const adminSellers=filterUid==='all'?getUsers().filter(function(u){
-    if(u.rol!=='admin'&&u.rol!=='superadmin') return false;
-    var vd=getVentasData(u.id);
-    return Object.values(vd).some(function(mv){return (mv.ventas||[]).length>0;});
+    return u.rol==='admin'||u.rol==='superadmin';
   }):[];
   const users=comisUsers.concat(adminSellers);
 
@@ -10523,7 +10632,7 @@ function renderAdminVentas(){
   // Product chart
   initProductChart(catMap);
   // Commissions table
-  renderComisVerifTable(users.filter(function(u){return u.rol==='user';}));
+  renderComisVerifTable(users.filter(function(u){return u.rol==='user'&&tieneAccesoVentas(u);}));
   // Pending projects
   renderPendingProjects(allVentas,catMap);
   renderAdminCxcTable(allVentas,catMap);
@@ -11009,22 +11118,42 @@ function renderAdminVentasTable(){
   const cat=getCatalogo();
   const catMap=Object.fromEntries(cat.map(c=>[c.id,c]));
   var filtered=catFilter==='all'?allVentas:allVentas.filter(v=>(catMap[normalizeProdId(v.prodId)]?.tipo||'otros')===catFilter);
-  // AGRUPAR POR FACTURA dentro del mismo mes: las ventas que comparten número de
-  // factura en un mismo mes quedan juntas. Orden: mes (más nuevo primero) →
-  // número de factura → fecha. Las sin factura van al final de cada mes.
+  // AGRUPAR POR FACTURA: todas las ventas que comparten número de factura quedan
+  // JUNTAS, sin importar si sus fechas caen en días o meses distintos.
+  // El mes del grupo se determina por su venta MÁS RECIENTE (así el grupo entero
+  // se ubica en un solo lugar). Normaliza el número para que "656", " 656 " y
+  // "0656" se reconozcan como la misma factura.
+  var _normFact=function(f){
+    var s=String(f||'').trim().toUpperCase().replace(/\s+/g,'');
+    if(!s) return '';
+    // Si es puramente numérico, quitar ceros a la izquierda: 0656 === 656
+    if(/^[0-9]+$/.test(s)) return String(parseInt(s,10));
+    return s;
+  };
+  // 1) Calcular, por cada número de factura, su fecha más reciente (ancla del grupo)
+  var _anclaGrupo={};
+  filtered.forEach(function(v){
+    var k=_normFact(v.factura);
+    if(!k) return;
+    var f=v.fecha||'';
+    if(!_anclaGrupo[k]||f>_anclaGrupo[k]) _anclaGrupo[k]=f;
+  });
   filtered=filtered.slice().sort(function(a,b){
-    var ma=(a.fecha||'').slice(0,7), mb=(b.fecha||'').slice(0,7);
+    var ka=_normFact(a.factura), kb=_normFact(b.factura);
+    // Sin factura: siempre al final de todo
+    if(!ka&&kb) return 1;
+    if(ka&&!kb) return -1;
+    if(!ka&&!kb) return (b.fecha||'').localeCompare(a.fecha||'');
+    // Misma factura → quedan juntas, ordenadas por fecha ascendente
+    if(ka===kb) return (a.fecha||'').localeCompare(b.fecha||'');
+    // Distinta factura: ordenar por el mes de su venta más reciente
+    var fa=_anclaGrupo[ka]||'', fb=_anclaGrupo[kb]||'';
+    var ma=fa.slice(0,7), mb=fb.slice(0,7);
     if(ma!==mb) return mb.localeCompare(ma); // mes más reciente primero
-    var fa=(a.factura||'').trim(), fb=(b.factura||'').trim();
-    if(!fa&&fb) return 1;   // sin factura al final
-    if(fa&&!fb) return -1;
-    if(fa!==fb){
-      // Comparación numérica cuando ambos son números (10 antes que 100)
-      var na=parseFloat(fa), nb=parseFloat(fb);
-      if(!isNaN(na)&&!isNaN(nb)&&String(na)===fa&&String(nb)===fb) return na-nb;
-      return fa.localeCompare(fb,'es',{numeric:true});
-    }
-    return (a.fecha||'').localeCompare(b.fecha||'');
+    // Mismo mes: por número de factura (numérico cuando aplica)
+    var na=parseFloat(ka), nb=parseFloat(kb);
+    if(!isNaN(na)&&!isNaN(nb)&&String(na)===ka&&String(nb)===kb) return na-nb;
+    return ka.localeCompare(kb,'es',{numeric:true});
   });
   const body=document.getElementById('av-detail-body');
   if(!body) return;
@@ -17644,6 +17773,22 @@ function safeDeleteVenta(uid, ventaId){
   var vd=getVentasData(uid);
   var venta=null;
   var ventaMk=null;
+  // Avisar a los superadmins en la campana (excepto si el propio superadmin la borra)
+  try{
+    var _vTmp=null;
+    Object.keys(vd).forEach(function(mk){
+      var f=(vd[mk].ventas||[]).find(function(x){return x.id===ventaId;});
+      if(f&&!_vTmp) _vTmp=f;
+    });
+    if(_vTmp){
+      var _uDel=getUsers().find(function(x){return x.id===uid;});
+      var _quien=SESSION?(SESSION.nombre||SESSION.id):'sistema';
+      getUsers().filter(function(x){return x.rol==='superadmin'&&x.id!==(SESSION&&SESSION.id);}).forEach(function(sa){
+        addNotification(sa.id,'🗑','Venta eliminada',
+          _quien+' eliminó una venta de '+(_uDel?_uDel.nombre:uid)+': '+(_vTmp.cliente||'')+' — '+fmt(_vTmp.subtotal||0)+' (fue a la papelera)');
+      });
+    }
+  }catch(e){ console.warn('notif venta borrada:',e); }
   Object.keys(vd).forEach(function(mk){
     var idx=(vd[mk].ventas||[]).findIndex(function(v){return v.id===ventaId;});
     if(idx>=0&&!venta){
@@ -19364,22 +19509,32 @@ function invSearchScore(item, q){
 }
 
 var _invSearchTimer=null;
+// Memoria de la búsqueda por tipo (inventario/activo). Se conserva mientras la
+// aplicación esté abierta: al entrar a un ítem, hacer una salida o editarlo y
+// volver a la lista, el texto buscado sigue puesto y la lista sigue filtrada.
+window._invSearchMem = window._invSearchMem || {inventario:'', activo:''};
 function _invSearchDebounce(inp, type){
   clearTimeout(_invSearchTimer);
+  window._invSearchMem[type]=inp.value; // recordar de inmediato
   _invSearchTimer=setTimeout(function(){ renderInvList(type, inp.value); }, 300);
 }
 
 function _invClearSearch(type){
   var body=_invBody();
   if(!body) return;
+  window._invSearchMem[type]=''; // limpiar también la memoria
   var si=body.querySelector('#inv-search-'+type);
   if(si){ si.value=''; si.focus(); }
   _renderInvItems(type,'');
+  renderInvList(type,''); // refrescar para quitar la X
 }
 
 function renderInvList(type, searchQ){
   var body=_invBody();
   if(!body) return;
+  // Sin búsqueda explícita → recuperar la última búsqueda recordada de este tipo
+  if(searchQ===undefined||searchQ===null) searchQ=(window._invSearchMem&&window._invSearchMem[type])||'';
+  window._invSearchMem[type]=searchQ;
   var allItems=window._invItems.filter(function(i){return i.type===type&&i.activo!==false;});
   var searchId='inv-search-'+type;
   var label=type==='inventario'?'Inventario':'Activo';
@@ -19404,6 +19559,9 @@ function renderInvList(type, searchQ){
   html+='</div>';
   body.innerHTML=html;
   _renderInvItems(type, searchQ||'', allItems);
+  // Restaurar el texto buscado en el campo (por si el navegador lo perdió al reconstruir)
+  var _si=body.querySelector('#'+searchId);
+  if(_si&&searchQ&&_si.value!==searchQ) _si.value=searchQ;
   if(userHasAuditDuty()) renderAuditPanel();
 }
 
@@ -19705,11 +19863,48 @@ function openInvItemModal(itemId, type){
     +'</div>'
     +'<div class="modal-footer">'
     +(itemId&&SESSION&&SESSION.rol==='superadmin'?'<button class="modal-btn" onclick="deleteInvItem(\''+itemId+'\',\''+type+'\')" style="background:rgba(227,24,55,.1);color:var(--red);border:1px solid rgba(227,24,55,.3);margin-right:auto">🗑 Eliminar</button>':'')
+    +(itemId?'<button class="modal-btn" onclick="duplicarInvItem(\''+itemId+'\',\''+type+'\')" style="background:rgba(37,99,235,.1);color:var(--blue);border:1px solid rgba(37,99,235,.3)">⧉ Duplicar</button>':'')
     +'<button class="modal-btn cancel" onclick="document.getElementById(\'invItemModal\').classList.add(\'hidden\')">Cancelar</button>'
     +'<button class="modal-btn save" onclick="saveInvItem(\''+type+'\',\''+itemId+'\')">Guardar</button>'
     +'</div>'
     +'</div>';
   m.classList.remove('hidden');
+}
+
+// Duplicar ítem: abre el modal en modo NUEVO con todos los datos copiados
+// (incluida la foto). El usuario cambia nombre y código antes de guardar.
+function duplicarInvItem(itemId, type){
+  var orig=(window._invItems||[]).find(function(i){return i.id===itemId;});
+  if(!orig){ toast('Ítem no encontrado'); return; }
+  // Abrir el modal en modo "nuevo" y luego poblar con los datos del original
+  openInvItemModal(null, type);
+  setTimeout(function(){
+    var s=function(id,val){ var el=document.getElementById(id); if(el) el.value=val; };
+    s('iim-nombre',(orig.nombre||'')+' (copia)');
+    s('iim-codigo','');   // el código debe ser nuevo y único
+    s('iim-unidad',orig.unidad||'unidad');
+    s('iim-cantidad',0);  // la copia arranca sin existencias
+    s('iim-minimo',orig.cantidad_minima||0);
+    s('iim-notas',orig.notas||'');
+    // Conservar la foto del original
+    var fotoEl=document.getElementById('iim-foto');
+    if(fotoEl) fotoEl.value=orig.foto_url||'';
+    var prev=document.getElementById('iim-foto-preview');
+    if(prev&&orig.foto_url){
+      prev.innerHTML='<img src="'+orig.foto_url+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain">'
+        +'<div style="font-size:10px;color:var(--text3);margin-top:4px">Foto copiada — clic para cambiar</div>';
+    }
+    // Aviso e indicación de qué falta
+    var cEl=document.getElementById('iim-codigo');
+    if(cEl){
+      cEl.placeholder='Escriba un código NUEVO (obligatorio y único)';
+      cEl.style.border='2px solid var(--amber,#d97706)';
+      cEl.focus();
+    }
+    var nEl=document.getElementById('iim-nombre');
+    if(nEl){ nEl.focus(); nEl.select(); }
+    toast('⧉ Copia lista — cambie el nombre y asigne un código nuevo');
+  },60);
 }
 
 async function deleteInvItem(itemId, type){
@@ -19756,6 +19951,33 @@ async function saveInvItem(type, itemId){
   if(!nombre||!codigo){ toast('Nombre y código son obligatorios'); return; }
   var isNew=(!itemId||itemId==='null'||itemId==='undefined');
   var id=isNew?('item-'+Date.now()):itemId;
+  // CÓDIGO ÚNICO: ningún ítem (inventario o activo) puede repetir código.
+  var dup=(window._invItems||[]).find(function(i){
+    return i.id!==id && (i.codigo||'').trim().toLowerCase()===codigo.toLowerCase();
+  });
+  if(dup){
+    var tipoDup=dup.type==='activo'?'activo':'ítem de inventario';
+    toast('⛔ El código "'+codigo+'" ya está en uso por el '+tipoDup+' "'+dup.nombre+'". Use un código diferente.');
+    var cEl=document.getElementById('iim-codigo');
+    if(cEl){
+      cEl.focus(); cEl.select();
+      cEl.style.border='2.5px solid var(--red)';
+      cEl.style.background='rgba(227,24,55,.06)';
+      var warn=document.getElementById('iim-codigo-warn');
+      if(!warn){
+        warn=document.createElement('div');
+        warn.id='iim-codigo-warn';
+        warn.style.cssText='font-size:11px;font-weight:800;color:var(--red);margin-top:4px';
+        cEl.parentElement.appendChild(warn);
+      }
+      warn.textContent='⛔ Código duplicado — ya lo usa: '+dup.nombre;
+      setTimeout(function(){
+        cEl.style.border=''; cEl.style.background='';
+        if(warn&&warn.parentElement) warn.remove();
+      },6000);
+    }
+    return;
+  }
   var row={id:id,type:type,nombre:nombre,codigo:codigo,unidad:unidad,cantidad:cantidad,cantidad_minima:minimo,foto_url:foto,notas:notas,es_fibra:false,activo:true,created_by:SESSION.id,updated_at:new Date().toISOString()};
   var res;
   if(isNew){
