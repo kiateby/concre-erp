@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260813152050';
+var APP_BUILD='20260813152725';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -11241,11 +11241,21 @@ function renderPendingProjects(allVentas,catMap){
       +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+getVentaDisplayNombre(v,catMap)+'</span>'
         +'<div style="font-size:9px;color:var(--text3)">'+fmt(v.subtotal)+' subtotal</div></td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:var(--blue)">'+fmt(v.pendMonto)+'</td>'
-      // Columna CANCELADO: refleja el campo "Cancelado" (Sí/No) que marcó quien
-      // registró la venta al activar "Proyecto pendiente de ejecutar".
+      // Columna CANCELADO: el estatus grande refleja el estado REAL del proyecto,
+      // combinando lo marcado al registrar la venta con lo que el colaborador
+      // haya marcado después en su cuadro de proyectos pendientes:
+      //   • SE CANCELA PROYECTO → el colaborador canceló el proyecto
+      //   • SÍ  → el pago quedó cancelado (por el formulario o marcado como pagada)
+      //   • NO  → aún pendiente de cancelar
       +'<td style="text-align:center">'
-        +'<span class="vac-badge '+(v.pendCancelado==='si'?'approved':'pending')+'" style="font-size:11px;font-weight:800">'
-        +(v.pendCancelado==='si'?'Sí':'No')+'</span>'
+        +(function(){
+            if(v.pendCanceladaChk){
+              return '<span class="vac-badge rejected" style="font-size:10px;font-weight:900;white-space:nowrap">SE CANCELA PROYECTO</span>';
+            }
+            var cancelado=(v.pendCancelado==='si')||v.pendPagada;
+            return '<span class="vac-badge '+(cancelado?'approved':'pending')+'" style="font-size:11px;font-weight:900">'
+              +(cancelado?'SÍ':'NO')+'</span>';
+          })()
         +estados+'</td></tr>';
   }).join(''):'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px">Sin proyectos pendientes de ejecutar</td></tr>';
 }
