@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260812153428';
+var APP_BUILD='20260813150015';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -9550,38 +9550,33 @@ function vNoPend(v){ return !esPendienteActiva(v); }
 
 function calcComision(venta, fibraCosto){
   if(esPendienteActiva(venta)) return 0; // pendiente no ejecutado: sin comisión aún
-  const pid=normalizeProdId(venta.prodId);
-  const cat=getCatalogo().find(function(c){return c.id===pid;})||{comis:5,tipo:'otros'};
-  const subtotal=venta.subtotal||0;
-  const insumos=venta.insMontoNum||0;
-  // Comisión al tercero: se RESTA de la comisión del vendedor (fuera de base de comisión)
-  const tercDeduc=venta.esTercero?(venta.tercMonto||0):0;
-  var comisBruta;
-  if(cat.tipo==='fibra'){
-    const kg=parseFloat(venta.cantidad)||0;
-    const costKg=fibraCosto||0;
-    const costoTotal=kg*costKg;
-    const base=Math.max(0,subtotal-costoTotal-insumos);
-    comisBruta=base*(cat.comis/100);
-  } else {
-    const base=Math.max(0,subtotal-insumos);
-    comisBruta=base*(cat.comis/100);
-  }
-  return parseFloat(Math.max(0,comisBruta-tercDeduc).toFixed(0));
+  const cat=getCatalogo().find(function(c){return c.id===normalizeProdId(venta.prodId);})||{comis:5,tipo:'otros'};
+  // La base neta ya descuenta insumos, costo de fibra y comisión a tercero
+  const base=getVentaNetBase(venta, fibraCosto);
+  return parseFloat(Math.max(0,base*(cat.comis/100)).toFixed(0));
 }
 
+// Base neta sobre la que se calcula la comisión del vendedor.
+// Se descuentan del subtotal SIN IVA, en este orden:
+//   1. Costo de la fibra (solo productos tipo fibra)
+//   2. Monto de insumos (si la venta los lleva)
+//   3. Comisión pagada a un tercero
+// Sobre el saldo restante se aplica el porcentaje de comisión del producto.
 function getVentaNetBase(venta, fibraCosto){
   if(esPendienteActiva(venta)) return 0; // pendiente no ejecutado: fuera de la base
   const pid=normalizeProdId(venta.prodId);
   const cat=getCatalogo().find(function(c){return c.id===pid;})||{comis:5,tipo:'otros'};
   const subtotal=venta.subtotal||0;
   const insumos=venta.insMontoNum||0;
+  // Comisión a tercero: se descuenta de la BASE (igual que los insumos),
+  // no anula la comisión del vendedor. Se calcula el % sobre el saldo restante.
+  const tercero=venta.esTercero?(venta.tercMonto||0):0;
   if(cat.tipo==='fibra'){
     const kg=parseFloat(venta.cantidad)||0;
     const costoTotal=kg*(fibraCosto||0);
-    return Math.max(0, subtotal-costoTotal-insumos);
+    return Math.max(0, subtotal-costoTotal-insumos-tercero);
   }
-  return Math.max(0, subtotal-insumos);
+  return Math.max(0, subtotal-insumos-tercero);
 }
 
 // Calculate total commission applying admin base deduction correctly:
@@ -9831,17 +9826,13 @@ function calcVentaPreview(){
   var tercMontoPrev=esTercero?(parseMon((document.getElementById('vf-terc-monto')||{value:''}).value)||0):0;
   var fakeVenta={subtotal:subtotal,insMontoNum:insMontoNum,esTercero:esTercero,tercMonto:tercMontoPrev,prodId:pid,cantidad:document.getElementById('vf-cantidad').value};
   var comis=calcComision(fakeVenta,fibraCosto);
-  var base=0;
-  if(cat.tipo==='fibra'){
-    var kg=parseFloat(document.getElementById('vf-cantidad').value)||0;
-    base=Math.max(0,subtotal-kg*fibraCosto-insMontoNum);
-  } else { base=Math.max(0,subtotal-insMontoNum); }
+  var base=getVentaNetBase(fakeVenta,fibraCosto);
   var prev=document.getElementById('vf-comis-preview');
   if(prev){
     if(subtotal>0){
-      var nota=insMontoNum>0?' (insumos excluidos: '+fmt(insMontoNum)+')':'';
-      var notaTerc=esTercero&&tercMontoPrev>0?' &nbsp;|&nbsp; <span style="color:var(--amber)">−'+fmt(tercMontoPrev)+' al tercero</span>':'';
-      prev.innerHTML='<strong style="color:var(--green)">Comision estimada: '+fmt(comis)+'</strong> &nbsp;|&nbsp; Base: '+fmt(base)+nota+' &nbsp;|&nbsp; '+cat.comis+'%'+notaTerc;
+      var nota=insMontoNum>0?' &nbsp;|&nbsp; <span style="color:var(--amber)">insumos −'+fmt(insMontoNum)+'</span>':'';
+      var notaTerc=esTercero&&tercMontoPrev>0?' &nbsp;|&nbsp; <span style="color:var(--amber)">tercero −'+fmt(tercMontoPrev)+'</span>':'';
+      prev.innerHTML='<strong style="color:var(--green)">Comision estimada: '+fmt(comis)+'</strong> &nbsp;|&nbsp; Base: '+fmt(base)+nota+notaTerc+' &nbsp;|&nbsp; '+cat.comis+'%';
     } else {
       prev.innerHTML='<span style="color:var(--text3)">Ingresa subtotal y cantidad para ver el calculo</span>';
     }
@@ -11202,8 +11193,12 @@ function renderPendingProjects(allVentas,catMap){
       +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+getVentaDisplayNombre(v,catMap)+'</span>'
         +'<div style="font-size:9px;color:var(--text3)">'+fmt(v.subtotal)+' subtotal</div></td>'
       +'<td style="font-family:var(--cond);font-weight:800;color:var(--blue)">'+fmt(v.pendMonto)+'</td>'
-      +'<td><span class="vac-badge '+(v.pendCanceladaChk?'rejected':'pending')+'">'+
-      (v.pendCanceladaChk?'Cancelado':'Pendiente')+'</span>'+estados+'</td></tr>';
+      // Columna CANCELADO: refleja el campo "Cancelado" (Sí/No) que marcó quien
+      // registró la venta al activar "Proyecto pendiente de ejecutar".
+      +'<td style="text-align:center">'
+        +'<span class="vac-badge '+(v.pendCancelado==='si'?'approved':'pending')+'" style="font-size:11px;font-weight:800">'
+        +(v.pendCancelado==='si'?'Sí':'No')+'</span>'
+        +estados+'</td></tr>';
   }).join(''):'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px">Sin proyectos pendientes de ejecutar</td></tr>';
 }
 
@@ -13975,6 +13970,16 @@ function openEditAdminOwnVenta(vid){
   setF('avf-proyecto', found.proyecto);
   setF('avf-notas', found.notas);
   setF('avf-tc-used', found.tcUsed>0?found.tcUsed:'525');
+  // FIX: el tipo de pago NO se poblaba al editar — el desplegable quedaba en
+  // "Contado" y al guardar convertía las ventas a crédito. Ahora se restaura
+  // el valor real de la venta (y su plazo).
+  var _tpEl=document.getElementById('avf-tipo-pago');
+  if(_tpEl) _tpEl.value=found.tipoPago||'CONTADO';
+  var _plzEl=document.getElementById('avf-plazo');
+  if(_plzEl) _plzEl.value=found.plazoCredito||30;
+  // Restaurar también el IVA de la venta
+  var _ivaEl=document.getElementById('avf-iva');
+  if(_ivaEl) _ivaEl.value=(found.ivaPct===0||!found.ivaPct)?'no':(found.ivaPct===13?'13':String(found.ivaPct));
   var ivaEl = document.getElementById('avf-iva'); if(ivaEl) ivaEl.value=found.ivaPct===13?'13':'no';
   var usdEl = document.getElementById('avf-is-usd'); if(usdEl) usdEl.checked=!!(found.isUsd||found.isUSD);
   // Poblar los checks completos (insumos, tercero, pendiente, mínimo, referido)
@@ -14185,6 +14190,8 @@ function saveAdminVenta(){
     ivaAmt:ivaAmt,
     total:sub+ivaAmt,
     tipoPago:(document.getElementById('avf-tipo-pago')?.value||'CONTADO'),
+    plazoCredito:(document.getElementById('avf-tipo-pago')?.value==='CREDITO'
+      ?(parseInt(document.getElementById('avf-plazo')?.value)||30):0),
     plazoCredito:0,
     isUsd:isUsd,usd:usdAmt,tcUsed:tcUsed,
     tieneInsumos:(document.getElementById('avf-ins-chk')?.checked||false),
@@ -25270,7 +25277,7 @@ window.initCalcCONCRE=initCalcCONCRE;
           <!-- Pending projects paid but not executed -->
           <div class="admin-table-wrap" style="margin-bottom:14px">
             <div class="admin-table-hdr" style="border-bottom-color:var(--blue)">
-              <span class="ath-title">🔵 Proyectos pagados pendientes de ejecutar</span>
+              <span class="ath-title">Proyectos pagados pendientes de ejecutar</span>
             </div>
             <table class="atbl">
               <thead><tr><th>Colaborador</th><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Monto pendiente</th><th>Cancelado</th></tr></thead>
