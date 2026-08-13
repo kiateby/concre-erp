@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260813152725';
+var APP_BUILD='20260813153129';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -12095,15 +12095,34 @@ function renderAdminCxcTable(allVentas,catMap){
   const body=document.getElementById('av-cxc-body');
   if(!body) return;
   const now=new Date();
-  // Incluye pendientes + las cobradas en los últimos 7 días (desaparecen luego).
-  // Usa _esCxcPagado para reflejar de inmediato el check ✓ Pago del Detalle completo.
-  var cxcList=allVentas.filter(function(v){
-    if(v.tipoPago!=='CREDITO') return false;
-    if(!_esCxcPagado(v)) return true; // pendiente
-    var f=_cxcPagadoFecha(v);
-    if(!f) return true;
-    var dias=(Date.now()-new Date(f).getTime())/(1000*60*60*24);
-    return dias<7; // cobrada: visible 7 días más
+  // HISTÓRICO COMPLETO: recorre TODAS las ventas de todos los colaboradores,
+  // sin filtrar por el mes/período seleccionado. Un crédito pendiente se arrastra
+  // hasta que se cobre, sin importar cuándo se generó.
+  // Incluye: pendientes de cobro + las cobradas en los últimos 7 días.
+  var cxcList=[];
+  getUsers().forEach(function(u){
+    var vd=getVentasData(u.id)||{};
+    var fibraCostoU=0;
+    Object.keys(vd).forEach(function(mk){
+      var partes=mk.split('-');
+      try{ fibraCostoU=getFibraCosto(parseInt(partes[1])-1, parseInt(partes[0])); }catch(e){ fibraCostoU=0; }
+      (vd[mk].ventas||[]).forEach(function(v){
+        if(v.tipoPago!=='CREDITO') return;
+        if(v.estado==='incompleta') return; // ventas sin completar no son cobrables aún
+        var incluir;
+        if(!_esCxcPagado(v)){
+          incluir=true; // pendiente de cobro
+        } else {
+          var f=_cxcPagadoFecha(v);
+          if(!f) incluir=true;
+          else {
+            var dias=(Date.now()-new Date(f).getTime())/(1000*60*60*24);
+            incluir=(dias<7); // cobrada: visible 7 días más
+          }
+        }
+        if(incluir) cxcList.push(Object.assign({uid:u.id, uname:u.nombre||u.id, fibraCosto:fibraCostoU}, v));
+      });
+    });
   });
   if(!cxcList.length){
     body.innerHTML='<tr><td colspan="11" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
@@ -25369,7 +25388,7 @@ window.initCalcCONCRE=initCalcCONCRE;
           <div class="admin-table-wrap" style="margin-bottom:14px">
             <div class="admin-table-hdr" style="border-bottom-color:var(--amber)">
               <span class="ath-title">⏳ Créditos pendientes de cobro</span>
-              <span style="font-size:11px;color:rgba(255,255,255,.5)">Se arrastran mes a mes · desaparecen 7 días después de marcar como pagado</span>
+              <span style="font-size:11px;color:rgba(255,255,255,.5)">Histórico completo — todos los meses y años · desaparecen 7 días después de marcar como pagado</span>
             </div>
             <table class="atbl" style="min-width:1000px">
               <thead><tr>
