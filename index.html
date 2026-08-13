@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260813150015';
+var APP_BUILD='20260813151002';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -11341,18 +11341,39 @@ function saveDepositoNum(uid, ventaId, val){
 }
 // Estado de pago: el override de configuracion manda sobre el campo de la venta.
 // Mismo patrón que el número de depósito (que sí persiste correctamente).
-// Estado de cobro de un crédito: el override manda sobre el campo de la venta.
+// Estado de cobro de un crédito.
+// Orden de prioridad: override en memoria → campo cxcPagado de la venta →
+// estado ✓ Pago del Detalle completo (pagadoAdmin).
+// Esto último hace que las ventas YA marcadas como pagadas antes de este cambio
+// se reflejen automáticamente como cobradas, sin necesidad de volver a marcarlas.
 function _esCxcPagado(v){
   if(!v) return false;
   var ov=window._cxcPagadoOverrides;
   if(ov&&Object.prototype.hasOwnProperty.call(ov,v.id)) return !!ov[v.id].pagado;
-  return !!v.cxcPagado;
+  if(v.cxcPagado) return true;
+  return _esPagado(v); // retroactivo: ✓ Pago en el Detalle = cobrado
 }
 function _cxcPagadoFecha(v){
   if(!v) return null;
   var ov=window._cxcPagadoOverrides;
   if(ov&&ov[v.id]&&ov[v.id].fecha) return ov[v.id].fecha;
-  return v.cxcPagadoDate||null;
+  if(v.cxcPagadoDate) return v.cxcPagadoDate;
+  // Venta marcada como pagada ANTES de este cambio, sin fecha de cobro registrada:
+  // se registra la fecha AHORA para que el conteo de 7 días arranque desde este
+  // momento (y no desaparezcan de golpe al desplegar el cambio).
+  if(_esPagado(v)){
+    var ahora=new Date().toISOString();
+    if(!window._cxcPagadoOverrides) window._cxcPagadoOverrides={};
+    window._cxcPagadoOverrides[v.id]={pagado:true,fecha:ahora};
+    DB.from('configuracion').upsert(
+      {clave:'cc_cxc_pagado_'+v.id,
+       valor:{pagado:true,fecha:ahora,ventaId:v.id,uid:v.uid||'',retroactivo:true},
+       updated_at:new Date().toISOString()},
+      {onConflict:'clave'}
+    ).then(function(r){ if(r.error) console.error('cxc retroactivo:',r.error); });
+    return ahora;
+  }
+  return null;
 }
 
 function _esPagado(v){
@@ -11382,28 +11403,29 @@ function toggleVentaPago(uid,ventaId,chk){
         if(r.error) console.error('pagado_admin save error:', r.error);
         else console.log('pagado_admin guardado en Supabase:', ventaId, newVal);
       });
-      // VÍNCULO con Créditos pendientes de cobro: al marcar ✓ Pago en el Detalle,
-      // la venta a crédito queda también marcada como cobrada allá (y arranca el
-      // conteo de 7 días para desaparecer). Al desmarcar, vuelve a pendiente.
-      if(vd[mk].ventas[idx].tipoPago==='CREDITO'){
-        vd[mk].ventas[idx].cxcPagado=newVal;
-        vd[mk].ventas[idx].cxcPagadoDate=newVal?new Date().toISOString():null;
-        // Respaldo en configuracion (mecanismo probado, independiente de la tabla)
-        DB.from('configuracion').upsert(
-          {clave:'cc_cxc_pagado_'+ventaId,
-           valor:{pagado:newVal,fecha:vd[mk].ventas[idx].cxcPagadoDate,ventaId:ventaId,uid:uid},
-           updated_at:new Date().toISOString()},
-          {onConflict:'clave'}
-        ).then(function(r){ if(r.error) console.error('cxc_pagado save:',r.error); });
-        if(!window._cxcPagadoOverrides) window._cxcPagadoOverrides={};
-        window._cxcPagadoOverrides[ventaId]={pagado:newVal,fecha:vd[mk].ventas[idx].cxcPagadoDate};
-      }
+      // VÍNCULO con Créditos pendientes de cobro y Saldos por cliente.
+      // Se aplica SIEMPRE (sin condicionar al tipo de pago): las ventas de contado
+      // no aparecen en esas tablas de todas formas, y así el vínculo no depende de
+      // que el campo tipoPago esté escrito exactamente como 'CREDITO'.
+      var _fechaCobro=newVal?new Date().toISOString():null;
+      vd[mk].ventas[idx].cxcPagado=newVal;
+      vd[mk].ventas[idx].cxcPagadoDate=_fechaCobro;
+      if(!window._cxcPagadoOverrides) window._cxcPagadoOverrides={};
+      window._cxcPagadoOverrides[ventaId]={pagado:newVal,fecha:_fechaCobro};
+      // Respaldo en configuracion (independiente de la tabla ventas)
+      DB.from('configuracion').upsert(
+        {clave:'cc_cxc_pagado_'+ventaId,
+         valor:{pagado:newVal,fecha:_fechaCobro,ventaId:ventaId,uid:uid},
+         updated_at:new Date().toISOString()},
+        {onConflict:'clave'}
+      ).then(function(r){ if(r.error) console.error('cxc_pagado save:',r.error); });
+      window._ventasCache[uid]=vd; // asegurar cache actualizado antes de re-renderizar
       // Guardar TAMBIÉN en la tabla ventas (columna pagado_admin) — doble respaldo:
       // si el override de configuracion no llegara, la fila de ventas conserva el estado.
       try{ _saveSingleVenta(uid, vd[mk].ventas[idx], mk); }catch(e){ console.error('toggleVentaPago save:',e); }
-      if(newVal) toast('✓ Pago verificado y guardado en línea');
-      renderAdminVentasTable();
-      try{ renderAdminVentas(); }catch(e){} // refresca Créditos pendientes y Saldos por cliente
+      if(newVal) toast('✓ Pago registrado — actualizado en Créditos pendientes y Saldos por cliente');
+      // Re-render COMPLETO: actualiza Detalle, Créditos pendientes y Saldos por cliente
+      try{ renderAdminVentas(); }catch(e){ console.error('render tras pago:',e); renderAdminVentasTable(); }
     }
   });
 }
@@ -25277,7 +25299,7 @@ window.initCalcCONCRE=initCalcCONCRE;
           <!-- Pending projects paid but not executed -->
           <div class="admin-table-wrap" style="margin-bottom:14px">
             <div class="admin-table-hdr" style="border-bottom-color:var(--blue)">
-              <span class="ath-title">Proyectos pagados pendientes de ejecutar</span>
+              <span class="ath-title">Proyectos pendientes de ejecutar</span>
             </div>
             <table class="atbl">
               <thead><tr><th>Colaborador</th><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Monto pendiente</th><th>Cancelado</th></tr></thead>
