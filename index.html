@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260813151002';
+var APP_BUILD='20260813152050';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -9266,6 +9266,7 @@ function _saveSingleVenta(uid, v, mk){
     pendPagada:v.pendPagada||false, pendEjecutada:v.pendEjecutada||false, pendCanceladaChk:v.pendCanceladaChk||false,
     pendPagadaAt:v.pendPagadaAt||'', pendEjecutadaAt:v.pendEjecutadaAt||'', pendCanceladaAt:v.pendCanceladaAt||'',
     pendResuelta:v.pendResuelta||false, pendResueltaAt:v.pendResueltaAt||'', pendOrigen:v.pendOrigen||'',
+    pendFechaOriginal:v.pendFechaOriginal||'',
     invMovId:v.invMovId||'',
     tienePendiente:v.tienePendiente||false, pendMonto:v.pendMonto||0, pendCancelado:v.pendCancelado||'no',
     referido:v.referido||'', notas:v.notas||'', estado:v.estado||'activa',
@@ -9397,7 +9398,7 @@ async function loadVentasFromDB(uid,_rows){
         pendPagadaAt:editOverride.pendPagadaAt||'', pendEjecutadaAt:editOverride.pendEjecutadaAt||'',
         pendCanceladaAt:editOverride.pendCanceladaAt||'',
         pendResuelta:editOverride.pendResuelta||false, pendResueltaAt:editOverride.pendResueltaAt||'',
-        pendOrigen:editOverride.pendOrigen||'',
+        pendOrigen:editOverride.pendOrigen||'', pendFechaOriginal:editOverride.pendFechaOriginal||'',
         isUsd:editOverride.isUsd||row.is_usd||false,
         isUSD:editOverride.isUsd||row.is_usd||false,
         tcUsed:editOverride.tcUsed||row.tc_used||0,
@@ -10107,21 +10108,25 @@ function renderPendExecList(){
     var p=cat.find(function(x){return x.id===normalizeProdId(v.prodId);})||{nombre:v.prodId};
     var origen=r.mk.split('-');
     var mesNombre=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(origen[1])-1]||'';
+    // Los tres checks quedan SIEMPRE editables mientras la venta siga en el cuadro,
+    // incluso después de marcarse como ejecutada o cancelada: así se puede corregir
+    // un error dentro del plazo de 48h antes de que salga de la tabla.
     var estado='';
-    var checks='';
     if(r.cancelada){
       var hrs=Math.max(0,48-Math.floor((Date.now()-new Date(v.pendCanceladaAt).getTime())/3600000));
-      estado='<span style="font-size:10px;font-weight:800;color:var(--red)">✖ CANCELADA — se enviará a papelera en '+hrs+'h</span>';
+      estado='<div style="font-size:10px;font-weight:800;color:var(--red);white-space:nowrap">✖ CANCELADA — a papelera en '+hrs+'h'
+        +'<br><span style="font-weight:600;color:var(--text3)">Desmarque para revertir</span></div>';
     } else if(r.resuelta){
-      estado='<span style="font-size:10px;font-weight:800;color:var(--green)">✅ EJECUTADA — sumada a ventas de este mes</span>';
-    } else {
-      checks='<label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">'
-        +'<input type="checkbox" '+(v.pendPagada?'checked':'')+' onchange="marcarPendCheck(\''+v.id+'\',\'pagada\',this)" style="width:14px;height:14px;accent-color:var(--green)">💰 Pagada</label>'
-        +'<label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">'
-        +'<input type="checkbox" '+(v.pendEjecutada?'checked':'')+' onchange="marcarPendCheck(\''+v.id+'\',\'ejecutada\',this)" style="width:14px;height:14px;accent-color:var(--blue)">🏗 Ejecutada</label>'
-        +'<label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;color:var(--red)">'
-        +'<input type="checkbox" onchange="marcarPendCheck(\''+v.id+'\',\'cancelada\',this)" style="width:14px;height:14px;accent-color:var(--red)">✖ Cancelada</label>';
+      var hrsE=Math.max(0,48-Math.floor((Date.now()-new Date(v.pendResueltaAt).getTime())/3600000));
+      estado='<div style="font-size:10px;font-weight:800;color:var(--green);white-space:nowrap">✅ EJECUTADA — ya suma en ventas'
+        +'<br><span style="font-weight:600;color:var(--text3)">Sale del cuadro en '+hrsE+'h · editable</span></div>';
     }
+    var checks='<label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">'
+      +'<input type="checkbox" '+(v.pendPagada?'checked':'')+' onchange="marcarPendCheck(\''+v.id+'\',\'pagada\',this)" style="width:14px;height:14px;accent-color:var(--green)">💰 Pagada</label>'
+      +'<label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">'
+      +'<input type="checkbox" '+(v.pendEjecutada?'checked':'')+' onchange="marcarPendCheck(\''+v.id+'\',\'ejecutada\',this)" style="width:14px;height:14px;accent-color:var(--blue)">🏗 Ejecutada</label>'
+      +'<label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;color:var(--red)">'
+      +'<input type="checkbox" '+(v.pendCanceladaChk?'checked':'')+' onchange="marcarPendCheck(\''+v.id+'\',\'cancelada\',this)" style="width:14px;height:14px;accent-color:var(--red)">✖ Cancelada</label>';
     return '<div style="display:flex;align-items:center;gap:12px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap;'
       +(r.cancelada?'background:rgba(239,68,68,.05)':(r.resuelta?'background:rgba(22,163,74,.05)':''))+'">'
       +'<div style="flex:1;min-width:180px">'
@@ -10130,7 +10135,7 @@ function renderPendExecList(){
         +(v.proyecto?' · '+escHtml(v.proyecto):'')+'</div>'
       +'</div>'
       +'<span style="font-family:var(--cond);font-weight:900;color:var(--blue);white-space:nowrap">'+fmt(v.subtotal)+'</span>'
-      +'<div style="display:flex;gap:10px;align-items:center">'+(checks||estado)+'</div>'
+      +'<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'+checks+(estado?'<div style="margin-left:6px">'+estado+'</div>':'')+'</div>'
       +'</div>';
   }).join('');
 }
@@ -10141,7 +10146,8 @@ function marcarPendCheck(ventaId, tipo, el){
   var v=found.v;
   var uName=SESSION.nombre||uid;
   if(tipo==='cancelada'){
-    if(el.checked && !confirm('¿Marcar este proyecto como CANCELADO?\n\nLa venta se enviará a la papelera en 48 horas.')){ el.checked=false; return; }
+    if(el.checked && !confirm('¿Marcar este proyecto como CANCELADO?\n\nLa venta se enviará a la papelera en 48 horas.\nPuede desmarcarlo dentro de ese plazo para revertirlo.')){ el.checked=false; return; }
+    if(!el.checked && v.pendCanceladaChk) toast('↩ Cancelación revertida — la venta ya no se eliminará');
     v.pendCanceladaChk=el.checked;
     v.pendCanceladaAt=el.checked?new Date().toISOString():'';
     if(el.checked) _pendNotifSuperadmins('✖','Proyecto pendiente CANCELADO', uName+' marcó como cancelado el proyecto pendiente de '+(v.cliente||'')+' ('+fmt(v.subtotal)+'). Se enviará a papelera en 48h.');
@@ -10154,13 +10160,54 @@ function marcarPendCheck(ventaId, tipo, el){
     v.pendEjecutadaAt=el.checked?new Date().toISOString():'';
     if(el.checked) _pendNotifSuperadmins('🏗','Proyecto pendiente: ejecutado', uName+' marcó como EJECUTADO el proyecto pendiente de '+(v.cliente||'')+' ('+fmt(v.subtotal)+').');
   }
-  // ¿Se resuelve? Pagada + Ejecutada (y no cancelada) → mudar al mes actual y activar en cálculos
+  // ¿Se resuelve? Pagada + Ejecutada (y no cancelada) → mudar al mes de ejecución
   if(v.pendPagada && v.pendEjecutada && !v.pendCanceladaChk){
-    resolverVentaPendiente(uid, ventaId);
+    if(v.pendResuelta){
+      // Ya estaba resuelta: solo guardar el cambio de checks
+      _saveSingleVenta(uid, v, found.mk);
+      renderPendExecList();
+    } else {
+      resolverVentaPendiente(uid, ventaId);
+    }
+  } else if(v.pendResuelta){
+    // REVERTIR: estaba ejecutada y se desmarcó Pagada o Ejecutada dentro del plazo.
+    // Vuelve a ser un proyecto pendiente (deja de sumar en ventas y comisión).
+    revertirVentaPendiente(uid, ventaId);
   } else {
     _saveSingleVenta(uid, v, found.mk);
     renderPendExecList();
+    try{ renderVentasUser(); }catch(e){}
   }
+}
+
+// Revertir una venta que ya se había marcado como ejecutada: vuelve al estado
+// pendiente, deja de contar en ventas y comisión, y regresa a su mes de origen.
+function revertirVentaPendiente(uid, ventaId){
+  var found=_pendBuscarVenta(uid, ventaId);
+  if(!found) return;
+  var v=found.v, mkActual=found.mk, vd=found.vd;
+  var mkOrigen=v.pendOrigen||mkActual;
+  v.pendResuelta=false;
+  v.pendResueltaAt='';
+  v.tienePendiente=true; // vuelve a estar fuera de ventas y comisión
+  // Regresar la venta a su mes de origen si había sido mudada
+  if(mkOrigen!==mkActual&&vd[mkActual]){
+    var idx=(vd[mkActual].ventas||[]).findIndex(function(x){return x.id===ventaId;});
+    if(idx>=0) vd[mkActual].ventas.splice(idx,1);
+    if(!vd[mkOrigen]) vd[mkOrigen]={ventas:[],tc:(vd[mkActual]&&vd[mkActual].tc)||525,comisVerif:false};
+    // Restaurar la fecha original si quedó registrada
+    if(v.pendFechaOriginal) v.fecha=v.pendFechaOriginal;
+    vd[mkOrigen].ventas.push(v);
+    window._ventasCache[uid]=vd;
+  }
+  v.pendOrigen='';
+  _saveSingleVenta(uid, v, mkOrigen);
+  var uName=SESSION.nombre||uid;
+  _pendNotifSuperadmins('↩','Proyecto ejecutado REVERTIDO',
+    uName+' revirtió la ejecución del proyecto de '+(v.cliente||'')+' ('+fmt(v.subtotal)+') — vuelve a estar pendiente.');
+  toast('↩ Revertido — el proyecto vuelve a estar pendiente de ejecutar');
+  renderPendExecList();
+  try{ renderVentasUser(); }catch(e){}
 }
 function resolverVentaPendiente(uid, ventaId){
   var found=_pendBuscarVenta(uid, ventaId);
@@ -10170,6 +10217,7 @@ function resolverVentaPendiente(uid, ventaId){
   var nowD=new Date();
   var mkNew=nowD.getFullYear()+'-'+pad(nowD.getMonth()+1);
   v.pendOrigen=mkOld;
+  v.pendFechaOriginal=v.pendFechaOriginal||v.fecha; // para poder revertir
   v.pendResuelta=true;
   v.pendResueltaAt=new Date().toISOString();
   v.tienePendiente=false; // deja de ser pendiente: cuenta en ventas y comisión
