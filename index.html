@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260814154417';
+var APP_BUILD='20260814155538';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -4558,6 +4558,40 @@ function saveAgOverrides(uid){
   toast('✓ Aguinaldo actualizado para este colaborador');
 }
 
+// Devuelve las deducciones VIGENTES para una quincena específica.
+// Si hubo cambios posteriores a esa quincena, devuelve los valores que regían
+// entonces — así las planillas ya pagadas no se alteran retroactivamente.
+// year: año · month: 0-11 · q: 1 o 2
+function getDedVigente(uid, year, month, q){
+  var ded=getDED(uid)||{};
+  var base={ccss:ded.ccss_monto||0, rb:ded.rb_monto||0, rb_desc:ded.rb_desc||'',
+            extra:ded.extra_monto||0, extra_desc:ded.extra_desc||''};
+  var hist=ded.ded_hist;
+  if(!hist) return base;
+  // Orden cronológico de los cambios registrados
+  var claves=Object.keys(hist).sort(function(a,b){
+    var pa=a.split('-'), pb=b.split('-');
+    var va=parseInt(pa[0])*100+parseInt(pa[1])*2+parseInt(pa[2]);
+    var vb=parseInt(pb[0])*100+parseInt(pb[1])*2+parseInt(pb[2]);
+    return va-vb;
+  });
+  var valorQuincena=(year*100)+((month+1)*2)+q;
+  // El primer cambio cuya vigencia es POSTERIOR a esta quincena indica que,
+  // en ese momento, esta quincena regía con los valores "anterior".
+  for(var i=0;i<claves.length;i++){
+    var p=claves[i].split('-');
+    var vCambio=(parseInt(p[0])*100)+(parseInt(p[1])*2)+parseInt(p[2]);
+    if(vCambio>valorQuincena){
+      var h=hist[claves[i]];
+      if(h&&h.anterior){
+        return {ccss:h.anterior.ccss||0, rb:h.anterior.rb||0, rb_desc:h.anterior.rb_desc||'',
+                extra:h.anterior.extra||0, extra_desc:h.anterior.extra_desc||''};
+      }
+    }
+  }
+  return base; // ningún cambio posterior: rigen los valores actuales
+}
+
 function saveAdminUserHoras(uid){
   const users=getUsers();
   const ui=users.findIndex(x=>x.id===uid);
@@ -4566,11 +4600,41 @@ function saveAdminUserHoras(uid){
   setUsers(users);
   var ded=getDED(uid)||{};
   const rk=`${new Date().getFullYear()}-${pad(new Date().getMonth()+1)}-1`;
-  ded.ccss_monto=parseMon(document.getElementById('ah-ccss').value)||0;
-  ded.rb_monto=parseMon(document.getElementById('ah-rb').value)||0;
-  ded.rb_desc=document.getElementById('ah-rbdesc').value;
-  ded.extra_monto=parseMon(document.getElementById('ah-ex').value)||0;
-  ded.extra_desc=document.getElementById('ah-exdesc').value;
+  var _nuevoCcss=parseMon(document.getElementById('ah-ccss').value)||0;
+  var _nuevoRb=parseMon(document.getElementById('ah-rb').value)||0;
+  var _nuevoRbDesc=document.getElementById('ah-rbdesc').value;
+  var _nuevoEx=parseMon(document.getElementById('ah-ex').value)||0;
+  var _nuevoExDesc=document.getElementById('ah-exdesc').value;
+
+  // ── VIGENCIA DE DEDUCCIONES ──────────────────────────────────────────────
+  // Antes de cambiar los montos, se CONGELAN los valores actuales para todas
+  // las quincenas ya transcurridas. Así una deducción nueva (préstamo, rebajo,
+  // CCSS) rige desde la quincena EN CURSO hacia adelante y no altera planillas
+  // anteriores. Las quincenas ya pagadas conservan lo que se les aplicó.
+  var _cambio=(_nuevoCcss!==(ded.ccss_monto||0))
+            ||(_nuevoRb!==(ded.rb_monto||0))
+            ||(_nuevoEx!==(ded.extra_monto||0));
+  if(_cambio){
+    var _hoy=new Date();
+    var _vigKey=_hoy.getFullYear()+'-'+pad(_hoy.getMonth()+1)+'-'+(_hoy.getDate()<=15?'1':'2');
+    if(!ded.ded_hist) ded.ded_hist={};
+    // Registrar los valores ANTERIORES como vigentes hasta la quincena previa
+    ded.ded_hist[_vigKey]={
+      desde:_vigKey,
+      ccss:_nuevoCcss, rb:_nuevoRb, rb_desc:_nuevoRbDesc,
+      extra:_nuevoEx, extra_desc:_nuevoExDesc,
+      anterior:{ccss:ded.ccss_monto||0, rb:ded.rb_monto||0, rb_desc:ded.rb_desc||'',
+                extra:ded.extra_monto||0, extra_desc:ded.extra_desc||''},
+      guardadoAt:new Date().toISOString(),
+      guardadoPor:SESSION?(SESSION.nombre||SESSION.id):''
+    };
+  }
+
+  ded.ccss_monto=_nuevoCcss;
+  ded.rb_monto=_nuevoRb;
+  ded.rb_desc=_nuevoRbDesc;
+  ded.extra_monto=_nuevoEx;
+  ded.extra_desc=_nuevoExDesc;
   ded['comis_'+rk]=parseMon(document.getElementById('ah-comis').value)||0;
   // Si es el usuario actual, actualizar DED en memoria también
   if(SESSION&&uid===SESSION.id) DED=ded;
@@ -4683,7 +4747,8 @@ function renderAdminHorasTable(uid){
     const half=Math.round(histAdmin.deduccion_total/2);
     ccss=half; rb=0; ex=0;
   } else {
-    ccss=((u.ccssSoloQ1&&ADMIN_CQ!==1)?0:(dedU.ccss_monto||0)); rb=dedU.rb_monto||0; ex=dedU.extra_monto||0;
+    var _dvA=getDedVigente(u.id,(typeof y!=='undefined'?y:new Date().getFullYear()),ADMIN_CM,ADMIN_CQ);
+    ccss=((u.ccssSoloQ1&&ADMIN_CQ!==1)?0:_dvA.ccss); rb=_dvA.rb; ex=_dvA.extra;
   }
   const tot=salQ+mExt-ccss-rb-ex;
 
@@ -5447,7 +5512,8 @@ function recalcQ(){
     if(r.entrada)diasR++;
   });
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
-  const ccss=((SESSION&&SESSION.ccssSoloQ1&&CQ!==1)?0:(DED.ccss_monto||0)),rb=DED.rb_monto||0,ex=DED.extra_monto||0;
+  var _dvU=(SESSION?getDedVigente(SESSION.id,y,CM,CQ):{ccss:0,rb:0,extra:0});
+  const ccss=((SESSION&&SESSION.ccssSoloQ1&&CQ!==1)?0:_dvU.ccss),rb=_dvU.rb,ex=_dvU.extra;
   const rk=`${y}-${pad(CM+1)}-${CQ}`;
   const comisRaw=DED[`comis_${rk}`]||0;
   const sesComisType=(SESSION&&SESSION.comisType)||getUsers().find(function(u){return SESSION&&u.id===SESSION.id;})?.comisType||'mensual';
@@ -5870,7 +5936,8 @@ function exportPlanilla(){
   let totExt=0;
   days.forEach(d=>{const r=REG[dkey(d)]||{},j=r.jornada||defJornada(d,r.entrada,r.salida);if(j==='libre')return;if(esFechaDeRangoExtra(d)){if(r.quincenaOrigen!==CQ)return;}else{if(r.quincenaOrigen!=null&&r.quincenaOrigen!==CQ)return;}totExt+=calcExt(r.entrada,r.salida,j).ext;});
   const salQ=sal/2,mExt=totExt*vh,bruto=salQ+mExt;
-  const ccss=((SESSION&&SESSION.ccssSoloQ1&&CQ!==1)?0:(DED.ccss_monto||0)),rb=DED.rb_monto||0,ex=DED.extra_monto||0;
+  var _dvU=(SESSION?getDedVigente(SESSION.id,y,CM,CQ):{ccss:0,rb:0,extra:0});
+  const ccss=((SESSION&&SESSION.ccssSoloQ1&&CQ!==1)?0:_dvU.ccss),rb=_dvU.rb,ex=_dvU.extra;
   const comis=DED[`comis_${y}-${pad(CM+1)}-${CQ}`]||0;
   const tot=bruto-ccss-rb-ex;
   const emitida=new Date().toLocaleDateString('es-CR');
@@ -9265,7 +9332,18 @@ function _saveSingleVenta(uid, v, mk){
     cxc_pagado: v.cxcPagado||false,
     cxc_pagado_date: v.cxcPagadoDate||null,
     tiene_minimo: v.tieneMinimo||false,
-    minimo_area: v.minimoArea||0
+    minimo_area: v.minimoArea||0,
+    // Insumos y comisión a tercero: se capturaban en el formulario pero no se
+    // escribían en la tabla — el dato solo vivía en el respaldo y se perdía.
+    tiene_insumos: v.tieneInsumos||false,
+    ins_desc: v.insDesc||'',
+    ins_monto: v.insMontoNum||0,
+    terc_nombre: v.tercNombre||'',
+    terc_monto: v.tercMonto||0,
+    referido: v.referido||'',
+    tiene_pendiente: v.tienePendiente||false,
+    pend_monto: v.pendMonto||0,
+    pend_cancelado: v.pendCancelado||'no'
   };
 
   // ── BACKUP GARANTIZADO en configuracion (cross-device, sin RLS issues) ──
@@ -9481,17 +9559,25 @@ async function loadVentasFromDB(uid,_rows){
       notas:row.notas||'',
       estado:row.estado||'activo',
       isAdminVenta:row.is_admin_venta||false,
-      tieneInsumos:row.tiene_insumos||false,
-      insMontoNum:row.ins_monto||0,
-      insDesc:row.ins_desc||'',
-      tienePendiente:row.tiene_pendiente||false,
-      pendMonto:row.pend_monto||0,
-      pendCancelado:row.pend_cancelado||'no',
+      tieneInsumos:(row.tiene_insumos!=null?!!row.tiene_insumos
+        :!!((window._ventaEditsCache||{})[row.id]||{}).tieneInsumos),
+      insMontoNum:(row.ins_monto!=null&&row.ins_monto!==0?row.ins_monto
+        :(((window._ventaEditsCache||{})[row.id]||{}).insMontoNum||0)),
+      insDesc:(row.ins_desc||((window._ventaEditsCache||{})[row.id]||{}).insDesc||''),
+      // Comisión a tercero: nombre y monto (el monto afecta la base de comisión)
+      tercNombre:(row.terc_nombre||((window._ventaEditsCache||{})[row.id]||{}).tercNombre||''),
+      tercMonto:(row.terc_monto!=null&&row.terc_monto!==0?row.terc_monto
+        :(((window._ventaEditsCache||{})[row.id]||{}).tercMonto||0)),
+      referido:(row.referido||((window._ventaEditsCache||{})[row.id]||{}).referido||''),
+      tienePendiente:(row.tiene_pendiente!=null?!!row.tiene_pendiente
+        :!!((window._ventaEditsCache||{})[row.id]||{}).tienePendiente),
+      pendMonto:(row.pend_monto!=null&&row.pend_monto!==0?row.pend_monto
+        :(((window._ventaEditsCache||{})[row.id]||{}).pendMonto||0)),
+      pendCancelado:(row.pend_cancelado||((window._ventaEditsCache||{})[row.id]||{}).pendCancelado||'no'),
       pagadoAdmin:pagadoAdminFinal,
       ejecutado:row.ejecutado||false,
       ejecutadoFecha:row.ejecutado_fecha||null,
       cxcPagado:row.cxc_pagado||false,
-      referido:row.referido||'',
       created:row.created_at||''
     });
   });
@@ -15881,6 +15967,9 @@ function renderPagosUsuarios(){
       var rb=ded.rb_monto||0;
       var extraReb=ded.extra_monto||0;
       // Usuarios con "CCSS solo el día 15": la CCSS fija se rebaja completa en Q1 y Q2 queda sin CCSS
+      // Deducciones VIGENTES para esta quincena (no las actuales si cambiaron después)
+      var _dv=getDedVigente(u.id,y,m,q);
+      ccss=_dv.ccss; rb=_dv.rb; extraReb=_dv.extra;
       dedTotal=((u.ccssSoloQ1&&q!==1)?0:ccss)+rb+(q===1?extraReb:0);
     }
 
