@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260814153708';
+var APP_BUILD='20260814154417';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -9263,7 +9263,9 @@ function _saveSingleVenta(uid, v, mk){
     pagado_admin: v.pagadoAdmin||false,
     inv_mov_id: v.invMovId||'',
     cxc_pagado: v.cxcPagado||false,
-    cxc_pagado_date: v.cxcPagadoDate||null
+    cxc_pagado_date: v.cxcPagadoDate||null,
+    tiene_minimo: v.tieneMinimo||false,
+    minimo_area: v.minimoArea||0
   };
 
   // ── BACKUP GARANTIZADO en configuracion (cross-device, sin RLS issues) ──
@@ -9463,6 +9465,12 @@ async function loadVentasFromDB(uid,_rows){
       tipoPago:row.pago||row.tipo_pago||row.tipoPago||'CONTADO',
       pago:row.pago||'CONTADO',
       plazoCredito:row.plazo_credito||0,
+      // Área del mínimo: prioriza la columna de la tabla; si aún no existe
+      // (ventas guardadas antes de este cambio) la recupera del respaldo.
+      tieneMinimo:(row.tiene_minimo!=null?!!row.tiene_minimo
+        :!!((window._ventaEditsCache||{})[row.id]||{}).tieneMinimo),
+      minimoArea:(row.minimo_area!=null&&row.minimo_area!==0?row.minimo_area
+        :(((window._ventaEditsCache||{})[row.id]||{}).minimoArea||0)),
       comision:row.comision,
       esTercero:row.es_tercero||false,
       isUsd:row.is_usd||false,
@@ -10432,6 +10440,7 @@ function renderVentasUser(){
     var extraInfo=[];
     if(v.tieneInsumos&&v.insDesc) extraInfo.push('⚠ Ins: '+v.insDesc+(v.insMontoNum?' ('+fmt(v.insMontoNum)+')':''));
     if(v.esTercero) extraInfo.push('👤 '+( v.tercNombre||'Tercero')+(v.tercMonto>0?' ('+fmt(v.tercMonto)+')':''));
+    if(v.tieneMinimo) extraInfo.push('📐 Mínimo'+(v.minimoArea>0?' — área real: '+v.minimoArea:''));
     if(v.tienePendiente&&v.pendCancelado!=='si') extraInfo.push('🔵 Pend: '+fmt(v.pendMonto));
     if(v.referido) extraInfo.push('↗ Ref: '+v.referido);
     if(v.isUsd) extraInfo.push('USD '+v.usd+' @ '+v.tcUsed);
@@ -11412,6 +11421,7 @@ function renderAdminVentasTable(){
     if(v.tieneInsumos&&v.insDesc) extraAdmin.push('⚠ Ins: '+v.insDesc+(v.insMontoNum?' ('+fmt(v.insMontoNum)+')':''));
     if(v.esTercero) extraAdmin.push('👤 '+(v.tercNombre||'Tercero')+(v.tercMonto>0?' ('+fmt(v.tercMonto)+')':''));
     if(v.tienePendiente&&v.pendCancelado!=='si') extraAdmin.push('🔵 Pend: '+fmt(v.pendMonto));
+    if(v.tieneMinimo) extraAdmin.push('📐 Mínimo'+(v.minimoArea>0?' — área real: '+v.minimoArea:''));
     if(v.referido) extraAdmin.push('↗ Ref: '+v.referido);
     if(v.isUsd) extraAdmin.push('USD '+v.usd+' @ '+v.tcUsed);
     var pagoAdminLabel=v.tipoPago==='CONTADO'
@@ -11429,7 +11439,10 @@ function renderAdminVentasTable(){
       +'<td style="position:sticky;left:360px;z-index:2;background:'+stickyBg+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(v.cliente)+'</td>'
       +'<td style="position:sticky;left:500px;z-index:2;background:'+stickyBg+';min-width:80px;font-size:11px;color:var(--text3);box-shadow:2px 0 5px rgba(0,0,0,.10)">'+( v.factura||'—')+'</td>'
       +'<td style="font-size:11px;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(v.proyecto?escHtml(v.proyecto):'')+'">'+(v.proyecto?escHtml(v.proyecto):'—')+'</td>'
-      +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'+((v.cantidad!=null&&v.cantidad!==''&&Number(v.cantidad)!==0?v.cantidad:'—'))+'</td>'
+      +'<td style="font-family:var(--cond);text-align:center;color:var(--text2)">'
+        +((v.cantidad!=null&&v.cantidad!==''&&Number(v.cantidad)!==0?v.cantidad:'—'))
+        +(v.tieneMinimo&&v.minimoArea>0?'<div style="font-size:9px;color:var(--amber,#d97706);font-weight:700;white-space:nowrap">📐 real: '+v.minimoArea+'</div>':'')
+      +'</td>'
       +'<td style="font-family:var(--cond);font-size:11px;color:var(--text2)">'+(v.precio>0?(v.isUsd?'$'+Number(v.precioUnit||v.precio).toFixed(1):fmt(v.precio)):'—')+'</td>'
       +'<td style="font-family:var(--cond);font-weight:700;text-align:right">'+fmt(v.subtotal)+'</td>'
       +'<td style="font-family:var(--cond);text-align:center;font-size:12px">'+(v.ivaAmt>0?fmt(v.ivaAmt):'S/IVA')+'</td>'
