@@ -1664,10 +1664,13 @@ function saveData(uid){
 // getDED: usa memoria si es el usuario actual, localStorage si es otro usuario
 function getDED(uid){
   if(SESSION&&uid===SESSION.id) return DED;
-  // Para otros usuarios: usar cache en memoria cargado desde Supabase al startup
-  // (no localStorage — todo debe ser cross-device desde Supabase)
-  if(window._dedAdminCache && window._dedAdminCache[uid]) return window._dedAdminCache[uid];
-  return {};
+  // Cache en memoria cargado desde Supabase al inicio.
+  // Si el usuario aún no tiene entrada, se crea y se GUARDA en el cache: así
+  // cualquier cambio hecho sobre el objeto devuelto persiste en la sesión
+  // (antes se devolvía un objeto temporal y los cambios se perdían en pantalla).
+  if(!window._dedAdminCache) window._dedAdminCache={};
+  if(!window._dedAdminCache[uid]) window._dedAdminCache[uid]={};
+  return window._dedAdminCache[uid];
 }
 function getREG(uid){
   if(SESSION&&uid===SESSION.id) return REG;
@@ -1931,7 +1934,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260814161132';
+var APP_BUILD='20260814161718';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -4600,6 +4603,9 @@ function _corregirVigenciasPagadas(uid){
     });
     if(cambio){
       ded.ded_hist=nuevo;
+      if(!window._dedAdminCache) window._dedAdminCache={};
+      window._dedAdminCache[uid]=ded;
+      if(SESSION&&uid===SESSION.id) DED=ded;
       _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
     }
   }catch(e){ console.warn('_corregirVigenciasPagadas:',e); }
@@ -4738,7 +4744,12 @@ function saveAdminUserHoras(uid){
   ded.extra_monto=_nuevoEx;
   ded.extra_desc=_nuevoExDesc;
   ded['comis_'+rk]=parseMon(document.getElementById('ah-comis').value)||0;
-  // Si es el usuario actual, actualizar DED en memoria también
+  // Actualizar el cache EN MEMORIA para que el cambio se refleje de inmediato.
+  // getDED() devuelve un objeto vacío nuevo cuando el usuario no está en cache;
+  // sin esta línea las modificaciones se guardaban en la nube pero la pantalla
+  // seguía mostrando los valores viejos hasta recargar la página.
+  if(!window._dedAdminCache) window._dedAdminCache={};
+  window._dedAdminCache[uid]=ded;
   if(SESSION&&uid===SESSION.id) DED=ded;
   _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
   buildAdminOverview();
