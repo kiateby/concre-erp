@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260813153129';
+var APP_BUILD='20260814152038';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -8805,6 +8805,14 @@ function renderAdminFondosTable(){
     return html;
   });
   body.innerHTML=rows.join('');
+  // Fila de TOTAL de gastos (respeta el filtro de categoría aplicado)
+  if(filtered&&filtered.length){
+    var _totGas=filtered.reduce(function(s,g){ return s+(g.monto||0); },0);
+    body.innerHTML+='<tr style="background:var(--surface2);border-top:2.5px solid var(--red)">'
+      +'<td colspan="5" style="text-align:right;font-family:var(--cond);font-weight:900;font-size:13px">TOTAL GASTADO ('+filtered.length+')</td>'
+      +'<td style="font-family:var(--cond);font-weight:900;font-size:15px;color:var(--red)">'+fmt(_totGas)+'</td>'
+      +'<td colspan="'+((SESSION&&SESSION.rol==='superadmin')?5:4)+'"></td></tr>';
+  }
 }
 function renderAdminDepTable(depositos){
   window._lastDepositosRendered=depositos; // cache para re-render tras toggle de check
@@ -8833,6 +8841,14 @@ function renderAdminDepTable(depositos){
           +'</tr>';
       }).join('')
     : '<tr><td colspan="'+cols+'" style="text-align:center;color:var(--text3);padding:20px">Sin depósitos</td></tr>';
+  // Fila de TOTAL de depósitos
+  if(depositos.length){
+    var _totDep=depositos.reduce(function(s,d){ return s+(d.monto||0); },0);
+    body.innerHTML+='<tr style="background:var(--surface2);border-top:2.5px solid var(--blue)">'
+      +'<td colspan="3" style="text-align:right;font-family:var(--cond);font-weight:900;font-size:13px">TOTAL DEPOSITADO ('+depositos.length+')</td>'
+      +'<td style="font-family:var(--cond);font-weight:900;font-size:15px;color:var(--blue)">'+fmt(_totDep)+'</td>'
+      +(isSA?'<td></td>':'')+'</tr>';
+  }
 }
 
 function exportFondosUser(){
@@ -10131,7 +10147,9 @@ function renderPendExecList(){
       +(r.cancelada?'background:rgba(239,68,68,.05)':(r.resuelta?'background:rgba(22,163,74,.05)':''))+'">'
       +'<div style="flex:1;min-width:180px">'
         +'<div style="font-weight:800">'+escHtml(p.nombre)+' · '+escHtml(v.cliente||'—')+'</div>'
-        +'<div style="font-size:10px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+' · mes origen: '+mesNombre+' '+origen[0]
+        +'<div style="font-size:10px;color:var(--text3)">'+formatDate(parseDate(v.fecha))
+        +' · Factura: <strong>'+(v.factura&&String(v.factura).trim()?escHtml(v.factura):'–')+'</strong>'
+        +' · mes origen: '+mesNombre+' '+origen[0]
         +(v.proyecto?' · '+escHtml(v.proyecto):'')+'</div>'
       +'</div>'
       +'<span style="font-family:var(--cond);font-weight:900;color:var(--blue);white-space:nowrap">'+fmt(v.subtotal)+'</span>'
@@ -10698,8 +10716,26 @@ function initResumenFilters(){
     o.textContent=(u.nombre||u.username||u.id)+(u.rol!=='user'?' ('+u.rol+')':'');
     sel.appendChild(o);
   });
-  var valid=Array.from(sel.options).some(function(o){return o.value===prevVal;});
-  sel.value=valid?prevVal:(document.getElementById('av-user-sel')?.value||'all');
+  // SINCRONIZACIÓN con los selectores superiores: cuando el superadmin cambia
+  // el usuario o el período arriba, el Resumen por Categoría los adopta
+  // automáticamente. Si no hubo cambios arriba, se respeta lo que el usuario
+  // haya ajustado manualmente en este bloque.
+  var topUser=document.getElementById('av-user-sel')?.value||'all';
+  var topType=document.getElementById('av-period-type')?.value||'month';
+  var topYear=document.getElementById('av-year-sel')?.value||'';
+  var topMonth=document.getElementById('av-month-sel')?.value||'';
+  var topSig=topUser+'|'+topType+'|'+topYear+'|'+topMonth;
+  var topCambio=(window._resumenLastTopSig!==topSig);
+  window._resumenLastTopSig=topSig;
+
+  if(topCambio){
+    // Adoptar el usuario del selector superior (si existe en esta lista)
+    var existe=Array.from(sel.options).some(function(o){return o.value===topUser;});
+    sel.value=existe?topUser:'all';
+  } else {
+    var valid=Array.from(sel.options).some(function(o){return o.value===prevVal;});
+    sel.value=valid?prevVal:'all';
+  }
 
   // Sincronizar fechas con el período del selector general (siempre, no solo cuando vacías)
   // así el resumen por defecto muestra el mismo período que el resto de ventas
@@ -10713,7 +10749,8 @@ function initResumenFilters(){
     // Solo actualizar si las fechas coinciden con el mes anterior o están vacías
     // Esto evita sobreescribir un rango personalizado que el usuario haya ingresado
     var prevFrom=rf.value, prevTo=rt.value;
-    var isDefaultRange=!prevFrom||!prevTo||prevFrom.startsWith(yr+'-'+p(mo+1));
+    // Si cambió algo arriba, sincronizar SIEMPRE; si no, respetar el rango manual
+    var isDefaultRange=topCambio||!prevFrom||!prevTo||prevFrom.startsWith(yr+'-'+p(mo+1));
     if(isDefaultRange){
       if(type==='month'){
         rf.value=yr+'-'+p(mo+1)+'-01';
@@ -10819,6 +10856,8 @@ function renderVentasPie(allVentas,catMap){
 
 
 // ── RANKING PRODUCTOS ──
+// Ranking: usa la BASE NETA (subtotal sin IVA, menos costo de materiales/fibra,
+// menos insumos y menos comisión a terceros) — no el total facturado.
 function renderRanking(allVentas, catMap){
   const el=document.getElementById('av-ranking-list');
   if(!el) return;
@@ -10828,7 +10867,8 @@ function renderRanking(allVentas, catMap){
     const p=catMap[normalizeProdId(v.prodId)];
     if(!p) return;
     if(!byProd[p.id]) byProd[p.id]={nombre:p.nombre,tipo:p.tipo,total:0,count:0,comis:0};
-    byProd[p.id].total+=v.subtotal;
+    // Base neta: sin IVA, sin costo de materiales/fibra, sin insumos, sin comisión a terceros
+    byProd[p.id].total+=getVentaNetBase(v, v.fibraCosto||0);
     byProd[p.id].count++;
     byProd[p.id].comis+=calcComision(v,v.fibraCosto||0);
   });
@@ -10966,129 +11006,129 @@ function renderTrendChart(){
 
 // ── PRODUCT BEHAVIOR CHART ──
 function initProductChart(catMap){
-  const sel=document.getElementById('av-prod-sel-chart');
-  if(!sel||sel.options.length>1) return;
-  const cat=getCatalogo();
-  sortAlpha(cat,'nombre').forEach(function(p){
-    var o=document.createElement('option'); o.value=p.id; o.textContent=p.nombre; sel.appendChild(o);
-  });
-  // Auto-select first product and render
-  if(sel.options.length>1){ sel.selectedIndex=1; renderProductChart(); }
+  // Selector de PRODUCTOS (por defecto: todos)
+  var sel=document.getElementById('av-prod-sel-chart');
+  if(sel&&sel.options.length<=1){
+    sortAlpha(getCatalogo(),'nombre').forEach(function(p){
+      var o=document.createElement('option'); o.value=p.id; o.textContent=p.nombre; sel.appendChild(o);
+    });
+  }
+  // Selector de COLABORADORES (por defecto: todos = global)
+  var selU=document.getElementById('av-prod-user');
+  if(selU&&selU.options.length<=1){
+    sortAlpha((window._usersCache||[]).filter(function(u){return tieneAccesoVentas(u);}),'nombre').forEach(function(u){
+      var o=document.createElement('option'); o.value=u.id; o.textContent=u.nombre||u.id; selU.appendChild(o);
+    });
+  }
+  // Selector de AÑO: año en curso por defecto + años con datos
+  var selY=document.getElementById('av-prod-year');
+  if(selY&&selY.options.length===0){
+    var anios={}, actual=new Date().getFullYear();
+    anios[actual]=true;
+    (window._usersCache||[]).forEach(function(u){
+      var vd=getVentasData(u.id)||{};
+      Object.keys(vd).forEach(function(mk){ var y=parseInt(mk.split('-')[0]); if(y) anios[y]=true; });
+    });
+    Object.keys(anios).map(Number).sort(function(a,b){return b-a;}).forEach(function(y){
+      var o=document.createElement('option'); o.value=y; o.textContent=y; selY.appendChild(o);
+    });
+    selY.value=String(actual);
+  }
+  renderProductChart();
 }
 
 function renderProductChart(){
-  const canvas=document.getElementById('av-prod-main');
-  if(!canvas) return;
-  const ctx=canvas.getContext('2d');
-  const W=canvas.offsetWidth||700, H=180;
-  canvas.width=W; canvas.height=H;
-  ctx.clearRect(0,0,W,H);
+  var wrap=document.getElementById('av-prod-table-wrap');
+  var legEl=document.getElementById('av-prod-legend');
+  if(!wrap) return;
 
-  const prodId=document.getElementById('av-prod-sel-chart')?.value;
-  const year=parseInt(document.getElementById('av-prod-year')?.value||2026);
-  const legEl=document.getElementById('av-prod-legend');
+  var prodId=document.getElementById('av-prod-sel-chart')?.value||'';
+  var userId=document.getElementById('av-prod-user')?.value||'all';
+  var year=parseInt(document.getElementById('av-prod-year')?.value)||new Date().getFullYear();
+  var cat=getCatalogo();
+  var meses=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'];
 
-  if(!prodId){
-    if(legEl) legEl.textContent='Selecciona un producto para ver su comportamiento';
+  // Usuarios a considerar (global por defecto)
+  var users=(window._usersCache||[]).filter(function(u){ return tieneAccesoVentas(u); });
+  if(userId!=='all') users=users.filter(function(u){ return u.id===userId; });
+
+  // Acumular: producto → 12 meses (monto neto sin IVA) y conteo
+  var data={}; // prodId → {nombre, tipo, meses:[12], cant:[12], total}
+  users.forEach(function(u){
+    var vd=getVentasData(u.id)||{};
+    for(var m=0;m<12;m++){
+      var key=year+'-'+pad(m+1);
+      if(!vd[key]||!vd[key].ventas) continue;
+      vd[key].ventas.forEach(function(v){
+        if(esPendienteActiva(v)) return; // pendientes aún no cuentan
+        var pid=normalizeProdId(v.prodId);
+        if(prodId&&pid!==prodId) return;
+        var p=cat.find(function(x){return x.id===pid;});
+        if(!p) return;
+        if(!data[pid]) data[pid]={nombre:p.nombre,tipo:p.tipo||'otros',meses:new Array(12).fill(0),cant:new Array(12).fill(0),total:0};
+        var monto=v.subtotal||0; // sin IVA
+        data[pid].meses[m]+=monto;
+        data[pid].cant[m]++;
+        data[pid].total+=monto;
+      });
+    }
+  });
+
+  var lista=Object.keys(data).map(function(k){ var o=data[k]; o.id=k; return o; })
+    .sort(function(a,b){ return b.total-a.total; });
+
+  if(!lista.length){
+    wrap.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sin ventas registradas en '+year+(userId!=='all'?' para el colaborador seleccionado':'')+'</div>';
+    if(legEl) legEl.textContent='';
     return;
   }
 
-  const cat=getCatalogo();
-  const prod=cat.find(function(c){return c.id===prodId;});
-  if(!prod) return;
+  // Totales por mes (para la fila final y las barras de intensidad)
+  var totMes=new Array(12).fill(0);
+  lista.forEach(function(o){ o.meses.forEach(function(v,i){ totMes[i]+=v; }); });
+  var maxCelda=0;
+  lista.forEach(function(o){ o.meses.forEach(function(v){ if(v>maxCelda) maxCelda=v; }); });
 
-  const users=getUsers().filter(function(u){return u.rol==='user';});
-  // Build global monthly total for this product
-  const monthly=Array(12).fill(0);
-  const monthlyCnt=Array(12).fill(0);
-  users.forEach(function(u){
-    const vd=getVentasData(u.id);
-    for(var m=0;m<12;m++){
-      const key=year+'-'+pad(m+1);
-      if(vd[key]&&vd[key].ventas){
-        vd[key].ventas.forEach(function(v){
-          if(v.prodId===prodId){ monthly[m]+=v.subtotal; monthlyCnt[m]++; }
-        });
-      }
-    }
+  var html='<table class="atbl" style="width:100%;min-width:1000px;font-size:11px">'
+    +'<thead><tr>'
+    +'<th style="text-align:left;position:sticky;left:0;background:var(--surface2);min-width:170px">Producto</th>';
+  meses.forEach(function(m){ html+='<th style="text-align:right;min-width:78px">'+m+'</th>'; });
+  html+='<th style="text-align:right;min-width:95px;background:var(--surface2)">TOTAL '+year+'</th></tr></thead><tbody>';
+
+  lista.forEach(function(o){
+    html+='<tr>'
+      +'<td style="position:sticky;left:0;background:var(--surface);font-weight:700">'
+        +'<span class="v-cat '+(TIPO_COLORS[o.tipo]||'vc-otros')+'">'+escHtml(o.nombre)+'</span></td>';
+    o.meses.forEach(function(val,i){
+      // Intensidad de color proporcional al monto (lectura visual rápida)
+      var alpha=maxCelda>0?(val/maxCelda):0;
+      var bg=val>0?'background:rgba(37,99,235,'+(0.06+alpha*0.28).toFixed(3)+')':'';
+      html+='<td style="text-align:right;font-family:var(--cond);'+bg+'">'
+        +(val>0?'<span style="font-weight:700">'+fmt(val)+'</span>'
+          +'<div style="font-size:9px;color:var(--text3)">'+o.cant[i]+' vta'+(o.cant[i]!==1?'s':'')+'</div>'
+          :'<span style="color:var(--text3)">—</span>')
+        +'</td>';
+    });
+    html+='<td style="text-align:right;font-family:var(--cond);font-weight:900;background:var(--surface2);color:var(--blue)">'+fmt(o.total)+'</td></tr>';
   });
 
-  const hasData=monthly.some(function(v){return v>0;});
-  const padL=65,padR=20,padT=20,padB=30;
-  const chartW=W-padL-padR, chartH=H-padT-padB;
-  const barW=Math.floor(chartW/12)-4;
-  const maxVal=Math.max(1,...monthly);
-  const shortMes=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'];
-  const color=PIE_COLORS[cat.indexOf(prod)%PIE_COLORS.length]||'#E31837';
+  // Fila de totales por mes
+  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--red)">'
+    +'<td style="position:sticky;left:0;background:var(--surface2);font-family:var(--cond);font-weight:900">TOTAL MENSUAL</td>';
+  totMes.forEach(function(v){
+    html+='<td style="text-align:right;font-family:var(--cond);font-weight:900;color:'+(v>0?'var(--text)':'var(--text3)')+'">'+(v>0?fmt(v):'—')+'</td>';
+  });
+  var granTotal=totMes.reduce(function(s,v){return s+v;},0);
+  html+='<td style="text-align:right;font-family:var(--cond);font-weight:900;font-size:14px;color:var(--red);background:var(--surface2)">'+fmt(granTotal)+'</td>';
+  html+='</tr></tbody></table>';
 
-  // Grid
-  ctx.strokeStyle='#e8e8e8'; ctx.lineWidth=1;
-  for(var gi=0;gi<=4;gi++){
-    const y=padT+chartH-(gi/4)*chartH;
-    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(W-padR,y); ctx.stroke();
-    ctx.fillStyle='#9a9b9d'; ctx.font='9px Barlow,sans-serif'; ctx.textAlign='right';
-    ctx.fillText(gi===0?'₡0':fmt(Math.round((gi/4)*maxVal)),padL-4,y+3);
+  wrap.innerHTML=html;
+  if(legEl){
+    legEl.innerHTML='Montos <strong>sin IVA</strong> · '+lista.length+' producto'+(lista.length!==1?'s':'')
+      +' · '+(userId==='all'?'todos los colaboradores':(users[0]?escHtml(users[0].nombre):''))
+      +' · año '+year+' &nbsp;|&nbsp; La intensidad del color indica el peso del mes.';
   }
-
-  // Bars
-  monthly.forEach(function(val,i){
-    const x=padL+i*(chartW/12)+2;
-    const bh=val>0?Math.max(3,Math.round((val/maxVal)*chartH)):0;
-    const y=padT+chartH-bh;
-    // Bar gradient
-    const grd=ctx.createLinearGradient(0,y,0,y+bh);
-    grd.addColorStop(0,color);
-    grd.addColorStop(1,color+'88');
-    ctx.fillStyle=val>0?grd:'rgba(0,0,0,.04)';
-    // Rounded top
-    if(bh>4){
-      ctx.beginPath();
-      ctx.moveTo(x+4,y); ctx.lineTo(x+barW-4,y);
-      ctx.quadraticCurveTo(x+barW,y,x+barW,y+4);
-      ctx.lineTo(x+barW,y+bh); ctx.lineTo(x,y+bh);
-      ctx.lineTo(x,y+4); ctx.quadraticCurveTo(x,y,x+4,y); ctx.closePath();
-      ctx.fill();
-    } else if(bh>0){
-      ctx.fillRect(x,y,barW,bh);
-    }
-    // Value on top
-    if(val>0&&bh>16){
-      ctx.fillStyle='#fff'; ctx.font='bold 8px Barlow Condensed,sans-serif';
-      ctx.textAlign='center';
-      ctx.fillText(fmt(val).replace('₡',''),x+barW/2,y+bh-4);
-    }
-    // Month label
-    ctx.fillStyle='#9a9b9d'; ctx.font='9px Barlow,sans-serif'; ctx.textAlign='center';
-    ctx.fillText(shortMes[i],x+barW/2,H-8);
-    // Count badge
-    if(monthlyCnt[i]>0){
-      ctx.fillStyle=color; ctx.font='bold 8px Barlow,sans-serif';
-      ctx.fillText(monthlyCnt[i]+'v',x+barW/2,padT+chartH+12);
-    }
-  });
-
-  // Trend line over bars
-  ctx.beginPath(); ctx.strokeStyle=color; ctx.lineWidth=2; ctx.setLineDash([4,3]);
-  var started=false;
-  monthly.forEach(function(val,i){
-    if(val===0){ started=false; return; }
-    const x=padL+i*(chartW/12)+barW/2+2;
-    const y=padT+chartH-(val/maxVal)*chartH;
-    if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
-  });
-  ctx.stroke(); ctx.setLineDash([]);
-
-  // Stats
-  const totalYear=monthly.reduce(function(a,b){return a+b;},0);
-  const activeMonths=monthlyCnt.filter(function(v){return v>0;}).length;
-  const avgMonth=activeMonths>0?totalYear/activeMonths:0;
-  const maxMonth=Math.max(...monthly);
-  const maxMonthIdx=monthly.indexOf(maxMonth);
-  if(legEl) legEl.textContent=prod.nombre+' — Total '+year+': '+fmt(totalYear)
-    +' | Promedio mensual: '+fmt(Math.round(avgMonth))
-    +(maxMonth>0?' | Mejor mes: '+shortMes[maxMonthIdx]+' ('+fmt(maxMonth)+')':'');
 }
-
 
 function renderComisVerifTable(users){
   const body=document.getElementById('av-comis-body');
@@ -11237,6 +11277,7 @@ function renderPendingProjects(allVentas,catMap){
     return '<tr style="background:'+(v.pendCanceladaChk?'rgba(239,68,68,.05)':'rgba(37,99,235,.04)')+'">'
       +'<td><strong>'+v.uname+'</strong></td>'
       +'<td style="font-size:11px;color:var(--text3)">'+formatDate(parseDate(v.fecha))+'</td>'
+      +'<td style="font-weight:800;font-family:var(--cond);text-align:center">'+(v.factura&&String(v.factura).trim()?escHtml(v.factura):'–')+'</td>'
       +'<td>'+escHtml(v.cliente)+'</td>'
       +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros']||'vc-otros')+'">'+getVentaDisplayNombre(v,catMap)+'</span>'
         +'<div style="font-size:9px;color:var(--text3)">'+fmt(v.subtotal)+' subtotal</div></td>'
@@ -11257,7 +11298,7 @@ function renderPendingProjects(allVentas,catMap){
               +(cancelado?'SÍ':'NO')+'</span>';
           })()
         +estados+'</td></tr>';
-  }).join(''):'<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:16px">Sin proyectos pendientes de ejecutar</td></tr>';
+  }).join(''):'<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:16px">Sin proyectos pendientes de ejecutar</td></tr>';
 }
 
 function renderAdminVentasTable(){
@@ -11286,22 +11327,22 @@ function renderAdminVentasTable(){
     var f=v.fecha||'';
     if(!_anclaGrupo[k]||f>_anclaGrupo[k]) _anclaGrupo[k]=f;
   });
+  // PRIORIDAD 1: número de factura (más reciente/mayor primero).
+  // PRIORIDAD 2: fecha dentro del mismo número de factura.
+  // Las ventas SIN número de factura van al final de todo.
   filtered=filtered.slice().sort(function(a,b){
     var ka=_normFact(a.factura), kb=_normFact(b.factura);
-    // Sin factura: siempre al final de todo
-    if(!ka&&kb) return 1;
+    if(!ka&&kb) return 1;    // sin factura al final
     if(ka&&!kb) return -1;
     if(!ka&&!kb) return (b.fecha||'').localeCompare(a.fecha||'');
-    // Misma factura → quedan juntas, ordenadas por fecha ascendente
-    if(ka===kb) return (a.fecha||'').localeCompare(b.fecha||'');
-    // Distinta factura: ordenar por el mes de su venta más reciente
-    var fa=_anclaGrupo[ka]||'', fb=_anclaGrupo[kb]||'';
-    var ma=fa.slice(0,7), mb=fb.slice(0,7);
-    if(ma!==mb) return mb.localeCompare(ma); // mes más reciente primero
-    // Mismo mes: por número de factura (numérico cuando aplica)
+    if(ka===kb) return (a.fecha||'').localeCompare(b.fecha||''); // misma factura: por fecha
+    // Distinta factura: número MAYOR primero (más reciente)
     var na=parseFloat(ka), nb=parseFloat(kb);
-    if(!isNaN(na)&&!isNaN(nb)&&String(na)===ka&&String(nb)===kb) return na-nb;
-    return ka.localeCompare(kb,'es',{numeric:true});
+    var aNum=(!isNaN(na)&&String(na)===ka), bNum=(!isNaN(nb)&&String(nb)===kb);
+    if(aNum&&bNum) return nb-na;              // ambos numéricos: descendente
+    if(aNum&&!bNum) return -1;                // numéricas antes que alfanuméricas
+    if(!aNum&&bNum) return 1;
+    return kb.localeCompare(ka,'es',{numeric:true}); // alfanuméricas: descendente
   });
   const body=document.getElementById('av-detail-body');
   if(!body) return;
@@ -11323,7 +11364,9 @@ function renderAdminVentasTable(){
       };
     });
   },0);
-  body.innerHTML=filtered.sort((a,b)=>a.fecha>b.fecha?-1:1).map(v=>{
+  // NOTA: 'filtered' YA viene ordenado por factura (prioridad) y fecha (secundaria).
+  // Antes había aquí un .sort() por fecha que anulaba ese ordenamiento.
+  body.innerHTML=filtered.map(v=>{
     const p=catMap[normalizeProdId(v.prodId)]||{nombre:v.prodId,tipo:'otros'};
     const comis=calcComision(v,v.fibraCosto);
     var extraAdmin=[];
@@ -11372,6 +11415,30 @@ function renderAdminVentasTable(){
       +'</td>'
       +'</tr>';
   }).join('')||'<tr><td colspan="18" style="text-align:center;color:var(--text3);padding:20px">Sin registros</td></tr>';
+
+  // ── FILA DE TOTALES: Subtotal, IVA y Total ──
+  // (columnas 9, 10 y 11 de 18; las 8 primeras son las fijas + proyecto/cant/precio)
+  if(filtered.length){
+    var _tSub=filtered.reduce(function(s,v){ return s+(v.subtotal||0); },0);
+    var _tIva=filtered.reduce(function(s,v){ return s+(v.ivaAmt||0); },0);
+    var _tTot=filtered.reduce(function(s,v){ return s+(v.total||(v.subtotal||0)+(v.ivaAmt||0)); },0);
+    var _tBase=filtered.reduce(function(s,v){ return s+Math.max(0,(v.subtotal||0)-(v.insMontoNum||0)); },0);
+    var _tComis=filtered.reduce(function(s,v){ return s+calcComision(v,v.fibraCosto); },0);
+    body.innerHTML+='<tr style="background:var(--surface2);border-top:2.5px solid var(--red);font-weight:900">'
+      +'<td style="position:sticky;left:0;z-index:2;background:var(--surface2);font-family:var(--cond);font-size:13px;white-space:nowrap">TOTALES ('+filtered.length+')</td>'
+      +'<td style="position:sticky;left:130px;z-index:2;background:var(--surface2)"></td>'
+      +'<td style="position:sticky;left:220px;z-index:2;background:var(--surface2)"></td>'
+      +'<td style="position:sticky;left:360px;z-index:2;background:var(--surface2)"></td>'
+      +'<td style="position:sticky;left:500px;z-index:2;background:var(--surface2);box-shadow:2px 0 5px rgba(0,0,0,.10)"></td>'
+      +'<td></td><td></td><td></td>'
+      +'<td style="font-family:var(--cond);font-size:14px;text-align:right;color:var(--text)">'+fmt(_tSub)+'</td>'
+      +'<td style="font-family:var(--cond);font-size:13px;text-align:center;color:var(--text2)">'+fmt(_tIva)+'</td>'
+      +'<td style="font-family:var(--cond);font-size:14px;text-align:right;color:var(--red)">'+fmt(_tTot)+'</td>'
+      +'<td></td>'
+      +'<td style="font-family:var(--cond);font-size:13px;text-align:right;color:var(--blue)">'+fmt(_tBase)+'</td>'
+      +'<td style="font-family:var(--cond);font-size:13px;text-align:right;color:var(--green)">'+fmt(_tComis)+'</td>'
+      +'<td></td><td></td><td></td><td></td></tr>';
+  }
 }
 
 
@@ -12533,6 +12600,41 @@ function initLiquidaciones(){
 //  PANEL VENTAS REFERENCIA EN LIQUIDACIONES
 // ══════════════════════════════════════════════════════
 
+// Devuelve la clave de la quincena SIGUIENTE a la dada.
+// '2026-08-15' (1–15 ago) → '2026-08-31' (16–31 ago)
+// '2026-08-31' (16–31 ago) → '2026-09-15' (1–15 set)
+function _liqSiguientePeriodo(periodKey){
+  if(!periodKey) return null;
+  var p=periodKey.split('-');
+  if(p.length<3) return null;
+  var y=parseInt(p[0]), m=parseInt(p[1]), day=parseInt(p[2]);
+  if(isNaN(y)||isNaN(m)||isNaN(day)) return null;
+  var pad2=function(n){ return n<10?'0'+n:String(n); };
+  if(day<=15){
+    // Primera quincena → segunda del mismo mes
+    return y+'-'+pad2(m)+'-'+lastDayOfMonth(y,m-1);
+  }
+  // Segunda quincena → primera del mes siguiente
+  var ny=(m===12)?y+1:y, nm=(m===12)?1:m+1;
+  return ny+'-'+pad2(nm)+'-15';
+}
+// ¿Está cerrada esta quincena?
+function _liqEstaCerrada(subId, periodKey){
+  try{
+    var st=getLiqPeriodState(subId, periodKey)||{};
+    return !!st.cerrada;
+  }catch(e){ return false; }
+}
+// Busca la primera quincena ABIERTA a partir de la dada (máx 6 saltos)
+function _liqPrimeraQuincenaAbierta(subId, periodKey){
+  var pk=periodKey, saltos=0;
+  while(pk && _liqEstaCerrada(subId, pk) && saltos<6){
+    pk=_liqSiguientePeriodo(pk);
+    saltos++;
+  }
+  return {periodKey:pk, saltos:saltos, agotado:(saltos>=6)};
+}
+
 function _liqPeriodDates(periodKey){
   // periodKey format: 'YYYY-MM-DD' where day=15 (first half 1-15) or day=30 (second half 16-end)
   if(!periodKey) return null;
@@ -12991,6 +13093,42 @@ function renderLiqProjects(){
   try{ renderLiqOpenAnchor(); }catch(e){}
 }
 
+// Mueve un proyecto de la quincena actual a la SIGUIENTE.
+// Útil para proyectos en ejecución o incompletos que no deben liquidarse aún.
+// Solo reasigna el período — conserva TODOS los datos del proyecto.
+function moverProyectoSiguienteQuincena(idx){
+  if(!LIQ_SUB||!LIQ_PERIOD) return;
+  var period=getLiqPeriod(LIQ_SUB,LIQ_PERIOD);
+  var proj=(period.proyectos||[])[idx];
+  if(!proj){ toast('Proyecto no encontrado'); return; }
+  var destino=_liqSiguientePeriodo(LIQ_PERIOD);
+  if(!destino){ toast('No se pudo calcular la siguiente quincena'); return; }
+  if(_liqEstaCerrada(LIQ_SUB,destino)){
+    toast('⚠ La siguiente quincena ('+destino+') ya está CERRADA. Ábrala primero o elija otra.');
+    return;
+  }
+  if(!confirm('¿Mover "'+proj.nombre+'" a la quincena '+destino+'?\n\nSaldrá de la quincena actual y quedará disponible en la siguiente con toda su información.')) return;
+
+  // Quitar de la quincena actual
+  period.proyectos.splice(idx,1);
+  saveLiqPeriod(LIQ_SUB,LIQ_PERIOD,period);
+  // Agregar a la quincena destino (conserva id y todos los campos)
+  var pdDest=getLiqPeriod(LIQ_SUB,destino);
+  if(!pdDest.proyectos) pdDest.proyectos=[];
+  proj.movidoDesde=LIQ_PERIOD;
+  proj.movidoAt=new Date().toISOString();
+  proj.movidoPor=SESSION?(SESSION.nombre||SESSION.id):'';
+  pdDest.proyectos.push(proj);
+  saveLiqPeriod(LIQ_SUB,destino,pdDest);
+
+  // NO se borra la fila: el proyecto conserva su MISMO id, y setLiqData() hace
+  // upsert por id — la fila existente se actualiza con el period_key nuevo.
+  // (Un DELETE aquí borraría la fila que el upsert acaba de escribir.)
+
+  toast('⏭ "'+proj.nombre+'" movido a la quincena '+destino);
+  renderLiqProjects();
+}
+
 function renderProjectCard(proj, idx){
   var r=calcProject(proj);
   var rentClass=r.rentabilidad>=45?'high':r.rentabilidad>=30?'mid':'low';
@@ -13036,6 +13174,7 @@ function renderProjectCard(proj, idx){
         +'<div style="font-family:var(--cond);font-size:17px;font-weight:900;color:'+(r.aDepositar>=0?'#6ee7b7':'#fca5a5')+'">'+fmt(r.aDepositar)+'</div>'
       +'</div>'
       +(r.cobro>0?'<span class="liq-project-rentab '+rentClass+'">'+r.rentabilidad.toFixed(1)+'%</span>':'')
+      +'<button onclick="event.stopPropagation();moverProyectoSiguienteQuincena('+idx+')" title="Mover a la siguiente quincena (proyecto en ejecución o incompleto)" style="background:rgba(217,119,6,.3);border:none;color:#fcd34d;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:12px">⏭</button>'
       +'<button onclick="event.stopPropagation();editProject('+idx+')" style="background:rgba(255,255,255,.1);border:none;color:#fff;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:12px">✏</button>'
       +'<button onclick="event.stopPropagation();deleteProject('+idx+')" style="background:rgba(227,24,55,.25);border:none;color:#fca5a5;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:12px">✕</button>'
       +'<span style="color:rgba(255,255,255,.3);font-size:11px;margin-left:2px">▾</span>'
@@ -14817,6 +14956,26 @@ function syncGastoToLiquidaciones(reg){
   var periodKey=y+'-'+m+'-'+half;
 
   var subId=reg.encId;
+
+  // Si la quincena que le corresponde por fecha YA ESTÁ CERRADA, el proyecto pasa
+  // automáticamente a la siguiente quincena abierta (no se pierde ni entra a una
+  // quincena ya pagada). Solo aplica a proyectos NUEVOS: si el registro ya existe
+  // en alguna quincena, se respeta donde está.
+  try{
+    var _yaExiste=false, _dAll=getLiqData(subId)||{};
+    Object.keys(_dAll).forEach(function(pk){
+      if((_dAll[pk].proyectos||[]).some(function(p){return p.gpRegId===reg.id;})) _yaExiste=true;
+    });
+    if(!_yaExiste && _liqEstaCerrada(subId, periodKey)){
+      var _res=_liqPrimeraQuincenaAbierta(subId, periodKey);
+      if(_res.agotado){
+        toast('⚠ Las próximas quincenas de este subcontratista están cerradas — el proyecto quedó en '+periodKey+'. Revíselo manualmente.');
+      } else if(_res.periodKey && _res.periodKey!==periodKey){
+        console.log('syncGastoToLiq: quincena '+periodKey+' cerrada → proyecto movido a '+_res.periodKey);
+        periodKey=_res.periodKey;
+      }
+    }
+  }catch(e){ console.warn('syncGastoToLiq quincena cerrada:',e); }
 
   // Ensure sub exists
   var subs=getLiqSubs();
@@ -19353,6 +19512,30 @@ async function getOrCreateAuditForUser(uid){
 }
 // Etiqueta 📦 Inventario / 🔧 Activo para ítems de auditoría.
 // Usa item.tipo si existe; para ítems viejos sin tipo, lo busca en el inventario actual.
+// Convierte una clave de semana ISO ('2026-W33') en su rango de fechas legible
+function _auditSemanaRango(weekKey){
+  try{
+    var m=String(weekKey||'').match(/^(\d{4})-W(\d{1,2})$/);
+    if(!m) return '';
+    var y=parseInt(m[1]), w=parseInt(m[2]);
+    // Lunes de la semana ISO: 4 de enero siempre cae en la semana 1
+    var ene4=new Date(y,0,4);
+    var diaSem=(ene4.getDay()+6)%7; // 0=lunes
+    var lunesS1=new Date(y,0,4-diaSem);
+    var lunes=new Date(lunesS1);
+    lunes.setDate(lunesS1.getDate()+(w-1)*7);
+    var domingo=new Date(lunes);
+    domingo.setDate(lunes.getDate()+6);
+    var mesesC=['ene','feb','mar','abr','may','jun','jul','ago','set','oct','nov','dic'];
+    var mismoMes=lunes.getMonth()===domingo.getMonth();
+    if(mismoMes){
+      return 'del '+lunes.getDate()+' al '+domingo.getDate()+' '+mesesC[domingo.getMonth()]+' '+domingo.getFullYear();
+    }
+    return 'del '+lunes.getDate()+' '+mesesC[lunes.getMonth()]
+      +' al '+domingo.getDate()+' '+mesesC[domingo.getMonth()]+' '+domingo.getFullYear();
+  }catch(e){ return ''; }
+}
+
 function _auditTipoBadge(item){
   var tipo=item&&item.tipo;
   if(!tipo&&item){
@@ -19382,7 +19565,8 @@ async function renderAuditPanel(){
   var html='<div id="inv-audit-panel" style="background:var(--surface);border:2px solid var(--amber);border-radius:12px;padding:18px;margin-bottom:20px;box-shadow:0 2px 12px rgba(217,119,6,.15)">';
   html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">';
   html+='<span style="font-size:20px">📋</span><div style="flex:1">';
-  html+='<div style="font-family:var(--cond);font-size:16px;font-weight:900;color:var(--amber)">Auditoría de Inventario — Semana '+audit.semana_key+'</div>';
+  html+='<div style="font-family:var(--cond);font-size:16px;font-weight:900;color:var(--amber)">Auditoría de Inventario — Semana '+audit.semana_key
+    +' <span style="font-size:12px;font-weight:600;color:var(--text3)">('+_auditSemanaRango(audit.semana_key)+')</span></div>';
   html+='<div style="font-size:11px;color:var(--text3)">Realiza el conteo físico de estos 3 ítems y confirma las cantidades encontradas</div></div></div>';
   html+='<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px"><thead>';
   html+='<tr style="background:var(--surface2)">';
@@ -19542,7 +19726,9 @@ async function renderAuditAdmin(){
       var label=a.completado?'✅ Completa':disc>0?'⚠ Discrepancia':'⏳ Pendiente';
       html+='<tr style="border-bottom:1px solid var(--border)">';
       html+='<td style="padding:8px 10px;font-weight:700">'+(u?u.nombre:a.uid)+'</td>';
-      html+='<td style="padding:8px;text-align:center;font-size:11px">'+a.semana_key+'</td>';
+      html+='<td style="padding:8px;text-align:center;font-size:11px;white-space:nowrap">'
+        +'<div style="font-weight:700">'+a.semana_key+'</div>'
+        +'<div style="font-size:10px;color:var(--text3)">'+_auditSemanaRango(a.semana_key)+'</div></td>';
       var _itemsTip=(a.items||[]).map(function(it){
         var t=it.tipo||(((window._invItems||[]).find(function(i){return i.id===it.item_id;})||{}).type)||'inventario';
         return (t==='activo'?'🔧 ':'📦 ')+it.nombre;
@@ -25343,18 +25529,18 @@ window.initCalcCONCRE=initCalcCONCRE;
           <div class="chart-card" style="margin-bottom:14px">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
               <div class="chart-title" style="margin-bottom:0">📦 Comportamiento de producto mes a mes</div>
-              <div style="display:flex;gap:8px;align-items:center">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <select id="av-prod-sel-chart" class="apb-sel" style="font-size:11px;padding:4px 8px" onchange="renderProductChart()">
-                  <option value="">— Seleccionar producto —</option>
+                  <option value="">Todos los productos</option>
                 </select>
-                <select id="av-prod-year" class="apb-sel" style="font-size:11px;padding:4px 8px" onchange="renderProductChart()">
-                  <option value="2026">2026</option>
-                  <option value="2025">2025</option>
+                <select id="av-prod-user" class="apb-sel" style="font-size:11px;padding:4px 8px" onchange="renderProductChart()">
+                  <option value="all">Todos los colaboradores</option>
                 </select>
+                <select id="av-prod-year" class="apb-sel" style="font-size:11px;padding:4px 8px" onchange="renderProductChart()"></select>
               </div>
             </div>
-            <canvas id="av-prod-main" width="700" height="180" style="width:100%;max-width:100%"></canvas>
-            <div id="av-prod-legend" style="margin-top:8px;font-size:11px;color:var(--text3);text-align:center"></div>
+            <div id="av-prod-table-wrap" style="overflow-x:auto"></div>
+            <div id="av-prod-legend" style="margin-top:8px;font-size:11px;color:var(--text3)"></div>
           </div>
 
           <!-- Commissions verification table -->
@@ -25379,7 +25565,7 @@ window.initCalcCONCRE=initCalcCONCRE;
               <span class="ath-title">Proyectos pendientes de ejecutar</span>
             </div>
             <table class="atbl">
-              <thead><tr><th>Colaborador</th><th>Fecha</th><th>Cliente</th><th>Producto</th><th>Monto pendiente</th><th>Cancelado</th></tr></thead>
+              <thead><tr><th>Colaborador</th><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Producto</th><th>Monto pendiente</th><th>Cancelado</th></tr></thead>
               <tbody id="av-pending-body"></tbody>
             </table>
           </div>
