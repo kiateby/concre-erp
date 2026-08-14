@@ -1934,7 +1934,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260814161718';
+var APP_BUILD='20260814163155';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -16074,7 +16074,7 @@ function renderPagosUsuarios(){
       }
     }
 
-    // ── 4. DEDUCCIONES — ccss+rb apply both quincenas, extra only Q1 ──
+    // ── 4. DEDUCCIONES — ccss, rb y extra aplican en AMBAS quincenas ──
     var dedTotal;
     if(hist&&(hist.deduccion_total||0)>0){
       dedTotal=Math.round((hist.deduccion_total||0)/2);
@@ -16086,7 +16086,11 @@ function renderPagosUsuarios(){
       // Deducciones VIGENTES para esta quincena (no las actuales si cambiaron después)
       var _dv=getDedVigente(u.id,y,m,q);
       ccss=_dv.ccss; rb=_dv.rb; extraReb=_dv.extra;
-      dedTotal=((u.ccssSoloQ1&&q!==1)?0:ccss)+rb+(q===1?extraReb:0);
+      // "Otro rebajo" (extra) se aplica en las dos quincenas, igual que el
+      // préstamo. Desde cuándo rige lo decide el selector de vigencia:
+      // getDedVigente ya devuelve 0 para las quincenas anteriores a la
+      // vigencia elegida por el superadmin.
+      dedTotal=((u.ccssSoloQ1&&q!==1)?0:ccss)+rb+extraReb;
     }
 
     // ── 5. TOTALS ──────────────────────────────────────────
