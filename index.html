@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260814152038';
+var APP_BUILD='20260814153708';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -11048,28 +11048,26 @@ function renderProductChart(){
   var cat=getCatalogo();
   var meses=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'];
 
-  // Usuarios a considerar (global por defecto)
   var users=(window._usersCache||[]).filter(function(u){ return tieneAccesoVentas(u); });
   if(userId!=='all') users=users.filter(function(u){ return u.id===userId; });
 
-  // Acumular: producto → 12 meses (monto neto sin IVA) y conteo
-  var data={}; // prodId → {nombre, tipo, meses:[12], cant:[12], total}
+  // Acumular por producto y mes (montos SIN IVA)
+  var data={};
   users.forEach(function(u){
     var vd=getVentasData(u.id)||{};
     for(var m=0;m<12;m++){
       var key=year+'-'+pad(m+1);
       if(!vd[key]||!vd[key].ventas) continue;
       vd[key].ventas.forEach(function(v){
-        if(esPendienteActiva(v)) return; // pendientes aún no cuentan
+        if(esPendienteActiva(v)) return;
         var pid=normalizeProdId(v.prodId);
         if(prodId&&pid!==prodId) return;
         var p=cat.find(function(x){return x.id===pid;});
         if(!p) return;
-        if(!data[pid]) data[pid]={nombre:p.nombre,tipo:p.tipo||'otros',meses:new Array(12).fill(0),cant:new Array(12).fill(0),total:0};
-        var monto=v.subtotal||0; // sin IVA
-        data[pid].meses[m]+=monto;
+        if(!data[pid]) data[pid]={nombre:p.nombre,meses:new Array(12).fill(0),cant:new Array(12).fill(0),total:0};
+        data[pid].meses[m]+=(v.subtotal||0);
         data[pid].cant[m]++;
-        data[pid].total+=monto;
+        data[pid].total+=(v.subtotal||0);
       });
     }
   });
@@ -11078,55 +11076,96 @@ function renderProductChart(){
     .sort(function(a,b){ return b.total-a.total; });
 
   if(!lista.length){
-    wrap.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sin ventas registradas en '+year+(userId!=='all'?' para el colaborador seleccionado':'')+'</div>';
+    wrap.innerHTML='<div style="padding:34px;text-align:center;color:var(--text3);font-size:12px">Sin ventas registradas en '+year+(userId!=='all'?' para el colaborador seleccionado':'')+'</div>';
     if(legEl) legEl.textContent='';
     return;
   }
 
-  // Totales por mes (para la fila final y las barras de intensidad)
+  // Máximo 8 líneas: las 7 de mayor volumen + "Otros" agrupado
+  var series=lista.slice(0,7);
+  if(lista.length>7){
+    var otros={nombre:'Otros ('+(lista.length-7)+')',meses:new Array(12).fill(0),cant:new Array(12).fill(0),total:0,esOtros:true};
+    lista.slice(7).forEach(function(o){
+      o.meses.forEach(function(v,i){ otros.meses[i]+=v; otros.cant[i]+=o.cant[i]; });
+      otros.total+=o.total;
+    });
+    series.push(otros);
+  }
+
+  // Escala
+  var maxVal=0;
+  series.forEach(function(s){ s.meses.forEach(function(v){ if(v>maxVal) maxVal=v; }); });
+  if(maxVal<=0) maxVal=1;
+  // Redondear el tope a una cifra "limpia"
+  var mag=Math.pow(10,Math.floor(Math.log10(maxVal)));
+  var techo=Math.ceil(maxVal/mag)*mag;
+
+  var W=980, H=340, padL=78, padR=18, padT=18, padB=38;
+  var cw=W-padL-padR, ch=H-padT-padB;
+  var xFor=function(i){ return padL+(cw/11)*i; };
+  var yFor=function(v){ return padT+ch-(v/techo)*ch; };
+  var fmtCorto=function(n){
+    if(n>=1000000) return '₡'+(n/1000000).toFixed(n>=10000000?0:1)+'M';
+    if(n>=1000) return '₡'+Math.round(n/1000)+'k';
+    return '₡'+Math.round(n);
+  };
+
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block;font-family:Barlow,sans-serif" role="img">';
+  // Rejilla horizontal + etiquetas del eje Y
+  for(var g=0;g<=4;g++){
+    var yv=techo*(g/4), yy=yFor(yv);
+    svg+='<line x1="'+padL+'" y1="'+yy+'" x2="'+(W-padR)+'" y2="'+yy+'" stroke="#e9e9ec" stroke-width="1"/>';
+    svg+='<text x="'+(padL-8)+'" y="'+(yy+4)+'" text-anchor="end" font-size="11" fill="#9a9b9d">'+fmtCorto(yv)+'</text>';
+  }
+  // Eje X: meses
+  meses.forEach(function(m,i){
+    svg+='<text x="'+xFor(i)+'" y="'+(H-padB+20)+'" text-anchor="middle" font-size="11" fill="#6b6c6e" font-weight="600">'+m+'</text>';
+  });
+  // Líneas por producto
+  series.forEach(function(s,si){
+    var color=s.esOtros?'#9a9b9d':PIE_COLORS[si%PIE_COLORS.length];
+    var pts=s.meses.map(function(v,i){ return xFor(i)+','+yFor(v); }).join(' ');
+    // Área tenue bajo la línea del producto principal
+    if(si===0&&!s.esOtros){
+      svg+='<polygon points="'+padL+','+yFor(0)+' '+pts+' '+xFor(11)+','+yFor(0)+'" fill="'+color+'" opacity="0.07"/>';
+    }
+    svg+='<polyline points="'+pts+'" fill="none" stroke="'+color+'" stroke-width="'+(si===0?3:2)+'" stroke-linejoin="round" stroke-linecap="round" opacity="'+(s.esOtros?0.6:1)+'"/>';
+    // Puntos con datos
+    s.meses.forEach(function(v,i){
+      if(v<=0) return;
+      svg+='<circle cx="'+xFor(i)+'" cy="'+yFor(v)+'" r="'+(si===0?4.5:3.5)+'" fill="#fff" stroke="'+color+'" stroke-width="2">'
+        +'<title>'+escHtml(s.nombre)+' — '+meses[i]+' '+year+'\n'+fmt(v)+' · '+s.cant[i]+' venta'+(s.cant[i]!==1?'s':'')+'</title></circle>';
+    });
+  });
+  svg+='</svg>';
+
+  // Leyenda con totales por producto
+  var leyenda='<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:10px;justify-content:center">'
+    +series.map(function(s,si){
+      var color=s.esOtros?'#9a9b9d':PIE_COLORS[si%PIE_COLORS.length];
+      return '<div style="display:flex;align-items:center;gap:6px;font-size:11px">'
+        +'<span style="width:11px;height:11px;border-radius:3px;background:'+color+';flex:none"></span>'
+        +'<span style="font-weight:700;color:var(--text)">'+escHtml(s.nombre)+'</span>'
+        +'<span style="font-family:var(--cond);font-weight:800;color:var(--text3)">'+fmt(s.total)+'</span>'
+        +'</div>';
+    }).join('')+'</div>';
+
+  // Totales por mes bajo el gráfico
   var totMes=new Array(12).fill(0);
   lista.forEach(function(o){ o.meses.forEach(function(v,i){ totMes[i]+=v; }); });
-  var maxCelda=0;
-  lista.forEach(function(o){ o.meses.forEach(function(v){ if(v>maxCelda) maxCelda=v; }); });
+  var granTotal=totMes.reduce(function(s,v){ return s+v; },0);
+  var mejorMes=totMes.indexOf(Math.max.apply(null,totMes));
 
-  var html='<table class="atbl" style="width:100%;min-width:1000px;font-size:11px">'
-    +'<thead><tr>'
-    +'<th style="text-align:left;position:sticky;left:0;background:var(--surface2);min-width:170px">Producto</th>';
-  meses.forEach(function(m){ html+='<th style="text-align:right;min-width:78px">'+m+'</th>'; });
-  html+='<th style="text-align:right;min-width:95px;background:var(--surface2)">TOTAL '+year+'</th></tr></thead><tbody>';
+  wrap.innerHTML='<div style="background:var(--surface);border-radius:10px;padding:6px 4px">'+svg+'</div>'+leyenda;
 
-  lista.forEach(function(o){
-    html+='<tr>'
-      +'<td style="position:sticky;left:0;background:var(--surface);font-weight:700">'
-        +'<span class="v-cat '+(TIPO_COLORS[o.tipo]||'vc-otros')+'">'+escHtml(o.nombre)+'</span></td>';
-    o.meses.forEach(function(val,i){
-      // Intensidad de color proporcional al monto (lectura visual rápida)
-      var alpha=maxCelda>0?(val/maxCelda):0;
-      var bg=val>0?'background:rgba(37,99,235,'+(0.06+alpha*0.28).toFixed(3)+')':'';
-      html+='<td style="text-align:right;font-family:var(--cond);'+bg+'">'
-        +(val>0?'<span style="font-weight:700">'+fmt(val)+'</span>'
-          +'<div style="font-size:9px;color:var(--text3)">'+o.cant[i]+' vta'+(o.cant[i]!==1?'s':'')+'</div>'
-          :'<span style="color:var(--text3)">—</span>')
-        +'</td>';
-    });
-    html+='<td style="text-align:right;font-family:var(--cond);font-weight:900;background:var(--surface2);color:var(--blue)">'+fmt(o.total)+'</td></tr>';
-  });
-
-  // Fila de totales por mes
-  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--red)">'
-    +'<td style="position:sticky;left:0;background:var(--surface2);font-family:var(--cond);font-weight:900">TOTAL MENSUAL</td>';
-  totMes.forEach(function(v){
-    html+='<td style="text-align:right;font-family:var(--cond);font-weight:900;color:'+(v>0?'var(--text)':'var(--text3)')+'">'+(v>0?fmt(v):'—')+'</td>';
-  });
-  var granTotal=totMes.reduce(function(s,v){return s+v;},0);
-  html+='<td style="text-align:right;font-family:var(--cond);font-weight:900;font-size:14px;color:var(--red);background:var(--surface2)">'+fmt(granTotal)+'</td>';
-  html+='</tr></tbody></table>';
-
-  wrap.innerHTML=html;
   if(legEl){
-    legEl.innerHTML='Montos <strong>sin IVA</strong> · '+lista.length+' producto'+(lista.length!==1?'s':'')
-      +' · '+(userId==='all'?'todos los colaboradores':(users[0]?escHtml(users[0].nombre):''))
-      +' · año '+year+' &nbsp;|&nbsp; La intensidad del color indica el peso del mes.';
+    legEl.innerHTML='<div style="display:flex;gap:18px;flex-wrap:wrap;justify-content:center;align-items:center;font-size:11px">'
+      +'<span>Total '+year+': <strong style="font-family:var(--cond);font-size:14px;color:var(--red)">'+fmt(granTotal)+'</strong></span>'
+      +(granTotal>0?'<span>Mejor mes: <strong>'+meses[mejorMes]+'</strong> ('+fmt(totMes[mejorMes])+')</span>':'')
+      +'<span>'+lista.length+' producto'+(lista.length!==1?'s':'')+'</span>'
+      +'<span>'+(userId==='all'?'Todos los colaboradores':escHtml((users[0]&&users[0].nombre)||''))+'</span>'
+      +'<span style="color:var(--text3)">Montos sin IVA · pase el cursor sobre los puntos para ver el detalle</span>'
+      +'</div>';
   }
 }
 
@@ -15323,6 +15362,14 @@ async function loadLiqPagosHistorial(){
 function renderLiqPagosHistorial(){
   var el=document.getElementById('liq-pagos-hist-tbody'); if(!el) return;
   var hist=window._liqPagosHistorial||[];
+  // Contador junto al título colapsable
+  var cnt=document.getElementById('hist-pagos-sub-count');
+  if(cnt){
+    var totalHist=hist.reduce(function(s,h){ return s+(h.monto||0); },0);
+    cnt.textContent=hist.length
+      ? '('+hist.length+' pago'+(hist.length!==1?'s':'')+' · '+fmt(totalHist)+') — clic para ver'
+      : '(sin pagos aún) — clic para ver';
+  }
   if(!hist.length){
     el.innerHTML='<tr><td colspan="5" style="padding:20px;text-align:center;color:var(--text3)">Sin pagos registrados aún.</td></tr>';
     return;
@@ -15336,6 +15383,11 @@ function renderLiqPagosHistorial(){
       +'<td style="font-size:11px;color:var(--text3)">'+h.pagado_por_nombre+'</td>'
       +'</tr>';
   }).join('');
+  var _totH=hist.reduce(function(s,h){ return s+(h.monto||0); },0);
+  el.innerHTML+='<tr style="background:var(--surface2);border-top:2.5px solid var(--green)">'
+    +'<td colspan="2" style="text-align:right;font-family:var(--cond);font-weight:900;font-size:13px">TOTAL PAGADO ('+hist.length+')</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:15px;color:var(--green)">'+fmt(_totH)+'</td>'
+    +'<td colspan="2"></td></tr>';
 }
 
 // ── Render subcontratistas planillas table ──
@@ -15355,12 +15407,24 @@ async function loadAllLiqDataThenRender(){
   renderSubcontratistaPlanillas();
 }
 
+// Historial de pagos a subcontratistas: colapsado por defecto
+function toggleHistPagosSub(){
+  var w=document.getElementById('hist-pagos-sub-wrap');
+  var a=document.getElementById('hist-pagos-sub-arrow');
+  if(!w) return;
+  var abierto=w.style.display!=='none';
+  w.style.display=abierto?'none':'block';
+  if(a){ a.textContent=abierto?'▶':'▼'; }
+}
+
 function renderSubcontratistaPlanillas(){
   var el=document.getElementById('sub-planillas-tbody');
   if(!el) return;
-  var closed=getClosedLiqPeriods();
+  // Solo PENDIENTES de pago: al marcar como pagada, la quincena sale de esta tabla
+  // y queda registrada en el Historial de pagos (abajo).
+  var closed=getClosedLiqPeriods().filter(function(p){ return !p.pagado; });
   if(!closed.length){
-    el.innerHTML='<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text3)">Sin quincenas cerradas pendientes de pago.</td></tr>';
+    el.innerHTML='<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text3)">Sin quincenas pendientes de pago. Las pagadas están en el historial.</td></tr>';
     return;
   }
   el.innerHTML=closed.map(function(p){
@@ -24965,7 +25029,7 @@ window.initCalcCONCRE=initCalcCONCRE;
         <div style="margin-top:24px">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
             <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">🏗 Pagos a Subcontratistas</div>
-            <span style="font-size:11px;color:var(--text3)">Quincenas cerradas — pendientes y pagadas</span>
+            <span style="font-size:11px;color:var(--text3)">Quincenas cerradas pendientes de pago</span>
           </div>
           <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden">
             <div style="background:var(--gray-dark);padding:10px 16px;border-bottom:2px solid var(--red)">
@@ -24988,12 +25052,14 @@ window.initCalcCONCRE=initCalcCONCRE;
           </div>
         </div>
 
-        <!-- Historial de pagos -->
+        <!-- Historial de pagos (colapsable) -->
         <div style="margin-top:24px">
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+          <div onclick="toggleHistPagosSub()" style="display:flex;align-items:center;gap:10px;margin-bottom:10px;cursor:pointer;user-select:none">
+            <span id="hist-pagos-sub-arrow" style="font-size:14px;color:var(--text3);transition:transform .2s">▶</span>
             <div style="font-family:var(--cond);font-size:18px;font-weight:800;color:var(--gray-dark)">📋 Historial de pagos a subcontratistas</div>
+            <span id="hist-pagos-sub-count" style="font-size:11px;color:var(--text3)"></span>
           </div>
-          <div style="overflow-x:auto">
+          <div id="hist-pagos-sub-wrap" style="display:none;overflow-x:auto">
             <table class="atbl" style="min-width:600px">
               <thead><tr>
                 <th style="text-align:left">Subcontratista</th>
