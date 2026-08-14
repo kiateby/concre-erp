@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260814155538';
+var APP_BUILD='20260814160617';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -4562,7 +4562,42 @@ function saveAgOverrides(uid){
 // Si hubo cambios posteriores a esa quincena, devuelve los valores que regían
 // entonces — así las planillas ya pagadas no se alteran retroactivamente.
 // year: año · month: 0-11 · q: 1 o 2
+// Corrige vigencias que quedaron registradas sobre una quincena YA PAGADA
+// (por el comportamiento anterior). Las mueve a la quincena siguiente.
+// Corre una sola vez por usuario y sesión.
+function _corregirVigenciasPagadas(uid){
+  try{
+    if(!window._vigFixDone) window._vigFixDone={};
+    if(window._vigFixDone[uid]) return;
+    window._vigFixDone[uid]=true;
+    var ded=getDED(uid)||{};
+    if(!ded.ded_hist) return;
+    var cambio=false, nuevo={};
+    Object.keys(ded.ded_hist).forEach(function(k){
+      var p=k.split('-');
+      if(p.length<3){ nuevo[k]=ded.ded_hist[k]; return; }
+      var vy=parseInt(p[0]), vm=parseInt(p[1])-1, vq=parseInt(p[2]);
+      var pk=vy+'-'+pad(vm+1)+'-'+(vq===1?'15':String(new Date(vy,vm+1,0).getDate()));
+      if((getPagoState(uid,pk)||{}).pagado){
+        // Esa quincena ya estaba pagada: mover la vigencia a la siguiente
+        var ny=vy, nm=vm, nq=vq;
+        if(nq===1){ nq=2; } else { nq=1; nm++; if(nm>11){ nm=0; ny++; } }
+        nuevo[ny+'-'+pad(nm+1)+'-'+nq]=ded.ded_hist[k];
+        cambio=true;
+        console.log('Vigencia corregida para '+uid+': '+k+' → '+ny+'-'+pad(nm+1)+'-'+nq+' (quincena estaba pagada)');
+      } else {
+        nuevo[k]=ded.ded_hist[k];
+      }
+    });
+    if(cambio){
+      ded.ded_hist=nuevo;
+      _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
+    }
+  }catch(e){ console.warn('_corregirVigenciasPagadas:',e); }
+}
+
 function getDedVigente(uid, year, month, q){
+  _corregirVigenciasPagadas(uid);
   var ded=getDED(uid)||{};
   var base={ccss:ded.ccss_monto||0, rb:ded.rb_monto||0, rb_desc:ded.rb_desc||'',
             extra:ded.extra_monto||0, extra_desc:ded.extra_desc||''};
@@ -4611,12 +4646,24 @@ function saveAdminUserHoras(uid){
   // las quincenas ya transcurridas. Así una deducción nueva (préstamo, rebajo,
   // CCSS) rige desde la quincena EN CURSO hacia adelante y no altera planillas
   // anteriores. Las quincenas ya pagadas conservan lo que se les aplicó.
+  var _vigDesde='';
   var _cambio=(_nuevoCcss!==(ded.ccss_monto||0))
             ||(_nuevoRb!==(ded.rb_monto||0))
             ||(_nuevoEx!==(ded.extra_monto||0));
   if(_cambio){
     var _hoy=new Date();
-    var _vigKey=_hoy.getFullYear()+'-'+pad(_hoy.getMonth()+1)+'-'+(_hoy.getDate()<=15?'1':'2');
+    var _vy=_hoy.getFullYear(), _vm=_hoy.getMonth(), _vq=(_hoy.getDate()<=15?1:2);
+    // Si la quincena EN CURSO ya está marcada como PAGADA para este colaborador,
+    // el cambio no puede afectarla — rige desde la quincena SIGUIENTE.
+    var _pkActual=_vy+'-'+pad(_vm+1)+'-'+(_vq===1?'15':String(new Date(_vy,_vm+1,0).getDate()));
+    var _yaPagada=!!(getPagoState(uid,_pkActual)||{}).pagado;
+    if(_yaPagada){
+      if(_vq===1){ _vq=2; }
+      else { _vq=1; _vm++; if(_vm>11){ _vm=0; _vy++; } }
+      console.log('saveAdminUserHoras: quincena en curso ya pagada → deducción rige desde '+_vy+'-'+pad(_vm+1)+'-Q'+_vq);
+    }
+    var _vigKey=_vy+'-'+pad(_vm+1)+'-'+_vq;
+    _vigDesde=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'][_vm]+' '+_vy+' · Q'+_vq;
     if(!ded.ded_hist) ded.ded_hist={};
     // Registrar los valores ANTERIORES como vigentes hasta la quincena previa
     ded.ded_hist[_vigKey]={
@@ -4640,9 +4687,12 @@ function saveAdminUserHoras(uid){
   if(SESSION&&uid===SESSION.id) DED=ded;
   _saveToSupabase('user_ded_'+uid, ded, 'cc_d_'+uid);
   buildAdminOverview();
-  // Pequeño delay para asegurar que localStorage se escribió antes de leer
   setTimeout(function(){ renderPagosUsuarios(); }, 50);
-  toast('✓ Cambios guardados para '+users[ui].nombre);
+  if(_cambio&&_vigDesde){
+    toast('✓ Guardado para '+users[ui].nombre+' — las deducciones rigen desde '+_vigDesde+' (las quincenas anteriores no cambian)');
+  } else {
+    toast('✓ Cambios guardados para '+users[ui].nombre);
+  }
 }
 
 // ── ADMIN HOURS TABLE VIEW ──
