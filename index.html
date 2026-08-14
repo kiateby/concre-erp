@@ -1931,7 +1931,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260814160617';
+var APP_BUILD='20260814161132';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -4466,6 +4466,11 @@ function loadAdminUserHoras(uid){
         <div class="form-row"><label class="form-label">Préstamo / Convenio</label><input class="form-inp" id="ah-rb" value="${ded.rb_monto?ded.rb_monto.toLocaleString('es-CR'):''}" oninput="fmtInp(this)"></div>
         <div class="form-row"><label class="form-label">Descripción préstamo</label><input class="form-inp" id="ah-rbdesc" value="${ded.rb_desc||''}"></div>
         <div class="form-row"><label class="form-label">Otro rebajo</label><input class="form-inp" id="ah-ex" value="${ded.extra_monto?ded.extra_monto.toLocaleString('es-CR'):''}" oninput="fmtInp(this)"></div>
+        <div class="form-row" style="background:rgba(37,99,235,.06);border:1px solid rgba(37,99,235,.25);border-radius:8px;padding:8px 10px">
+          <label class="form-label" style="color:var(--blue)">📅 Las deducciones rigen desde</label>
+          <select class="form-inp" id="ah-vigencia">${_buildVigenciaOptions(u.id)}</select>
+          <div style="font-size:10px;color:var(--text3);margin-top:4px">Las quincenas anteriores conservan lo que ya se les aplicó. Las quincenas pagadas no se pueden seleccionar.</div>
+        </div>
         <div class="form-row"><label class="form-label">Descripción otro</label><input class="form-inp" id="ah-exdesc" value="${ded.extra_desc||''}"></div>
         <div class="form-row"><label class="form-label">Comisión quincena actual</label><input class="form-inp" id="ah-comis" value="${ded['comis_'+rk]?ded['comis_'+rk].toLocaleString('es-CR'):''}" oninput="fmtInp(this)"></div>
       </div>
@@ -4572,6 +4577,10 @@ function _corregirVigenciasPagadas(uid){
     window._vigFixDone[uid]=true;
     var ded=getDED(uid)||{};
     if(!ded.ded_hist) return;
+    // Solo una vez EN LA VIDA: sin este flag persistente la vigencia se movía
+    // una quincena más en cada sesión, alejando el rebajo indefinidamente.
+    if(ded.ded_hist_fixed) return;
+    ded.ded_hist_fixed=true;
     var cambio=false, nuevo={};
     Object.keys(ded.ded_hist).forEach(function(k){
       var p=k.split('-');
@@ -4627,6 +4636,44 @@ function getDedVigente(uid, year, month, q){
   return base; // ningún cambio posterior: rigen los valores actuales
 }
 
+// Opciones de quincena para el selector "rigen desde": desde el mes pasado
+// hasta 6 meses adelante. Las quincenas ya PAGADAS aparecen deshabilitadas.
+function _buildVigenciaOptions(uid){
+  var MESC=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'];
+  var hoy=new Date();
+  var ded=getDED(uid)||{};
+  // Vigencia actualmente registrada (la más reciente del historial)
+  var actual='';
+  if(ded.ded_hist){
+    var ks=Object.keys(ded.ded_hist).sort(function(a,b){
+      var pa=a.split('-'), pb=b.split('-');
+      return (parseInt(pa[0])*100+parseInt(pa[1])*2+parseInt(pa[2]))
+           - (parseInt(pb[0])*100+parseInt(pb[1])*2+parseInt(pb[2]));
+    });
+    if(ks.length) actual=ks[ks.length-1];
+  }
+  var opts='', sugerida='';
+  for(var off=-1; off<=6; off++){
+    var d=new Date(hoy.getFullYear(), hoy.getMonth()+off, 1);
+    var yy=d.getFullYear(), mm=d.getMonth();
+    for(var qq=1; qq<=2; qq++){
+      var key=yy+'-'+pad(mm+1)+'-'+qq;
+      var pk=yy+'-'+pad(mm+1)+'-'+(qq===1?'15':String(new Date(yy,mm+1,0).getDate()));
+      var pagada=!!(getPagoState(uid,pk)||{}).pagado;
+      // Sugerir la primera quincena NO pagada a partir de la actual
+      var esFutura=(yy>hoy.getFullYear())||(yy===hoy.getFullYear()&&mm>hoy.getMonth())
+        ||(yy===hoy.getFullYear()&&mm===hoy.getMonth()&&(qq===2||hoy.getDate()<=15));
+      if(!sugerida&&!pagada&&esFutura) sugerida=key;
+      opts+='<option value="'+key+'"'+(pagada?' disabled':'')+'>'
+        +MESC[mm]+' '+yy+' · Q'+qq+(qq===1?' (1–15)':' (16–fin)')
+        +(pagada?' — YA PAGADA':'')+'</option>';
+    }
+  }
+  var sel=actual||sugerida;
+  if(sel) opts=opts.replace('<option value="'+sel+'"','<option value="'+sel+'" selected');
+  return opts;
+}
+
 function saveAdminUserHoras(uid){
   const users=getUsers();
   const ui=users.findIndex(x=>x.id===uid);
@@ -4651,18 +4698,26 @@ function saveAdminUserHoras(uid){
             ||(_nuevoRb!==(ded.rb_monto||0))
             ||(_nuevoEx!==(ded.extra_monto||0));
   if(_cambio){
-    var _hoy=new Date();
-    var _vy=_hoy.getFullYear(), _vm=_hoy.getMonth(), _vq=(_hoy.getDate()<=15?1:2);
-    // Si la quincena EN CURSO ya está marcada como PAGADA para este colaborador,
-    // el cambio no puede afectarla — rige desde la quincena SIGUIENTE.
-    var _pkActual=_vy+'-'+pad(_vm+1)+'-'+(_vq===1?'15':String(new Date(_vy,_vm+1,0).getDate()));
-    var _yaPagada=!!(getPagoState(uid,_pkActual)||{}).pagado;
-    if(_yaPagada){
-      if(_vq===1){ _vq=2; }
-      else { _vq=1; _vm++; if(_vm>11){ _vm=0; _vy++; } }
-      console.log('saveAdminUserHoras: quincena en curso ya pagada → deducción rige desde '+_vy+'-'+pad(_vm+1)+'-Q'+_vq);
+    // La quincena de vigencia la ELIGE el superadmin en el selector.
+    // Si no hay selector (o viene vacío), se usa la quincena en curso y, si ya
+    // está pagada, la siguiente.
+    var _vigSel=document.getElementById('ah-vigencia')?document.getElementById('ah-vigencia').value:'';
+    var _vy,_vm,_vq;
+    if(_vigSel&&_vigSel.split('-').length===3){
+      var _sp=_vigSel.split('-');
+      _vy=parseInt(_sp[0]); _vm=parseInt(_sp[1])-1; _vq=parseInt(_sp[2]);
+    } else {
+      var _hoy=new Date();
+      _vy=_hoy.getFullYear(); _vm=_hoy.getMonth(); _vq=(_hoy.getDate()<=15?1:2);
+      var _pkActual=_vy+'-'+pad(_vm+1)+'-'+(_vq===1?'15':String(new Date(_vy,_vm+1,0).getDate()));
+      if((getPagoState(uid,_pkActual)||{}).pagado){
+        if(_vq===1){ _vq=2; } else { _vq=1; _vm++; if(_vm>11){ _vm=0; _vy++; } }
+      }
     }
     var _vigKey=_vy+'-'+pad(_vm+1)+'-'+_vq;
+    // Reemplazar cualquier vigencia previa del mismo punto (evita acumular entradas)
+    if(ded.ded_hist&&ded.ded_hist[_vigKey]) delete ded.ded_hist[_vigKey];
+    ded.ded_hist_fixed=true; // ya no requiere corrección automática
     _vigDesde=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'][_vm]+' '+_vy+' · Q'+_vq;
     if(!ded.ded_hist) ded.ded_hist={};
     // Registrar los valores ANTERIORES como vigentes hasta la quincena previa
