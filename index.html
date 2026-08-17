@@ -1810,6 +1810,11 @@ async function loadAllDataFromDB(){
           window._pagadoAdminOverrides[vid]=!!(row.valor.pagado);
         }
         // Ediciones de ventas guardadas como backup
+        if(row.clave&&row.clave.startsWith('cxc_ov_')){
+          if(!window._cxcOverridesCache) window._cxcOverridesCache={};
+          var _ov=row.valor||{};
+          if(_ov&&_ov.__key) window._cxcOverridesCache[_ov.__key]=_ov;
+        }
         if(row.clave&&row.clave.startsWith('abonos_cliente_')){
           if(!window._abonosCache) window._abonosCache={};
           window._abonosCache[row.clave.replace('abonos_cliente_','')]=Array.isArray(row.valor)?row.valor:[];
@@ -1934,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260814163155';
+var APP_BUILD='20260817172934';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -3837,6 +3842,7 @@ function buildAdminTabs(){
     {id:'vacaciones',    label:'🌴 Vacaciones',      extra:'try{renderAdminVacSection();}catch(e){}'},
     {id:'fondos',        label:'📦 Fondos',          extra:'try{initAdminFondos();}catch(e){}'},
     {id:'ventas',        label:'📈 Ventas',          extra:'try{initAdminVentas();}catch(e){}'},
+    {id:'cxc',           label:'💰 Cuentas por cobrar', extra:'try{initCXCTab();}catch(e){console.error(e);}', optIn:true},
     {id:'liquidaciones', label:'📋 Liquidaciones',   extra:'try{initLiquidaciones();}catch(e){}'},
     {id:'gastos-admin',  label:'🏗 Gastos',          extra:'try{initAdminGastos();}catch(e){}'},
     {id:'crm',           label:'👥 CRM',             extra:'try{initCRM();}catch(e){}'},
@@ -3854,6 +3860,8 @@ function buildAdminTabs(){
   var allowedBtns=btns.filter(function(b){
     if(b.saOnly&&!isSuperAdmin) return false; // saOnly tabs for superadmin only
     if(isSuperAdmin) return true;
+    // optIn: oculta por defecto — solo visible si el superadmin la activó
+    if(b.optIn) return !!(adminTabPerms&&adminTabPerms[b.id]===true);
     if(!adminTabPerms) return true; // no restrictions = all visible
     return adminTabPerms[b.id]!==false;
   });
@@ -3887,6 +3895,7 @@ function buildUserTabs(){
     {id:'fibraplus',  label:'🧮 FibraPlus54'},
     {id:'radar',      label:'📡 Radar Comercial', optIn:true}, // requiere autorización EXPLÍCITA de superadmin (a diferencia de las demás pestañas)
     {id:'precios',    label:'📚 Precios e Info', optIn:true}, // oculta por defecto — superadmin decide quién la ve (solo documentos y listas publicadas)
+    {id:'cxc',        label:'💰 Cuentas por cobrar', optIn:true}, // oculta por defecto — solo lectura para quien la reciba
   ];
   var visible=allTabs.filter(function(t){
     if(t.optIn) return perms[t.id]===true; // oculta por defecto — solo visible si superadmin la activó explícitamente
@@ -3920,6 +3929,8 @@ function switchUserTab(tab, btn){
     if(pym) pym.style.display='none';
     var prm=document.getElementById('preciosUserModule');
     if(prm) prm.style.display='none';
+    var cxm=document.getElementById('cxcUserModule');
+    if(cxm) cxm.style.display='none';
     if(um) um.style.display='none';
     if(vm) vm.style.display='none';
     if(fm) fm.style.display='none';
@@ -3955,6 +3966,9 @@ function switchUserTab(tab, btn){
     } else if(tab==='proyectos'){
       if(pym){ pym.style.cssText='display:flex;flex:1;width:100%'; }
       try{ initProyectosTab('proyectosUserRoot'); }catch(e2){ console.error('initProyectosTab error:',e2); }
+    } else if(tab==='cxc'){
+      if(cxm){ cxm.style.cssText='display:flex;flex:1;width:100%'; }
+      try{ initCXCTab('cxcUserRoot'); }catch(e2){ console.error('initCXCTab error:',e2); }
     } else if(tab==='precios'){
       if(prm){ prm.style.cssText='display:flex;flex:1;width:100%'; }
       try{ initPreciosTab('preciosUserRoot'); }catch(e2){ console.error('initPreciosTab error:',e2); }
@@ -9440,6 +9454,7 @@ function _saveSingleVenta(uid, v, mk){
     tc_used: v.tcUsed||0,
     usd: v.usd||0,
     deposito_num: v.depositoNum||'',
+    fecha_facturacion: v.fechaFact||null,
     notas: v.notas||'',
     estado: v.estado||'activo',
     is_admin_venta: v.isAdminVenta||false,
@@ -9483,6 +9498,7 @@ function _saveSingleVenta(uid, v, mk){
     tienePendiente:v.tienePendiente||false, pendMonto:v.pendMonto||0, pendCancelado:v.pendCancelado||'no',
     referido:v.referido||'', notas:v.notas||'', estado:v.estado||'activa',
     tieneMinimo:v.tieneMinimo||false, minimoArea:v.minimoArea||0,
+    fechaFact:v.fechaFact||'',
     ts: new Date().toISOString()
   };
   if(!window._ventaEditsCache) window._ventaEditsCache={};
@@ -9601,6 +9617,7 @@ async function loadVentasFromDB(uid,_rows){
         tipoPago:editOverride.tipoPago||row.pago||'CONTADO',
         pago:editOverride.tipoPago||row.pago||'CONTADO',
         plazoCredito:editOverride.plazoCredito||row.plazo_credito||0,
+        fechaFact:editOverride.fechaFact||row.fecha_facturacion||'',
         comision:row.comision,
         esTercero:editOverride.esTercero||row.es_tercero||false,
         tercNombre:editOverride.tercNombre||'',
@@ -9659,6 +9676,7 @@ async function loadVentasFromDB(uid,_rows){
       tipoPago:row.pago||row.tipo_pago||row.tipoPago||'CONTADO',
       pago:row.pago||'CONTADO',
       plazoCredito:row.plazo_credito||0,
+      fechaFact:row.fecha_facturacion||((window._ventaEditsCache||{})[row.id]||{}).fechaFact||'',
       // Área del mínimo: prioriza la columna de la tabla; si aún no existe
       // (ventas guardadas antes de este cambio) la recupera del respaldo.
       tieneMinimo:(row.tiene_minimo!=null?!!row.tiene_minimo
@@ -9721,7 +9739,7 @@ async function loadVentasFromDB(uid,_rows){
       iva:e.ivaAmt||0, total:e.total||0, usdTotal:e.usdTotal||0,
       cliente:e.cliente||'', factura:e.factura||'', proyecto:e.proyecto||'',
       tipoPago:e.tipoPago||'CONTADO', pago:e.tipoPago||'CONTADO',
-      plazoCredito:e.plazoCredito||0, comision:0,
+      plazoCredito:e.plazoCredito||0, fechaFact:e.fechaFact||'', comision:0,
       esTercero:e.esTercero||false, tercNombre:e.tercNombre||'', tercMonto:e.tercMonto||0,
       pendPagada:e.pendPagada||false, pendEjecutada:e.pendEjecutada||false, pendCanceladaChk:e.pendCanceladaChk||false,
       pendPagadaAt:e.pendPagadaAt||'', pendEjecutadaAt:e.pendEjecutadaAt||'', pendCanceladaAt:e.pendCanceladaAt||'',
@@ -10099,6 +10117,8 @@ function clearVentaForm(){
   document.getElementById('vf-tipo-pago').value='CONTADO';
   document.getElementById('vf-plazo').value=30;
   document.getElementById('vf-plazo-wrap').style.display='none';
+  var _ffEl=document.getElementById('vf-fecha-fact'); if(_ffEl) _ffEl.value='';
+  var _ffW=document.getElementById('vf-fechafact-wrap'); if(_ffW) _ffW.style.display='none';
   document.getElementById('vf-is-usd').checked=false;
   document.getElementById('vf-pend-chk').checked=false;
   document.getElementById('vf-ins-chk').checked=false;
@@ -10170,6 +10190,19 @@ function _doSaveVenta(){
     return;
   }
   const fecha=document.getElementById('vf-fecha').value||todayCR();
+  // Crédito: plazo obligatorio (>0) y fecha de facturación obligatoria
+  var _errCred=_validarCredito(
+    document.getElementById('vf-tipo-pago').value,
+    document.getElementById('vf-plazo')?.value,
+    document.getElementById('vf-fecha-fact')?.value);
+  if(_errCred){
+    toast(_errCred);
+    var _foco=document.getElementById(
+      (!document.getElementById('vf-plazo')?.value||parseInt(document.getElementById('vf-plazo').value)<=0)
+      ?'vf-plazo':'vf-fecha-fact');
+    if(_foco) _foco.focus();
+    return;
+  }
   const isUsd=document.getElementById('vf-is-usd').checked;
   let subtotal=0, usd=0, tcUsed=0;
   var _qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
@@ -10207,6 +10240,7 @@ function _doSaveVenta(){
     subtotal, ivaPct, ivaAmt, total:totalFinal,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:parseInt(document.getElementById('vf-plazo').value)||0,
+    fechaFact:document.getElementById('vf-fecha-fact')?.value||'',
     isUsd, usd, tcUsed, usdTotal,
     tieneInsumos:insChk,
     insDesc:insChk?document.getElementById('vf-ins-desc').value.trim():'',
@@ -11802,7 +11836,8 @@ function toggleVentaPago(uid,ventaId,chk){
       // Guardar TAMBIÉN en la tabla ventas (columna pagado_admin) — doble respaldo:
       // si el override de configuracion no llegara, la fila de ventas conserva el estado.
       try{ _saveSingleVenta(uid, vd[mk].ventas[idx], mk); }catch(e){ console.error('toggleVentaPago save:',e); }
-      if(newVal) toast('✓ Pago registrado — actualizado en Créditos pendientes y Saldos por cliente');
+      if(newVal) toast('✓ Pago registrado — actualizado en Cuentas por cobrar');
+      try{ if(typeof renderCXCTab==='function') renderCXCTab(); }catch(e){}
       // Re-render COMPLETO: actualiza Detalle, Créditos pendientes y Saldos por cliente
       try{ renderAdminVentas(); }catch(e){ console.error('render tras pago:',e); renderAdminVentasTable(); }
     }
@@ -11999,16 +12034,41 @@ function exportVentasAdmin(){
   toast('Función de exportación admin en desarrollo');
 }
 
+// ── CREDITO / PLAZO (formulario admin) ──
+function onAdminTipoPagoChange(){
+  var v=(document.getElementById('avf-tipo-pago')||{}).value;
+  var w=document.getElementById('avf-plazo-wrap');
+  if(w) w.style.display=v==='CREDITO'?'block':'none';
+  var f=document.getElementById('avf-fechafact-wrap');
+  if(f) f.style.display=v==='CREDITO'?'block':'none';
+}
+
 // ── CREDITO / PLAZO ──
 function onTipoPagoChange(){
   const v=document.getElementById('vf-tipo-pago').value;
   const w=document.getElementById('vf-plazo-wrap');
   if(w) w.style.display=v==='CREDITO'?'block':'none';
+  const f=document.getElementById('vf-fechafact-wrap');
+  if(f) f.style.display=v==='CREDITO'?'block':'none';
+}
+
+// ── VALIDACIÓN COMÚN DE CRÉDITO ──
+// Devuelve null si todo está bien, o el mensaje de error.
+// Solo aplica a ventas NUEVAS o al editar: las ventas viejas guardadas antes
+// de este cambio conservan su condición y no se tocan.
+function _validarCredito(tipoPago, plazo, fechaFact){
+  if(tipoPago!=='CREDITO') return null;
+  if(!plazo||parseInt(plazo)<=0) return 'Ingrese el plazo de crédito en días (no puede quedar en 0)';
+  if(!fechaFact) return 'La fecha de facturación es obligatoria para las ventas a crédito';
+  return null;
 }
 
 function getVencimientoDate(venta){
   if(venta.tipoPago!=='CREDITO'||!venta.plazoCredito) return null;
-  const d=parseDate(venta.fecha);
+  // El vencimiento se cuenta desde la FECHA DE FACTURACIÓN. Las ventas
+  // anteriores a ese campo no la tienen: para esas se sigue usando la fecha
+  // de la venta, igual que antes, para no alterar su comportamiento.
+  const d=parseDate(venta.fechaFact||venta.fecha);
   if(!d) return null;
   d.setDate(d.getDate()+(parseInt(venta.plazoCredito)||30));
   return d;
@@ -12023,24 +12083,13 @@ function diasParaVencer(venta){
 
 // Auto-cleanup: remove cxc marked paid > 7 days ago
 function cleanupOldCxc(){
-  const users=getUsers().filter(u=>u.rol==='user');
-  const now=new Date();
-  users.forEach(u=>{
-    const vd=getVentasData(u.id);
-    let changed=false;
-    Object.keys(vd).forEach(mk=>{
-      if(!vd[mk].ventas) return;
-      vd[mk].ventas=vd[mk].ventas.filter(v=>{
-        if(_esCxcPagado(v)&&_cxcPagadoFecha(v)){
-          const paid=new Date(_cxcPagadoFecha(v));
-          const diffDays=(now-paid)/(1000*60*60*24);
-          if(diffDays>7){ changed=true; return false; } // remove after 7 days
-        }
-        return true;
-      });
-    });
-    if(changed) setVentasData(u.id,vd);
-  });
+  // DESACTIVADA A PROPÓSITO.
+  // Antes esta función ELIMINABA del arreglo de ventas las cobradas con más de
+  // 7 días. Eso borraba la venta completa de la vista (y de los totales del mes)
+  // hasta recargar la página. Con la pestaña "Cuentas por cobrar" las cobradas
+  // deben conservarse indefinidamente en su propia tabla, así que ya no se
+  // depura nada. Se mantiene la función vacía porque hay llamadas existentes.
+  return;
 }
 
 // ── EDIT VENTA ──
@@ -12095,7 +12144,9 @@ function editVenta(ventaId){
   document.getElementById('vf-tipo-pago').value=found.tipoPago||'CONTADO';
   if(found.tipoPago==='CREDITO'){
     document.getElementById('vf-plazo-wrap').style.display='block';
+    var _ffwE=document.getElementById('vf-fechafact-wrap'); if(_ffwE) _ffwE.style.display='block';
     document.getElementById('vf-plazo').value=found.plazoCredito||30;
+    var _ffE=document.getElementById('vf-fecha-fact'); if(_ffE) _ffE.value=found.fechaFact||'';
   }
   document.getElementById('vf-is-usd').checked=found.isUsd||false;
     // Restore currency switch state
@@ -12193,7 +12244,10 @@ function updateVenta(){
   const insChk=document.getElementById('vf-ins-chk').checked;
   const tercChk=document.getElementById('vf-terc-chk').checked;
   const pendChk=document.getElementById('vf-pend-chk').checked;
-  const plazo=parseInt(document.getElementById('vf-plazo').value)||30;
+  const plazo=parseInt(document.getElementById('vf-plazo').value)||0;
+  var _errCredEd=_validarCredito(document.getElementById('vf-tipo-pago').value, plazo,
+    document.getElementById('vf-fecha-fact')?.value);
+  if(_errCredEd){ toast(_errCredEd); return; }
 
   var newProdId=document.getElementById('vf-prod').value;
   var newCliente=document.getElementById('vf-cliente').value.trim();
@@ -12214,6 +12268,7 @@ function updateVenta(){
     subtotal,ivaPct,ivaAmt,total:totalFinal,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:plazo,
+    fechaFact:document.getElementById('vf-fecha-fact')?.value||'',
     isUsd,usd,tcUsed,usdTotal,
     tieneInsumos:insChk,
     insDesc:insChk?document.getElementById('vf-ins-desc').value.trim():'',
@@ -12504,6 +12559,687 @@ function renderAdminCxcTable(allVentas,catMap){
   });
 }
 
+
+
+// ══════════════════════════════════════════════════════════════
+//  CUENTAS POR COBRAR — pestaña propia (superadmin; opt-in para otros)
+//  Agrupa por N° de factura + cliente. Las ventas SIN número de factura
+//  quedan como una línea individual (no se agrupan).
+//  IMPORTANTE: esta agrupación aplica ÚNICAMENTE a esta pestaña.
+//  Ninguna otra tabla ni reporte del sistema cambia su comportamiento.
+// ══════════════════════════════════════════════════════════════
+
+var CXC_SUBTAB='pend'; // 'pend' | 'cobr'
+
+// Solo el superadmin puede modificar. El resto entra en modo lectura.
+function cxcPuedeEditar(){ return SESSION && SESSION.rol==='superadmin'; }
+
+function _cxcFacturaVacia(f){
+  var t=String(f==null?'':f).trim();
+  return t===''||t==='-'||t.toUpperCase()==='NA'||t.toUpperCase()==='N/A'||t.toUpperCase()==='S/F';
+}
+
+// Clave de agrupación: factura + cliente. Sin factura -> clave única por venta.
+function _cxcGrupoKey(v){
+  if(_cxcFacturaVacia(v.factura)) return 'SOLA::'+v.id;
+  return 'F::'+String(v.factura).trim().toLowerCase()
+        +'::'+String(v.cliente||'').trim().toLowerCase();
+}
+
+// ── Overrides persistidos (Supabase, tabla configuracion) ──
+function _cxcOv(){ return window._cxcOverridesCache||(window._cxcOverridesCache={}); }
+function _cxcGetOv(key){ return _cxcOv()[key]||{}; }
+function _cxcSetOv(key, patch){
+  var o=Object.assign({}, _cxcGetOv(key), patch, {__key:key});
+  _cxcOv()[key]=o;
+  _saveToSupabase('cxc_ov_'+_cxcSafe(key), o, '');
+  return o;
+}
+function _cxcSafe(k){ return String(k).replace(/[^a-zA-Z0-9]/g,'_').slice(0,120); }
+
+// ── Abonos por factura ──
+function _cxcAbonos(key){ return (_cxcGetOv(key).abonos)||[]; }
+function _cxcTotalAbonos(key){
+  return _cxcAbonos(key).reduce(function(s,a){ return s+(a.monto||0); },0);
+}
+
+// ══════════════════════════════════════════════
+//  Construcción de los grupos
+// ══════════════════════════════════════════════
+function cxcBuildGrupos(){
+  var grupos={};
+  getUsers().forEach(function(u){
+    var vd=getVentasData(u.id)||{};
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(v){
+        if(v.tipoPago!=='CREDITO') return;
+        if(v.estado==='incompleta') return;
+        var key=_cxcGrupoKey(v);
+        if(!grupos[key]){
+          grupos[key]={
+            key:key, factura:(_cxcFacturaVacia(v.factura)?'':String(v.factura).trim()),
+            cliente:(v.cliente||'Sin cliente').trim(),
+            ventas:[], subtotal:0, iva:0, total:0, usd:0,
+            uid:u.id, uname:u.nombre||u.id, hayUsd:false
+          };
+        }
+        var g=grupos[key];
+        g.ventas.push(Object.assign({uid:u.id, uname:u.nombre||u.id}, v));
+        g.subtotal+=(v.subtotal||0);
+        g.iva+=(v.ivaAmt||v.iva||0);
+        g.total+=(v.total||(v.subtotal||0)+(v.ivaAmt||0));
+        if(v.isUsd){ g.hayUsd=true; g.usd+=(v.usdTotal||v.usd||0); }
+      });
+    });
+  });
+  // Estado del grupo: cobrado si TODAS sus ventas están cobradas
+  Object.keys(grupos).forEach(function(k){
+    var g=grupos[k];
+    g.cobrado=g.ventas.length>0 && g.ventas.every(function(v){ return _esCxcPagado(v); });
+    // Fecha de facturación del grupo (la más antigua de sus ventas)
+    var ff=null;
+    g.ventas.forEach(function(v){
+      var d=parseDate(v.fechaFact||v.fecha);
+      if(d&&(!ff||d<ff)) ff=d;
+    });
+    var ov=_cxcGetOv(k);
+    if(ov.fechaFact){ var od=parseDate(ov.fechaFact); if(od) ff=od; }
+    g.fechaFactDate=ff;
+    g.fechaFactStr=ff?ff.toISOString().slice(0,10):'';
+    // ¿Alguna de sus ventas tenía ya fecha de facturación propia?
+    g.tieneFechaPropia=g.ventas.some(function(v){ return !!v.fechaFact; });
+    // Vencimiento: fecha de facturación + el mayor plazo del grupo
+    var plazo=0;
+    g.ventas.forEach(function(v){ plazo=Math.max(plazo, parseInt(v.plazoCredito)||0); });
+    g.plazo=plazo;
+    if(ff&&plazo>0){
+      var venc=new Date(ff.getTime());
+      venc.setDate(venc.getDate()+plazo);
+      g.venc=venc;
+      g.dias=Math.ceil((venc-new Date())/(1000*60*60*24));
+    } else { g.venc=null; g.dias=null; }
+    g.abonado=_cxcTotalAbonos(k);
+    g.saldo=g.total-g.abonado;
+    g.verUsd=!!ov.verUsd && g.hayUsd;
+    g.borrado=!!ov.borrado;
+  });
+  return grupos;
+}
+
+function cxcListaPendientes(){
+  var g=cxcBuildGrupos();
+  return Object.keys(g).map(function(k){return g[k];})
+    .filter(function(x){ return !x.cobrado && !x.borrado; })
+    .sort(function(a,b){
+      var da=a.venc||new Date(9999,0), db=b.venc||new Date(9999,0);
+      return da-db;
+    });
+}
+function cxcListaCobradas(){
+  var g=cxcBuildGrupos();
+  return Object.keys(g).map(function(k){return g[k];})
+    .filter(function(x){ return x.cobrado && !x.borrado; })
+    .sort(function(a,b){
+      var da=a.venc||new Date(0), db=b.venc||new Date(0);
+      return db-da;
+    });
+}
+
+// ── Formato de monto según el check de dólares del grupo ──
+function cxcFmtMonto(g, campoCRC, campoUSD){
+  if(g.verUsd){
+    var val=(campoUSD!=null?campoUSD:0);
+    return '$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+  return fmt(campoCRC||0);
+}
+function _cxcUsdDe(g, cual){
+  if(!g.hayUsd) return 0;
+  var s=0,i=0,t=0;
+  g.ventas.forEach(function(v){
+    if(!v.isUsd) return;
+    var u=(v.usd||0);
+    var ip=(v.ivaPct||0)/100;
+    s+=u; i+=u*ip; t+=u*(1+ip);
+  });
+  return cual==='sub'?s:cual==='iva'?i:t;
+}
+
+// ══════════════════════════════════════════════
+//  RENDER — subpestañas
+// ══════════════════════════════════════════════
+function _cxcRoot(){
+  return document.getElementById(window._cxcRootId||'cxcAdminRoot')||document;
+}
+function cxcSwitchSub(which, btn){
+  CXC_SUBTAB=which;
+  var r=_cxcRoot();
+  ['pend','cobr'].forEach(function(k){
+    var el=r.querySelector('#cxc-sub-'+k);
+    if(el) el.style.display=(k===which)?'block':'none';
+  });
+  r.querySelectorAll('.cxc-subtab').forEach(function(b){
+    b.classList.remove('on');
+    b.style.borderBottomColor='transparent'; b.style.color='var(--text2)';
+  });
+  if(btn){ btn.classList.add('on'); btn.style.borderBottomColor='var(--red)'; btn.style.color='var(--red)'; }
+  renderCXCTab();
+}
+
+function _cxcHTML(){
+  return ''
+    +'<div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:2px solid var(--border);padding-bottom:0">'
+    +'<button class="cxc-subtab on" data-sub="pend" onclick="cxcSwitchSub(\'pend\',this)" style="padding:9px 18px;border:none;background:none;font-family:Barlow,sans-serif;font-size:13px;font-weight:800;color:var(--text2);cursor:pointer;border-bottom:3px solid transparent">⏳ Créditos pendientes de cobro</button>'
+    +'<button class="cxc-subtab" data-sub="cobr" onclick="cxcSwitchSub(\'cobr\',this)" style="padding:9px 18px;border:none;background:none;font-family:Barlow,sans-serif;font-size:13px;font-weight:800;color:var(--text2);cursor:pointer;border-bottom:3px solid transparent">✅ Créditos cobrados</button>'
+    +'</div>'
+    +'<div id="cxc-readonly-note" style="display:none;background:rgba(217,119,6,.08);border:1px solid rgba(217,119,6,.3);border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:var(--amber);font-weight:700">👁 Modo consulta — solo el superadmin puede modificar esta información.</div>'
+    +'<div id="cxc-sub-pend">'
+    +'<div class="admin-table-wrap" style="margin-bottom:14px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--amber)">'
+    +'<span class="ath-title">⏳ Créditos pendientes de cobro</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Agrupado por N° de factura + cliente · histórico completo</span>'
+    +'</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border)"><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Filtrar</span><input type="text" id="cxcp-f-cliente" placeholder="Cliente" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:150px"><input type="text" id="cxcp-f-factura" placeholder="N° factura" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:120px"><input type="date" id="cxcp-f-fecha" onchange="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="document.getElementById(\'cxcp-f-cliente\').value=\'\';document.getElementById(\'cxcp-f-factura\').value=\'\';document.getElementById(\'cxcp-f-fecha\').value=\'\';renderCXCTab()" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;font-weight:700">Limpiar</button><span style="flex:1"></span><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Informe</span><select id="cxcp-r-tipo" onchange="cxcOnTipoInforme(\'pend\')" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><option value="">Todos</option><option value="cliente">Por cliente</option><option value="factura">Por factura</option><option value="fecha">Por fecha</option></select><input type="text" id="cxcp-r-valor" placeholder="Valor" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:130px"><input type="date" id="cxcp-r-fecha" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="cxcInformePDF(\'pend\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(227,24,55,.3);background:rgba(227,24,55,.1);color:var(--red);cursor:pointer;font-weight:800">📄 PDF</button><button onclick="cxcInformeExcel(\'pend\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(26,158,92,.3);background:var(--green-dim);color:var(--green);cursor:pointer;font-weight:800">📊 Excel</button></div>'
+    +'<table class="atbl" style="min-width:1180px">'
+    +'<thead><tr>'
+    +'<th>Colaborador</th><th>Fecha facturación</th><th>Factura</th><th>Cliente</th>'
+    +'<th>Subtotal s/IVA</th><th>IVA</th><th>Total c/IVA</th>'
+    +'<th>Vencimiento</th><th>Estado</th><th>Abono</th><th>Saldo</th><th>Acción</th>'
+    +'</tr></thead>'
+    +'<tbody id="cxc-pend-body"></tbody>'
+    +'</table>'
+    +'</div>'
+    +'<div class="admin-table-wrap" style="margin-bottom:14px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--red)">'
+    +'<span class="ath-title">🧾 Saldos por cliente — cuentas por cobrar</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Deuda histórica acumulada por cliente</span>'
+    +'</div>'
+    +'<table class="atbl" style="min-width:800px">'
+    +'<thead><tr>'
+    +'<th>Cliente</th><th>Facturas</th><th>Subtotal s/IVA</th><th>Total con IVA</th><th>Saldo pendiente</th>'
+    +'</tr></thead>'
+    +'<tbody id="cxc-saldos-body"></tbody>'
+    +'</table>'
+    +'</div>'
+    +'</div>'
+    +'<div id="cxc-sub-cobr" style="display:none">'
+    +'<div class="admin-table-wrap" style="margin-bottom:14px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--green)">'
+    +'<span class="ath-title">✅ Créditos cobrados</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Se conservan indefinidamente · reversables</span>'
+    +'</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border)"><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Filtrar</span><input type="text" id="cxcc-f-cliente" placeholder="Cliente" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:150px"><input type="text" id="cxcc-f-factura" placeholder="N° factura" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:120px"><input type="date" id="cxcc-f-fecha" onchange="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="document.getElementById(\'cxcc-f-cliente\').value=\'\';document.getElementById(\'cxcc-f-factura\').value=\'\';document.getElementById(\'cxcc-f-fecha\').value=\'\';renderCXCTab()" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;font-weight:700">Limpiar</button><span style="flex:1"></span><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Informe</span><select id="cxcc-r-tipo" onchange="cxcOnTipoInforme(\'cobr\')" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><option value="">Todos</option><option value="cliente">Por cliente</option><option value="factura">Por factura</option><option value="fecha">Por fecha</option></select><input type="text" id="cxcc-r-valor" placeholder="Valor" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:130px"><input type="date" id="cxcc-r-fecha" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="cxcInformePDF(\'cobr\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(227,24,55,.3);background:rgba(227,24,55,.1);color:var(--red);cursor:pointer;font-weight:800">📄 PDF</button><button onclick="cxcInformeExcel(\'cobr\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(26,158,92,.3);background:var(--green-dim);color:var(--green);cursor:pointer;font-weight:800">📊 Excel</button></div>'
+    +'<table class="atbl" style="min-width:1050px">'
+    +'<thead><tr>'
+    +'<th>Colaborador</th><th>Fecha facturación</th><th>Factura</th><th>Cliente</th>'
+    +'<th>Subtotal s/IVA</th><th>IVA</th><th>Total c/IVA</th><th>Fecha de cobro</th><th>$</th><th>Acción</th>'
+    +'</tr></thead>'
+    +'<tbody id="cxc-cobr-body"></tbody>'
+    +'</table>'
+    +'</div>'
+    +'</div>';
+}
+
+// Monta la pestaña en el contenedor indicado (admin o usuario).
+// Se monta UNA sola vez por contenedor para no duplicar IDs.
+function initCXCTab(rootId){
+  var id=rootId||'cxcAdminRoot';
+  var root=document.getElementById(id);
+  if(!root) return;
+  if(root.getAttribute('data-cxc-mounted')!=='1'){
+    root.innerHTML=_cxcHTML();
+    root.setAttribute('data-cxc-mounted','1');
+  }
+  window._cxcRootId=id;
+  var nota=root.querySelector('#cxc-readonly-note');
+  if(nota) nota.style.display=cxcPuedeEditar()?'none':'block';
+  cxcSwitchSub(CXC_SUBTAB, root.querySelector('.cxc-subtab[data-sub="'+CXC_SUBTAB+'"]'));
+}
+
+
+// Filtros
+function _cxcFiltro(lista, pref){
+  var r=_cxcRoot();
+  var cli=(r.querySelector('#'+pref+'-f-cliente')||{}).value||'';
+  var fac=(r.querySelector('#'+pref+'-f-factura')||{}).value||'';
+  var fec=(r.querySelector('#'+pref+'-f-fecha')||{}).value||'';
+  return lista.filter(function(g){
+    if(cli && String(g.cliente).toLowerCase().indexOf(cli.toLowerCase())<0) return false;
+    if(fac && String(g.factura).toLowerCase().indexOf(fac.toLowerCase())<0) return false;
+    if(fec && g.fechaFactStr!==fec) return false;
+    return true;
+  });
+}
+
+function renderCXCTab(){
+  try{
+    if(CXC_SUBTAB==='pend'){ renderCXCPendientes(); renderCXCSaldosCliente(); }
+    else { renderCXCCobradas(); }
+  }catch(e){ console.error('renderCXCTab:',e); }
+}
+
+// ── TABLA 1: Créditos pendientes de cobro ──
+function renderCXCPendientes(){
+  var body=_cxcRoot().querySelector('#cxc-pend-body');
+  if(!body) return;
+  var editable=cxcPuedeEditar();
+  var lista=_cxcFiltro(cxcListaPendientes(),'cxcp');
+  if(!lista.length){
+    body.innerHTML='<tr><td colspan="12" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
+    return;
+  }
+  var html='';
+  lista.forEach(function(g){
+    var vencido=g.dias!==null&&g.dias<0;
+    var urgente=g.dias!==null&&g.dias<=7&&g.dias>=0;
+    var sk=_cxcSafe(g.key);
+    var dis=editable?'':' disabled';
+    html+='<tr style="'+(vencido?'background:rgba(227,24,55,.06)':urgente?'background:rgba(217,119,6,.06)':'')+'">'
+      +'<td style="font-size:11px;color:var(--text3)">'+escHtml(g.uname)+'</td>'
+      +'<td style="white-space:nowrap">'
+        +(editable&&!g.tieneFechaPropia
+          ? '<input type="date" value="'+(g.fechaFactStr||'')+'" onchange="cxcEditFechaFact(\''+g.key+'\',this.value)" style="font-size:11px;padding:2px 4px;border:1.5px solid var(--border2);border-radius:5px">'
+          : '<span style="font-size:11px">'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</span>')
+      +'</td>'
+      +'<td style="font-weight:800;font-family:var(--cond)">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
+        +(g.ventas.length>1?'<span style="font-size:9px;color:var(--text3);font-weight:700"> ('+g.ventas.length+' líneas)</span>':'')+'</td>'
+      +'<td>'+escHtml(g.cliente)+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.subtotal,_cxcUsdDe(g,'sub'))+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.iva,_cxcUsdDe(g,'iva'))+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800;color:var(--green)">'+cxcFmtMonto(g,g.total,_cxcUsdDe(g,'tot'))+'</td>'
+      +'<td style="white-space:nowrap;font-size:11px">'+(g.venc?formatDate(g.venc):'—')+'</td>'
+      +'<td style="color:'+(vencido?'var(--red)':urgente?'var(--amber)':'var(--green)')+';font-weight:700;font-size:11px">'
+        +(g.dias===null?'—':g.dias<0?'⚠ '+Math.abs(g.dias)+'d vencido':g.dias+'d restantes')+'</td>'
+      +'<td style="text-align:center;white-space:nowrap">'
+        +'<input type="text" id="cxc-ab-'+sk+'" placeholder="Monto" oninput="fmtInp(this)"'+dis
+          +' style="width:78px;font-size:11px;padding:3px 5px;border:1.5px solid var(--border2);border-radius:5px;margin-right:3px">'
+        +'<button onclick="cxcAplicarAbono(\''+g.key+'\')"'+dis
+          +' style="padding:3px 8px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+'">+</button>'
+        +(g.abonado>0?'<div style="font-size:10px;color:var(--green);font-weight:800;margin-top:2px">'+cxcFmtMonto(g,g.abonado,0)+'</div>':'')
+      +'</td>'
+      +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:'+(g.saldo<=0?'var(--green)':'var(--red)')+'">'
+        +cxcFmtMonto(g,g.saldo,0)+'</td>'
+      +'<td style="text-align:center;white-space:nowrap">'
+        +(g.hayUsd?'<label style="display:block;font-size:9px;font-weight:700;color:var(--text3);margin-bottom:3px;cursor:pointer">'
+          +'<input type="checkbox" '+(g.verUsd?'checked':'')+dis+' onchange="cxcToggleUsd(\''+g.key+'\',this.checked)"> $ USD</label>':'')
+        +'<button onclick="cxcMarcarCobrado(\''+g.key+'\')"'+dis
+          +' style="padding:4px 9px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+';white-space:nowrap">✓ Pago recibido</button>'
+      +'</td></tr>';
+  });
+  var tSub=lista.reduce(function(s,g){return s+g.subtotal;},0);
+  var tIva=lista.reduce(function(s,g){return s+g.iva;},0);
+  var tTot=lista.reduce(function(s,g){return s+g.total;},0);
+  var tSal=lista.reduce(function(s,g){return s+g.saldo;},0);
+  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
+    +'<td colspan="4" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL PENDIENTE ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--amber)">'+fmt(tSub)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:13px">'+fmt(tIva)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--red)">'+fmt(tTot)+'</td>'
+    +'<td colspan="3"></td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:15px;color:var(--red)">'+fmt(tSal)+'</td>'
+    +'<td></td></tr>';
+  body.innerHTML=html;
+}
+
+// ── TABLA 2: Créditos cobrados ──
+function renderCXCCobradas(){
+  var body=_cxcRoot().querySelector('#cxc-cobr-body');
+  if(!body) return;
+  var editable=cxcPuedeEditar();
+  var lista=_cxcFiltro(cxcListaCobradas(),'cxcc');
+  if(!lista.length){
+    body.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:16px">Sin créditos cobrados</td></tr>';
+    return;
+  }
+  var html='';
+  lista.forEach(function(g){
+    var dis=editable?'':' disabled';
+    var fPago=null;
+    g.ventas.forEach(function(v){ var f=_cxcPagadoFecha(v); if(f){ var d=new Date(f); if(!fPago||d>fPago) fPago=d; } });
+    html+='<tr style="background:rgba(22,163,74,.05)">'
+      +'<td style="font-size:11px;color:var(--text3)">'+escHtml(g.uname)+'</td>'
+      +'<td style="font-size:11px;white-space:nowrap">'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
+      +'<td style="font-weight:800;font-family:var(--cond)">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
+        +(g.ventas.length>1?'<span style="font-size:9px;color:var(--text3);font-weight:700"> ('+g.ventas.length+' líneas)</span>':'')+'</td>'
+      +'<td>'+escHtml(g.cliente)+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.subtotal,_cxcUsdDe(g,'sub'))+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.iva,_cxcUsdDe(g,'iva'))+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800;color:var(--green)">'+cxcFmtMonto(g,g.total,_cxcUsdDe(g,'tot'))+'</td>'
+      +'<td style="font-size:11px;white-space:nowrap">'+(fPago?formatDate(fPago):'—')+'</td>'
+      +'<td style="text-align:center">'
+        +(g.hayUsd?'<label style="font-size:9px;font-weight:700;color:var(--text3);cursor:pointer">'
+          +'<input type="checkbox" '+(g.verUsd?'checked':'')+dis+' onchange="cxcToggleUsd(\''+g.key+'\',this.checked)"> $ USD</label>':'')
+      +'</td>'
+      +'<td style="text-align:center;white-space:nowrap">'
+        +'<button onclick="cxcReversar(\''+g.key+'\')"'+dis
+          +' style="padding:3px 8px;border-radius:6px;background:var(--amber-dim,rgba(217,119,6,.12));border:1px solid rgba(217,119,6,.3);color:var(--amber);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+';margin-right:4px">↩ Reversar</button>'
+        +'<button onclick="cxcBorrar(\''+g.key+'\')"'+dis
+          +' style="padding:3px 8px;border-radius:6px;background:rgba(227,24,55,.1);border:1px solid rgba(227,24,55,.3);color:var(--red);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+'">🗑</button>'
+      +'</td></tr>';
+  });
+  var tSub=lista.reduce(function(s,g){return s+g.subtotal;},0);
+  var tIva=lista.reduce(function(s,g){return s+g.iva;},0);
+  var tTot=lista.reduce(function(s,g){return s+g.total;},0);
+  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--green)">'
+    +'<td colspan="4" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL COBRADO ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px">'+fmt(tSub)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:13px">'+fmt(tIva)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--green)">'+fmt(tTot)+'</td>'
+    +'<td colspan="3"></td></tr>';
+  body.innerHTML=html;
+}
+
+// ── TABLA 3: Saldos por cliente (sin columnas de abono) ──
+function renderCXCSaldosCliente(){
+  var body=_cxcRoot().querySelector('#cxc-saldos-body');
+  if(!body) return;
+  var porCliente={};
+  cxcListaPendientes().forEach(function(g){
+    var key=String(g.cliente).toLowerCase();
+    if(!porCliente[key]) porCliente[key]={nombre:g.cliente,facturas:0,subtotal:0,total:0,abonado:0};
+    porCliente[key].facturas++;
+    porCliente[key].subtotal+=g.subtotal;
+    porCliente[key].total+=g.total;
+    porCliente[key].abonado+=g.abonado;
+  });
+  var lista=Object.keys(porCliente).map(function(k){
+    var o=porCliente[k]; o.saldo=o.total-o.abonado; return o;
+  }).sort(function(a,b){ return b.saldo-a.saldo; });
+  if(!lista.length){
+    body.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:16px">Sin saldos pendientes por cliente</td></tr>';
+    return;
+  }
+  var html=lista.map(function(o){
+    return '<tr'+(o.saldo<=0?' style="background:rgba(22,163,74,.06)"':'')+'>'
+      +'<td><strong>'+escHtml(o.nombre)+'</strong></td>'
+      +'<td style="text-align:center">'+o.facturas+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800">'+fmt(o.subtotal)+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:800">'+fmt(o.total)+'</td>'
+      +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:'+(o.saldo<=0?'var(--green)':'var(--red)')+'">'+fmt(o.saldo)+'</td>'
+      +'</tr>';
+  }).join('');
+  var tSub=lista.reduce(function(s,o){return s+o.subtotal;},0);
+  var tTot=lista.reduce(function(s,o){return s+o.total;},0);
+  var tSal=lista.reduce(function(s,o){return s+o.saldo;},0);
+  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--red)">'
+    +'<td colspan="2" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL POR COBRAR ('+lista.length+' cliente'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px">'+fmt(tSub)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px">'+fmt(tTot)+'</td>'
+    +'<td style="font-family:var(--cond);font-weight:900;font-size:16px;color:var(--red)">'+fmt(tSal)+'</td></tr>';
+  body.innerHTML=html;
+}
+
+// ══════════════════════════════════════════════
+//  ACCIONES — solo superadmin
+// ══════════════════════════════════════════════
+function _cxcGuard(){
+  if(!cxcPuedeEditar()){ toast('Solo el superadmin puede modificar Cuentas por cobrar'); return false; }
+  return true;
+}
+function _cxcGrupo(key){
+  var g=cxcBuildGrupos();
+  return g[key]||null;
+}
+
+// Editar fecha de facturación (solo grupos SIN fecha propia — ventas viejas)
+function cxcEditFechaFact(key, val){
+  if(!_cxcGuard()) return;
+  _cxcSetOv(key,{fechaFact:val||''});
+  toast('✓ Fecha de facturación actualizada');
+  renderCXCTab();
+}
+
+// Check de dólares — se guarda y define cómo se ve y cómo se exporta
+function cxcToggleUsd(key, on){
+  if(!_cxcGuard()) return;
+  _cxcSetOv(key,{verUsd:!!on});
+  renderCXCTab();
+}
+
+// Abono parcial por factura
+function cxcAplicarAbono(key){
+  if(!_cxcGuard()) return;
+  var el=_cxcRoot().querySelector('#cxc-ab-'+_cxcSafe(key));
+  var monto=parseMon(el?el.value:'')||0;
+  if(monto<=0){ toast('Ingrese el monto del abono'); if(el) el.focus(); return; }
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(!confirm('¿Aplicar abono de '+fmt(monto)+' a la factura '+(g.factura||'(sin número)')+' de '+g.cliente+'?')) return;
+  var lista=_cxcAbonos(key).slice();
+  lista.push({id:'ab'+Date.now(), monto:monto, fecha:new Date().toISOString(),
+              by:(SESSION.nombre||SESSION.id)});
+  _cxcSetOv(key,{abonos:lista});
+  if(el) el.value='';
+  toast('✓ Abono de '+fmt(monto)+' aplicado');
+  renderCXCTab();
+}
+
+// Marcar cobrado: marca TODAS las ventas del grupo
+function cxcMarcarCobrado(key){
+  if(!_cxcGuard()) return;
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(!confirm('¿Confirmar pago recibido de la factura '+(g.factura||'(sin número)')+' de '+g.cliente+'?\n\n'
+    +g.ventas.length+' línea(s) · '+fmt(g.total)+'\n\nPasará a "Créditos cobrados".')) return;
+  var ahora=new Date().toISOString();
+  g.ventas.forEach(function(v){
+    var vd=getVentasData(v.uid)||{};
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(x){
+        if(x.id!==v.id) return;
+        x.cxcPagado=true; x.cxcPagadoDate=ahora;
+        _saveSingleVenta(v.uid, x, mk);
+      });
+    });
+    window._ventasCache[v.uid]=vd;
+  });
+  toast('✓ Factura marcada como cobrada');
+  renderCXCTab();
+  try{ renderAdminVentas(); }catch(e){}
+}
+
+// Reversar: vuelve a pendientes
+function cxcReversar(key){
+  if(!_cxcGuard()) return;
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(!confirm('¿Reversar el cobro de la factura '+(g.factura||'(sin número)')+' de '+g.cliente+'?\n\n'
+    +'Volverá a "Créditos pendientes de cobro".')) return;
+  g.ventas.forEach(function(v){
+    var vd=getVentasData(v.uid)||{};
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(x){
+        if(x.id!==v.id) return;
+        x.cxcPagado=false; x.cxcPagadoDate=null;
+        _saveSingleVenta(v.uid, x, mk);
+      });
+    });
+    window._ventasCache[v.uid]=vd;
+  });
+  toast('↩ Cobro reversado — vuelve a pendientes');
+  renderCXCTab();
+  try{ renderAdminVentas(); }catch(e){}
+}
+
+// Borrar: va a la papelera (recuperable). NO elimina la venta.
+function cxcBorrar(key){
+  if(!_cxcGuard()) return;
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(!confirm('¿Enviar a la papelera el crédito cobrado de la factura '
+    +(g.factura||'(sin número)')+' de '+g.cliente+'?\n\n'
+    +'La venta NO se elimina: solo deja de aparecer en Cuentas por cobrar.\n'
+    +'Podrás restaurarlo desde la Papelera.')) return;
+  addToTrash({
+    type:'cxc_cobrado', uid:g.uid, uNombre:g.uname,
+    data:{ key:key, factura:g.factura, cliente:g.cliente,
+           subtotal:g.subtotal, iva:g.iva, total:g.total,
+           ventaIds:g.ventas.map(function(v){return v.id;}) }
+  });
+  _cxcSetOv(key,{borrado:true});
+  toast('🗑 Enviado a la papelera — restaurable');
+  renderCXCTab();
+}
+
+// Restaurar desde papelera
+function cxcRestaurarDesdeTrash(key){
+  _cxcSetOv(key,{borrado:false});
+  try{ renderCXCTab(); }catch(e){}
+}
+
+// ══════════════════════════════════════════════
+//  INFORMES — PDF (impresión del navegador) y Excel
+//  Filtro por cliente, fecha o factura (uno a la vez).
+//  Montos en colones, salvo las facturas con el check de dólares marcado.
+// ══════════════════════════════════════════════
+function _cxcFiltroInforme(lista, tipo, valor){
+  if(!tipo||!valor) return lista;
+  return lista.filter(function(g){
+    if(tipo==='cliente') return String(g.cliente).toLowerCase().indexOf(String(valor).toLowerCase())>=0;
+    if(tipo==='factura') return String(g.factura).toLowerCase().indexOf(String(valor).toLowerCase())>=0;
+    if(tipo==='fecha')   return g.fechaFactStr===valor;
+    return true;
+  });
+}
+function _cxcOrdenFecha(lista){
+  return lista.slice().sort(function(a,b){
+    var da=a.fechaFactDate||new Date(9999,0), db=b.fechaFactDate||new Date(9999,0);
+    return da-db; // de más viejas a más nuevas
+  });
+}
+function _cxcMonto(g,cual){
+  if(g.verUsd){
+    var u=_cxcUsdDe(g,cual);
+    return '$'+u.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+  return fmt(cual==='sub'?g.subtotal:cual==='iva'?g.iva:g.total);
+}
+
+function _cxcDatosInforme(which){
+  var pref=(which==='cobr')?'cxcc':'cxcp';
+  var r=_cxcRoot();
+  var tipo=(r.querySelector('#'+pref+'-r-tipo')||{}).value||'';
+  var valor='';
+  if(tipo==='fecha') valor=(r.querySelector('#'+pref+'-r-fecha')||{}).value||'';
+  else if(tipo)      valor=(r.querySelector('#'+pref+'-r-valor')||{}).value||'';
+  var base=(which==='cobr')?cxcListaCobradas():cxcListaPendientes();
+  return { filas:_cxcOrdenFecha(_cxcFiltroInforme(base,tipo,valor)), tipo:tipo, valor:valor };
+}
+
+function cxcOnTipoInforme(which){
+  var pref=(which==='cobr')?'cxcc':'cxcp';
+  var r=_cxcRoot();
+  var t=(r.querySelector('#'+pref+'-r-tipo')||{}).value||'';
+  var f=r.querySelector('#'+pref+'-r-fecha');
+  var v=r.querySelector('#'+pref+'-r-valor');
+  if(f) f.style.display=(t==='fecha')?'':'none';
+  if(v) v.style.display=(t&&t!=='fecha')?'':'none';
+  if(v) v.placeholder=(t==='cliente')?'Nombre del cliente':'N° de factura';
+}
+
+function cxcInformePDF(which){
+  var d=_cxcDatosInforme(which);
+  if(!d.filas.length){ toast('No hay datos con ese filtro'); return; }
+  var titulo=(which==='cobr')?'Créditos cobrados':'Créditos pendientes de cobro';
+  var hoy=new Date();
+  var emitida=hoy.toLocaleDateString('es-CR',{day:'2-digit',month:'long',year:'numeric'});
+  var subFiltro=d.tipo?('Filtrado por '+d.tipo+': '+d.valor):'Todos los registros';
+  var filas='', tSub=0, tIva=0, tTot=0;
+  d.filas.forEach(function(g){
+    var venc=g.venc?formatDate(g.venc):'—';
+    var diasVenc=(g.dias!==null&&g.dias<0)?Math.abs(g.dias):0;
+    if(!g.verUsd){ tSub+=g.subtotal; tIva+=g.iva; tTot+=g.total; }
+    filas+='<tr>'
+      +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
+      +'<td>'+(g.factura||'—')+'</td>'
+      +'<td>'+escHtml(g.cliente)+'</td>'
+      +'<td class="n">'+_cxcMonto(g,'sub')+'</td>'
+      +'<td class="n">'+_cxcMonto(g,'iva')+'</td>'
+      +'<td class="n">'+_cxcMonto(g,'tot')+'</td>'
+      +'<td>'+venc+'</td>'
+      +'<td class="c">'+(diasVenc>0?'<span class="vz">'+diasVenc+'</span>':'—')+'</td>'
+      +'</tr>';
+  });
+  var html='<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+titulo+'</title>'
+   +'<style>'
+   +'@page{size:letter portrait;margin:14mm}'
+   +'*{box-sizing:border-box}'
+   +'body{font-family:Arial,Helvetica,sans-serif;color:#1c1c1c;margin:0;font-size:11px}'
+   +'.hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #E31837;padding-bottom:10px;margin-bottom:4px}'
+   +'.lg{font-size:30px;font-weight:900;letter-spacing:-1px}.lg span{color:#E31837}'
+   +'.ei{text-align:right;font-size:10px;color:#58595B;line-height:1.5}'
+   +'h1{font-size:16px;margin:12px 0 2px}'
+   +'.sb{font-size:10px;color:#777;margin-bottom:10px}'
+   +'table{width:100%;border-collapse:collapse;margin-top:6px}'
+   +'th{background:#58595B;color:#fff;font-size:9.5px;text-transform:uppercase;padding:6px 5px;text-align:left;letter-spacing:.3px}'
+   +'td{padding:5px;border-bottom:1px solid #e6e6e6;font-size:10px}'
+   +'td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}'
+   +'td.c{text-align:center}'
+   +'tr:nth-child(even) td{background:#fafafa}'
+   +'.vz{color:#E31837;font-weight:900}'
+   +'tfoot td{background:#f0f0f0;font-weight:900;border-top:2px solid #58595B;font-size:11px}'
+   +'.ft{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#999;display:flex;justify-content:space-between}'
+   +'.noprint{margin:10px 0;text-align:center}'
+   +'@media print{.noprint{display:none}}'
+   +'</style></head><body>'
+   +'<div class="noprint"><button onclick="window.print()" style="background:#E31837;color:#fff;border:none;border-radius:6px;padding:9px 20px;font-size:13px;font-weight:700;cursor:pointer">🖨 Imprimir / Guardar PDF</button></div>'
+   +'<div class="hd"><div><div class="lg">CON<span>C</span>RE</div></div>'
+   +'<div class="ei"><strong>'+EMPRESA.nombre+'</strong><br>Céd. jurídica '+EMPRESA.cedula
+   +'<br>'+EMPRESA.telefono+'<br>'+EMPRESA.correo+'</div></div>'
+   +'<h1>'+titulo+'</h1>'
+   +'<div class="sb">'+subFiltro+' · Emitido: '+emitida+'</div>'
+   +'<table><thead><tr><th>Fecha facturación</th><th>N° factura</th><th>Cliente</th>'
+   +'<th style="text-align:right">Subtotal s/IVA</th><th style="text-align:right">IVA</th>'
+   +'<th style="text-align:right">Total c/IVA</th><th>Vencimiento</th><th style="text-align:center">Días vencidos</th></tr></thead>'
+   +'<tbody>'+filas+'</tbody>'
+   +'<tfoot><tr><td colspan="3">TOTAL ('+d.filas.length+' factura'+(d.filas.length!==1?'s':'')+')</td>'
+   +'<td class="n">'+fmt(tSub)+'</td><td class="n">'+fmt(tIva)+'</td><td class="n">'+fmt(tTot)+'</td>'
+   +'<td colspan="2"></td></tr></tfoot></table>'
+   +'<div class="ft"><span>'+EMPRESA.nombre+' · Documento oficial</span><span>Sistema CONCRE · '+emitida+'</span></div>'
+   +'</body></html>';
+  var w=window.open('','_blank','width=900,height=1000,scrollbars=yes');
+  if(!w){ toast('Permita las ventanas emergentes para generar el informe'); return; }
+  w.document.write(html); w.document.close();
+}
+
+function cxcInformeExcel(which){
+  var d=_cxcDatosInforme(which);
+  if(!d.filas.length){ toast('No hay datos con ese filtro'); return; }
+  var titulo=(which==='cobr')?'Creditos cobrados':'Creditos pendientes de cobro';
+  var tSub=0,tIva=0,tTot=0;
+  var html='<table border="1">'
+    +'<tr><td colspan="8" style="font-size:16px;font-weight:bold">'+EMPRESA.nombre+' — '+titulo+'</td></tr>'
+    +'<tr><td colspan="8">Céd. jurídica '+EMPRESA.cedula+' · '+EMPRESA.telefono+' · '+EMPRESA.correo+'</td></tr>'
+    +'<tr><td colspan="8">'+(d.tipo?('Filtrado por '+d.tipo+': '+d.valor):'Todos los registros')+'</td></tr>'
+    +'<tr></tr>'
+    +'<tr style="background:#E31837;color:#fff;font-weight:bold">'
+    +'<th>Fecha facturación</th><th>N° factura</th><th>Cliente</th><th>Subtotal s/IVA</th>'
+    +'<th>IVA</th><th>Total c/IVA</th><th>Vencimiento</th><th>Días vencidos</th></tr>';
+  d.filas.forEach(function(g){
+    var diasVenc=(g.dias!==null&&g.dias<0)?Math.abs(g.dias):0;
+    if(!g.verUsd){ tSub+=g.subtotal; tIva+=g.iva; tTot+=g.total; }
+    html+='<tr>'
+      +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
+      +'<td>'+(g.factura||'—')+'</td>'
+      +'<td>'+escHtml(g.cliente)+'</td>'
+      +'<td>'+_cxcMonto(g,'sub')+'</td>'
+      +'<td>'+_cxcMonto(g,'iva')+'</td>'
+      +'<td>'+_cxcMonto(g,'tot')+'</td>'
+      +'<td>'+(g.venc?formatDate(g.venc):'—')+'</td>'
+      +'<td'+(diasVenc>0?' style="color:#E31837;font-weight:bold"':'')+'>'+(diasVenc>0?diasVenc:'—')+'</td>'
+      +'</tr>';
+  });
+  html+='<tr style="background:#f0f0f0;font-weight:bold"><td colspan="3">TOTAL ('+d.filas.length+')</td>'
+    +'<td>'+fmt(tSub)+'</td><td>'+fmt(tIva)+'</td><td>'+fmt(tTot)+'</td><td colspan="2"></td></tr></table>';
+  var blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-excel'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download=titulo.replace(/ /g,'_')+'_'+new Date().toISOString().slice(0,10)+'.xls';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1500);
+  toast('✓ Informe exportado');
+}
 
 // ══════════════════════════════════════════════
 //  SALDOS POR CLIENTE — cuentas por cobrar con abonos
@@ -14469,6 +15205,9 @@ function openEditAdminOwnVenta(vid){
   if(_tpEl) _tpEl.value=found.tipoPago||'CONTADO';
   var _plzEl=document.getElementById('avf-plazo');
   if(_plzEl) _plzEl.value=found.plazoCredito||30;
+  var _affEl=document.getElementById('avf-fecha-fact');
+  if(_affEl) _affEl.value=found.fechaFact||'';
+  try{ onAdminTipoPagoChange(); }catch(e){}
   // Restaurar también el IVA de la venta
   var _ivaEl=document.getElementById('avf-iva');
   if(_ivaEl) _ivaEl.value=(found.ivaPct===0||!found.ivaPct)?'no':(found.ivaPct===13?'13':String(found.ivaPct));
@@ -14654,6 +15393,19 @@ function saveAdminVenta(){
       return;
     }
   }
+  // Crédito: plazo obligatorio (>0) y fecha de facturación obligatoria
+  var _errCredA=_validarCredito(
+    document.getElementById('avf-tipo-pago')?.value,
+    document.getElementById('avf-plazo')?.value,
+    document.getElementById('avf-fecha-fact')?.value);
+  if(_errCredA){
+    toast('⚠ '+_errCredA);
+    var _fA=document.getElementById(
+      (!document.getElementById('avf-plazo')?.value||parseInt(document.getElementById('avf-plazo').value)<=0)
+      ?'avf-plazo':'avf-fecha-fact');
+    if(_fA){ _fA.focus(); _fA.style.border='2px solid var(--red)'; setTimeout(function(){_fA.style.border='';},2500); }
+    return;
+  }
   var isUsd=document.getElementById('avf-is-usd')?.checked||false;
   var ivaSel=document.getElementById('avf-iva')?.value;
   var ivaPct=ivaSel==='13'?13:0;
@@ -14682,9 +15434,13 @@ function saveAdminVenta(){
     ivaAmt:ivaAmt,
     total:sub+ivaAmt,
     tipoPago:(document.getElementById('avf-tipo-pago')?.value||'CONTADO'),
+    // FIX: 'plazoCredito' estaba declarado DOS veces en este objeto y la
+    // segunda (plazoCredito:0) pisaba a la primera, por lo que el formulario
+    // de admin/superadmin SIEMPRE guardaba 0 y descartaba el plazo tecleado.
     plazoCredito:(document.getElementById('avf-tipo-pago')?.value==='CREDITO'
-      ?(parseInt(document.getElementById('avf-plazo')?.value)||30):0),
-    plazoCredito:0,
+      ?(parseInt(document.getElementById('avf-plazo')?.value)||0):0),
+    fechaFact:(document.getElementById('avf-tipo-pago')?.value==='CREDITO'
+      ?(document.getElementById('avf-fecha-fact')?.value||''):''),
     isUsd:isUsd,usd:usdAmt,tcUsed:tcUsed,
     tieneInsumos:(document.getElementById('avf-ins-chk')?.checked||false),
     insDesc:(document.getElementById('avf-ins-chk')?.checked?(document.getElementById('avf-ins-desc')?.value.trim()||''):''),
@@ -18029,6 +18785,7 @@ var USER_TAB_DEFS = [
   {id:'inventario',  label:'Inventario'},
   {id:'fibraplus',   label:'FibraPlus54'},
   {id:'radar',       label:'Radar Comercial'},
+  {id:'cxc',         label:'Cuentas por cobrar (solo lectura)'},
 ];
 var ADMIN_TAB_DEFS = [
   {id:'overview',       label:'Resumen'},
@@ -18047,6 +18804,7 @@ var ADMIN_TAB_DEFS = [
   {id:'inventario',     label:'Inventario'},
   {id:'fibraplus',      label:'FibraPlus54'},
   {id:'radar',          label:'Radar Comercial'},
+  {id:'cxc',            label:'Cuentas por cobrar (solo lectura)'},
 ];
 
 function getUserTabPerms(uid){
@@ -18096,7 +18854,8 @@ function renderUserTabPermsRow(userId){
     +'<div style="display:flex;flex-wrap:wrap;gap:6px">'
     +tabs.map(function(t){
       // 'radar' para usuarios normales (no admin) es opt-in: requiere true explícito, oculta por defecto
-      var esRadarOptIn=(t.id==='radar'&&!targetIsAdmin);
+      // 'cxc' es opt-in para todos los roles; 'radar' solo para usuarios normales
+      var esRadarOptIn=(t.id==='radar'&&!targetIsAdmin)||t.id==='cxc';
       var allowed=esRadarOptIn?(perms[t.id]===true):(perms[t.id]!==false);
       var disabled=targetIsAdmin&&!isSA; // only superadmin can restrict admins
       return '<label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:'+(disabled?'not-allowed':'pointer')+';opacity:'+(disabled?'0.5':'1')+'">'
@@ -18117,7 +18876,7 @@ function onTabPermChange(chk){
   var users=getUsers();
   var targetUser=users.find(function(x){return x.id===uid;})||{};
   var targetIsAdmin=targetUser.rol==='admin'||targetUser.rol==='superadmin';
-  var esOptIn=(tab==='radar'&&!targetIsAdmin); // 'radar' para usuarios normales requiere true explícito, no basta con ausencia de 'false'
+  var esOptIn=(tab==='radar'&&!targetIsAdmin)||tab==='cxc'; // requieren true explícito; no basta con ausencia de 'false'
   if(esOptIn){
     if(allowed){ perms[tab]=true; }
     else { delete perms[tab]; }
@@ -18293,7 +19052,7 @@ function addToTrash(reg){
 
   // Notify admins/superadmins
   var admins=getUsers().filter(function(u){return u.rol==='admin'||u.rol==='superadmin';});
-  var typeName={'venta':'venta','gasto':'gasto de proyecto','fondos':'gasto de fondos','cliente_crm':'cliente CRM','inv_item':'ítem de inventario'}[reg.type]||reg.type;
+  var typeName={'venta':'venta','gasto':'gasto de proyecto','fondos':'gasto de fondos','cliente_crm':'cliente CRM','inv_item':'ítem de inventario','cxc_cobrado':'crédito cobrado'}[reg.type]||reg.type;
   var msg='🗑 '+reg.uNombre+' eliminó un registro de '+typeName;
   if(reg.data&&reg.data.nombre) msg+=' ('+reg.data.nombre+')';
   else if(reg.data&&reg.data.proyecto) msg+=' ('+reg.data.proyecto+')';
@@ -18336,6 +19095,14 @@ async function restoreFromTrash(trashId, restoreToUser){
         pd.proyectos.push(lp.proj);
         saveLiqPeriod(lp.subId,lp.periodKey,pd);
       }
+    } else if(item.type==='cxc_cobrado'){
+      // Restaurar crédito cobrado — vuelve a verse en Cuentas por cobrar.
+      // La venta nunca se eliminó: solo se había ocultado de esa pestaña.
+      try{ cxcRestaurarDesdeTrash(item.data.key); }catch(e){ console.error('restaurar cxc:',e); }
+      setTrash(trash.filter(function(t){return t.id!==trashId;}));
+      renderTrashPanel();
+      toast('✅ Crédito de la factura '+(item.data.factura||'(sin número)')+' restaurado');
+      return;
     } else if(item.type==='inv_item'){
       // Restaurar ítem de inventario — reactivar en Supabase
       var invItem=item.data;
@@ -18426,7 +19193,7 @@ function renderTrashPanel(){
     el.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3)">🗑 Papelera vacía — sin registros pendientes</div>';
     return;
   }
-  var TYPE_LABELS={'venta':'Venta','gasto':'Gasto Proyecto','fondos':'Fondos','cliente_crm':'Cliente CRM','inv_item':'Inv/Activo'};
+  var TYPE_LABELS={'venta':'Venta','gasto':'Gasto Proyecto','fondos':'Fondos','cliente_crm':'Cliente CRM','inv_item':'Inv/Activo','cxc_cobrado':'Crédito cobrado'};
   el.innerHTML='<table class="atbl" style="min-width:800px"><thead><tr>'
     +'<th>Fecha borrado</th><th>Usuario</th><th>Tipo</th><th>Registro</th>'
     +'<th>Estado</th><th>Acciones</th></tr></thead><tbody>'
@@ -25614,6 +26381,10 @@ window.initCalcCONCRE=initCalcCONCRE;
         </div>
 
           <!-- ADMIN VENTAS SECTION -->
+
+          <div id="sec-cxc" class="admin-section">
+            <div id="cxcAdminRoot"></div>
+          </div>
           <div id="sec-ventas" class="admin-section">
           <div class="page-title">Ventas y Comisiones</div>
           <div class="page-sub">Control de ventas, comisiones y proyectos por colaborador</div>
@@ -25648,7 +26419,9 @@ window.initCalcCONCRE=initCalcCONCRE;
                 <div><span class="vf-label">Cantidad / M²</span><input type="number" class="vf-inp" id="avf-cantidad" min="0" step="any" oninput="calcAdminVentaPreview()"></div>
                 <div><span class="vf-label" id="avf-precio-label">Precio unitario ₡</span><input type="text" class="vf-inp" id="avf-precio" placeholder="0" oninput="fmtInp(this);calcAdminVentaPreview()"></div>
                 <div><span class="vf-label">IVA</span><select class="vf-sel" id="avf-iva" onchange="calcAdminVentaPreview()"><option value="no">Sin IVA</option><option value="13">13%</option></select></div>
-                <div><span class="vf-label">Pago</span><select class="vf-sel" id="avf-tipo-pago"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
+                <div><span class="vf-label">Pago</span><select class="vf-sel" id="avf-tipo-pago" onchange="onAdminTipoPagoChange()"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
+                <div id="avf-plazo-wrap" style="display:none"><span class="vf-label">Plazo crédito (días) *</span><input type="number" class="vf-inp" id="avf-plazo" min="1" placeholder="30" value="30"></div>
+                <div id="avf-fechafact-wrap" style="display:none"><span class="vf-label">Fecha de facturación *</span><input type="date" class="vf-inp" id="avf-fecha-fact"></div>
               </div>
               <!-- Moneda switch admin -->
               <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;padding:8px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
@@ -25858,35 +26631,8 @@ window.initCalcCONCRE=initCalcCONCRE;
             </table>
           </div>
 
-          <!-- CXC / Credits tracking -->
-          <div class="admin-table-wrap" style="margin-bottom:14px">
-            <div class="admin-table-hdr" style="border-bottom-color:var(--amber)">
-              <span class="ath-title">⏳ Créditos pendientes de cobro</span>
-              <span style="font-size:11px;color:rgba(255,255,255,.5)">Histórico completo — todos los meses y años · desaparecen 7 días después de marcar como pagado</span>
-            </div>
-            <table class="atbl" style="min-width:1000px">
-              <thead><tr>
-                <th>Colaborador</th><th>Fecha</th><th>Factura</th><th>Producto</th><th>Cliente</th>
-                <th>Subtotal s/IVA</th><th>Total con IVA</th><th>Vencimiento</th><th>Estado</th><th>Notas</th><th>Acción</th>
-              </tr></thead>
-              <tbody id="av-cxc-body"></tbody>
-            </table>
-          </div>
-
-          <!-- Saldos por cliente con abonos -->
-          <div class="admin-table-wrap" style="margin-bottom:14px">
-            <div class="admin-table-hdr" style="border-bottom-color:var(--red)">
-              <span class="ath-title">🧾 Saldos por cliente — cuentas por cobrar</span>
-              <span style="font-size:11px;color:rgba(255,255,255,.5)">Deuda histórica acumulada por cliente · aplique abonos parciales</span>
-            </div>
-            <table class="atbl" style="min-width:1000px">
-              <thead><tr>
-                <th>Cliente</th><th>Facturas</th><th>Subtotal s/IVA</th><th>Total con IVA</th>
-                <th>Abonos aplicados</th><th>Saldo pendiente</th><th style="text-align:center">Aplicar abono</th>
-              </tr></thead>
-              <tbody id="av-saldos-cliente-body"></tbody>
-            </table>
-          </div>
+          <!-- Las tablas de Créditos pendientes de cobro y Saldos por cliente
+               se movieron a la pestaña "Cuentas por cobrar" (sec-cxc). -->
 
           <!-- Full sales detail -->
           <div class="admin-table-wrap" style="overflow-x:auto;position:relative">
@@ -27035,8 +27781,12 @@ window.initCalcCONCRE=initCalcCONCRE;
               </select>
             </div>
             <div id="vf-plazo-wrap" style="display:none">
-              <span class="vf-label">Plazo crédito (días)</span>
+              <span class="vf-label">Plazo crédito (días) *</span>
               <input type="number" class="vf-inp" id="vf-plazo" min="1" placeholder="30" value="30">
+            </div>
+            <div id="vf-fechafact-wrap" style="display:none">
+              <span class="vf-label">Fecha de facturación *</span>
+              <input type="date" class="vf-inp" id="vf-fecha-fact">
             </div>
           </div>
 
@@ -27224,6 +27974,9 @@ window.initCalcCONCRE=initCalcCONCRE;
 <!-- GASTOS DE PROYECTO MODULE -->
 <div id="preciosUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
   <div id="preciosUserRoot" style="flex:1;padding:16px 20px;width:100%;max-width:100%;box-sizing:border-box"></div>
+</div>
+<div id="cxcUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
+  <div id="cxcUserRoot" style="flex:1;padding:16px 20px;width:100%;max-width:100%;box-sizing:border-box"></div>
 </div>
 <div id="proyectosUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
   <div id="proyectosUserRoot" style="flex:1;padding:16px 20px;width:100%;max-width:100%;box-sizing:border-box"></div>
