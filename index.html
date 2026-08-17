@@ -1939,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260817172934';
+var APP_BUILD='20260817174712';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -12726,6 +12726,144 @@ function cxcSwitchSub(which, btn){
   renderCXCTab();
 }
 
+
+// ══════════════════════════════════════════════
+//  AUTOCOMPLETADO — lista plegable + búsqueda por mejor coincidencia
+//  Usado en los filtros de tabla y de informe (cliente y N° de factura).
+//  No depende de applySearchableSelects: eso solo actúa sobre <select>.
+// ══════════════════════════════════════════════
+
+// Opciones disponibles según la subpestaña activa
+function _cxcOpciones(which, campo){
+  var base=(which==='cobr')?cxcListaCobradas():cxcListaPendientes();
+  var set={};
+  base.forEach(function(g){
+    var v=(campo==='factura')?g.factura:g.cliente;
+    v=String(v==null?'':v).trim();
+    if(v) set[v]=true;
+  });
+  return Object.keys(set).sort(function(a,b){
+    return a.localeCompare(b,'es',{numeric:true,sensitivity:'base'});
+  });
+}
+
+function _cxcNorm(s){
+  s=String(s==null?'':s).toLowerCase();
+  s=s.replace(/[áàä]/g,'a').replace(/[éèë]/g,'e').replace(/[íìï]/g,'i')
+     .replace(/[óòö]/g,'o').replace(/[úùü]/g,'u').replace(/ñ/g,'n');
+  return s.replace(/[^a-z0-9]/g,'');
+}
+
+// Puntaje: 3 = empieza igual, 2 = contiene, 1 = coincidencia difusa en orden
+function _cxcScore(opt, q){
+  if(!q) return 3;
+  var o=_cxcNorm(opt), n=_cxcNorm(q);
+  if(!n) return 3;
+  if(o.indexOf(n)===0) return 3;
+  if(o.indexOf(n)>=0) return 2;
+  var i=0;
+  for(var k=0;k<o.length&&i<n.length;k++){ if(o[k]===n[i]) i++; }
+  return i===n.length?1:0;
+}
+
+function _cxcFiltrarOpts(opts, q){
+  return opts.map(function(o){ return {o:o, s:_cxcScore(o,q)}; })
+    .filter(function(x){ return x.s>0; })
+    .sort(function(a,b){ return b.s-a.s || a.o.localeCompare(b.o,'es',{numeric:true}); })
+    .slice(0,60)
+    .map(function(x){ return x.o; });
+}
+
+// Conecta un input de texto con su lista desplegable.
+// getOpts() devuelve el arreglo de opciones vigente en cada apertura.
+function _cxcAutocomplete(input, getOpts, onPick){
+  if(!input || input.dataset.cxcAuto==='1') return;
+  input.dataset.cxcAuto='1';
+  input.setAttribute('autocomplete','off');
+
+  // Envoltura para posicionar el panel
+  var wrap=document.createElement('span');
+  wrap.dataset.cxcWrap='1';
+  wrap.style.cssText='position:relative;display:inline-block';
+  // Si el input venía oculto, el envoltorio nace oculto (caso del informe)
+  if(input.style.display==='none'){ wrap.style.display='none'; input.style.display=''; }
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+
+  var panel=document.createElement('div');
+  panel.style.cssText='position:absolute;z-index:9999;top:calc(100% + 2px);left:0;min-width:100%;'
+    +'max-height:230px;overflow-y:auto;background:var(--surface,#fff);border:1.5px solid var(--border2,#ccc);'
+    +'border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.18);display:none;font-size:12px';
+  wrap.appendChild(panel);
+
+  // Flecha para indicar que es desplegable
+  var caret=document.createElement('span');
+  caret.textContent='▾';
+  caret.style.cssText='position:absolute;right:7px;top:50%;transform:translateY(-50%);'
+    +'font-size:10px;color:var(--text3,#888);pointer-events:none';
+  wrap.appendChild(caret);
+  input.style.paddingRight='18px';
+
+  var idx=-1, items=[];
+
+  function pintar(){
+    var q=input.value||'';
+    items=_cxcFiltrarOpts(getOpts()||[], q);
+    if(!items.length){
+      panel.innerHTML='<div style="padding:8px 10px;color:var(--text3,#888)">Sin coincidencias</div>';
+      panel.style.display='block'; return;
+    }
+    panel.innerHTML=items.map(function(o,i){
+      return '<div data-i="'+i+'" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border,#eee);'
+        +(i===idx?'background:var(--surface2,#f0f0f0);':'')+'">'+escHtml(o)+'</div>';
+    }).join('');
+    panel.style.display='block';
+  }
+  function cerrar(){ panel.style.display='none'; idx=-1; }
+  function elegir(v){
+    input.value=v;
+    cerrar();
+    if(onPick) onPick(v);
+  }
+
+  input.addEventListener('focus', pintar);
+  input.addEventListener('click', function(e){ e.stopPropagation(); pintar(); });
+  input.addEventListener('input', function(){ idx=-1; pintar(); if(onPick) onPick(input.value); });
+  input.addEventListener('keydown', function(e){
+    if(panel.style.display==='none'){ if(e.key==='ArrowDown') pintar(); return; }
+    if(e.key==='ArrowDown'){ e.preventDefault(); idx=Math.min(idx+1, items.length-1); pintar(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); idx=Math.max(idx-1, 0); pintar(); }
+    else if(e.key==='Enter'){ if(idx>=0&&items[idx]){ e.preventDefault(); elegir(items[idx]); } else cerrar(); }
+    else if(e.key==='Escape'){ cerrar(); }
+  });
+  panel.addEventListener('mousedown', function(e){
+    var d=e.target.closest('[data-i]');
+    if(!d) return;
+    e.preventDefault();
+    elegir(items[parseInt(d.dataset.i)]);
+  });
+  document.addEventListener('click', function(e){
+    if(!wrap.contains(e.target)) cerrar();
+  });
+}
+
+// Conecta los cuatro filtros de tabla y los dos de informe
+function _cxcMontarAutocompletes(){
+  var r=_cxcRoot();
+  [['cxcp','pend'],['cxcc','cobr']].forEach(function(par){
+    var pref=par[0], which=par[1];
+    _cxcAutocomplete(r.querySelector('#'+pref+'-f-cliente'),
+      function(){ return _cxcOpciones(which,'cliente'); }, function(){ renderCXCTab(); });
+    _cxcAutocomplete(r.querySelector('#'+pref+'-f-factura'),
+      function(){ return _cxcOpciones(which,'factura'); }, function(){ renderCXCTab(); });
+    // Informe: las opciones dependen del tipo elegido
+    _cxcAutocomplete(r.querySelector('#'+pref+'-r-valor'), function(){
+      var t=(r.querySelector('#'+pref+'-r-tipo')||{}).value||'cliente';
+      return _cxcOpciones(which, t==='factura'?'factura':'cliente');
+    }, null);
+  });
+}
+
 function _cxcHTML(){
   return ''
     +'<div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:2px solid var(--border);padding-bottom:0">'
@@ -12794,6 +12932,10 @@ function initCXCTab(rootId){
   var nota=root.querySelector('#cxc-readonly-note');
   if(nota) nota.style.display=cxcPuedeEditar()?'none':'block';
   cxcSwitchSub(CXC_SUBTAB, root.querySelector('.cxc-subtab[data-sub="'+CXC_SUBTAB+'"]'));
+  try{
+    _cxcMontarAutocompletes();
+    cxcOnTipoInforme('pend'); cxcOnTipoInforme('cobr');
+  }catch(e){ console.error('autocompletes cxc:',e); }
 }
 
 
@@ -13132,9 +13274,12 @@ function cxcOnTipoInforme(which){
   var t=(r.querySelector('#'+pref+'-r-tipo')||{}).value||'';
   var f=r.querySelector('#'+pref+'-r-fecha');
   var v=r.querySelector('#'+pref+'-r-valor');
+  // El input vive dentro de una envoltura creada por el autocompletado:
+  // se muestra/oculta la envoltura, no el input.
+  var vw=(v&&v.parentNode&&v.parentNode.dataset&&v.parentNode.dataset.cxcWrap==='1')?v.parentNode:v;
   if(f) f.style.display=(t==='fecha')?'':'none';
-  if(v) v.style.display=(t&&t!=='fecha')?'':'none';
-  if(v) v.placeholder=(t==='cliente')?'Nombre del cliente':'N° de factura';
+  if(vw) vw.style.display=(t&&t!=='fecha')?'inline-block':'none';
+  if(v){ v.placeholder=(t==='cliente')?'Nombre del cliente':'N° de factura'; v.value=''; }
 }
 
 function cxcInformePDF(which){
