@@ -1635,7 +1635,7 @@ async function _loadFromSupabase(clave, fallbackLocalKey){
   return {}; // No encontrado en Supabase — sin fallback local
 }
 function _saveToSupabase(clave, valor, localKey){
-  // Guardar SOLO en Supabase — sin localStorage (cross-device, sin dependencia local)
+  // Guardar SOLO en Supabase — cross-device, sin almacenamiento local
   DB.from('configuracion').upsert(
     {clave:clave, valor:valor, updated_at:new Date().toISOString()},
     {onConflict:'clave'}
@@ -1661,7 +1661,7 @@ function saveData(uid){
   _saveToSupabase('user_horas_'+uid, REG, 'cc_h_'+uid);
   _saveToSupabase('user_ded_'+uid, DED, 'cc_d_'+uid);
 }
-// getDED: usa memoria si es el usuario actual, localStorage si es otro usuario
+// getDED: usa el cache en memoria, rehidratado desde Supabase al arrancar
 function getDED(uid){
   if(SESSION&&uid===SESSION.id) return DED;
   // Cache en memoria cargado desde Supabase al inicio.
@@ -1939,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260817174712';
+var APP_BUILD='20260817180131';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -4811,7 +4811,7 @@ function renderAdminHorasTable(uid){
   const users=getUsers();
   const u=users.find(x=>x.id===uid);
   if(!u)return;
-  const regU=getREG(uid)||{}; // getREG reads localStorage('cc_h_'+uid) loaded by _loadUserDEDForAdmin
+  const regU=getREG(uid)||{}; // getREG lee el cache en memoria que puebla _loadUserDEDForAdmin desde Supabase
   const y=new Date().getFullYear();
   // Admin always shows main quincena days + any extra days el usuario llenó CON la marca
   // explícita quincenaOrigen (sin marca = pertenece a su quincena normal de calendario,
@@ -6993,7 +6993,7 @@ function openVacLogModal(uid){
 }
 
 // ── NOTIFICATIONS ──
-// Cache en memoria poblado desde Supabase (sin localStorage — cross-device real).
+// Cache en memoria poblado desde Supabase (sin almacenamiento local — cross-device real).
 function getNotifications(uid){
   if(!window._notifCache) window._notifCache={};
   return window._notifCache[uid]||[];
@@ -9581,7 +9581,7 @@ async function loadVentasFromDB(uid,_rows){
   (data||[]).forEach(function(row){
     var mk=row.anio+'-'+pad(row.mes+1);
     if(!vd[mk]) vd[mk]={ventas:[],tc:525,comisVerif:false};
-    // Aplicar override de pagado_admin desde configuracion de Supabase (cross-device, sin localStorage)
+    // Aplicar override de pagado_admin desde configuracion de Supabase (cross-device, sin almacenamiento local)
     var configOverride=window._pagadoAdminOverrides&&window._pagadoAdminOverrides.hasOwnProperty(row.id)
       ? window._pagadoAdminOverrides[row.id] : null;
     var pagadoAdminFinal = configOverride!==null ? configOverride : (row.pagado_admin||false);
@@ -12628,7 +12628,12 @@ function cxcBuildGrupos(){
         g.subtotal+=(v.subtotal||0);
         g.iva+=(v.ivaAmt||v.iva||0);
         g.total+=(v.total||(v.subtotal||0)+(v.ivaAmt||0));
-        if(v.isUsd){ g.hayUsd=true; g.usd+=(v.usdTotal||v.usd||0); }
+        if(v.isUsd){
+          g.hayUsd=true; g.usd+=(v.usdTotal||v.usd||0);
+          // Tipo de cambio con el que se registró la venta. Se usa para
+          // convertir abono y saldo cuando el check de dólares está marcado.
+          if(!g.tc && (v.tcUsed||0)>0) g.tc=v.tcUsed;
+        }
       });
     });
   });
@@ -12660,6 +12665,11 @@ function cxcBuildGrupos(){
     } else { g.venc=null; g.dias=null; }
     g.abonado=_cxcTotalAbonos(k);
     g.saldo=g.total-g.abonado;
+    // Equivalentes en dólares. Los abonos se ingresan en colones, así que se
+    // convierten con el tipo de cambio de la propia venta.
+    g.totalUsd=_cxcUsdDe(g,'tot');
+    g.abonadoUsd=(g.tc>0)?(g.abonado/g.tc):0;
+    g.saldoUsd=g.totalUsd-g.abonadoUsd;
     g.verUsd=!!ov.verUsd && g.hayUsd;
     g.borrado=!!ov.borrado;
   });
@@ -12878,9 +12888,9 @@ function _cxcHTML(){
     +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Agrupado por N° de factura + cliente · histórico completo</span>'
     +'</div>'
     +'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border)"><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Filtrar</span><input type="text" id="cxcp-f-cliente" placeholder="Cliente" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:150px"><input type="text" id="cxcp-f-factura" placeholder="N° factura" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:120px"><input type="date" id="cxcp-f-fecha" onchange="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="document.getElementById(\'cxcp-f-cliente\').value=\'\';document.getElementById(\'cxcp-f-factura\').value=\'\';document.getElementById(\'cxcp-f-fecha\').value=\'\';renderCXCTab()" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;font-weight:700">Limpiar</button><span style="flex:1"></span><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Informe</span><select id="cxcp-r-tipo" onchange="cxcOnTipoInforme(\'pend\')" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><option value="">Todos</option><option value="cliente">Por cliente</option><option value="factura">Por factura</option><option value="fecha">Por fecha</option></select><input type="text" id="cxcp-r-valor" placeholder="Valor" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:130px"><input type="date" id="cxcp-r-fecha" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="cxcInformePDF(\'pend\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(227,24,55,.3);background:rgba(227,24,55,.1);color:var(--red);cursor:pointer;font-weight:800">📄 PDF</button><button onclick="cxcInformeExcel(\'pend\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(26,158,92,.3);background:var(--green-dim);color:var(--green);cursor:pointer;font-weight:800">📊 Excel</button></div>'
-    +'<table class="atbl" style="min-width:1180px">'
+    +'<table class="atbl" style="min-width:1270px">'
     +'<thead><tr>'
-    +'<th>Colaborador</th><th>Fecha facturación</th><th>Factura</th><th>Cliente</th>'
+    +'<th>Colaborador</th><th>Fecha facturación</th><th>Factura</th><th>Crédito (días)</th><th>Cliente</th>'
     +'<th>Subtotal s/IVA</th><th>IVA</th><th>Total c/IVA</th>'
     +'<th>Vencimiento</th><th>Estado</th><th>Abono</th><th>Saldo</th><th>Acción</th>'
     +'</tr></thead>'
@@ -12967,7 +12977,7 @@ function renderCXCPendientes(){
   var editable=cxcPuedeEditar();
   var lista=_cxcFiltro(cxcListaPendientes(),'cxcp');
   if(!lista.length){
-    body.innerHTML='<tr><td colspan="12" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
+    body.innerHTML='<tr><td colspan="13" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
     return;
   }
   var html='';
@@ -12985,6 +12995,11 @@ function renderCXCPendientes(){
       +'</td>'
       +'<td style="font-weight:800;font-family:var(--cond)">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
         +(g.ventas.length>1?'<span style="font-size:9px;color:var(--text3);font-weight:700"> ('+g.ventas.length+' líneas)</span>':'')+'</td>'
+      +'<td style="text-align:center">'
+        +(editable&&!g.tieneFechaPropia
+          ? '<input type="number" min="1" value="'+(g.plazo||'')+'" onchange="cxcEditPlazo(\''+g.key+'\',this.value)" style="width:56px;font-size:11px;padding:2px 4px;border:1.5px solid var(--border2);border-radius:5px;text-align:center">'
+          : '<span style="font-family:var(--cond);font-weight:800">'+(g.plazo>0?g.plazo+'d':'—')+'</span>')
+      +'</td>'
       +'<td>'+escHtml(g.cliente)+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.subtotal,_cxcUsdDe(g,'sub'))+'</td>'
       +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.iva,_cxcUsdDe(g,'iva'))+'</td>'
@@ -12997,10 +13012,10 @@ function renderCXCPendientes(){
           +' style="width:78px;font-size:11px;padding:3px 5px;border:1.5px solid var(--border2);border-radius:5px;margin-right:3px">'
         +'<button onclick="cxcAplicarAbono(\''+g.key+'\')"'+dis
           +' style="padding:3px 8px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+'">+</button>'
-        +(g.abonado>0?'<div style="font-size:10px;color:var(--green);font-weight:800;margin-top:2px">'+cxcFmtMonto(g,g.abonado,0)+'</div>':'')
+        +(g.abonado>0?'<div style="font-size:10px;color:var(--green);font-weight:800;margin-top:2px">'+cxcFmtMonto(g,g.abonado,g.abonadoUsd)+'</div>':'')
       +'</td>'
       +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:'+(g.saldo<=0?'var(--green)':'var(--red)')+'">'
-        +cxcFmtMonto(g,g.saldo,0)+'</td>'
+        +cxcFmtMonto(g,g.saldo,g.saldoUsd)+'</td>'
       +'<td style="text-align:center;white-space:nowrap">'
         +(g.hayUsd?'<label style="display:block;font-size:9px;font-weight:700;color:var(--text3);margin-bottom:3px;cursor:pointer">'
           +'<input type="checkbox" '+(g.verUsd?'checked':'')+dis+' onchange="cxcToggleUsd(\''+g.key+'\',this.checked)"> $ USD</label>':'')
@@ -13013,7 +13028,7 @@ function renderCXCPendientes(){
   var tTot=lista.reduce(function(s,g){return s+g.total;},0);
   var tSal=lista.reduce(function(s,g){return s+g.saldo;},0);
   html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
-    +'<td colspan="4" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL PENDIENTE ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
+    +'<td colspan="5" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL PENDIENTE ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
     +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--amber)">'+fmt(tSub)+'</td>'
     +'<td style="font-family:var(--cond);font-weight:900;font-size:13px">'+fmt(tIva)+'</td>'
     +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--red)">'+fmt(tTot)+'</td>'
@@ -13128,6 +13143,37 @@ function cxcEditFechaFact(key, val){
   if(!_cxcGuard()) return;
   _cxcSetOv(key,{fechaFact:val||''});
   toast('✓ Fecha de facturación actualizada');
+  renderCXCTab();
+}
+
+// Editar el plazo de crédito en días.
+// Solo para las ventas anteriores al arreglo del formulario (las que no
+// tienen fecha de facturación propia). Las nuevas ya lo guardan bien y su
+// casilla se muestra en modo lectura.
+// Se escribe en la venta real: así el vencimiento queda correcto en TODO
+// el sistema, no solo en esta tabla.
+function cxcEditPlazo(key, val){
+  if(!_cxcGuard()) return;
+  var n=parseInt(val)||0;
+  if(n<=0){ toast('El plazo debe ser mayor que 0'); renderCXCTab(); return; }
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(g.tieneFechaPropia){
+    toast('Esta venta ya se registró con su plazo — no se puede modificar aquí');
+    renderCXCTab(); return;
+  }
+  g.ventas.forEach(function(v){
+    var vd=getVentasData(v.uid)||{};
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(x){
+        if(x.id!==v.id) return;
+        x.plazoCredito=n;
+        _saveSingleVenta(v.uid, x, mk);
+      });
+    });
+    window._ventasCache[v.uid]=vd;
+  });
+  toast('✓ Plazo actualizado a '+n+' días');
   renderCXCTab();
 }
 
@@ -16416,9 +16462,9 @@ function getClosedLiqPeriods(){
     var d=getLiqData(s.id);
     Object.keys(d).forEach(function(pk){
       var state=getLiqPeriodState(s.id, pk);
-      // cerrada: prefer localStorage state (may have been updated this session),
+      // cerrada: prefiere el estado en memoria (pudo actualizarse en esta sesión),
       // but fall back to the value loaded from DB in the cache (d[pk].cerrada).
-      // This fixes the Planillas tab showing empty when localStorage wasn't set yet.
+      // Esto evita que la pestaña Planillas salga vacía si el cache aún no se pobló.
       var isCerrada=state.cerrada||d[pk].cerrada||false;
       if(isCerrada){
         var period=getLiqPeriod(s.id, pk);
@@ -16708,7 +16754,7 @@ function renderPlanillaHistoricaTable(){
     +'</tr></thead>'
     +'<tbody>';
 
-  // Pre-load: get REG and DED from localStorage (loaded by _loadUserDEDForAdmin at startup)
+  // Pre-carga: toma REG y DED del cache en memoria (lo puebla _loadUserDEDForAdmin desde Supabase al arrancar)
   var regUser=getREG(uid)||{};
   var dedUser=getDED(uid)||{};
   // DED deducciones are flat: ccss_monto, rb_monto, extra_monto
@@ -20320,7 +20366,13 @@ function executeRestore(){
 
 
 // ── STARTUP: purga de residuos locales — la app es 100% nube ──
-// Elimina cualquier clave legacy cc_* de localStorage en cada arranque.
+//
+// ⚠ ESTA ES LA ÚNICA PARTE DEL SISTEMA QUE MENCIONA localStorage, y NO guarda
+//   nada: solo BORRA. Recorre el almacenamiento del navegador y elimina claves
+//   legacy (cc_*, concre_*) que dejaron versiones antiguas de la app.
+//   No existe ni un solo setItem/getItem de datos en todo el archivo:
+//   todo vive en Supabase. Si esta función se elimina, la basura vieja
+//   quedaría en los navegadores de los usuarios sin que nadie la limpie.
 (function purgeLocalResidue(){
   try{
     var keysToRemove=[];
@@ -22772,7 +22824,7 @@ const FCK_OPTS=[
   {v:50.66,l:"C50/57*  (f'c=517 kg/cm²  |  MR=45.0 kg/cm²)"},
 ];
 
-// ── PROYECTOS — Supabase (compartido por todos) + localStorage fallback ─────
+// ── PROYECTOS — Supabase (compartido por todos, sin almacenamiento local) ─────
 const _LS='concre_fp54_v3';
 
 // Cache en memoria para evitar múltiples lecturas
