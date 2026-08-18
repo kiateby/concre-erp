@@ -1939,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260817180131';
+var APP_BUILD='20260818172950';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -12549,7 +12549,7 @@ function renderAdminCxcTable(allVentas,catMap){
   var _totCon=_pendientes.reduce(function(s,v){return s+(v.total||(v.subtotal||0)+(v.ivaAmt||0));},0);
   html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
     +'<td colspan="5" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL PENDIENTE DE COBRO ('+_pendientes.length+' factura'+(_pendientes.length!==1?'s':'')+')</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--amber)">'+fmt(_totSub)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:var(--amber)">'+fmt(_totSub)+'</td>'
     +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--red)">'+fmt(_totCon)+'</td>'
     +'<td colspan="4"></td></tr>';
   body.innerHTML=html;
@@ -12570,6 +12570,17 @@ function renderAdminCxcTable(allVentas,catMap){
 // ══════════════════════════════════════════════════════════════
 
 var CXC_SUBTAB='pend'; // 'pend' | 'cobr'
+
+// Facturas anteriores al sistema actual que se registraron en COLONES pero
+// se facturaron en dólares. Solo para estas se habilita una casilla donde el
+// superadmin escribe el tipo de cambio usado; el sistema divide los montos
+// en colones entre ese TC para mostrarlos en dólares.
+// Para el resto de las ventas el sistema ya guarda los dólares nativos.
+var CXC_FACTURAS_TC_MANUAL = ['634','636','647'];
+
+function _cxcPermiteTcManual(factura){
+  return CXC_FACTURAS_TC_MANUAL.indexOf(String(factura||'').trim())>=0;
+}
 
 // Solo el superadmin puede modificar. El resto entra en modo lectura.
 function cxcPuedeEditar(){ return SESSION && SESSION.rol==='superadmin'; }
@@ -12651,8 +12662,11 @@ function cxcBuildGrupos(){
     if(ov.fechaFact){ var od=parseDate(ov.fechaFact); if(od) ff=od; }
     g.fechaFactDate=ff;
     g.fechaFactStr=ff?ff.toISOString().slice(0,10):'';
-    // ¿Alguna de sus ventas tenía ya fecha de facturación propia?
-    g.tieneFechaPropia=g.ventas.some(function(v){ return !!v.fechaFact; });
+    // Bloqueo de edición: la factura queda en modo lectura solo si TODAS sus
+    // líneas son posteriores al cambio (todas tienen fecha de facturación).
+    // Antes se usaba .some(), y bastaba una sola línea nueva para congelar
+    // facturas viejas completas — ese era el caso de la 684.
+    g.tieneFechaPropia=g.ventas.length>0 && g.ventas.every(function(v){ return !!v.fechaFact; });
     // Vencimiento: fecha de facturación + el mayor plazo del grupo
     var plazo=0;
     g.ventas.forEach(function(v){ plazo=Math.max(plazo, parseInt(v.plazoCredito)||0); });
@@ -12665,12 +12679,27 @@ function cxcBuildGrupos(){
     } else { g.venc=null; g.dias=null; }
     g.abonado=_cxcTotalAbonos(k);
     g.saldo=g.total-g.abonado;
-    // Equivalentes en dólares. Los abonos se ingresan en colones, así que se
-    // convierten con el tipo de cambio de la propia venta.
-    g.totalUsd=_cxcUsdDe(g,'tot');
-    g.abonadoUsd=(g.tc>0)?(g.abonado/g.tc):0;
+
+    // ── Montos en dólares ──
+    g.permiteTcManual=_cxcPermiteTcManual(g.factura);
+    g.tcManual=parseFloat(ov.tcManual)||0;
+    g.puedeUsd=g.hayUsd||g.permiteTcManual;
+    var tcConv=0;
+    if(g.hayUsd){
+      // Venta registrada en dólares: se usan los montos nativos
+      g.subUsd=_cxcUsdDe(g,'sub'); g.ivaUsd=_cxcUsdDe(g,'iva'); g.totalUsd=_cxcUsdDe(g,'tot');
+      tcConv=g.tc||0;
+    } else if(g.permiteTcManual&&g.tcManual>0){
+      // Factura vieja en colones: se divide entre el TC que digitó el superadmin
+      tcConv=g.tcManual;
+      g.subUsd=g.subtotal/tcConv; g.ivaUsd=g.iva/tcConv; g.totalUsd=g.total/tcConv;
+    } else {
+      g.subUsd=0; g.ivaUsd=0; g.totalUsd=0;
+    }
+    g.abonadoUsd=(tcConv>0)?(g.abonado/tcConv):0;
     g.saldoUsd=g.totalUsd-g.abonadoUsd;
-    g.verUsd=!!ov.verUsd && g.hayUsd;
+    // Solo se muestra en dólares si además hay con qué convertir
+    g.verUsd=!!ov.verUsd&&g.puedeUsd&&(g.hayUsd||g.tcManual>0);
     g.borrado=!!ov.borrado;
   });
   return grupos;
@@ -12713,6 +12742,61 @@ function _cxcUsdDe(g, cual){
     s+=u; i+=u*ip; t+=u*(1+ip);
   });
   return cual==='sub'?s:cual==='iva'?i:t;
+}
+
+
+// ── Formato de números legible ──
+// Barlow Condensed hacía que 1/7, 3/8 y 0/6 se confundieran a este tamaño.
+// Se usa la fuente normal con cifras tabulares (todas del mismo ancho), para
+// que las columnas queden alineadas y los dígitos sean inconfundibles.
+var _CXCNUM='font-family:var(--sans);font-variant-numeric:tabular-nums;'
+  +'font-feature-settings:\'tnum\' 1;letter-spacing:.3px;font-weight:700;'
+  +'font-size:12.5px;white-space:nowrap;text-align:right';
+
+// ── Celda de dólares: check + casilla de tipo de cambio para las facturas viejas ──
+function _cxcCeldaUsd(g, dis){
+  if(!g.puedeUsd) return '';
+  var h='<label style="display:block;font-size:9px;font-weight:700;color:var(--text3);margin-bottom:3px;cursor:pointer">'
+    +'<input type="checkbox" '+(g.verUsd?'checked':'')+dis
+    +' onchange="cxcToggleUsd(\''+g.key+'\',this.checked)"> $ USD</label>';
+  // Solo las facturas listadas en CXC_FACTURAS_TC_MANUAL piden el tipo de cambio
+  if(g.permiteTcManual&&_cxcGetOv(g.key).verUsd){
+    h+='<div style="margin-bottom:4px">'
+      +'<span style="font-size:8.5px;font-weight:800;color:var(--text3);display:block">T/C usado</span>'
+      +'<input type="number" step="0.01" min="0" value="'+(g.tcManual||'')+'" placeholder="510"'+dis
+      +' onchange="cxcSetTcManual(\''+g.key+'\',this.value)"'
+      +' style="width:64px;font-size:11px;padding:2px 4px;border:1.5px solid var(--amber);'
+      +'border-radius:5px;text-align:center;'+(g.tcManual>0?'':'background:rgba(217,119,6,.1)')+'">'
+      +(g.tcManual>0?'':'<div style="font-size:8px;color:var(--amber);font-weight:800">Falta el T/C</div>')
+      +'</div>';
+  }
+  return h;
+}
+
+// ── Historial de abonos, editable por el superadmin ──
+function _cxcHistorialAbonos(g, editable){
+  var lista=_cxcAbonos(g.key);
+  if(!lista.length) return '';
+  var h='<div style="margin-top:4px;border-top:1px dashed var(--border2);padding-top:3px">';
+  lista.forEach(function(a){
+    var f=a.fecha?new Date(a.fecha):null;
+    h+='<div style="display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-bottom:2px">'
+      +'<span title="'+(f?f.toLocaleDateString('es-CR'):'')+(a.by?(' · '+escHtml(a.by)):'')
+        +(a.editadoAt?' · corregido':'')+'" style="'+_CXCNUM+';font-size:10.5px;color:var(--green)">'
+      +(g.verUsd&&g.abonadoUsd>0?fmtUSD(a.monto/(g.total/g.totalUsd)):fmt(a.monto))+'</span>';
+    if(editable){
+      h+='<button onclick="cxcEditarAbono(\''+g.key+'\',\''+a.id+'\')" title="Editar este abono"'
+        +' style="border:none;background:none;cursor:pointer;font-size:10px;padding:0 1px">✏️</button>'
+        +'<button onclick="cxcBorrarAbono(\''+g.key+'\',\''+a.id+'\')" title="Eliminar este abono"'
+        +' style="border:none;background:none;cursor:pointer;font-size:10px;padding:0 1px">🗑</button>';
+    }
+    h+='</div>';
+  });
+  if(lista.length>1){
+    h+='<div style="'+_CXCNUM+';font-size:10.5px;color:var(--green);border-top:1px solid var(--border2);padding-top:2px">'
+      +'Σ '+cxcFmtMonto(g,g.abonado,g.abonadoUsd)+'</div>';
+  }
+  return h+'</div>';
 }
 
 // ══════════════════════════════════════════════
@@ -12993,17 +13077,17 @@ function renderCXCPendientes(){
           ? '<input type="date" value="'+(g.fechaFactStr||'')+'" onchange="cxcEditFechaFact(\''+g.key+'\',this.value)" style="font-size:11px;padding:2px 4px;border:1.5px solid var(--border2);border-radius:5px">'
           : '<span style="font-size:11px">'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</span>')
       +'</td>'
-      +'<td style="font-weight:800;font-family:var(--cond)">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
+      +'<td style="font-weight:800;'+_CXCNUM+'">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
         +(g.ventas.length>1?'<span style="font-size:9px;color:var(--text3);font-weight:700"> ('+g.ventas.length+' líneas)</span>':'')+'</td>'
       +'<td style="text-align:center">'
         +(editable&&!g.tieneFechaPropia
           ? '<input type="number" min="1" value="'+(g.plazo||'')+'" onchange="cxcEditPlazo(\''+g.key+'\',this.value)" style="width:56px;font-size:11px;padding:2px 4px;border:1.5px solid var(--border2);border-radius:5px;text-align:center">'
-          : '<span style="font-family:var(--cond);font-weight:800">'+(g.plazo>0?g.plazo+'d':'—')+'</span>')
+          : '<span style="'+_CXCNUM+';font-weight:800">'+(g.plazo>0?g.plazo+'d':'—')+'</span>')
       +'</td>'
       +'<td>'+escHtml(g.cliente)+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.subtotal,_cxcUsdDe(g,'sub'))+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.iva,_cxcUsdDe(g,'iva'))+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:800;color:var(--green)">'+cxcFmtMonto(g,g.total,_cxcUsdDe(g,'tot'))+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.subtotal,g.subUsd)+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.iva,g.ivaUsd)+'</td>'
+      +'<td style="'+_CXCNUM+';color:var(--green)">'+cxcFmtMonto(g,g.total,g.totalUsd)+'</td>'
       +'<td style="white-space:nowrap;font-size:11px">'+(g.venc?formatDate(g.venc):'—')+'</td>'
       +'<td style="color:'+(vencido?'var(--red)':urgente?'var(--amber)':'var(--green)')+';font-weight:700;font-size:11px">'
         +(g.dias===null?'—':g.dias<0?'⚠ '+Math.abs(g.dias)+'d vencido':g.dias+'d restantes')+'</td>'
@@ -13012,13 +13096,12 @@ function renderCXCPendientes(){
           +' style="width:78px;font-size:11px;padding:3px 5px;border:1.5px solid var(--border2);border-radius:5px;margin-right:3px">'
         +'<button onclick="cxcAplicarAbono(\''+g.key+'\')"'+dis
           +' style="padding:3px 8px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+'">+</button>'
-        +(g.abonado>0?'<div style="font-size:10px;color:var(--green);font-weight:800;margin-top:2px">'+cxcFmtMonto(g,g.abonado,g.abonadoUsd)+'</div>':'')
+        +_cxcHistorialAbonos(g, editable)
       +'</td>'
-      +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:'+(g.saldo<=0?'var(--green)':'var(--red)')+'">'
+      +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:'+(g.saldo<=0?'var(--green)':'var(--red)')+'">'
         +cxcFmtMonto(g,g.saldo,g.saldoUsd)+'</td>'
       +'<td style="text-align:center;white-space:nowrap">'
-        +(g.hayUsd?'<label style="display:block;font-size:9px;font-weight:700;color:var(--text3);margin-bottom:3px;cursor:pointer">'
-          +'<input type="checkbox" '+(g.verUsd?'checked':'')+dis+' onchange="cxcToggleUsd(\''+g.key+'\',this.checked)"> $ USD</label>':'')
+        +_cxcCeldaUsd(g, dis)
         +'<button onclick="cxcMarcarCobrado(\''+g.key+'\')"'+dis
           +' style="padding:4px 9px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+';white-space:nowrap">✓ Pago recibido</button>'
       +'</td></tr>';
@@ -13028,12 +13111,12 @@ function renderCXCPendientes(){
   var tTot=lista.reduce(function(s,g){return s+g.total;},0);
   var tSal=lista.reduce(function(s,g){return s+g.saldo;},0);
   html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
-    +'<td colspan="5" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL PENDIENTE ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--amber)">'+fmt(tSub)+'</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:13px">'+fmt(tIva)+'</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--red)">'+fmt(tTot)+'</td>'
+    +'<td colspan="5" style="text-align:right;font-weight:900;'+_CXCNUM+';font-size:13px">TOTAL PENDIENTE ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:var(--amber)">'+fmt(tSub)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:13px">'+fmt(tIva)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:var(--red)">'+fmt(tTot)+'</td>'
     +'<td colspan="3"></td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:15px;color:var(--red)">'+fmt(tSal)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:15px;color:var(--red)">'+fmt(tSal)+'</td>'
     +'<td></td></tr>';
   body.innerHTML=html;
 }
@@ -13056,16 +13139,15 @@ function renderCXCCobradas(){
     html+='<tr style="background:rgba(22,163,74,.05)">'
       +'<td style="font-size:11px;color:var(--text3)">'+escHtml(g.uname)+'</td>'
       +'<td style="font-size:11px;white-space:nowrap">'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
-      +'<td style="font-weight:800;font-family:var(--cond)">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
+      +'<td style="font-weight:800;'+_CXCNUM+'">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
         +(g.ventas.length>1?'<span style="font-size:9px;color:var(--text3);font-weight:700"> ('+g.ventas.length+' líneas)</span>':'')+'</td>'
       +'<td>'+escHtml(g.cliente)+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.subtotal,_cxcUsdDe(g,'sub'))+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:800">'+cxcFmtMonto(g,g.iva,_cxcUsdDe(g,'iva'))+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:800;color:var(--green)">'+cxcFmtMonto(g,g.total,_cxcUsdDe(g,'tot'))+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.subtotal,g.subUsd)+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.iva,g.ivaUsd)+'</td>'
+      +'<td style="'+_CXCNUM+';color:var(--green)">'+cxcFmtMonto(g,g.total,g.totalUsd)+'</td>'
       +'<td style="font-size:11px;white-space:nowrap">'+(fPago?formatDate(fPago):'—')+'</td>'
       +'<td style="text-align:center">'
-        +(g.hayUsd?'<label style="font-size:9px;font-weight:700;color:var(--text3);cursor:pointer">'
-          +'<input type="checkbox" '+(g.verUsd?'checked':'')+dis+' onchange="cxcToggleUsd(\''+g.key+'\',this.checked)"> $ USD</label>':'')
+        +_cxcCeldaUsd(g, dis)
       +'</td>'
       +'<td style="text-align:center;white-space:nowrap">'
         +'<button onclick="cxcReversar(\''+g.key+'\')"'+dis
@@ -13078,10 +13160,10 @@ function renderCXCCobradas(){
   var tIva=lista.reduce(function(s,g){return s+g.iva;},0);
   var tTot=lista.reduce(function(s,g){return s+g.total;},0);
   html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--green)">'
-    +'<td colspan="4" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL COBRADO ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px">'+fmt(tSub)+'</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:13px">'+fmt(tIva)+'</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--green)">'+fmt(tTot)+'</td>'
+    +'<td colspan="4" style="text-align:right;font-weight:900;'+_CXCNUM+';font-size:13px">TOTAL COBRADO ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px">'+fmt(tSub)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:13px">'+fmt(tIva)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:var(--green)">'+fmt(tTot)+'</td>'
     +'<td colspan="3"></td></tr>';
   body.innerHTML=html;
 }
@@ -13110,19 +13192,19 @@ function renderCXCSaldosCliente(){
     return '<tr'+(o.saldo<=0?' style="background:rgba(22,163,74,.06)"':'')+'>'
       +'<td><strong>'+escHtml(o.nombre)+'</strong></td>'
       +'<td style="text-align:center">'+o.facturas+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:800">'+fmt(o.subtotal)+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:800">'+fmt(o.total)+'</td>'
-      +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:'+(o.saldo<=0?'var(--green)':'var(--red)')+'">'+fmt(o.saldo)+'</td>'
+      +'<td style="'+_CXCNUM+';font-weight:800">'+fmt(o.subtotal)+'</td>'
+      +'<td style="'+_CXCNUM+';font-weight:800">'+fmt(o.total)+'</td>'
+      +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:'+(o.saldo<=0?'var(--green)':'var(--red)')+'">'+fmt(o.saldo)+'</td>'
       +'</tr>';
   }).join('');
   var tSub=lista.reduce(function(s,o){return s+o.subtotal;},0);
   var tTot=lista.reduce(function(s,o){return s+o.total;},0);
   var tSal=lista.reduce(function(s,o){return s+o.saldo;},0);
   html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--red)">'
-    +'<td colspan="2" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL POR COBRAR ('+lista.length+' cliente'+(lista.length!==1?'s':'')+')</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px">'+fmt(tSub)+'</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px">'+fmt(tTot)+'</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:16px;color:var(--red)">'+fmt(tSal)+'</td></tr>';
+    +'<td colspan="2" style="text-align:right;font-weight:900;'+_CXCNUM+';font-size:13px">TOTAL POR COBRAR ('+lista.length+' cliente'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px">'+fmt(tSub)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px">'+fmt(tTot)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:16px;color:var(--red)">'+fmt(tSal)+'</td></tr>';
   body.innerHTML=html;
 }
 
@@ -13181,6 +13263,48 @@ function cxcEditPlazo(key, val){
 function cxcToggleUsd(key, on){
   if(!_cxcGuard()) return;
   _cxcSetOv(key,{verUsd:!!on});
+  renderCXCTab();
+}
+
+// Tipo de cambio manual — solo para las facturas viejas listadas arriba
+function cxcSetTcManual(key, val){
+  if(!_cxcGuard()) return;
+  var tc=parseFloat(String(val).replace(/,/g,''))||0;
+  if(tc<0){ toast('El tipo de cambio no puede ser negativo'); renderCXCTab(); return; }
+  _cxcSetOv(key,{tcManual:tc});
+  if(tc>0) toast('✓ Tipo de cambio ₡'+tc+' aplicado');
+  renderCXCTab();
+}
+
+// Editar un abono ya aplicado
+function cxcEditarAbono(key, abonoId){
+  if(!_cxcGuard()) return;
+  var lista=_cxcAbonos(key).slice();
+  var ab=lista.filter(function(a){ return a.id===abonoId; })[0];
+  if(!ab){ toast('Abono no encontrado'); return; }
+  var nuevo=prompt('Nuevo monto del abono (en colones):', ab.monto);
+  if(nuevo===null) return;
+  var m=parseMon(nuevo)||0;
+  if(m<=0){ toast('El monto debe ser mayor que 0'); return; }
+  lista=lista.map(function(a){
+    if(a.id!==abonoId) return a;
+    return Object.assign({},a,{monto:m, editadoAt:new Date().toISOString(),
+                               editadoBy:(SESSION.nombre||SESSION.id)});
+  });
+  _cxcSetOv(key,{abonos:lista});
+  toast('✓ Abono corregido a '+fmt(m));
+  renderCXCTab();
+}
+
+// Borrar un abono
+function cxcBorrarAbono(key, abonoId){
+  if(!_cxcGuard()) return;
+  var lista=_cxcAbonos(key);
+  var ab=lista.filter(function(a){ return a.id===abonoId; })[0];
+  if(!ab){ toast('Abono no encontrado'); return; }
+  if(!confirm('¿Eliminar el abono de '+fmt(ab.monto)+'?\n\nEl saldo de la factura volverá a subir por ese monto.')) return;
+  _cxcSetOv(key,{abonos:lista.filter(function(a){ return a.id!==abonoId; })});
+  toast('🗑 Abono eliminado');
   renderCXCTab();
 }
 
