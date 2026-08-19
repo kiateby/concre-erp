@@ -1939,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260819180146';
+var APP_BUILD='20260819182302';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -13468,16 +13468,20 @@ function _cxcOrdenFecha(lista){
 // En "Créditos pendientes" el informe refleja lo que falta por cobrar;
 // en "Créditos cobrados" refleja la factura completa.
 function _cxcMonto(g,cual,soloPend){
-  var crc = soloPend
-    ? (cual==='sub'?g.pendSubtotal:cual==='iva'?g.pendIva:g.pendTotal)
-    : (cual==='sub'?g.subtotal:cual==='iva'?g.iva:g.total);
-  if(g.verUsd){
-    var u = soloPend
-      ? (cual==='sub'?g.pendSubUsd:cual==='iva'?g.pendIvaUsd:g.pendTotalUsd)
-      : (cual==='sub'?g.subUsd:cual==='iva'?g.ivaUsd:g.totalUsd);
-    return '$'+Number(u||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  var crc, usd;
+  if(cual==='abo'){ crc=g.abonado||0; usd=g.abonadoUsd||0; }
+  else if(cual==='sal'){ crc=g.saldo||0; usd=g.saldoUsd||0; }
+  else if(soloPend){
+    crc=(cual==='sub'?g.pendSubtotal:cual==='iva'?g.pendIva:g.pendTotal);
+    usd=(cual==='sub'?g.pendSubUsd:cual==='iva'?g.pendIvaUsd:g.pendTotalUsd);
+  } else {
+    crc=(cual==='sub'?g.subtotal:cual==='iva'?g.iva:g.total);
+    usd=(cual==='sub'?g.subUsd:cual==='iva'?g.ivaUsd:g.totalUsd);
   }
-  return fmt(crc);
+  if(g.verUsd){
+    return '$'+Number(usd||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+  return fmt(crc||0);
 }
 
 function _cxcDatosInforme(which){
@@ -13513,7 +13517,7 @@ function cxcInformePDF(which){
   var hoy=new Date();
   var emitida=hoy.toLocaleDateString('es-CR',{day:'2-digit',month:'long',year:'numeric'});
   var subFiltro=d.tipo?('Filtrado por '+d.tipo+': '+d.valor):'Todos los registros';
-  var filas='', tSub=0, tIva=0, tTot=0;
+  var filas='', tSub=0, tIva=0, tTot=0, tSaldo=0;
   d.filas.forEach(function(g){
     var venc=g.venc?formatDate(g.venc):'—';
     var diasVenc=(g.dias!==null&&g.dias<0)?Math.abs(g.dias):0;
@@ -13521,6 +13525,7 @@ function cxcInformePDF(which){
       tSub+=(_soloPend?g.pendSubtotal:g.subtotal);
       tIva+=(_soloPend?g.pendIva:g.iva);
       tTot+=(_soloPend?g.pendTotal:g.total);
+      tSaldo+=(g.saldo||0);
     }
     filas+='<tr>'
       +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
@@ -13529,6 +13534,8 @@ function cxcInformePDF(which){
       +'<td class="n">'+_cxcMonto(g,'sub',_soloPend)+'</td>'
       +'<td class="n">'+_cxcMonto(g,'iva',_soloPend)+'</td>'
       +'<td class="n">'+_cxcMonto(g,'tot',_soloPend)+'</td>'
+      +(_soloPend?('<td class="n">'+_cxcMonto(g,'abo',true)+'</td>'
+                  +'<td class="n"><strong>'+_cxcMonto(g,'sal',true)+'</strong></td>'):'')
       +'<td>'+venc+'</td>'
       +'<td class="c">'+(diasVenc>0?'<span class="vz">'+diasVenc+'</span>':'—')+'</td>'
       +'</tr>';
@@ -13538,6 +13545,15 @@ function cxcInformePDF(which){
    +'@page{size:letter portrait;margin:14mm}'
    +'*{box-sizing:border-box}'
    +'body{font-family:Arial,Helvetica,sans-serif;color:#1c1c1c;margin:0;font-size:11px}'
+   // En pantalla la regla @page no aplica, así que el contenido quedaba pegado a
+   // los bordes de la ventana. Estos márgenes son SOLO para la vista previa y
+   // desaparecen al imprimir, donde manda @page.
+   +'@media screen{'
+     +'body{background:#e9e9ec;padding:0 0 28px}'
+     +'.hoja{background:#fff;max-width:880px;margin:0 auto;padding:26px 34px 30px;'
+       +'box-shadow:0 2px 14px rgba(0,0,0,.13);border-radius:3px}'
+   +'}'
+   +'@media print{.hoja{max-width:none;margin:0;padding:0;box-shadow:none;border-radius:0}}'
    +'.hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #E31837;padding-bottom:10px;margin-bottom:4px}'
    +'.lg{font-size:30px;font-weight:900;letter-spacing:-1px}.lg span{color:#E31837}'
    +'.ei{text-align:right;font-size:10px;color:#58595B;line-height:1.5}'
@@ -13552,10 +13568,11 @@ function cxcInformePDF(which){
    +'.vz{color:#E31837;font-weight:900}'
    +'tfoot td{background:#f0f0f0;font-weight:900;border-top:2px solid #58595B;font-size:11px}'
    +'.ft{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#999;display:flex;justify-content:space-between}'
-   +'.noprint{margin:10px 0;text-align:center}'
+   +'.noprint{margin:16px 0;text-align:center}'
    +'@media print{.noprint{display:none}}'
    +'</style></head><body>'
    +'<div class="noprint"><button onclick="window.print()" style="background:#E31837;color:#fff;border:none;border-radius:6px;padding:9px 20px;font-size:13px;font-weight:700;cursor:pointer">🖨 Imprimir / Guardar PDF</button></div>'
+   +'<div class="hoja">'
    +'<div class="hd"><div><div class="lg">CON<span>C</span>RE</div></div>'
    +'<div class="ei"><strong>'+EMPRESA.nombre+'</strong><br>Céd. jurídica '+EMPRESA.cedula
    +'<br>'+EMPRESA.telefono+'<br>'+EMPRESA.correo+'</div></div>'
@@ -13563,12 +13580,21 @@ function cxcInformePDF(which){
    +'<div class="sb">'+subFiltro+' · Emitido: '+emitida+'</div>'
    +'<table><thead><tr><th>Fecha facturación</th><th>N° factura</th><th>Cliente</th>'
    +'<th style="text-align:right">Subtotal s/IVA</th><th style="text-align:right">IVA</th>'
-   +'<th style="text-align:right">Total c/IVA</th><th>Vencimiento</th><th style="text-align:center">Días vencidos</th></tr></thead>'
+   +'<th style="text-align:right">Total c/IVA</th>'
+   +(_soloPend?'<th style="text-align:right">Abono</th><th style="text-align:right">Saldo</th>':'')
+   +'<th>Vencimiento</th><th style="text-align:center">Días vencidos</th></tr></thead>'
    +'<tbody>'+filas+'</tbody>'
-   +'<tfoot><tr><td colspan="3">TOTAL ('+d.filas.length+' factura'+(d.filas.length!==1?'s':'')+')</td>'
-   +'<td class="n">'+fmt(tSub)+'</td><td class="n">'+fmt(tIva)+'</td><td class="n">'+fmt(tTot)+'</td>'
-   +'<td colspan="2"></td></tr></tfoot></table>'
+   +'<tfoot>'
+   +(_soloPend
+      ? '<tr><td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO ('
+        +d.filas.length+' factura'+(d.filas.length!==1?'s':'')+')</td>'
+        +'<td class="n" colspan="2" style="font-size:13px">'+fmt(tSaldo)+'</td><td colspan="2"></td></tr>'
+      : '<tr><td colspan="3">TOTAL ('+d.filas.length+' factura'+(d.filas.length!==1?'s':'')+')</td>'
+        +'<td class="n">'+fmt(tSub)+'</td><td class="n">'+fmt(tIva)+'</td><td class="n">'+fmt(tTot)+'</td>'
+        +'<td colspan="2"></td></tr>')
+   +'</tfoot></table>'
    +'<div class="ft"><span>'+EMPRESA.nombre+' · Documento oficial</span><span>Sistema CONCRE · '+emitida+'</span></div>'
+   +'</div>'
    +'</body></html>';
   var w=window.open('','_blank','width=900,height=1000,scrollbars=yes');
   if(!w){ toast('Permita las ventanas emergentes para generar el informe'); return; }
@@ -13580,21 +13606,25 @@ function cxcInformeExcel(which){
   if(!d.filas.length){ toast('No hay datos con ese filtro'); return; }
   var titulo=(which==='cobr')?'Creditos cobrados':'Creditos pendientes de cobro';
   var _soloPend=(which!=='cobr');
-  var tSub=0,tIva=0,tTot=0;
+  var tSub=0,tIva=0,tTot=0,tSaldo=0;
+  var _NC=_soloPend?10:8;
   var html='<table border="1">'
-    +'<tr><td colspan="8" style="font-size:16px;font-weight:bold">'+EMPRESA.nombre+' — '+titulo+'</td></tr>'
-    +'<tr><td colspan="8">Céd. jurídica '+EMPRESA.cedula+' · '+EMPRESA.telefono+' · '+EMPRESA.correo+'</td></tr>'
-    +'<tr><td colspan="8">'+(d.tipo?('Filtrado por '+d.tipo+': '+d.valor):'Todos los registros')+'</td></tr>'
+    +'<tr><td colspan="'+_NC+'" style="font-size:16px;font-weight:bold">'+EMPRESA.nombre+' — '+titulo+'</td></tr>'
+    +'<tr><td colspan="'+_NC+'">Céd. jurídica '+EMPRESA.cedula+' · '+EMPRESA.telefono+' · '+EMPRESA.correo+'</td></tr>'
+    +'<tr><td colspan="'+_NC+'">'+(d.tipo?('Filtrado por '+d.tipo+': '+d.valor):'Todos los registros')+'</td></tr>'
     +'<tr></tr>'
     +'<tr style="background:#E31837;color:#fff;font-weight:bold">'
     +'<th>Fecha facturación</th><th>N° factura</th><th>Cliente</th><th>Subtotal s/IVA</th>'
-    +'<th>IVA</th><th>Total c/IVA</th><th>Vencimiento</th><th>Días vencidos</th></tr>';
+    +'<th>IVA</th><th>Total c/IVA</th>'
+    +(_soloPend?'<th>Abono</th><th>Saldo</th>':'')
+    +'<th>Vencimiento</th><th>Días vencidos</th></tr>';
   d.filas.forEach(function(g){
     var diasVenc=(g.dias!==null&&g.dias<0)?Math.abs(g.dias):0;
     if(!g.verUsd){
       tSub+=(_soloPend?g.pendSubtotal:g.subtotal);
       tIva+=(_soloPend?g.pendIva:g.iva);
       tTot+=(_soloPend?g.pendTotal:g.total);
+      tSaldo+=(g.saldo||0);
     }
     html+='<tr>'
       +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
@@ -13603,12 +13633,18 @@ function cxcInformeExcel(which){
       +'<td>'+_cxcMonto(g,'sub',_soloPend)+'</td>'
       +'<td>'+_cxcMonto(g,'iva',_soloPend)+'</td>'
       +'<td>'+_cxcMonto(g,'tot',_soloPend)+'</td>'
+      +(_soloPend?('<td>'+_cxcMonto(g,'abo',true)+'</td>'
+                  +'<td><b>'+_cxcMonto(g,'sal',true)+'</b></td>'):'')
       +'<td>'+(g.venc?formatDate(g.venc):'—')+'</td>'
       +'<td'+(diasVenc>0?' style="color:#E31837;font-weight:bold"':'')+'>'+(diasVenc>0?diasVenc:'—')+'</td>'
       +'</tr>';
   });
-  html+='<tr style="background:#f0f0f0;font-weight:bold"><td colspan="3">TOTAL ('+d.filas.length+')</td>'
-    +'<td>'+fmt(tSub)+'</td><td>'+fmt(tIva)+'</td><td>'+fmt(tTot)+'</td><td colspan="2"></td></tr></table>';
+  html+= _soloPend
+    ? ('<tr style="background:#f0f0f0;font-weight:bold">'
+       +'<td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO ('+d.filas.length+' facturas)</td>'
+       +'<td colspan="2">'+fmt(tSaldo)+'</td><td colspan="2"></td></tr></table>')
+    : ('<tr style="background:#f0f0f0;font-weight:bold"><td colspan="3">TOTAL ('+d.filas.length+')</td>'
+       +'<td>'+fmt(tSub)+'</td><td>'+fmt(tIva)+'</td><td>'+fmt(tTot)+'</td><td colspan="2"></td></tr></table>');
   var blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-excel'});
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a');
