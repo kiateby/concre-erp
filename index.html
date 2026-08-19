@@ -1939,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260818172950';
+var APP_BUILD='20260819171208';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -13326,6 +13326,46 @@ function cxcAplicarAbono(key){
   renderCXCTab();
 }
 
+// ── Marcar/desmarcar una venta como cobrada ──
+// El estado "cobrado" vive en CINCO lugares y _esCxcPagado los consulta en
+// cascada. Tocar solo uno no alcanza: por eso el reverso "no hacía nada".
+//   1. window._cxcPagadoOverrides[id]   ← máxima prioridad
+//   2. venta.cxcPagado / cxcPagadoDate
+//   3. window._pagadoAdminOverrides[id] ─┐ el ✓ Pago del Detalle completo
+//   4. venta.pagadoAdmin                ─┘
+//   5. respaldos en configuracion (cc_cxc_pagado_* y cc_pagado_admin_*)
+// Esta función escribe los cinco, igual que hace toggleVentaPago, para que
+// Cuentas por cobrar y el Detalle completo nunca queden en desacuerdo.
+function _cxcSetPagadoVenta(uid, ventaId, newVal){
+  var vd=getVentasData(uid)||{};
+  var fecha=newVal?new Date().toISOString():null;
+  var hecho=false;
+  Object.keys(vd).forEach(function(mk){
+    var idx=(vd[mk].ventas||[]).findIndex(function(v){ return v.id===ventaId; });
+    if(idx<0) return;
+    var v=vd[mk].ventas[idx];
+    v.cxcPagado=newVal; v.cxcPagadoDate=fecha; v.pagadoAdmin=newVal;
+    if(!window._cxcPagadoOverrides) window._cxcPagadoOverrides={};
+    if(!window._pagadoAdminOverrides) window._pagadoAdminOverrides={};
+    window._cxcPagadoOverrides[ventaId]={pagado:newVal,fecha:fecha};
+    window._pagadoAdminOverrides[ventaId]=newVal;
+    DB.from('configuracion').upsert(
+      {clave:'cc_cxc_pagado_'+ventaId,
+       valor:{pagado:newVal,fecha:fecha,ventaId:ventaId,uid:uid},
+       updated_at:new Date().toISOString()},{onConflict:'clave'}
+    ).then(function(r){ if(r.error) console.error('cxc_pagado save:',r.error); });
+    DB.from('configuracion').upsert(
+      {clave:'cc_pagado_admin_'+ventaId,
+       valor:{pagado:newVal,ventaId:ventaId,uid:uid,ts:new Date().toISOString()},
+       updated_at:new Date().toISOString()},{onConflict:'clave'}
+    ).then(function(r){ if(r.error) console.error('pagado_admin save:',r.error); });
+    window._ventasCache[uid]=vd;
+    try{ _saveSingleVenta(uid, v, mk); }catch(e){ console.error('_cxcSetPagadoVenta:',e); }
+    hecho=true;
+  });
+  return hecho;
+}
+
 // Marcar cobrado: marca TODAS las ventas del grupo
 function cxcMarcarCobrado(key){
   if(!_cxcGuard()) return;
@@ -13333,18 +13373,7 @@ function cxcMarcarCobrado(key){
   if(!g){ toast('Factura no encontrada'); return; }
   if(!confirm('¿Confirmar pago recibido de la factura '+(g.factura||'(sin número)')+' de '+g.cliente+'?\n\n'
     +g.ventas.length+' línea(s) · '+fmt(g.total)+'\n\nPasará a "Créditos cobrados".')) return;
-  var ahora=new Date().toISOString();
-  g.ventas.forEach(function(v){
-    var vd=getVentasData(v.uid)||{};
-    Object.keys(vd).forEach(function(mk){
-      (vd[mk].ventas||[]).forEach(function(x){
-        if(x.id!==v.id) return;
-        x.cxcPagado=true; x.cxcPagadoDate=ahora;
-        _saveSingleVenta(v.uid, x, mk);
-      });
-    });
-    window._ventasCache[v.uid]=vd;
-  });
+  g.ventas.forEach(function(v){ _cxcSetPagadoVenta(v.uid, v.id, true); });
   toast('✓ Factura marcada como cobrada');
   renderCXCTab();
   try{ renderAdminVentas(); }catch(e){}
@@ -13357,19 +13386,14 @@ function cxcReversar(key){
   if(!g){ toast('Factura no encontrada'); return; }
   if(!confirm('¿Reversar el cobro de la factura '+(g.factura||'(sin número)')+' de '+g.cliente+'?\n\n'
     +'Volverá a "Créditos pendientes de cobro".')) return;
-  g.ventas.forEach(function(v){
-    var vd=getVentasData(v.uid)||{};
-    Object.keys(vd).forEach(function(mk){
-      (vd[mk].ventas||[]).forEach(function(x){
-        if(x.id!==v.id) return;
-        x.cxcPagado=false; x.cxcPagadoDate=null;
-        _saveSingleVenta(v.uid, x, mk);
-      });
-    });
-    window._ventasCache[v.uid]=vd;
-  });
-  toast('↩ Cobro reversado — vuelve a pendientes');
-  renderCXCTab();
+  var ok=0;
+  g.ventas.forEach(function(v){ if(_cxcSetPagadoVenta(v.uid, v.id, false)) ok++; });
+  if(!ok){ toast('No se pudo reversar: no se encontraron las ventas'); return; }
+  // La factura vuelve a "Créditos pendientes de cobro": se cambia de subpestaña
+  // para que se vea de inmediato dónde quedó.
+  toast('↩ Cobro reversado — la factura volvió a Créditos pendientes de cobro');
+  var _btn=_cxcRoot().querySelector('.cxc-subtab[data-sub="pend"]');
+  cxcSwitchSub('pend', _btn);
   try{ renderAdminVentas(); }catch(e){}
 }
 
