@@ -1939,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260819171208';
+var APP_BUILD='20260819180146';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -12652,6 +12652,21 @@ function cxcBuildGrupos(){
   Object.keys(grupos).forEach(function(k){
     var g=grupos[k];
     g.cobrado=g.ventas.length>0 && g.ventas.every(function(v){ return _esCxcPagado(v); });
+
+    // ── Montos PENDIENTES: solo las líneas que aún no se han cobrado ──
+    // Al marcar ✓ Pago en el Detalle completo de una línea suelta, esa línea
+    // deja de sumar acá, pero la factura sigue agrupada en pendientes hasta
+    // que se cancelen todas. Los totales de la factura completa (g.subtotal,
+    // g.iva, g.total) se conservan aparte para la tabla de cobradas.
+    g.pendSubtotal=0; g.pendIva=0; g.pendTotal=0;
+    g.lineasPend=0; g.lineasCobradas=0;
+    g.ventas.forEach(function(v){
+      if(_esCxcPagado(v)){ g.lineasCobradas++; return; }
+      g.lineasPend++;
+      g.pendSubtotal+=(v.subtotal||0);
+      g.pendIva+=(v.ivaAmt||v.iva||0);
+      g.pendTotal+=(v.total||(v.subtotal||0)+(v.ivaAmt||0));
+    });
     // Fecha de facturación del grupo (la más antigua de sus ventas)
     var ff=null;
     g.ventas.forEach(function(v){
@@ -12678,7 +12693,6 @@ function cxcBuildGrupos(){
       g.dias=Math.ceil((venc-new Date())/(1000*60*60*24));
     } else { g.venc=null; g.dias=null; }
     g.abonado=_cxcTotalAbonos(k);
-    g.saldo=g.total-g.abonado;
 
     // ── Montos en dólares ──
     g.permiteTcManual=_cxcPermiteTcManual(g.factura);
@@ -12689,15 +12703,22 @@ function cxcBuildGrupos(){
       // Venta registrada en dólares: se usan los montos nativos
       g.subUsd=_cxcUsdDe(g,'sub'); g.ivaUsd=_cxcUsdDe(g,'iva'); g.totalUsd=_cxcUsdDe(g,'tot');
       tcConv=g.tc||0;
+      g.pendSubUsd=_cxcUsdDe(g,'sub',true); g.pendIvaUsd=_cxcUsdDe(g,'iva',true);
+      g.pendTotalUsd=_cxcUsdDe(g,'tot',true);
     } else if(g.permiteTcManual&&g.tcManual>0){
       // Factura vieja en colones: se divide entre el TC que digitó el superadmin
       tcConv=g.tcManual;
       g.subUsd=g.subtotal/tcConv; g.ivaUsd=g.iva/tcConv; g.totalUsd=g.total/tcConv;
+      g.pendSubUsd=g.pendSubtotal/tcConv; g.pendIvaUsd=g.pendIva/tcConv;
+      g.pendTotalUsd=g.pendTotal/tcConv;
     } else {
       g.subUsd=0; g.ivaUsd=0; g.totalUsd=0;
+      g.pendSubUsd=0; g.pendIvaUsd=0; g.pendTotalUsd=0;
     }
     g.abonadoUsd=(tcConv>0)?(g.abonado/tcConv):0;
-    g.saldoUsd=g.totalUsd-g.abonadoUsd;
+    // El saldo se mide contra lo que queda pendiente, no contra la factura completa
+    g.saldo=g.pendTotal-g.abonado;
+    g.saldoUsd=g.pendTotalUsd-g.abonadoUsd;
     // Solo se muestra en dólares si además hay con qué convertir
     g.verUsd=!!ov.verUsd&&g.puedeUsd&&(g.hayUsd||g.tcManual>0);
     g.borrado=!!ov.borrado;
@@ -12732,11 +12753,12 @@ function cxcFmtMonto(g, campoCRC, campoUSD){
   }
   return fmt(campoCRC||0);
 }
-function _cxcUsdDe(g, cual){
+function _cxcUsdDe(g, cual, soloPendientes){
   if(!g.hayUsd) return 0;
   var s=0,i=0,t=0;
   g.ventas.forEach(function(v){
     if(!v.isUsd) return;
+    if(soloPendientes && _esCxcPagado(v)) return;
     var u=(v.usd||0);
     var ip=(v.ivaPct||0)/100;
     s+=u; i+=u*ip; t+=u*(1+ip);
@@ -13078,16 +13100,16 @@ function renderCXCPendientes(){
           : '<span style="font-size:11px">'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</span>')
       +'</td>'
       +'<td style="font-weight:800;'+_CXCNUM+'">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
-        +(g.ventas.length>1?'<span style="font-size:9px;color:var(--text3);font-weight:700"> ('+g.ventas.length+' líneas)</span>':'')+'</td>'
+        +(g.ventas.length>1?'<span style="font-size:9px;color:'+(g.lineasCobradas>0?'var(--green)':'var(--text3)')+';font-weight:700;display:block">'+(g.lineasCobradas>0?(g.lineasPend+' de '+g.ventas.length+' pendientes'):(g.ventas.length+' líneas'))+'</span>':'')+'</td>'
       +'<td style="text-align:center">'
         +(editable&&!g.tieneFechaPropia
           ? '<input type="number" min="1" value="'+(g.plazo||'')+'" onchange="cxcEditPlazo(\''+g.key+'\',this.value)" style="width:56px;font-size:11px;padding:2px 4px;border:1.5px solid var(--border2);border-radius:5px;text-align:center">'
           : '<span style="'+_CXCNUM+';font-weight:800">'+(g.plazo>0?g.plazo+'d':'—')+'</span>')
       +'</td>'
       +'<td>'+escHtml(g.cliente)+'</td>'
-      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.subtotal,g.subUsd)+'</td>'
-      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.iva,g.ivaUsd)+'</td>'
-      +'<td style="'+_CXCNUM+';color:var(--green)">'+cxcFmtMonto(g,g.total,g.totalUsd)+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.pendSubtotal,g.pendSubUsd)+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.pendIva,g.pendIvaUsd)+'</td>'
+      +'<td style="'+_CXCNUM+';color:var(--green)">'+cxcFmtMonto(g,g.pendTotal,g.pendTotalUsd)+'</td>'
       +'<td style="white-space:nowrap;font-size:11px">'+(g.venc?formatDate(g.venc):'—')+'</td>'
       +'<td style="color:'+(vencido?'var(--red)':urgente?'var(--amber)':'var(--green)')+';font-weight:700;font-size:11px">'
         +(g.dias===null?'—':g.dias<0?'⚠ '+Math.abs(g.dias)+'d vencido':g.dias+'d restantes')+'</td>'
@@ -13106,9 +13128,9 @@ function renderCXCPendientes(){
           +' style="padding:4px 9px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+';white-space:nowrap">✓ Pago recibido</button>'
       +'</td></tr>';
   });
-  var tSub=lista.reduce(function(s,g){return s+g.subtotal;},0);
-  var tIva=lista.reduce(function(s,g){return s+g.iva;},0);
-  var tTot=lista.reduce(function(s,g){return s+g.total;},0);
+  var tSub=lista.reduce(function(s,g){return s+g.pendSubtotal;},0);
+  var tIva=lista.reduce(function(s,g){return s+g.pendIva;},0);
+  var tTot=lista.reduce(function(s,g){return s+g.pendTotal;},0);
   var tSal=lista.reduce(function(s,g){return s+g.saldo;},0);
   html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
     +'<td colspan="5" style="text-align:right;font-weight:900;'+_CXCNUM+';font-size:13px">TOTAL PENDIENTE ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
@@ -13177,8 +13199,8 @@ function renderCXCSaldosCliente(){
     var key=String(g.cliente).toLowerCase();
     if(!porCliente[key]) porCliente[key]={nombre:g.cliente,facturas:0,subtotal:0,total:0,abonado:0};
     porCliente[key].facturas++;
-    porCliente[key].subtotal+=g.subtotal;
-    porCliente[key].total+=g.total;
+    porCliente[key].subtotal+=g.pendSubtotal;
+    porCliente[key].total+=g.pendTotal;
     porCliente[key].abonado+=g.abonado;
   });
   var lista=Object.keys(porCliente).map(function(k){
@@ -13443,12 +13465,19 @@ function _cxcOrdenFecha(lista){
     return da-db; // de más viejas a más nuevas
   });
 }
-function _cxcMonto(g,cual){
+// En "Créditos pendientes" el informe refleja lo que falta por cobrar;
+// en "Créditos cobrados" refleja la factura completa.
+function _cxcMonto(g,cual,soloPend){
+  var crc = soloPend
+    ? (cual==='sub'?g.pendSubtotal:cual==='iva'?g.pendIva:g.pendTotal)
+    : (cual==='sub'?g.subtotal:cual==='iva'?g.iva:g.total);
   if(g.verUsd){
-    var u=_cxcUsdDe(g,cual);
-    return '$'+u.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    var u = soloPend
+      ? (cual==='sub'?g.pendSubUsd:cual==='iva'?g.pendIvaUsd:g.pendTotalUsd)
+      : (cual==='sub'?g.subUsd:cual==='iva'?g.ivaUsd:g.totalUsd);
+    return '$'+Number(u||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   }
-  return fmt(cual==='sub'?g.subtotal:cual==='iva'?g.iva:g.total);
+  return fmt(crc);
 }
 
 function _cxcDatosInforme(which){
@@ -13480,6 +13509,7 @@ function cxcInformePDF(which){
   var d=_cxcDatosInforme(which);
   if(!d.filas.length){ toast('No hay datos con ese filtro'); return; }
   var titulo=(which==='cobr')?'Créditos cobrados':'Créditos pendientes de cobro';
+  var _soloPend=(which!=='cobr');
   var hoy=new Date();
   var emitida=hoy.toLocaleDateString('es-CR',{day:'2-digit',month:'long',year:'numeric'});
   var subFiltro=d.tipo?('Filtrado por '+d.tipo+': '+d.valor):'Todos los registros';
@@ -13487,14 +13517,18 @@ function cxcInformePDF(which){
   d.filas.forEach(function(g){
     var venc=g.venc?formatDate(g.venc):'—';
     var diasVenc=(g.dias!==null&&g.dias<0)?Math.abs(g.dias):0;
-    if(!g.verUsd){ tSub+=g.subtotal; tIva+=g.iva; tTot+=g.total; }
+    if(!g.verUsd){
+      tSub+=(_soloPend?g.pendSubtotal:g.subtotal);
+      tIva+=(_soloPend?g.pendIva:g.iva);
+      tTot+=(_soloPend?g.pendTotal:g.total);
+    }
     filas+='<tr>'
       +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
       +'<td>'+(g.factura||'—')+'</td>'
       +'<td>'+escHtml(g.cliente)+'</td>'
-      +'<td class="n">'+_cxcMonto(g,'sub')+'</td>'
-      +'<td class="n">'+_cxcMonto(g,'iva')+'</td>'
-      +'<td class="n">'+_cxcMonto(g,'tot')+'</td>'
+      +'<td class="n">'+_cxcMonto(g,'sub',_soloPend)+'</td>'
+      +'<td class="n">'+_cxcMonto(g,'iva',_soloPend)+'</td>'
+      +'<td class="n">'+_cxcMonto(g,'tot',_soloPend)+'</td>'
       +'<td>'+venc+'</td>'
       +'<td class="c">'+(diasVenc>0?'<span class="vz">'+diasVenc+'</span>':'—')+'</td>'
       +'</tr>';
@@ -13545,6 +13579,7 @@ function cxcInformeExcel(which){
   var d=_cxcDatosInforme(which);
   if(!d.filas.length){ toast('No hay datos con ese filtro'); return; }
   var titulo=(which==='cobr')?'Creditos cobrados':'Creditos pendientes de cobro';
+  var _soloPend=(which!=='cobr');
   var tSub=0,tIva=0,tTot=0;
   var html='<table border="1">'
     +'<tr><td colspan="8" style="font-size:16px;font-weight:bold">'+EMPRESA.nombre+' — '+titulo+'</td></tr>'
@@ -13556,14 +13591,18 @@ function cxcInformeExcel(which){
     +'<th>IVA</th><th>Total c/IVA</th><th>Vencimiento</th><th>Días vencidos</th></tr>';
   d.filas.forEach(function(g){
     var diasVenc=(g.dias!==null&&g.dias<0)?Math.abs(g.dias):0;
-    if(!g.verUsd){ tSub+=g.subtotal; tIva+=g.iva; tTot+=g.total; }
+    if(!g.verUsd){
+      tSub+=(_soloPend?g.pendSubtotal:g.subtotal);
+      tIva+=(_soloPend?g.pendIva:g.iva);
+      tTot+=(_soloPend?g.pendTotal:g.total);
+    }
     html+='<tr>'
       +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
       +'<td>'+(g.factura||'—')+'</td>'
       +'<td>'+escHtml(g.cliente)+'</td>'
-      +'<td>'+_cxcMonto(g,'sub')+'</td>'
-      +'<td>'+_cxcMonto(g,'iva')+'</td>'
-      +'<td>'+_cxcMonto(g,'tot')+'</td>'
+      +'<td>'+_cxcMonto(g,'sub',_soloPend)+'</td>'
+      +'<td>'+_cxcMonto(g,'iva',_soloPend)+'</td>'
+      +'<td>'+_cxcMonto(g,'tot',_soloPend)+'</td>'
       +'<td>'+(g.venc?formatDate(g.venc):'—')+'</td>'
       +'<td'+(diasVenc>0?' style="color:#E31837;font-weight:bold"':'')+'>'+(diasVenc>0?diasVenc:'—')+'</td>'
       +'</tr>';
