@@ -1939,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260819182302';
+var APP_BUILD='20260819182953';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -13518,6 +13518,9 @@ function cxcInformePDF(which){
   var emitida=hoy.toLocaleDateString('es-CR',{day:'2-digit',month:'long',year:'numeric'});
   var subFiltro=d.tipo?('Filtrado por '+d.tipo+': '+d.valor):'Todos los registros';
   var filas='', tSub=0, tIva=0, tTot=0, tSaldo=0;
+  // Las facturas marcadas en dólares no pueden sumarse con las de colones:
+  // se acumulan aparte y se muestran en su propia línea de total.
+  var tSaldoUsd=0, nCrc=0, nUsd=0;
   d.filas.forEach(function(g){
     var venc=g.venc?formatDate(g.venc):'—';
     var diasVenc=(g.dias!==null&&g.dias<0)?Math.abs(g.dias):0;
@@ -13526,6 +13529,10 @@ function cxcInformePDF(which){
       tIva+=(_soloPend?g.pendIva:g.iva);
       tTot+=(_soloPend?g.pendTotal:g.total);
       tSaldo+=(g.saldo||0);
+      nCrc++;
+    } else {
+      tSaldoUsd+=(_soloPend?(g.saldoUsd||0):(g.totalUsd||0));
+      nUsd++;
     }
     filas+='<tr>'
       +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
@@ -13586,9 +13593,16 @@ function cxcInformePDF(which){
    +'<tbody>'+filas+'</tbody>'
    +'<tfoot>'
    +(_soloPend
-      ? '<tr><td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO ('
-        +d.filas.length+' factura'+(d.filas.length!==1?'s':'')+')</td>'
-        +'<td class="n" colspan="2" style="font-size:13px">'+fmt(tSaldo)+'</td><td colspan="2"></td></tr>'
+      ? ((nCrc>0
+          ? '<tr><td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO — COLONES ('
+            +nCrc+' factura'+(nCrc!==1?'s':'')+')</td>'
+            +'<td class="n" colspan="2" style="font-size:13px">'+fmt(tSaldo)+'</td><td colspan="2"></td></tr>'
+          : '')
+        +(nUsd>0
+          ? '<tr><td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO — DÓLARES ('
+            +nUsd+' factura'+(nUsd!==1?'s':'')+')</td>'
+            +'<td class="n" colspan="2" style="font-size:13px">'+fmtUSD(tSaldoUsd)+'</td><td colspan="2"></td></tr>'
+          : ''))
       : '<tr><td colspan="3">TOTAL ('+d.filas.length+' factura'+(d.filas.length!==1?'s':'')+')</td>'
         +'<td class="n">'+fmt(tSub)+'</td><td class="n">'+fmt(tIva)+'</td><td class="n">'+fmt(tTot)+'</td>'
         +'<td colspan="2"></td></tr>')
@@ -13607,6 +13621,7 @@ function cxcInformeExcel(which){
   var titulo=(which==='cobr')?'Creditos cobrados':'Creditos pendientes de cobro';
   var _soloPend=(which!=='cobr');
   var tSub=0,tIva=0,tTot=0,tSaldo=0;
+  var tSaldoUsd=0,nCrc=0,nUsd=0;
   var _NC=_soloPend?10:8;
   var html='<table border="1">'
     +'<tr><td colspan="'+_NC+'" style="font-size:16px;font-weight:bold">'+EMPRESA.nombre+' — '+titulo+'</td></tr>'
@@ -13625,6 +13640,10 @@ function cxcInformeExcel(which){
       tIva+=(_soloPend?g.pendIva:g.iva);
       tTot+=(_soloPend?g.pendTotal:g.total);
       tSaldo+=(g.saldo||0);
+      nCrc++;
+    } else {
+      tSaldoUsd+=(_soloPend?(g.saldoUsd||0):(g.totalUsd||0));
+      nUsd++;
     }
     html+='<tr>'
       +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
@@ -13640,9 +13659,17 @@ function cxcInformeExcel(which){
       +'</tr>';
   });
   html+= _soloPend
-    ? ('<tr style="background:#f0f0f0;font-weight:bold">'
-       +'<td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO ('+d.filas.length+' facturas)</td>'
-       +'<td colspan="2">'+fmt(tSaldo)+'</td><td colspan="2"></td></tr></table>')
+    ? ((nCrc>0
+        ? '<tr style="background:#f0f0f0;font-weight:bold">'
+          +'<td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO — COLONES ('+nCrc+' facturas)</td>'
+          +'<td colspan="2">'+fmt(tSaldo)+'</td><td colspan="2"></td></tr>'
+        : '')
+      +(nUsd>0
+        ? '<tr style="background:#f0f0f0;font-weight:bold">'
+          +'<td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO — DÓLARES ('+nUsd+' facturas)</td>'
+          +'<td colspan="2">'+fmtUSD(tSaldoUsd)+'</td><td colspan="2"></td></tr>'
+        : '')
+      +'</table>')
     : ('<tr style="background:#f0f0f0;font-weight:bold"><td colspan="3">TOTAL ('+d.filas.length+')</td>'
        +'<td>'+fmt(tSub)+'</td><td>'+fmt(tIva)+'</td><td>'+fmt(tTot)+'</td><td colspan="2"></td></tr></table>');
   var blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-excel'});
