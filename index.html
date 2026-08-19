@@ -1939,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260819182953';
+var APP_BUILD='20260819184154';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -12986,7 +12986,7 @@ function _cxcHTML(){
     +'<button class="cxc-subtab on" data-sub="pend" onclick="cxcSwitchSub(\'pend\',this)" style="padding:9px 18px;border:none;background:none;font-family:Barlow,sans-serif;font-size:13px;font-weight:800;color:var(--text2);cursor:pointer;border-bottom:3px solid transparent">⏳ Créditos pendientes de cobro</button>'
     +'<button class="cxc-subtab" data-sub="cobr" onclick="cxcSwitchSub(\'cobr\',this)" style="padding:9px 18px;border:none;background:none;font-family:Barlow,sans-serif;font-size:13px;font-weight:800;color:var(--text2);cursor:pointer;border-bottom:3px solid transparent">✅ Créditos cobrados</button>'
     +'</div>'
-    +'<div id="cxc-readonly-note" style="display:none;background:rgba(217,119,6,.08);border:1px solid rgba(217,119,6,.3);border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:var(--amber);font-weight:700">👁 Modo consulta — solo el superadmin puede modificar esta información.</div>'
+    +'<div id="cxc-readonly-note" style="display:none;background:rgba(217,119,6,.08);border:1px solid rgba(217,119,6,.3);border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:var(--amber);font-weight:700">👁 Modo consulta — puede filtrar las tablas y generar informes en PDF y Excel. Solo el superadmin puede registrar abonos, marcar cobros o editar datos.</div>'
     +'<div id="cxc-sub-pend">'
     +'<div class="admin-table-wrap" style="margin-bottom:14px">'
     +'<div class="admin-table-hdr" style="border-bottom-color:var(--amber)">'
@@ -13036,6 +13036,24 @@ function _cxcHTML(){
 
 // Monta la pestaña en el contenedor indicado (admin o usuario).
 // Se monta UNA sola vez por contenedor para no duplicar IDs.
+// Un usuario con rol 'user' solo carga SUS ventas al iniciar sesión (el batch
+// completo es exclusivo de admin/superadmin). Si el superadmin le compartió
+// Cuentas por cobrar, necesita ver las de todos, así que se cargan aquí — una
+// sola vez y solo de lectura, sin alterar nada más de su sesión.
+function _cxcAsegurarDatos(){
+  if(window._cxcDatosListos) return Promise.resolve();
+  if(SESSION&&(SESSION.rol==='admin'||SESSION.rol==='superadmin')){
+    window._cxcDatosListos=true; return Promise.resolve();
+  }
+  window._cxcDatosListos=true;
+  return loadAllRows('ventas','fecha').then(function(r){
+    var todas=(r&&r.data)||[];
+    return Promise.all(getUsers().map(function(u){
+      return loadVentasFromDB(u.id, todas);
+    }));
+  }).catch(function(e){ console.error('_cxcAsegurarDatos:',e); });
+}
+
 function initCXCTab(rootId){
   var id=rootId||'cxcAdminRoot';
   var root=document.getElementById(id);
@@ -13052,6 +13070,8 @@ function initCXCTab(rootId){
     _cxcMontarAutocompletes();
     cxcOnTipoInforme('pend'); cxcOnTipoInforme('cobr');
   }catch(e){ console.error('autocompletes cxc:',e); }
+  // Si es un usuario normal, traer las ventas de todos y re-dibujar al terminar
+  try{ _cxcAsegurarDatos().then(function(){ renderCXCTab(); }); }catch(e){}
 }
 
 
