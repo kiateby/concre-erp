@@ -1939,7 +1939,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260819184154';
+var APP_BUILD='20260902162234';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -7579,6 +7579,7 @@ function vacAdminProgramar(){
   const userSel=document.getElementById('vac-prog-user').value;
   const desde=document.getElementById('vac-prog-desde').value;
   const hasta=document.getElementById('vac-prog-hasta').value;
+  const nota=((document.getElementById('vac-prog-nota')||{}).value||'').trim();
   if(!desde||!hasta){ alert('Indica las fechas de inicio y fin.'); return; }
   const fromDate=parseDate(desde),toDate=parseDate(hasta);
   if(toDate<fromDate){ alert('La fecha de fin no puede ser anterior al inicio.'); return; }
@@ -7588,7 +7589,9 @@ function vacAdminProgramar(){
   users.forEach(u=>{
     const dias=countWorkingDays(fromDate,toDate,u.id,'full');
     // Deduct saldo FIRST so adjustVacSaldo writes its version
-    adjustVacSaldo(u.id,-dias,'Vacaciones obligatorias programadas por '+SESSION.nombre);
+    // La nota del superadmin queda dentro del motivo, que es lo que el historial muestra
+    adjustVacSaldo(u.id,-dias,'Vacaciones obligatorias programadas por '+SESSION.nombre
+      +(nota?' — '+nota:''));
     // Now read fresh and add request + usedDias on top
     const vd=getVacData(u.id);
     if(!vd.requests) vd.requests=[];
@@ -7598,16 +7601,19 @@ function vacAdminProgramar(){
       status:'approved',mandatory:true,
       created:new Date().toISOString(),
       approvedBy:SESSION.nombre,
-      motivo:'Vacaciones programadas por administración'
+      motivo:'Vacaciones programadas por administración'+(nota?' — '+nota:''),
+      nota:nota
     });
     if(!vd.usedDias) vd.usedDias=0;
     vd.usedDias=parseFloat((vd.usedDias+dias).toFixed(1));
     setVacData(u.id,vd);
     addNotification(u.id,'📅','Vacaciones programadas',
-      'La administración programó vacaciones del '+formatDate(fromDate)+' al '+formatDate(toDate)+' ('+dias.toFixed(1)+' días hábiles).');
+      'La administración programó vacaciones del '+formatDate(fromDate)+' al '+formatDate(toDate)+' ('+dias.toFixed(1)+' días hábiles).'
+      +(nota?' Nota: '+nota:''));
   });
   document.getElementById('vac-prog-desde').value='';
   document.getElementById('vac-prog-hasta').value='';
+  var _nEl=document.getElementById('vac-prog-nota'); if(_nEl) _nEl.value='';
   toast('✓ Vacaciones programadas para '+users.length+' colaborador(es)');
   renderAdminVacSection();
 }
@@ -17632,7 +17638,7 @@ function renderTop(elId, selId, type){
 
   var sorted=scores.slice().sort(function(a,b){
     return type==='freq'?(b.freq-a.freq):(b.monto-a.monto);
-  }).slice(0,10).filter(function(s){
+  }).slice(0,20).filter(function(s){
     return type==='freq'?s.freq>0:s.monto>0;
   });
 
@@ -17677,14 +17683,17 @@ function getCRMSemesters(){
   return {s1:{start:s1start,end:s1end,label:label1},s2:{start:s2start,end:s2end,label:label2}};
 }
 
-function renderCRMSemestral(){
-  var canvas=document.getElementById('crm-sem-chart');
-  var summaryEl=document.getElementById('crm-sem-summary');
-  var labelEl=document.getElementById('crm-sem-label');
+// ── Comparativo de frecuencia (motor común para semestral y anual) ──
+// Compara dos períodos y dibuja barras + resumen de quiénes subieron y bajaron.
+// Lo usan renderCRMSemestral() y renderCRMAnual() con distintos períodos.
+function _renderCRMComparativo(cfg){
+  var canvas=document.getElementById(cfg.canvasId);
+  var summaryEl=document.getElementById(cfg.summaryId);
+  var labelEl=document.getElementById(cfg.labelId);
   if(!canvas) return;
 
-  var sems=getCRMSemesters();
-  if(labelEl) labelEl.textContent=sems.s1.label+' vs '+sems.s2.label;
+  var p=cfg.periodos;
+  if(labelEl) labelEl.textContent=p.s1.label+' vs '+p.s2.label;
 
   var clients=getCRMClients();
   var allVentas=getAllVentasForCRM();
@@ -17697,12 +17706,13 @@ function renderCRMSemestral(){
   }
 
   var data=clients.map(function(cl){
-    var f1=freqInPeriod(cl.id,sems.s1.start,sems.s1.end);
-    var f2=freqInPeriod(cl.id,sems.s2.start,sems.s2.end);
+    var f1=freqInPeriod(cl.id,p.s1.start,p.s1.end);
+    var f2=freqInPeriod(cl.id,p.s2.start,p.s2.end);
     return {cl:cl,f1:f1,f2:f2,delta:f2-f1};
-  }).filter(function(d){return d.f1>0||d.f2>0;}).sort(function(a,b){return Math.abs(b.delta)-Math.abs(a.delta);}).slice(0,10);
+  }).filter(function(d){return d.f1>0||d.f2>0;})
+    .sort(function(a,b){return Math.abs(b.delta)-Math.abs(a.delta);})
+    .slice(0,cfg.top||10);
 
-  // Draw chart
   var ctx=canvas.getContext('2d');
   var W=canvas.offsetWidth||600; var H=120;
   canvas.width=W; canvas.height=H;
@@ -17719,30 +17729,25 @@ function renderCRMSemestral(){
 
     data.forEach(function(d,i){
       var x=padL+i*(groupW+16);
-      // S1 bar
       var h1=maxVal>0?Math.round(d.f1/maxVal*chartH):0;
       ctx.fillStyle='rgba(88,89,91,.5)';
       ctx.fillRect(x,H-padB-h1,barW,h1);
-      // S2 bar
       var h2=maxVal>0?Math.round(d.f2/maxVal*chartH):0;
       var col=d.delta>0?'rgba(26,158,92,.8)':d.delta<0?'rgba(227,24,55,.8)':'rgba(88,89,91,.4)';
       ctx.fillStyle=col;
       ctx.fillRect(x+barW+gap,H-padB-h2,barW,h2);
-      // Label
       ctx.fillStyle='#3e3f41'; ctx.font='9px Barlow,sans-serif'; ctx.textAlign='center';
       var name=d.cl.nombreEmpresa.split(' ')[0].slice(0,8);
       ctx.fillText(name,x+barW,H-padB+12);
     });
 
-    // Legend
     ctx.fillStyle='rgba(88,89,91,.5)'; ctx.fillRect(W-120,8,12,10);
     ctx.fillStyle='#3e3f41'; ctx.font='10px Barlow,sans-serif'; ctx.textAlign='left';
-    ctx.fillText(sems.s1.label,W-104,17);
+    ctx.fillText(p.s1.label,W-104,17);
     ctx.fillStyle='rgba(26,158,92,.8)'; ctx.fillRect(W-120,22,12,10);
-    ctx.fillText(sems.s2.label,W-104,31);
+    ctx.fillText(p.s2.label,W-104,31);
   }
 
-  // Summary cards
   var increased=data.filter(function(d){return d.delta>0;});
   var decreased=data.filter(function(d){return d.delta<0;});
   if(summaryEl){
@@ -17766,6 +17771,30 @@ function renderCRMSemestral(){
         }).join(''):'<div style="font-size:11px;color:var(--text3)">Ninguno en este período</div>')
       +'</div>';
   }
+}
+
+function renderCRMSemestral(){
+  _renderCRMComparativo({
+    periodos:getCRMSemesters(),
+    canvasId:'crm-sem-chart', summaryId:'crm-sem-summary', labelId:'crm-sem-label', top:10
+  });
+  renderCRMAnual();
+}
+
+// ── Análisis anual: año en curso contra el anterior, ambos completos ──
+function getCRMYears(){
+  var y=new Date().getFullYear();
+  return {
+    s1:{start:new Date(y-1,0,1), end:new Date(y-1,11,31,23,59,59), label:'Año '+(y-1)},
+    s2:{start:new Date(y,0,1),   end:new Date(y,11,31,23,59,59),   label:'Año '+y}
+  };
+}
+
+function renderCRMAnual(){
+  _renderCRMComparativo({
+    periodos:getCRMYears(),
+    canvasId:'crm-anual-chart', summaryId:'crm-anual-summary', labelId:'crm-anual-label', top:10
+  });
 }
 
 // ── Inactive alert ──
@@ -26679,6 +26708,11 @@ window.initCalcCONCRE=initCalcCONCRE;
               </div>
               <button class="modal-btn save" style="white-space:nowrap" onclick="vacAdminProgramar()">📅 Programar</button>
             </div>
+            <div style="margin-top:10px">
+              <div class="form-label" style="margin-bottom:5px">Nota (opcional) — queda guardada en el historial del colaborador</div>
+              <input type="text" class="form-inp" id="vac-prog-nota" maxlength="300"
+                placeholder="Ej. Cierre de planta por fin de año" style="width:100%">
+            </div>
             <div id="vac-prog-preview" style="margin-top:10px;font-size:12px;color:var(--text3)"></div>
           </div>
 
@@ -27494,7 +27528,7 @@ window.initCalcCONCRE=initCalcCONCRE;
               <!-- Top periodicidad -->
               <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden">
                 <div style="background:var(--gray-dark);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid var(--red)">
-                  <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">🏆 Top 10 — Mayor frecuencia</span>
+                  <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">🏆 Top 20 — Mayor frecuencia</span>
                   <select id="crm-top-freq-period" class="apb-sel" style="font-size:10px;padding:3px 6px" onchange="renderCRMTops()">
                     <option value="month">Este mes</option>
                     <option value="quarter">Trimestre</option>
@@ -27503,12 +27537,12 @@ window.initCalcCONCRE=initCalcCONCRE;
                     <option value="all">Acumulado</option>
                   </select>
                 </div>
-                <div id="crm-top-freq" style="padding:10px"></div>
+                <div id="crm-top-freq" style="padding:10px;max-height:420px;overflow-y:auto"></div>
               </div>
               <!-- Top monto -->
               <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden">
                 <div style="background:var(--gray-dark);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid var(--red)">
-                  <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">💰 Top 10 — Mayor monto</span>
+                  <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">💰 Top 20 — Mayor monto</span>
                   <select id="crm-top-monto-period" class="apb-sel" style="font-size:10px;padding:3px 6px" onchange="renderCRMTops()">
                     <option value="month">Este mes</option>
                     <option value="quarter">Trimestre</option>
@@ -27517,7 +27551,7 @@ window.initCalcCONCRE=initCalcCONCRE;
                     <option value="all">Acumulado</option>
                   </select>
                 </div>
-                <div id="crm-top-monto" style="padding:10px"></div>
+                <div id="crm-top-monto" style="padding:10px;max-height:420px;overflow-y:auto"></div>
               </div>
             </div>
 
@@ -27530,6 +27564,18 @@ window.initCalcCONCRE=initCalcCONCRE;
               <div style="padding:14px">
                 <canvas id="crm-sem-chart" height="120" style="width:100%;max-width:100%"></canvas>
                 <div id="crm-sem-summary" style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px"></div>
+              </div>
+            </div>
+
+            <!-- Annual analysis -->
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden;margin-bottom:16px">
+              <div style="background:var(--gray-dark);padding:10px 14px;border-bottom:2px solid var(--red);display:flex;align-items:center;justify-content:space-between">
+                <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">📅 Análisis anual de frecuencia</span>
+                <span id="crm-anual-label" style="font-size:11px;color:rgba(255,255,255,.6)"></span>
+              </div>
+              <div style="padding:14px">
+                <canvas id="crm-anual-chart" height="120" style="width:100%;max-width:100%"></canvas>
+                <div id="crm-anual-summary" style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px"></div>
               </div>
             </div>
 
