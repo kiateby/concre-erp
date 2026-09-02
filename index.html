@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260902195212';
+var APP_BUILD='20260902200707';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -12779,11 +12779,16 @@ function auxAcum(y, fn){
 //  RENDER
 // ══════════════════════════════════════════════
 var AUX_MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'];
-var _AUXNUM='font-family:var(--sans);font-variant-numeric:tabular-nums;'
-  +'font-feature-settings:\'tnum\' 1;font-weight:700;font-size:11.5px;'
-  +'white-space:nowrap;text-align:right;padding:4px 7px';
+var _AUXFONT='-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,'
+  +'\'Helvetica Neue\',Arial,sans-serif';
+var _AUXNUM='font-family:'+_AUXFONT+';font-variant-numeric:tabular-nums;'
+  +'font-feature-settings:\'tnum\' 1;font-weight:600;font-size:12px;'
+  +'letter-spacing:.1px;-webkit-font-smoothing:antialiased;'
+  +'-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;'
+  +'white-space:nowrap;text-align:right;padding:5px 8px';
 var _AUXLBL='position:sticky;left:0;background:var(--surface);z-index:2;'
-  +'font-size:11.5px;font-weight:600;padding:4px 10px;min-width:250px;'
+  +'font-family:'+_AUXFONT+';font-size:12px;font-weight:500;padding:5px 11px;'
+  +'min-width:250px;-webkit-font-smoothing:antialiased;'
   +'border-right:2px solid var(--border)';
 
 function auxRoot(){ return document.getElementById('auxEquiposRoot')||document; }
@@ -12801,7 +12806,7 @@ function auxCeldaEditable(y,m,filaId,val,cerrado){
   return '<td style="padding:2px 3px">'
     +'<input type="text" value="'+(val?Math.round(val*100)/100:'')+'" '
     +'onfocus="this.select()" onchange="auxOnEdit('+y+','+m+',\''+filaId+'\',this.value)" '
-    +'style="width:96px;'+_AUXNUM+';border:1px solid transparent;border-radius:4px;'
+    +'style="width:100px;'+_AUXNUM+';border:1px solid transparent;border-radius:4px;'
     +'background:transparent;outline:none" '
     +'onmouseover="this.style.borderColor=\'var(--border2)\'" '
     +'onmouseout="this.style.borderColor=\'transparent\'">'
@@ -12814,15 +12819,20 @@ function auxOnEdit(y,m,filaId,val){
 }
 
 function auxHeaderMeses(y, titulo, colorBorde){
-  var h='<tr style="background:var(--gray-dark)">'
-    +'<th style="'+_AUXLBL+';background:var(--gray-dark);color:#fff;font-family:var(--cond);'
-    +'font-size:12.5px;font-weight:800;text-align:left;border-right:2px solid var(--red)">'+titulo+'</th>';
+  // Fondo claro y texto negro: sobre el gris oscuro los meses se leían mal.
+  var FONDO='#eceded';
+  var h='<tr style="background:'+FONDO+'">'
+    +'<th style="'+_AUXLBL+';background:'+FONDO+';color:#111;font-family:'+_AUXFONT+';'
+    +'font-size:12.5px;font-weight:700;text-align:left;letter-spacing:.3px;'
+    +'border-right:2px solid var(--red);border-bottom:2px solid #b9babb">'+titulo+'</th>';
   for(var m=0;m<12;m++){
-    h+='<th style="color:#fff;font-size:10.5px;font-weight:800;padding:6px 7px;text-align:right;'
-      +'font-family:var(--cond);letter-spacing:.4px">'+AUX_MESES[m]+' '+String(y).slice(2)+'</th>';
+    h+='<th style="color:#111;font-size:11.5px;font-weight:700;padding:7px 8px;text-align:right;'
+      +'font-family:'+_AUXFONT+';letter-spacing:.2px;-webkit-font-smoothing:antialiased;'
+      +'border-bottom:2px solid #b9babb">'+AUX_MESES[m]+' '+String(y).slice(2)+'</th>';
   }
-  h+='<th style="color:#fff;font-size:10.5px;font-weight:800;padding:6px 9px;text-align:right;'
-    +'font-family:var(--cond);background:rgba(227,24,55,.35);letter-spacing:.4px">ACUMULADO</th></tr>';
+  h+='<th style="color:#111;font-size:11.5px;font-weight:800;padding:7px 10px;text-align:right;'
+    +'font-family:'+_AUXFONT+';background:#f7dde2;letter-spacing:.3px;'
+    +'-webkit-font-smoothing:antialiased;border-bottom:2px solid var(--red)">ACUMULADO</th></tr>';
   return h;
 }
 
