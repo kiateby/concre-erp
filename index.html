@@ -1810,6 +1810,15 @@ async function loadAllDataFromDB(){
           window._pagadoAdminOverrides[vid]=!!(row.valor.pagado);
         }
         // Ediciones de ventas guardadas como backup
+        if(row.clave&&row.clave.indexOf('aux_equipos_')===0){
+          var _suf=row.clave.replace('aux_equipos_','');
+          if(_suf==='cfg'){ window._auxCfg=row.valor||null; }
+          else if(_suf==='anios'){ window._auxAnios=Array.isArray(row.valor)?row.valor:[]; }
+          else if(/^\d{4}$/.test(_suf)){
+            if(!window._auxCache) window._auxCache={};
+            window._auxCache[parseInt(_suf)]=row.valor||{};
+          }
+        }
         if(row.clave&&row.clave.startsWith('cxc_ov_')){
           if(!window._cxcOverridesCache) window._cxcOverridesCache={};
           var _ov=row.valor||{};
@@ -1939,7 +1948,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260902162234';
+var APP_BUILD='20260902190012';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -3843,6 +3852,7 @@ function buildAdminTabs(){
     {id:'fondos',        label:'📦 Fondos',          extra:'try{initAdminFondos();}catch(e){}'},
     {id:'ventas',        label:'📈 Ventas',          extra:'try{initAdminVentas();}catch(e){}'},
     {id:'cxc',           label:'💰 Cuentas por cobrar', extra:'try{initCXCTab();}catch(e){console.error(e);}', optIn:true},
+    {id:'auxeq',         label:'🏗 Auxiliar equipos',   extra:'try{initAuxEquipos();}catch(e){console.error(e);}', saOnly:true},
     {id:'liquidaciones', label:'📋 Liquidaciones',   extra:'try{initLiquidaciones();}catch(e){}'},
     {id:'gastos-admin',  label:'🏗 Gastos',          extra:'try{initAdminGastos();}catch(e){}'},
     {id:'crm',           label:'👥 CRM',             extra:'try{initCRM();}catch(e){}'},
@@ -12566,6 +12576,835 @@ function renderAdminCxcTable(allVentas,catMap){
 }
 
 
+
+
+// ══════════════════════════════════════════════════════════════
+//  AUXILIAR VENTA DE EQUIPOS E INSUMOS PARA LA CONSTRUCCIÓN
+//  Pestaña de CONCREEQUIPOS — solo superadmin.
+//  Tres subtablas: Ingresos, Gastos e Impuestos de importación.
+//  Se muestra el año en curso; los años cerrados quedan en historial.
+// ══════════════════════════════════════════════════════════════
+
+// Desde este mes las tres filas de categoría se calculan solas desde Ventas.
+// Los meses anteriores conservan los valores cargados del Excel original.
+var AUX_MES_AUTOMATICO = '2026-09';
+
+// Categorías de Ventas que alimentan los ingresos
+var AUX_CATS = [
+  {id:'cat15', nombre:'Equipo Liviano'},
+  {id:'cat16', nombre:'Herramienta Manual'},
+  {id:'cat17', nombre:'Repuestos'}
+];
+
+// ── Filas fijas ──
+var AUX_FILAS_ING = [
+  {id:'apertura', nombre:'Apertura de bancos',            tipo:'manual'},
+  {id:'aportes',  nombre:'Aportes de capital temporales', tipo:'manual'},
+  {id:'cat15',    nombre:'Equipo Liviano',                tipo:'auto'},
+  {id:'cat16',    nombre:'Herramienta Manual',            tipo:'auto'},
+  {id:'cat17',    nombre:'Repuestos',                     tipo:'auto'}
+];
+var AUX_FILAS_GAS = [
+  {id:'impSociedades', nombre:'Pago de impuesto a las sociedades',           tipo:'manual'},
+  {id:'recompra',      nombre:'Recompra más Nacionalización',                tipo:'manual'},
+  {id:'impFuera',      nombre:'Impuestos pagados fuera de los de importaciones', tipo:'manual'},
+  {id:'publicidad',    nombre:'Gasto de publicidad',                         tipo:'manual', def:120000},
+  {id:'facturacion',   nombre:'Pago del sistema de facturación',             tipo:'manual'},
+  {id:'telefono',      nombre:'Teléfono plan vendedor',                      tipo:'manual', def:17000},
+  {id:'timbres',       nombre:'Timbres de Hacienda',                         tipo:'manual'},
+  {id:'socios',        nombre:'Repartición a socios',                        tipo:'manual'},
+  {id:'alquiler',      nombre:'Alquiler de espacio de bodega',               tipo:'pct'},
+  {id:'comision',      nombre:'Comisión vendedores',                         tipo:'pct'},
+  {id:'renta2023',     nombre:'Renta 10% 2023 pendiente de pagar',           tipo:'manual'}
+];
+var AUX_FILAS_IMP = [
+  {id:'impAdelantado', nombre:'Impuesto pagado por adelantado / parciales', tipo:'manual'},
+  {id:'abonos',        nombre:'Abonos',                                     tipo:'manual'}
+];
+
+// ── Acceso a datos (Supabase vía configuracion) ──
+function auxAnioActual(){ return window._auxAnio || new Date().getFullYear(); }
+function auxCache(){ return window._auxCache||(window._auxCache={}); }
+
+function auxGetAnio(y){
+  var c=auxCache();
+  if(!c[y]) c[y]={year:y, meses:{}, filasExtra:[], cerrado:false};
+  if(!c[y].meses) c[y].meses={};
+  if(!c[y].filasExtra) c[y].filasExtra=[];
+  return c[y];
+}
+function auxSaveAnio(y){
+  var d=auxGetAnio(y);
+  _saveToSupabase('aux_equipos_'+y, d, '');
+}
+function auxMesKey(y,m){ return y+'-'+pad(m+1); }
+function auxGetMes(y,m){
+  var d=auxGetAnio(y), k=auxMesKey(y,m);
+  if(!d.meses[k]) d.meses[k]={};
+  return d.meses[k];
+}
+function auxSetCelda(y,m,filaId,val){
+  var mes=auxGetMes(y,m);
+  mes[filaId]=parseMon(val)||0;
+  auxSaveAnio(y);
+}
+
+// ── Configuración de porcentajes con vigencia por FECHA DE VENTA ──
+function auxCfg(){
+  if(!window._auxCfg) window._auxCfg={pctHist:[{desde:'2000-01-01',alquiler:10,comision:5}]};
+  if(!window._auxCfg.pctHist||!window._auxCfg.pctHist.length){
+    window._auxCfg.pctHist=[{desde:'2000-01-01',alquiler:10,comision:5}];
+  }
+  return window._auxCfg;
+}
+// Porcentajes vigentes para una fecha concreta de venta
+function auxPctEn(fechaStr){
+  var hist=auxCfg().pctHist.slice().sort(function(a,b){
+    return String(a.desde).localeCompare(String(b.desde));
+  });
+  var out=hist[0];
+  hist.forEach(function(h){ if(String(fechaStr)>=String(h.desde)) out=h; });
+  return {alquiler:parseFloat(out.alquiler)||0, comision:parseFloat(out.comision)||0};
+}
+function auxPctVigente(){
+  var hist=auxCfg().pctHist.slice().sort(function(a,b){
+    return String(b.desde).localeCompare(String(a.desde));
+  });
+  return hist[0];
+}
+function auxGuardarPct(alq, com, desde){
+  var a=parseFloat(alq), c=parseFloat(com);
+  if(isNaN(a)||a<0||isNaN(c)||c<0){ toast('Porcentajes inválidos'); return false; }
+  if(!desde){ toast('Indique desde qué fecha rigen los porcentajes'); return false; }
+  var cfg=auxCfg();
+  // Si ya existe una vigencia con esa misma fecha, se reemplaza
+  cfg.pctHist=cfg.pctHist.filter(function(h){ return h.desde!==desde; });
+  cfg.pctHist.push({desde:desde, alquiler:a, comision:c});
+  _saveToSupabase('aux_equipos_cfg', cfg, '');
+  return true;
+}
+
+// ── Ventas de las 3 categorías, por mes y por fecha ──
+function auxVentasDelMes(y,m){
+  var out=[];
+  getUsers().forEach(function(u){
+    var vd=getVentasData(u.id)||{};
+    var mk=auxMesKey(y,m);
+    var mv=vd[mk];
+    if(!mv||!mv.ventas) return;
+    mv.ventas.forEach(function(v){
+      if(v.estado==='incompleta') return;
+      if(AUX_CATS.every(function(c){ return c.id!==v.prodId; })) return;
+      out.push(v);
+    });
+  });
+  return out;
+}
+
+// ── Valor de una celda ya resuelto (auto o manual) ──
+function auxEsMesAutomatico(y,m){ return auxMesKey(y,m) >= AUX_MES_AUTOMATICO; }
+
+function auxValor(y,m,filaId){
+  var mes=auxGetMes(y,m);
+  var auto=auxEsMesAutomatico(y,m);
+
+  // Categorías: automáticas desde el mes de corte
+  if(filaId==='cat15'||filaId==='cat16'||filaId==='cat17'){
+    if(!auto) return parseFloat(mes[filaId])||0;
+    return auxVentasDelMes(y,m).reduce(function(s,v){
+      return s + (v.prodId===filaId ? (v.subtotal||0) : 0);
+    },0);
+  }
+
+  // Alquiler y comisión: % sobre la venta, con el porcentaje vigente a la
+  // FECHA DE CADA VENTA. Los meses anteriores al corte conservan lo cargado.
+  if(filaId==='alquiler'||filaId==='comision'){
+    if(!auto) return parseFloat(mes[filaId])||0;
+    return auxVentasDelMes(y,m).reduce(function(s,v){
+      var p=auxPctEn(v.fecha||auxMesKey(y,m)+'-01');
+      var pct=(filaId==='alquiler')?p.alquiler:p.comision;
+      return s + (v.subtotal||0)*pct/100;
+    },0);
+  }
+
+  return parseFloat(mes[filaId])||0;
+}
+
+// ── Totales calculados ──
+function auxTotalVenta(y,m){
+  return AUX_CATS.reduce(function(s,c){ return s+auxValor(y,m,c.id); },0);
+}
+function auxTotalFlujo(y,m){
+  return auxValor(y,m,'apertura')+auxValor(y,m,'aportes')+auxTotalVenta(y,m);
+}
+function auxFilasGastoTodas(y){
+  return AUX_FILAS_GAS.concat(
+    auxGetAnio(y).filasExtra.filter(function(f){ return f.tabla==='gasto'; })
+  );
+}
+function auxTotalGasto(y,m){
+  return auxFilasGastoTodas(y).reduce(function(s,f){ return s+auxValor(y,m,f.id); },0);
+}
+function auxFlujoDisponible(y,m){ return auxTotalFlujo(y,m)-auxTotalGasto(y,m); }
+
+// Saldo CORRIDO de impuestos: arrastra lo pendiente del mes anterior
+function auxSaldoImpuestos(y,m){
+  var saldo=0;
+  for(var i=0;i<=m;i++){
+    saldo += auxValor(y,i,'impAdelantado') - auxValor(y,i,'abonos');
+  }
+  return saldo;
+}
+
+// ── Acumulados del año ──
+function auxAcum(y, fn){
+  var s=0; for(var m=0;m<12;m++) s+=fn(y,m); return s;
+}
+
+// ══════════════════════════════════════════════
+//  RENDER
+// ══════════════════════════════════════════════
+var AUX_MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'];
+var _AUXNUM='font-family:var(--sans);font-variant-numeric:tabular-nums;'
+  +'font-feature-settings:\'tnum\' 1;font-weight:700;font-size:11.5px;'
+  +'white-space:nowrap;text-align:right;padding:4px 7px';
+var _AUXLBL='position:sticky;left:0;background:var(--surface);z-index:2;'
+  +'font-size:11.5px;font-weight:600;padding:4px 10px;min-width:250px;'
+  +'border-right:2px solid var(--border)';
+
+function auxRoot(){ return document.getElementById('auxEquiposRoot')||document; }
+function auxFmt(n){
+  n=Math.round((n||0)*100)/100;
+  if(n===0) return '<span style="color:var(--text3)">—</span>';
+  var t=fmt(Math.abs(n));
+  return n<0 ? '<span style="color:var(--red)">('+t+')</span>' : t;
+}
+
+function auxCeldaEditable(y,m,filaId,val,cerrado){
+  if(cerrado){
+    return '<td style="'+_AUXNUM+'">'+auxFmt(val)+'</td>';
+  }
+  return '<td style="padding:2px 3px">'
+    +'<input type="text" value="'+(val?Math.round(val*100)/100:'')+'" '
+    +'onfocus="this.select()" onchange="auxOnEdit('+y+','+m+',\''+filaId+'\',this.value)" '
+    +'style="width:96px;'+_AUXNUM+';border:1px solid transparent;border-radius:4px;'
+    +'background:transparent;outline:none" '
+    +'onmouseover="this.style.borderColor=\'var(--border2)\'" '
+    +'onmouseout="this.style.borderColor=\'transparent\'">'
+    +'</td>';
+}
+
+function auxOnEdit(y,m,filaId,val){
+  auxSetCelda(y,m,filaId,val);
+  renderAuxEquipos();
+}
+
+function auxHeaderMeses(y, titulo, colorBorde){
+  var h='<tr style="background:var(--gray-dark)">'
+    +'<th style="'+_AUXLBL+';background:var(--gray-dark);color:#fff;font-family:var(--cond);'
+    +'font-size:12.5px;font-weight:800;text-align:left;border-right:2px solid var(--red)">'+titulo+'</th>';
+  for(var m=0;m<12;m++){
+    h+='<th style="color:#fff;font-size:10.5px;font-weight:800;padding:6px 7px;text-align:right;'
+      +'font-family:var(--cond);letter-spacing:.4px">'+AUX_MESES[m]+' '+String(y).slice(2)+'</th>';
+  }
+  h+='<th style="color:#fff;font-size:10.5px;font-weight:800;padding:6px 9px;text-align:right;'
+    +'font-family:var(--cond);background:rgba(227,24,55,.35);letter-spacing:.4px">ACUMULADO</th></tr>';
+  return h;
+}
+
+function auxFilaDatos(y, fila, cerrado, extra){
+  var acum=0, tds='';
+  for(var m=0;m<12;m++){
+    var v=auxValor(y,m,fila.id);
+    acum+=v;
+    var editable=(fila.tipo==='manual') ||
+                 ((fila.tipo==='auto'||fila.tipo==='pct') && !auxEsMesAutomatico(y,m));
+    tds += editable ? auxCeldaEditable(y,m,fila.id,v,cerrado)
+                    : '<td style="'+_AUXNUM+';background:rgba(88,89,91,.05)">'+auxFmt(v)+'</td>';
+  }
+  var icono = fila.tipo==='auto' ? ' <span title="Se calcula desde Ventas" style="font-size:9px;color:var(--green)">⚙</span>'
+            : fila.tipo==='pct'  ? ' <span title="Porcentaje sobre la venta del mes" style="font-size:9px;color:var(--green)">%</span>' : '';
+  var btnQuitar = (extra&&!cerrado)
+    ? ' <button onclick="auxQuitarFila(\''+fila.id+'\')" title="Quitar esta fila" '
+      +'style="border:none;background:none;cursor:pointer;font-size:10px;color:var(--red)">✕</button>' : '';
+  return '<tr>'
+    +'<td style="'+_AUXLBL+'">'+escHtml(fila.nombre)+icono+btnQuitar+'</td>'
+    +tds
+    +'<td style="'+_AUXNUM+';background:rgba(227,24,55,.06);font-weight:900;font-size:12px">'+auxFmt(acum)+'</td>'
+    +'</tr>';
+}
+
+// acumFn: para saldos corridos el acumulado NO es la suma de los meses,
+// sino el saldo del último mes. Se pasa aparte cuando aplica.
+function auxFilaTotal(y, nombre, fn, color, grande, acumFn){
+  var acum=0, tds='';
+  for(var m=0;m<12;m++){
+    var v=fn(y,m); acum+=v;
+    tds+='<td style="'+_AUXNUM+';font-weight:900;'+(grande?'font-size:12.5px;':'')
+      +(color?'color:'+color+';':'')+'">'+auxFmt(v)+'</td>';
+  }
+  return '<tr style="background:var(--surface2);border-top:2px solid '+(color||'var(--border2)')+'">'
+    +'<td style="'+_AUXLBL+';background:var(--surface2);font-weight:900;font-family:var(--cond);font-size:12.5px">'+nombre+'</td>'
+    +tds
+    +'<td style="'+_AUXNUM+';background:rgba(227,24,55,.1);font-weight:900;font-size:13px;'
+      +(color?'color:'+color+';':'')+'">'+auxFmt(acumFn?acumFn(y):acum)+'</td>'
+    +'</tr>';
+}
+
+function renderAuxEquipos(){
+  var root=auxRoot();
+  var cont=root.querySelector('#aux-tablas');
+  if(!cont) return;
+  var y=auxAnioActual();
+  var cerrado=auxGetAnio(y).cerrado;
+
+  // ── INGRESOS ──
+  var h='<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--green)">'
+    +'<span class="ath-title">📈 Ingresos</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Las tres categorías se cargan solas desde Ventas a partir de '
+      +AUX_MESES[parseInt(AUX_MES_AUTOMATICO.split('-')[1])-1]+' '+AUX_MES_AUTOMATICO.split('-')[0]+'</span>'
+    +'</div>'
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1500px;border-collapse:separate;border-spacing:0">'
+    +'<thead>'+auxHeaderMeses(y,'INGRESOS')+'</thead><tbody>';
+  AUX_FILAS_ING.forEach(function(f){ h+=auxFilaDatos(y,f,cerrado); });
+  h+=auxFilaTotal(y,'Total de venta mensual',auxTotalVenta,'var(--green)');
+  h+=auxFilaTotal(y,'Total de flujo de efectivo',auxTotalFlujo,'var(--green)',true);
+  h+='</tbody></table></div></div>';
+
+  // ── GASTOS ──
+  var pv=auxPctVigente();
+  h+='<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--red)">'
+    +'<span class="ath-title">📉 Gastos</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Alquiler '+pv.alquiler+'% · Comisión '+pv.comision+'% sobre la venta</span>'
+    +'</div>'
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1500px;border-collapse:separate;border-spacing:0">'
+    +'<thead>'+auxHeaderMeses(y,'GASTOS')+'</thead><tbody>';
+  auxFilasGastoTodas(y).forEach(function(f){
+    var esExtra=AUX_FILAS_GAS.every(function(x){return x.id!==f.id;});
+    var fila=Object.assign({},f);
+    if(f.id==='alquiler') fila.nombre='Alquiler de espacio de bodega ('+pv.alquiler+'%)';
+    if(f.id==='comision') fila.nombre='Comisión vendedores ('+pv.comision+'%)';
+    h+=auxFilaDatos(y,fila,cerrado,esExtra);
+  });
+  h+=auxFilaTotal(y,'Total de gasto mensual',auxTotalGasto,'var(--red)');
+  h+=auxFilaTotal(y,'Total de flujo disponible',auxFlujoDisponible,'var(--red)',true);
+  h+='</tbody></table></div>';
+  if(!cerrado){
+    h+='<div style="padding:10px 14px;border-top:1px solid var(--border)">'
+      +'<button onclick="auxAgregarFila()" style="padding:5px 12px;border-radius:6px;'
+      +'border:1px dashed var(--border2);background:var(--surface);cursor:pointer;'
+      +'font-size:11px;font-weight:700;color:var(--text2)">+ Agregar fila de gasto</button></div>';
+  }
+  h+='</div>';
+
+  // ── IMPUESTOS DE IMPORTACIÓN ──
+  h+='<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--amber)">'
+    +'<span class="ath-title">🧾 Impuestos de importación</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">El saldo arrastra lo pendiente del mes anterior hasta agotarse</span>'
+    +'</div>'
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1500px;border-collapse:separate;border-spacing:0">'
+    +'<thead>'+auxHeaderMeses(y,'IMPUESTOS')+'</thead><tbody>';
+  AUX_FILAS_IMP.forEach(function(f){ h+=auxFilaDatos(y,f,cerrado); });
+  h+=auxFilaTotal(y,'Saldo por aplicar',auxSaldoImpuestos,'var(--amber)',true,
+        function(yy){ return auxSaldoImpuestos(yy,11); });
+  h+='</tbody></table></div></div>';
+
+  cont.innerHTML=h;
+  try{ renderAuxComparativos(); }catch(e){ console.error('comparativos aux:',e); }
+}
+
+// ══════════════════════════════════════════════
+//  ACCIONES
+// ══════════════════════════════════════════════
+function auxGuard(){
+  if(!SESSION||SESSION.rol!=='superadmin'){ toast('Solo el superadmin puede modificar esta tabla'); return false; }
+  return true;
+}
+
+// ── Agregar / quitar filas de gasto ──
+function auxAgregarFila(){
+  if(!auxGuard()) return;
+  var nombre=prompt('Nombre de la nueva fila de gasto:');
+  if(!nombre||!nombre.trim()) return;
+  var y=auxAnioActual();
+  var d=auxGetAnio(y);
+  d.filasExtra.push({id:'gx'+Date.now(), tabla:'gasto', nombre:nombre.trim(), tipo:'manual'});
+  auxSaveAnio(y);
+  toast('✓ Fila agregada');
+  renderAuxEquipos();
+}
+function auxQuitarFila(filaId){
+  if(!auxGuard()) return;
+  var y=auxAnioActual(), d=auxGetAnio(y);
+  var f=d.filasExtra.filter(function(x){return x.id===filaId;})[0];
+  if(!f) return;
+  if(!confirm('¿Quitar la fila "'+f.nombre+'"?\n\nSe borran también los montos que tenga cargados en el año.')) return;
+  d.filasExtra=d.filasExtra.filter(function(x){return x.id!==filaId;});
+  Object.keys(d.meses).forEach(function(k){ delete d.meses[k][filaId]; });
+  auxSaveAnio(y);
+  toast('Fila eliminada');
+  renderAuxEquipos();
+}
+
+// ── Porcentajes ──
+function auxAbrirPct(){
+  if(!auxGuard()) return;
+  var pv=auxPctVigente();
+  var el=auxRoot().querySelector('#aux-pct-panel');
+  if(!el) return;
+  var abierto=el.style.display!=='none';
+  el.style.display=abierto?'none':'block';
+  if(!abierto){
+    auxRoot().querySelector('#aux-pct-alq').value=pv.alquiler;
+    auxRoot().querySelector('#aux-pct-com').value=pv.comision;
+    auxRoot().querySelector('#aux-pct-desde').value=todayCR();
+    auxRenderPctHist();
+  }
+}
+function auxRenderPctHist(){
+  var el=auxRoot().querySelector('#aux-pct-hist');
+  if(!el) return;
+  var hist=auxCfg().pctHist.slice().sort(function(a,b){
+    return String(b.desde).localeCompare(String(a.desde));
+  });
+  el.innerHTML='<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:4px">Historial de porcentajes</div>'
+    +hist.map(function(h){
+      return '<div style="font-size:11px;padding:2px 0;color:var(--text2)">'
+        +'Desde '+(h.desde==='2000-01-01'?'el inicio':formatDate(parseDate(h.desde)))
+        +' → Alquiler <strong>'+h.alquiler+'%</strong> · Comisión <strong>'+h.comision+'%</strong></div>';
+    }).join('');
+}
+function auxSavePct(){
+  if(!auxGuard()) return;
+  var r=auxRoot();
+  var ok=auxGuardarPct(
+    r.querySelector('#aux-pct-alq').value,
+    r.querySelector('#aux-pct-com').value,
+    r.querySelector('#aux-pct-desde').value);
+  if(!ok) return;
+  toast('✓ Porcentajes guardados — rigen para las ventas desde esa fecha');
+  auxRenderPctHist();
+  renderAuxEquipos();
+}
+
+// ── Cierre anual ──
+function auxCerrarAnio(){
+  if(!auxGuard()) return;
+  var y=auxAnioActual();
+  var d=auxGetAnio(y);
+  if(d.cerrado){ toast('El año '+y+' ya está cerrado'); return; }
+  var cierre=auxAcum(y,auxFlujoDisponible);
+  if(!confirm('¿Cerrar el año '+y+' y abrir el '+(y+1)+'?\n\n'
+    +'• El año '+y+' pasa al historial y queda solo de consulta.\n'
+    +'• La apertura de bancos de enero '+(y+1)+' será '+fmt(cierre)+'.\n\n'
+    +'Esta acción se puede revertir desde el historial.')) return;
+
+  d.cerrado=true; d.cerradoAt=new Date().toISOString();
+  d.cerradoBy=(SESSION.nombre||SESSION.id);
+  d.resumen={venta:auxAcum(y,auxTotalVenta), flujo:auxAcum(y,auxTotalFlujo),
+             gasto:auxAcum(y,auxTotalGasto), disponible:cierre};
+  auxSaveAnio(y);
+
+  var n=auxGetAnio(y+1);
+  n.meses[auxMesKey(y+1,0)]=Object.assign({}, n.meses[auxMesKey(y+1,0)]||{}, {apertura:cierre});
+  n.cerrado=false;
+  auxSaveAnio(y+1);
+
+  var lista=(window._auxAnios||[]);
+  if(lista.indexOf(y+1)<0) lista.push(y+1);
+  window._auxAnios=lista;
+  _saveToSupabase('aux_equipos_anios', lista, '');
+
+  window._auxAnio=y+1;
+  toast('✓ Año '+y+' cerrado — apertura de '+(y+1)+': '+fmt(cierre));
+  initAuxEquipos();
+}
+function auxReabrirAnio(y){
+  if(!auxGuard()) return;
+  if(!confirm('¿Reabrir el año '+y+' para editarlo de nuevo?')) return;
+  var d=auxGetAnio(y);
+  d.cerrado=false; auxSaveAnio(y);
+  window._auxAnio=y;
+  toast('Año '+y+' reabierto');
+  initAuxEquipos();
+}
+function auxCambiarAnio(v){
+  window._auxAnio=parseInt(v)||new Date().getFullYear();
+  initAuxEquipos();
+}
+
+// ══════════════════════════════════════════════
+//  COMPARATIVOS VISUALES (los tres que se acordaron)
+// ══════════════════════════════════════════════
+function auxAniosDisponibles(){
+  var s={};
+  Object.keys(auxCache()).forEach(function(k){ s[parseInt(k)]=true; });
+  s[auxAnioActual()]=true;
+  return Object.keys(s).map(Number).sort();
+}
+
+function auxResumenAnio(y){
+  var d=auxGetAnio(y);
+  if(d.cerrado&&d.resumen) return d.resumen;
+  return {venta:auxAcum(y,auxTotalVenta), flujo:auxAcum(y,auxTotalFlujo),
+          gasto:auxAcum(y,auxTotalGasto), disponible:auxAcum(y,auxFlujoDisponible)};
+}
+
+function _auxBarra(label, val, max, color){
+  var pct=max>0?Math.max(2,Math.round(Math.abs(val)/max*100)):0;
+  return '<div style="margin-bottom:7px">'
+    +'<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">'
+      +'<span style="font-weight:700">'+label+'</span>'
+      +'<span style="'+_AUXNUM+';padding:0">'+(val<0?'-':'')+fmt(Math.abs(val))+'</span>'
+    +'</div>'
+    +'<div style="background:var(--border);border-radius:3px;height:9px;overflow:hidden">'
+      +'<div style="background:'+color+';height:9px;border-radius:3px;width:'+pct+'%"></div>'
+    +'</div></div>';
+}
+
+// 1) Año contra año — totales
+function auxCompAnioAnio(){
+  var anios=auxAniosDisponibles();
+  if(anios.length<2) return '<div style="font-size:12px;color:var(--text3);padding:14px">'
+    +'Disponible cuando exista más de un año registrado.</div>';
+  var datos=anios.map(function(y){ return Object.assign({y:y}, auxResumenAnio(y)); });
+  var max=Math.max.apply(null, datos.map(function(d){
+    return Math.max(Math.abs(d.venta),Math.abs(d.gasto),Math.abs(d.disponible)); }));
+  var h='<div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">';
+  datos.forEach(function(d){
+    h+='<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px">'
+      +'<div style="font-family:var(--cond);font-size:15px;font-weight:900;margin-bottom:10px">Año '+d.y
+        +(auxGetAnio(d.y).cerrado?' <span style="font-size:9px;color:var(--text3);font-weight:700">CERRADO</span>':'')+'</div>'
+      +_auxBarra('Venta',d.venta,max,'var(--green)')
+      +_auxBarra('Gasto',d.gasto,max,'var(--red)')
+      +_auxBarra('Flujo disponible',d.disponible,max,d.disponible<0?'var(--red)':'var(--amber)')
+      +'</div>';
+  });
+  h+='</div>';
+  // Variación contra el año anterior
+  if(datos.length>=2){
+    var a=datos[datos.length-2], b=datos[datos.length-1];
+    function varia(x,z){ return x===0?null:Math.round((z-x)/Math.abs(x)*1000)/10; }
+    h+='<div style="padding:0 14px 14px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px">';
+    [['Venta',varia(a.venta,b.venta)],['Gasto',varia(a.gasto,b.gasto)],
+     ['Flujo disponible',varia(a.disponible,b.disponible)]].forEach(function(p){
+      var v=p[1];
+      var col=v===null?'var(--text3)':(p[0]==='Gasto'?(v>0?'var(--red)':'var(--green)'):(v>=0?'var(--green)':'var(--red)'));
+      h+='<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;text-align:center">'
+        +'<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">'+p[0]+' '+b.y+' vs '+a.y+'</div>'
+        +'<div style="font-size:20px;font-weight:900;color:'+col+';font-family:var(--cond)">'
+          +(v===null?'—':(v>0?'▲ +':'▼ ')+v+'%')+'</div></div>';
+    });
+    h+='</div>';
+  }
+  return h;
+}
+
+// 2) Composición del gasto del año
+function auxCompComposicion(){
+  var y=auxAnioActual();
+  var filas=auxFilasGastoTodas(y).map(function(f){
+    return {nombre:f.nombre, total:auxAcum(y,function(yy,mm){ return auxValor(yy,mm,f.id); })};
+  }).filter(function(f){ return f.total>0; }).sort(function(a,b){ return b.total-a.total; });
+  if(!filas.length) return '<div style="font-size:12px;color:var(--text3);padding:14px">Sin gastos registrados en '+y+'.</div>';
+  var tot=filas.reduce(function(s,f){return s+f.total;},0);
+  var cols=['#E31837','#58595B','#1a9e5c','#d97706','#7c3aed','#0ea5e9','#db2777','#65a30d','#c2410c','#0f766e','#a16207'];
+  var h='<div style="padding:14px">'
+    +'<div style="display:flex;height:22px;border-radius:6px;overflow:hidden;margin-bottom:14px">';
+  filas.forEach(function(f,i){
+    h+='<div title="'+escHtml(f.nombre)+': '+fmt(f.total)+'" style="background:'+cols[i%cols.length]
+      +';width:'+(f.total/tot*100)+'%"></div>';
+  });
+  h+='</div>';
+  filas.forEach(function(f,i){
+    var pct=Math.round(f.total/tot*1000)/10;
+    h+='<div style="display:flex;align-items:center;gap:8px;font-size:11.5px;padding:3px 0;border-bottom:1px solid var(--border)">'
+      +'<span style="width:11px;height:11px;border-radius:3px;background:'+cols[i%cols.length]+';flex-shrink:0"></span>'
+      +'<span style="flex:1">'+escHtml(f.nombre)+'</span>'
+      +'<span style="'+_AUXNUM+';padding:0">'+fmt(f.total)+'</span>'
+      +'<span style="width:52px;text-align:right;font-weight:800;color:var(--text3)">'+pct+'%</span>'
+    +'</div>';
+  });
+  h+='<div style="display:flex;gap:8px;font-size:12px;padding:7px 0;font-weight:900">'
+    +'<span style="flex:1;padding-left:19px">Total del año '+y+'</span>'
+    +'<span style="'+_AUXNUM+';padding:0">'+fmt(tot)+'</span><span style="width:52px"></span></div>';
+  return h+'</div>';
+}
+
+// 3) Evolución mensual del flujo disponible + acumulado
+function auxCompEvolucion(){
+  var y=auxAnioActual();
+  var mens=[], acum=[], run=0;
+  for(var m=0;m<12;m++){ var v=auxFlujoDisponible(y,m); mens.push(v); run+=v; acum.push(run); }
+  var todos=mens.concat(acum);
+  var max=Math.max.apply(null,todos), min=Math.min.apply(null,todos);
+  if(max===min){ max=max||1; min=0; }
+  var W=1100,H=210,padL=8,padB=26,padT=10;
+  var chartH=H-padB-padT;
+  function yPos(v){ return padT+chartH-((v-min)/(max-min))*chartH; }
+  var bw=Math.floor((W-padL*2)/12)-10;
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto" xmlns="http://www.w3.org/2000/svg">';
+  var y0=yPos(0);
+  svg+='<line x1="'+padL+'" y1="'+y0+'" x2="'+(W-padL)+'" y2="'+y0+'" stroke="#c9cacb" stroke-width="1"/>';
+  var pts=[];
+  for(var i=0;i<12;i++){
+    var x=padL+i*((W-padL*2)/12)+5;
+    var v=mens[i], yv=yPos(v);
+    var alto=Math.abs(y0-yv);
+    svg+='<rect x="'+x+'" y="'+Math.min(y0,yv)+'" width="'+bw+'" height="'+Math.max(1,alto)+'" '
+      +'rx="2" fill="'+(v<0?'rgba(227,24,55,.75)':'rgba(26,158,92,.7)')+'"><title>'
+      +AUX_MESES[i]+': '+fmt(v)+'</title></rect>';
+    pts.push((x+bw/2)+','+yPos(acum[i]));
+    svg+='<text x="'+(x+bw/2)+'" y="'+(H-9)+'" text-anchor="middle" font-size="10" '
+      +'font-family="Barlow,sans-serif" fill="#58595B">'+AUX_MESES[i]+'</text>';
+  }
+  svg+='<polyline points="'+pts.join(' ')+'" fill="none" stroke="#E31837" stroke-width="2.2" '
+    +'stroke-linejoin="round" stroke-linecap="round"/>';
+  pts.forEach(function(p){
+    var xy=p.split(',');
+    svg+='<circle cx="'+xy[0]+'" cy="'+xy[1]+'" r="3" fill="#E31837"/>';
+  });
+  svg+='</svg>';
+  return '<div style="padding:14px">'+svg
+    +'<div style="display:flex;gap:16px;font-size:11px;margin-top:8px;justify-content:center">'
+    +'<span><span style="display:inline-block;width:11px;height:11px;background:rgba(26,158,92,.7);border-radius:2px"></span> Flujo del mes</span>'
+    +'<span><span style="display:inline-block;width:11px;height:11px;background:rgba(227,24,55,.75);border-radius:2px"></span> Mes negativo</span>'
+    +'<span><span style="display:inline-block;width:16px;height:3px;background:#E31837;vertical-align:middle"></span> Acumulado del año</span>'
+    +'</div>'
+    +'<div style="text-align:center;margin-top:8px;font-size:12px">Cierre acumulado '+y+': '
+    +'<strong style="'+_AUXNUM+';padding:0;font-size:14px;color:'+(acum[11]<0?'var(--red)':'var(--green)')+'">'
+    +fmt(acum[11])+'</strong></div></div>';
+}
+
+function renderAuxComparativos(){
+  var root=auxRoot();
+  function put(id,html){ var e=root.querySelector(id); if(e) e.innerHTML=html; }
+  put('#aux-comp-anios', auxCompAnioAnio());
+  put('#aux-comp-gasto', auxCompComposicion());
+  put('#aux-comp-evol',  auxCompEvolucion());
+}
+
+// ══════════════════════════════════════════════
+//  INFORME — las tres tablas en un solo documento
+// ══════════════════════════════════════════════
+function _auxFilasInforme(y){
+  var b=[];
+  b.push({tipo:'sec', nombre:'INGRESOS'});
+  AUX_FILAS_ING.forEach(function(f){ b.push({tipo:'dato', id:f.id, nombre:f.nombre}); });
+  b.push({tipo:'tot', nombre:'Total de venta mensual', fn:auxTotalVenta});
+  b.push({tipo:'tot', nombre:'Total de flujo de efectivo', fn:auxTotalFlujo});
+  b.push({tipo:'sec', nombre:'GASTOS'});
+  var pv=auxPctVigente();
+  auxFilasGastoTodas(y).forEach(function(f){
+    var n=f.nombre;
+    if(f.id==='alquiler') n='Alquiler de espacio de bodega ('+pv.alquiler+'%)';
+    if(f.id==='comision') n='Comisión vendedores ('+pv.comision+'%)';
+    b.push({tipo:'dato', id:f.id, nombre:n});
+  });
+  b.push({tipo:'tot', nombre:'Total de gasto mensual', fn:auxTotalGasto});
+  b.push({tipo:'tot', nombre:'Total de flujo disponible', fn:auxFlujoDisponible});
+  b.push({tipo:'sec', nombre:'IMPUESTOS DE IMPORTACIÓN'});
+  AUX_FILAS_IMP.forEach(function(f){ b.push({tipo:'dato', id:f.id, nombre:f.nombre}); });
+  b.push({tipo:'tot', nombre:'Saldo por aplicar', fn:auxSaldoImpuestos, acumUlt:true});
+  return b;
+}
+function _auxNum(n){
+  n=Math.round((n||0)*100)/100;
+  if(n===0) return '—';
+  return (n<0?'(':'')+fmt(Math.abs(n))+(n<0?')':'');
+}
+
+function auxInformePDF(){
+  var y=auxAnioActual();
+  var filas=_auxFilasInforme(y);
+  var hoy=new Date();
+  var emitida=hoy.toLocaleDateString('es-CR',{day:'2-digit',month:'long',year:'numeric'});
+  var body='';
+  filas.forEach(function(f){
+    if(f.tipo==='sec'){
+      body+='<tr class="sec"><td colspan="14">'+f.nombre+'</td></tr>'; return;
+    }
+    var acum=0, tds='';
+    for(var m=0;m<12;m++){
+      var v=(f.tipo==='tot')?f.fn(y,m):auxValor(y,m,f.id);
+      acum+=v;
+      tds+='<td class="n'+(v<0?' neg':'')+'">'+_auxNum(v)+'</td>';
+    }
+    if(f.acumUlt) acum=f.fn(y,11);
+    body+='<tr'+(f.tipo==='tot'?' class="tot"':'')+'><td class="lb">'+escHtml(f.nombre)+'</td>'
+      +tds+'<td class="n ac">'+_auxNum(acum)+'</td></tr>';
+  });
+  var ths=AUX_MESES.map(function(m){ return '<th>'+m+'</th>'; }).join('');
+  var html='<!DOCTYPE html><html><head><meta charset="utf-8">'
+   +'<title>Auxiliar venta de equipos '+y+'</title><style>'
+   +'@page{size:letter landscape;margin:10mm}'
+   +'*{box-sizing:border-box}'
+   +'body{font-family:Arial,Helvetica,sans-serif;color:#1c1c1c;margin:0;font-size:10px}'
+   +'@media screen{body{background:#e9e9ec;padding:0 0 28px}'
+   +'.hoja{background:#fff;max-width:1180px;margin:0 auto;padding:22px 26px 26px;'
+   +'box-shadow:0 2px 14px rgba(0,0,0,.13);border-radius:3px}}'
+   +'@media print{.hoja{max-width:none;margin:0;padding:0;box-shadow:none}.noprint{display:none}}'
+   +'.hd{display:flex;justify-content:space-between;align-items:flex-start;'
+   +'border-bottom:3px solid #E31837;padding-bottom:9px}'
+   +'.lg{font-size:26px;font-weight:900;letter-spacing:-1px}.lg span{color:#E31837}'
+   +'.ei{text-align:right;font-size:9px;color:#58595B;line-height:1.5}'
+   +'h1{font-size:14px;margin:11px 0 2px}.sb{font-size:9px;color:#777;margin-bottom:9px}'
+   +'table{width:100%;border-collapse:collapse}'
+   +'th{background:#58595B;color:#fff;font-size:8.5px;padding:4px 3px;text-align:right}'
+   +'th:first-child{text-align:left}'
+   +'td{padding:3px;border-bottom:1px solid #ececec;font-size:8.5px}'
+   +'td.lb{text-align:left;min-width:160px}'
+   +'td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}'
+   +'td.neg{color:#E31837}td.ac{background:#fbe9ec;font-weight:900}'
+   +'tr.sec td{background:#58595B;color:#fff;font-weight:900;font-size:9.5px;'
+   +'letter-spacing:.6px;padding:5px 6px}'
+   +'tr.tot td{background:#f0f0f0;font-weight:900;border-top:1.5px solid #58595B}'
+   +'.ft{margin-top:12px;padding-top:7px;border-top:1px solid #ddd;font-size:8px;'
+   +'color:#999;display:flex;justify-content:space-between}'
+   +'.noprint{margin:16px 0;text-align:center}'
+   +'</style></head><body>'
+   +'<div class="noprint"><button onclick="window.print()" style="background:#E31837;color:#fff;'
+   +'border:none;border-radius:6px;padding:9px 20px;font-size:13px;font-weight:700;cursor:pointer">'
+   +'🖨 Imprimir / Guardar PDF</button></div>'
+   +'<div class="hoja"><div class="hd"><div><div class="lg">CON<span>C</span>RE</div></div>'
+   +'<div class="ei"><strong>'+EMPRESA.nombre+'</strong><br>Céd. jurídica '+EMPRESA.cedula
+   +'<br>'+EMPRESA.telefono+'<br>'+EMPRESA.correo+'</div></div>'
+   +'<h1>Auxiliar venta de equipos e insumos para la construcción</h1>'
+   +'<div class="sb">Año '+y+' · Emitido: '+emitida+'</div>'
+   +'<table><thead><tr><th>Partida</th>'+ths+'<th>Acumulado</th></tr></thead>'
+   +'<tbody>'+body+'</tbody></table>'
+   +'<div class="ft"><span>'+EMPRESA.nombre+' · Documento interno</span>'
+   +'<span>Sistema CONCRE · '+emitida+'</span></div></div></body></html>';
+  var w=window.open('','_blank','width=1250,height=900,scrollbars=yes');
+  if(!w){ toast('Permita las ventanas emergentes para generar el informe'); return; }
+  w.document.write(html); w.document.close();
+}
+
+function auxInformeExcel(){
+  var y=auxAnioActual();
+  var filas=_auxFilasInforme(y);
+  var ths=AUX_MESES.map(function(m){ return '<th>'+m+' '+y+'</th>'; }).join('');
+  var html='<table border="1">'
+    +'<tr><td colspan="14" style="font-size:15px;font-weight:bold">'+EMPRESA.nombre
+      +' — Auxiliar venta de equipos e insumos para la construcción</td></tr>'
+    +'<tr><td colspan="14">Céd. jurídica '+EMPRESA.cedula+' · '+EMPRESA.telefono+'</td></tr>'
+    +'<tr><td colspan="14">Año '+y+'</td></tr><tr></tr>'
+    +'<tr style="background:#E31837;color:#fff;font-weight:bold"><th>Partida</th>'+ths+'<th>Acumulado</th></tr>';
+  filas.forEach(function(f){
+    if(f.tipo==='sec'){
+      html+='<tr style="background:#58595B;color:#fff;font-weight:bold">'
+        +'<td colspan="14">'+f.nombre+'</td></tr>'; return;
+    }
+    var acum=0, tds='';
+    for(var m=0;m<12;m++){
+      var v=(f.tipo==='tot')?f.fn(y,m):auxValor(y,m,f.id);
+      acum+=v;
+      tds+='<td>'+(Math.round(v*100)/100)+'</td>';
+    }
+    if(f.acumUlt) acum=f.fn(y,11);
+    html+='<tr'+(f.tipo==='tot'?' style="background:#f0f0f0;font-weight:bold"':'')+'>'
+      +'<td>'+escHtml(f.nombre)+'</td>'+tds+'<td>'+(Math.round(acum*100)/100)+'</td></tr>';
+  });
+  html+='</table>';
+  var blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-excel'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download='Auxiliar_equipos_'+y+'.xls';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1500);
+  toast('✓ Informe exportado');
+}
+
+// ══════════════════════════════════════════════
+//  MONTAJE DE LA PESTAÑA
+// ══════════════════════════════════════════════
+function _auxHTML(){
+  return ''
+  +'<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px">'
+    +'<div style="font-family:var(--cond);font-size:20px;font-weight:900;flex:1;min-width:260px">'
+      +'🏗 Auxiliar venta de equipos e insumos para la construcción'
+      +'<div style="font-size:11px;font-weight:600;color:var(--text3);font-family:var(--sans)">CONCREEQUIPOS</div>'
+    +'</div>'
+    +'<select id="aux-anio" class="apb-sel" style="font-size:12px;padding:5px 9px" onchange="auxCambiarAnio(this.value)"></select>'
+    +'<button onclick="auxAbrirPct()" style="padding:6px 12px;border-radius:7px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;font-size:11px;font-weight:800">⚙ Porcentajes</button>'
+    +'<button onclick="auxCerrarAnio()" style="padding:6px 12px;border-radius:7px;border:1px solid rgba(217,119,6,.35);background:rgba(217,119,6,.1);color:var(--amber);cursor:pointer;font-size:11px;font-weight:800">🔒 Cerrar año</button>'
+    +'<button onclick="auxInformePDF()" style="padding:6px 12px;border-radius:7px;border:1px solid rgba(227,24,55,.3);background:rgba(227,24,55,.1);color:var(--red);cursor:pointer;font-size:11px;font-weight:800">📄 PDF</button>'
+    +'<button onclick="auxInformeExcel()" style="padding:6px 12px;border-radius:7px;border:1px solid rgba(26,158,92,.3);background:var(--green-dim);color:var(--green);cursor:pointer;font-size:11px;font-weight:800">📊 Excel</button>'
+  +'</div>'
+
+  +'<div id="aux-cerrado-note" style="display:none;background:rgba(217,119,6,.08);border:1px solid rgba(217,119,6,.3);border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:var(--amber);font-weight:700"></div>'
+
+  +'<div id="aux-pct-panel" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px">'
+    +'<div style="font-family:var(--cond);font-size:14px;font-weight:900;margin-bottom:4px">Porcentajes sobre la venta</div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Rigen para las ventas con fecha igual o posterior a la indicada. Los montos ya calculados de fechas anteriores no cambian.</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">'
+      +'<div><div class="form-label" style="margin-bottom:4px">Alquiler de bodega %</div>'
+        +'<input type="number" step="0.01" min="0" id="aux-pct-alq" class="form-inp" style="width:110px"></div>'
+      +'<div><div class="form-label" style="margin-bottom:4px">Comisión vendedores %</div>'
+        +'<input type="number" step="0.01" min="0" id="aux-pct-com" class="form-inp" style="width:110px"></div>'
+      +'<div><div class="form-label" style="margin-bottom:4px">Rige desde</div>'
+        +'<input type="date" id="aux-pct-desde" class="form-inp"></div>'
+      +'<button onclick="auxSavePct()" class="modal-btn save" style="white-space:nowrap">Guardar</button>'
+    +'</div>'
+    +'<div id="aux-pct-hist" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)"></div>'
+  +'</div>'
+
+  +'<div id="aux-tablas"></div>'
+
+  +'<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr"><span class="ath-title">📊 Comparativo año contra año</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Solo las partidas acumuladas</span></div>'
+    +'<div id="aux-comp-anios"></div></div>'
+
+  +'<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr"><span class="ath-title">🥧 Composición del gasto</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Peso de cada partida sobre el total del año</span></div>'
+    +'<div id="aux-comp-gasto"></div></div>'
+
+  +'<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr"><span class="ath-title">📈 Evolución del flujo disponible</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Barras: mes a mes · Línea: acumulado</span></div>'
+    +'<div id="aux-comp-evol"></div></div>';
+}
+
+function initAuxEquipos(){
+  var root=document.getElementById('auxEquiposRoot');
+  if(!root) return;
+  if(root.getAttribute('data-aux-mounted')!=='1'){
+    root.innerHTML=_auxHTML();
+    root.setAttribute('data-aux-mounted','1');
+  }
+  var y=auxAnioActual();
+
+  // Selector de años: los registrados más el actual
+  var anios=auxAniosDisponibles();
+  var sel=root.querySelector('#aux-anio');
+  if(sel){
+    sel.innerHTML=anios.map(function(a){
+      return '<option value="'+a+'"'+(a===y?' selected':'')+'>'+a
+        +(auxGetAnio(a).cerrado?' (historial)':'')+'</option>';
+    }).join('');
+  }
+
+  var d=auxGetAnio(y);
+  var nota=root.querySelector('#aux-cerrado-note');
+  if(nota){
+    if(d.cerrado){
+      nota.style.display='block';
+      nota.innerHTML='🔒 Año '+y+' cerrado el '
+        +(d.cerradoAt?formatDate(new Date(d.cerradoAt)):'—')
+        +(d.cerradoBy?' por '+escHtml(d.cerradoBy):'')
+        +' — solo consulta. <button onclick="auxReabrirAnio('+y+')" style="margin-left:8px;'
+        +'padding:3px 10px;border-radius:6px;border:1px solid rgba(217,119,6,.4);'
+        +'background:var(--surface);color:var(--amber);cursor:pointer;font-size:11px;'
+        +'font-weight:800">Reabrir</button>';
+    } else nota.style.display='none';
+  }
+  renderAuxEquipos();
+}
 
 // ══════════════════════════════════════════════════════════════
 //  CUENTAS POR COBRAR — pestaña propia (superadmin; opt-in para otros)
@@ -26883,6 +27722,9 @@ window.initCalcCONCRE=initCalcCONCRE;
 
           <!-- ADMIN VENTAS SECTION -->
 
+          <div id="sec-auxeq" class="admin-section">
+            <div id="auxEquiposRoot"></div>
+          </div>
           <div id="sec-cxc" class="admin-section">
             <div id="cxcAdminRoot"></div>
           </div>
