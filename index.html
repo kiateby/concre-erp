@@ -1722,7 +1722,11 @@ async function loadAllDataFromDB(){
     };
     // Cargar PRIMERO los estados de pago/depósito con consulta dedicada,
     // así ya están disponibles cuando se mapeen las ventas en la fase 2.
-    try{ await loadPagoOverrides(); }catch(e){ console.error('loadPagoOverrides:',e); }
+    // Los estados de pago/depósito ya NO bloquean el arranque: viajan dentro del
+    // mismo lote paralelo. Como la fase 1 se espera completa antes de la fase 2,
+    // siguen estando listos cuando se mapean las ventas.
+    // Se agrega AL FINAL del arreglo a propósito, para no correr los índices
+    // phase1[0]..phase1[6] que se leen justo abajo.
     var phase1=await Promise.all([
       DB.from('usuarios').select('*').order('nombre'),
       _loadAllConfig(),
@@ -1730,7 +1734,8 @@ async function loadAllDataFromDB(){
       loadAllRows('crm_clientes','nombre_empresa'),
       loadAllRows('crm_links'),
       loadAllRows('papelera','deleted_at',false),
-      DB.from('proyectos').select('*').order('created_at',{ascending:false})
+      DB.from('proyectos').select('*').order('created_at',{ascending:false}),
+      loadPagoOverrides().catch(function(e){ console.error('loadPagoOverrides:',e); })
     ]);
 
     var users=phase1[0], configs=phase1[1], subs=phase1[2];
@@ -1948,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260902190012';
+var APP_BUILD='20260902195212';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -5229,29 +5234,36 @@ async function loadPagoOverrides(){
   window._pagadoAdminOverrides = window._pagadoAdminOverrides || {};
   window._depositoOverrides = window._depositoOverrides || {};
   window._cxcPagadoOverrides = window._cxcPagadoOverrides || {};
+  // RENDIMIENTO: antes los tres patrones se consultaban EN SERIE, cada uno
+  // esperando al anterior. Ahora viajan en paralelo: dos idas y vueltas menos.
   var patrones=[['cc_pagado_admin_%','pago'],['cc_deposito_%','dep'],['cc_cxc_pagado_%','cxc']];
-  for(var pi=0; pi<patrones.length; pi++){
-    var pref=patrones[pi][0], tipo=patrones[pi][1];
-    var from=0;
+  async function _traerPatron(pref){
+    var all=[], from=0;
     for(var i=0;i<50;i++){
       var r=await DB.from('configuracion').select('clave,valor').like('clave',pref).range(from,from+999);
       if(r.error){ console.error('loadPagoOverrides '+pref+':',r.error); break; }
       var rows=r.data||[];
-      rows.forEach(function(row){
-        if(!row.valor) return;
-        if(tipo==='pago'){
-          window._pagadoAdminOverrides[row.clave.replace('cc_pagado_admin_','')]=!!row.valor.pagado;
-        } else if(tipo==='cxc'){
-          window._cxcPagadoOverrides[row.clave.replace('cc_cxc_pagado_','')]=
-            {pagado:!!row.valor.pagado, fecha:row.valor.fecha||null};
-        } else {
-          window._depositoOverrides[row.clave.replace('cc_deposito_','')]=row.valor.deposito||'';
-        }
-      });
+      all=all.concat(rows);
       if(rows.length<1000) break;
       from+=1000;
     }
+    return all;
   }
+  var resultados=await Promise.all(patrones.map(function(pp){ return _traerPatron(pp[0]); }));
+  patrones.forEach(function(pp, pi){
+    var tipo=pp[1];
+    (resultados[pi]||[]).forEach(function(row){
+      if(!row.valor) return;
+      if(tipo==='pago'){
+        window._pagadoAdminOverrides[row.clave.replace('cc_pagado_admin_','')]=!!row.valor.pagado;
+      } else if(tipo==='cxc'){
+        window._cxcPagadoOverrides[row.clave.replace('cc_cxc_pagado_','')]=
+          {pagado:!!row.valor.pagado, fecha:row.valor.fecha||null};
+      } else {
+        window._depositoOverrides[row.clave.replace('cc_deposito_','')]=row.valor.deposito||'';
+      }
+    });
+  });
   console.log('Estados de pago cargados: '+Object.keys(window._pagadoAdminOverrides).length
     +' · Depósitos: '+Object.keys(window._depositoOverrides).length);
 }
@@ -9436,6 +9448,7 @@ function getVentasData(uid){
 }
 function setVentasData(uid, d){
   window._ventasCache[uid] = d;
+  if(typeof _crmInvalidarCache==='function') _crmInvalidarCache();
   // NO hacemos delete masivo — guardamos individualmente con insert/update
   // Esta función es llamada cuando se agrega/edita/elimina UNA venta
   // El guardado individual lo maneja _saveSingleVenta y _deleteSingleVenta
@@ -9444,6 +9457,7 @@ function setVentasData(uid, d){
 // Guardar UNA venta específica en Supabase (insert o update según si existe)
 function _saveSingleVenta(uid, v, mk){
   if(!v||!v.id) return;
+  if(typeof _crmInvalidarCache==='function') _crmInvalidarCache();
   var parts=(mk||'').split('-');
   // SOLO columnas que existen en la tabla ventas de Supabase
   var row={
@@ -18270,6 +18284,7 @@ function getCRMClients(){
 }
 function setCRMClients(d){
   window._crmClientsCache=d;
+  _crmInvalidarCache();
   if(!d||!d.length) return;
   // Upsert only — NEVER delete. Each client saved individually by ID.
   var rows=d.map(function(cl){
@@ -18304,6 +18319,7 @@ function getCRMLinks(){
   return window._crmLinksCache||[];
 }
 function setCRMLinks(d){
+  _crmInvalidarCache();
   window._crmLinksCache=d;
   if(!d||!d.length) return;
   // Upsert by venta_id — safe, never wipes other users' links
@@ -18389,25 +18405,65 @@ function renderCRMKPIs(){
 }
 
 // ── Get all ventas for CRM (via links or fuzzy match) ──
+// ── RENDIMIENTO: resultado memorizado ──────────────────────────────────────
+// Esta función se llamaba hasta 8 veces por render, y una de ellas dentro de
+// un bucle por cliente. Cada llamada recorría TODAS las ventas haciendo un
+// .find() sobre los links y, si no había link, un fuzzyMatch contra TODOS los
+// clientes. Con varios cientos de ventas eso son cientos de miles de
+// comparaciones repetidas: era la causa de que el CRM se pegara.
+//
+// Ahora el resultado se calcula UNA vez y se reutiliza hasta que cambien las
+// ventas o los datos del CRM. La invalidación es explícita
+// (_crmInvalidarCache) para no depender de comparaciones costosas.
+function _crmInvalidarCache(){ window._crmVentasMemo=null; }
+
 function getAllVentasForCRM(){
+  if(window._crmVentasMemo) return window._crmVentasMemo;
+
   var links=getCRMLinks();
   var clients=getCRMClients();
   var result=[];
   var users=getUsers();
+
+  // Índice de links por ventaId — evita un .find() por cada venta
+  var linkPorVenta={};
+  links.forEach(function(l){ if(l&&l.ventaId) linkPorVenta[l.ventaId]=l; });
+
+  // Nombres de cliente ya normalizados — evita re-normalizar en cada fuzzyMatch
+  var cliNorm=clients.map(function(cl){
+    return {cl:cl, n:String(cl.nombreEmpresa||'').toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')};
+  });
+  // Memoria de nombres ya resueltos: el mismo cliente se repite mucho
+  var matchMemo={};
+  function matchPorNombre(nombre){
+    var q=String(nombre||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    if(!q) return null;
+    if(Object.prototype.hasOwnProperty.call(matchMemo,q)) return matchMemo[q];
+    var tokens=q.split(' ').filter(Boolean);
+    var hit=null;
+    for(var i=0;i<cliNorm.length;i++){
+      var n=cliNorm[i].n;
+      if(n.indexOf(q)>=0){ hit=cliNorm[i].cl; break; }
+      var todos=true;
+      for(var t=0;t<tokens.length;t++){ if(n.indexOf(tokens[t])<0){ todos=false; break; } }
+      if(todos&&tokens.length){ hit=cliNorm[i].cl; break; }
+    }
+    matchMemo[q]=hit;
+    return hit;
+  }
+
   users.forEach(function(u){
     var vd=getVentasData(u.id);
     Object.values(vd).forEach(function(mv){
       (mv.ventas||[]).forEach(function(v){
-        var link=links.find(function(l){return l.ventaId===v.id;});
+        var link=linkPorVenta[v.id];
         if(link){
           result.push({ventaId:v.id,clienteId:link.clienteId,contactoId:link.contactoId,
             fecha:v.fecha,subtotal:v.subtotal,prodId:v.prodId,uid:u.id,
             cliente:v.cliente,proyecto:v.proyecto||''});
         } else if(v.cliente){
-          // No link — try to match by client name
-          var matched=clients.find(function(cl){
-            return fuzzyMatch(cl.nombreEmpresa,v.cliente.toLowerCase());
-          });
+          var matched=matchPorNombre(v.cliente);
           if(matched){
             result.push({ventaId:v.id,clienteId:matched.id,contactoId:'',
               fecha:v.fecha,subtotal:v.subtotal,prodId:v.prodId,uid:u.id,
@@ -18417,11 +18473,20 @@ function getAllVentasForCRM(){
       });
     });
   });
+
+  window._crmVentasMemo=result;
+  // Índice por cliente, para que getClientVentas no filtre la lista completa
+  var porCliente={};
+  result.forEach(function(v){
+    (porCliente[v.clienteId]||(porCliente[v.clienteId]=[])).push(v);
+  });
+  window._crmVentasPorCliente=porCliente;
   return result;
 }
 
 function getClientVentas(clienteId){
-  return getAllVentasForCRM().filter(function(v){return v.clienteId===clienteId;});
+  getAllVentasForCRM();
+  return (window._crmVentasPorCliente||{})[clienteId]||[];
 }
 
 function getClientLastPurchaseDate(clienteId){
@@ -18468,11 +18533,15 @@ function renderTop(elId, selId, type){
   var allVentas=getAllVentasForCRM();
   var filtered=filterVentasByPeriod(allVentas,period);
 
+  // Una sola pasada agrupando por cliente, en vez de un filter por cada uno
+  var idx={};
+  filtered.forEach(function(v){
+    var b=idx[v.clienteId]||(idx[v.clienteId]={dias:{},monto:0});
+    b.dias[v.fecha]=1; b.monto+=(v.subtotal||0);
+  });
   var scores=clients.map(function(cl){
-    var cv=filtered.filter(function(v){return v.clienteId===cl.id;});
-    var freq=new Set(cv.map(function(v){return v.fecha;})).size;
-    var monto=cv.reduce(function(s,v){return s+v.subtotal;},0);
-    return {cl:cl, freq:freq, monto:monto};
+    var b=idx[cl.id];
+    return {cl:cl, freq:b?Object.keys(b.dias).length:0, monto:b?b.monto:0};
   });
 
   var sorted=scores.slice().sort(function(a,b){
@@ -18537,16 +18606,25 @@ function _renderCRMComparativo(cfg){
   var clients=getCRMClients();
   var allVentas=getAllVentasForCRM();
 
-  function freqInPeriod(clienteId, start, end){
-    var cv=allVentas.filter(function(v){
-      return v.clienteId===clienteId && new Date(v.fecha)>=start && new Date(v.fecha)<=end;
-    });
-    return new Set(cv.map(function(v){return v.fecha;})).size;
-  }
+  // Una sola pasada sobre las ventas resolviendo AMBOS períodos a la vez.
+  // Antes se filtraba la lista completa dos veces por cada cliente.
+  var a1=p.s1.start.getTime(), b1=p.s1.end.getTime();
+  var a2=p.s2.start.getTime(), b2=p.s2.end.getTime();
+  var idx={};
+  allVentas.forEach(function(v){
+    var t=new Date(v.fecha).getTime();
+    if(isNaN(t)) return;
+    var en1=(t>=a1&&t<=b1), en2=(t>=a2&&t<=b2);
+    if(!en1&&!en2) return;
+    var b=idx[v.clienteId]||(idx[v.clienteId]={d1:{},d2:{}});
+    if(en1) b.d1[v.fecha]=1;
+    if(en2) b.d2[v.fecha]=1;
+  });
 
   var data=clients.map(function(cl){
-    var f1=freqInPeriod(cl.id,p.s1.start,p.s1.end);
-    var f2=freqInPeriod(cl.id,p.s2.start,p.s2.end);
+    var b=idx[cl.id];
+    var f1=b?Object.keys(b.d1).length:0;
+    var f2=b?Object.keys(b.d2).length:0;
     return {cl:cl,f1:f1,f2:f2,delta:f2-f1};
   }).filter(function(d){return d.f1>0||d.f2>0;})
     .sort(function(a,b){return Math.abs(b.delta)-Math.abs(a.delta);})
@@ -21119,8 +21197,9 @@ function collectCRM(){
   var clients=getCRMClients();
   var links=getCRMLinks();
   var rows=[];
+  getAllVentasForCRM(); // calcula una sola vez y arma el índice por cliente
   clients.forEach(function(cl){
-    var cv=getAllVentasForCRM().filter(function(v){return v.clienteId===cl.id;});
+    var cv=getClientVentas(cl.id);
     var monto=cv.reduce(function(s,v){return s+v.subtotal;},0);
     var days=new Set(cv.map(function(v){return v.fecha;})).size;
     var last=getClientLastPurchaseDate(cl.id);
