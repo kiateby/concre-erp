@@ -1934,7 +1934,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260918085726';
+var APP_BUILD='20260918105046';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -25120,6 +25120,7 @@ var S = {
   // filtros de la lista
   fEstado: 'todas',
   fBusca: '',
+  fCat: '',            // buscador de la subpestaña Catálogo
   // exportación a ventas
   expSel: {},          // lineaId -> true
   expGrupo: {},        // lineaId -> 'g1'
@@ -25142,6 +25143,13 @@ function _n(x){ var v=parseFloat(x); return isNaN(v)?0:v; }
 function _esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;')
   .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function _pad(n){ return (n<10?'0':'')+n; }
+// Normaliza para buscar: minúsculas y sin tildes, de modo que "adoquin"
+// encuentre "adoquín" y "pulido intermedio" encuentre "Pulido Intermedio".
+function _norm(t){
+  var s=String(t==null?'':t).toLowerCase();
+  try{ s=s.normalize('NFD').replace(/[\u0300-\u036f]/g,''); }catch(e){}
+  return s;
+}
 function _hoy(){ var d=new Date(); return d.getFullYear()+'-'+_pad(d.getMonth()+1)+'-'+_pad(d.getDate()); }
 function _sumaDias(iso, dias){
   var p=String(iso||'').split('-');
@@ -25289,6 +25297,14 @@ function inyectarCSS(){
     '#fact-root-admin table.fx-t tr:hover td{background:var(--surface2)}',
     '#fact-root-admin .fx-r{text-align:right;white-space:nowrap}',
     '#fact-root-admin .fx-c{text-align:center}',
+    // El ERP centra globalmente con td:not(:first-child){text-align:center};
+    // estas tres reglas devuelven la alineación correcta dentro del módulo.
+    '#fact-root-admin table.fx-t td{text-align:left}',
+    '#fact-root-admin table.fx-t td.fx-r{text-align:right;white-space:nowrap}',
+    '#fact-root-admin table.fx-t td.fx-c{text-align:center}',
+    '#fact-root-admin table.fx-t th{text-align:left}',
+    '#fact-root-admin table.fx-t th.fx-r{text-align:right}',
+    '#fact-root-admin table.fx-t th.fx-c{text-align:center}',
     '#fact-root-admin .fx-badge{display:inline-block;font-size:9.5px;font-weight:900;padding:3px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}',
     '#fact-root-admin .fx-tag{display:inline-block;font-size:9.5px;font-weight:800;padding:2px 8px;border-radius:999px;border:1px solid var(--red);color:var(--red);margin-right:4px}',
     '#fact-root-admin .fx-empty{text-align:center;padding:36px 20px;color:var(--text3);font-size:12.5px;line-height:1.7}',
@@ -25355,12 +25371,12 @@ function renderBody(){
 // ── LISTA DE PROFORMAS ──────────────────────────────────────────────────────
 function renderLista(b){
   var docs=docsEmpresa();
-  var q=S.fBusca.toLowerCase().trim();
+  var q=_norm(S.fBusca).trim();
   var vis=docs.filter(function(d){
     if(S.fEstado!=='todas' && d.estado!==S.fEstado) return false;
     if(!q) return true;
-    return (String(d.consecutivo||'')+' '+String(d.cliente_nombre||'')+' '+String(d.proyecto||''))
-      .toLowerCase().indexOf(q)>=0;
+    return _norm(String(d.consecutivo||'')+' '+String(d.cliente_nombre||'')+' '+String(d.proyecto||''))
+      .indexOf(q)>=0;
   });
 
   var cuenta={};
@@ -25863,13 +25879,13 @@ function buscarCliente(q){
   S.dirty=true;
   var ac=document.getElementById('fact-cli-ac');
   if(!ac) return;
-  var t=String(q||'').toLowerCase().trim();
+  var t=_norm(q).trim();
   if(t.length<2){ ac.innerHTML=''; return; }
   var cli=[];
   try{ cli=(typeof getCRMClients==='function')?getCRMClients():(window._crmClientsCache||[]); }
   catch(e){ cli=window._crmClientsCache||[]; }
   var hits=(cli||[]).filter(function(c){
-    return String(c.nombreEmpresa||'').toLowerCase().indexOf(t)>=0;
+    return _norm(c.nombreEmpresa).indexOf(t)>=0;
   }).slice(0,12);
   if(!hits.length){ ac.innerHTML=''; return; }
   ac.innerHTML='<div class="fx-ac-list">'
@@ -25958,12 +25974,12 @@ function agregarDeCatalogo(){
 }
 
 function listaCatModal(grupos, filtro){
-  var f=String(filtro||'').toLowerCase().trim();
+  var f=_norm(filtro).trim();
   var out='';
   Object.keys(grupos).sort().forEach(function(g){
     var its=grupos[g].filter(function(c){
       if(!f) return true;
-      return (String(c.descripcion||'')+' '+String(c.codigo||'')+' '+g).toLowerCase().indexOf(f)>=0;
+      return _norm(String(c.descripcion||'')+' '+String(c.codigo||'')+' '+String(c.cabys||'')+' '+g).indexOf(f)>=0;
     });
     if(!its.length) return;
     out+='<div style="font-size:9.5px;font-weight:900;color:var(--text3);text-transform:uppercase;letter-spacing:.07em;margin:12px 0 5px">'+_esc(g)+'</div>';
@@ -26650,24 +26666,41 @@ async function confirmarExport(){
 // Independiente del catálogo de Ventas. La categoría sugerida solo pre-llena
 // el modal de exportación; el usuario siempre decide al final.
 function renderCatalogo(b){
-  var items=catEmpresa();
+  var todos=catEmpresa();
+  // Buscador: filtra por código, descripción, CABYS o grupo
+  var q=_norm(S.fCat).trim();
+  var items=!q?todos:todos.filter(function(c){
+    return _norm(String(c.codigo||'')+' '+String(c.descripcion||'')+' '+String(c.cabys||'')
+      +' '+String(c.grupo||'')+' '+String(c.detalle||'')).indexOf(q)>=0;
+  });
   var grupos={};
   items.forEach(function(c){ var g=c.grupo||'Sin grupo'; (grupos[g]=grupos[g]||[]).push(c); });
   var cats=getCatalogo();
+  var sinCabys=todos.filter(function(c){ return !String(c.cabys||'').trim(); }).length;
 
   b.innerHTML=
     '<div class="fx-card">'
       +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">'
-        +'<div class="fx-h" style="margin:0">Catálogo de '+_esc(_emp().nombre_comercial)+'</div>'
+        +'<div class="fx-h" style="margin:0">Catálogo de '+_esc(_emp().nombre_comercial)
+          +' <span style="opacity:.6">('+todos.length+' ítem'+(todos.length===1?'':'s')+')</span></div>'
         +'<button class="fx-b sm" style="margin-left:auto" onclick="FACT.nuevoItem()">+ Nuevo ítem</button>'
       +'</div>'
       +'<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin-bottom:12px">'
         +'Este catálogo es solo de Facturación — no afecta el catálogo de Ventas ni cómo se ingresan las ventas hoy. '
-        +'La columna <b>Categoría de Ventas</b> es apenas una sugerencia que aparece pre-seleccionada al pasar líneas a Ventas.<br>'
-        +'El campo <b>CABYS</b> queda listo para cargar los códigos; todavía no se usa (hace falta en la Etapa 3, al facturar).'
+        +'La columna <b>Categoría de Ventas</b> es apenas una sugerencia que aparece pre-seleccionada al pasar líneas a Ventas.'
+        +(sinCabys?'<br><b style="color:var(--amber)">⚠ '+sinCabys+' ítem(s) sin CABYS</b> — se necesita para facturar (Etapa 3).':'')
       +'</div>'
-      +(items.length===0
+      +(todos.length
+        ? '<div style="margin-bottom:12px"><input class="fx-i" style="max-width:340px"'
+          +' placeholder="Buscar por código, descripción o CABYS…"'
+          +' value="'+_esc(S.fCat)+'" oninput="FACT.setBuscaCat(this.value)">'
+          +(q?'<span style="font-size:11px;color:var(--text3);margin-left:10px">'+items.length+' de '+todos.length+'</span>':'')
+          +'</div>'
+        : '')
+      +(todos.length===0
         ? '<div class="fx-empty">El catálogo está vacío.<br>Agregue el primer ítem con el botón de arriba.</div>'
+        : items.length===0
+        ? '<div class="fx-empty">Ningún ítem coincide con «'+_esc(S.fCat)+'».</div>'
         : Object.keys(grupos).sort().map(function(g){
             return '<div style="margin-bottom:16px">'
               +'<div style="font-size:9.5px;font-weight:900;color:var(--text3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">'
@@ -27007,16 +27040,23 @@ function setEmpresa(id){
 function setSub(s){
   if(S.edit && S.dirty && !confirm('Hay cambios sin guardar en la proforma. ¿Salir?')) return;
   if(s!=='proformas'){ S.edit=null; S.lineas=[]; S.adjuntos=[]; S.dirty=false; }
+  if(s!=='catalogo') S.fCat='';
   S.sub=s;
   render();
 }
 function setEstadoFiltro(k){ S.fEstado=k; renderBody(); }
 function setBusca(v){ S.fBusca=v; renderBody(); }
+function setBuscaCat(v){
+  S.fCat=v; renderBody();
+  // devolver el foco al buscador para poder seguir escribiendo
+  var el=document.querySelector('#fact-body input[placeholder^="Buscar por código"]');
+  if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+}
 
 // ── API pública del módulo ──────────────────────────────────────────────────
 window.FACT={
   setEmpresa:setEmpresa, setSub:setSub,
-  setEstadoFiltro:setEstadoFiltro, setBusca:setBusca,
+  setEstadoFiltro:setEstadoFiltro, setBusca:setBusca, setBuscaCat:setBuscaCat,
   nueva:nuevaProforma, abrir:abrirProforma, cerrarEditor:cerrarEditor,
   guardar:guardarProforma, duplicar:duplicarProforma, aPapelera:aPapelera,
   imprimir:imprimirProforma,
