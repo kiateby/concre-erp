@@ -1934,7 +1934,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260918105046';
+var APP_BUILD='20260918112055';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -25121,6 +25121,12 @@ var S = {
   fEstado: 'todas',
   fBusca: '',
   fCat: '',            // buscador de la subpestaña Catálogo
+  clientes: [],        // clientes de facturación (tabla propia)
+  fCli: '',            // buscador de la subpestaña Clientes
+  fCliRevisar: false,  // filtro "solo los que hay que revisar"
+  pagCli: 1,
+  cliEdit: null,       // cliente en el formulario
+  cliOpc: false,       // ¿campos opcionales desplegados?
   // exportación a ventas
   expSel: {},          // lineaId -> true
   expGrupo: {},        // lineaId -> 'g1'
@@ -25234,6 +25240,11 @@ async function cargar(){
     if(!ra.error) S.anexos=ra.data||[];
   }catch(e){ console.warn('fact_anexos:',e); S.anexos=[]; }
 
+  try{
+    var rcl=await loadAllRows('fact_clientes','nombre');
+    if(!rcl.error) S.clientes=rcl.data||[];
+  }catch(e){ console.warn('fact_clientes:',e); S.clientes=[]; }
+
   // La empresa activa por defecto es la primera marcada como activa
   var act=S.empresas.filter(function(e){ return e.activa; });
   if(act.length && !act.find(function(e){ return e.id===S.empresaId; })) S.empresaId=act[0].id;
@@ -25330,6 +25341,7 @@ function render(){
   var e=_emp();
   var subs=[
     ['proformas','📄 Proformas'],
+    ['clientes','👥 Clientes'],
     ['catalogo','📦 Catálogo'],
     ['anexos','📎 Anexos técnicos'],
     ['config','⚙ Datos de la empresa'],
@@ -25363,6 +25375,7 @@ function render(){
 function renderBody(){
   var b=document.getElementById('fact-body'); if(!b) return;
   if(S.sub==='proformas'){ S.edit ? renderEditor(b) : renderLista(b); }
+  else if(S.sub==='clientes') renderClientes(b);
   else if(S.sub==='catalogo') renderCatalogo(b);
   else if(S.sub==='anexos')   renderAnexos(b);
   else if(S.sub==='config')   renderConfig(b);
@@ -25527,10 +25540,13 @@ function renderEditor(b){
         +campo('Cédula','<input class="fx-i" value="'+_esc(d.cliente_identificacion||'')+'" onchange="FACT.setDoc(\'cliente_identificacion\',this.value)">')
         +campo('Contacto','<input class="fx-i" value="'+_esc(d.contacto_nombre||'')+'" onchange="FACT.setDoc(\'contacto_nombre\',this.value)">')
       +'</div>'
-      +(d.cliente_id
-        ? '<div style="margin-top:9px;font-size:11px;color:var(--green);font-weight:700">✓ Vinculada al cliente del CRM'
-          +' <button class="fx-b sm gh" style="margin-left:8px" onclick="FACT.desvincular()">Desvincular</button></div>'
-        : '<div style="margin-top:9px;font-size:11px;color:var(--text3)">Cliente libre — no está vinculado al CRM</div>')
+      +((d.fact_cliente_id||d.cliente_id)
+        ? '<div style="margin-top:9px;font-size:11px;font-weight:700;color:var(--green)">'
+          +(d.fact_cliente_id?'✓ Cliente de facturación':'')
+          +(d.fact_cliente_id&&d.cliente_id?' · también en el CRM':(d.cliente_id?'✓ Tomado del CRM':''))
+          +' <button class="fx-b sm gh" style="margin-left:8px;font-weight:600" onclick="FACT.desvincular()">Desvincular</button></div>'
+        : '<div style="margin-top:9px;font-size:11px;color:var(--text3)">'
+          +'Cliente libre — sirve para la proforma. Para facturar tendrá que existir en Clientes.</div>')
     +'</div>'
 
     // ── Proyecto y tipo ──
@@ -25707,7 +25723,8 @@ function nuevaProforma(){
   S.edit={
     id:_id('fdoc'), empresa_id:S.empresaId, tipo_doc:'proforma', consecutivo:'',
     estado:'borrador', fecha:hoy, fecha_vence:_sumaDias(hoy, _n(e.vigencia_dias)||15),
-    cliente_id:null, cliente_nombre:'', cliente_telefono:'', cliente_correo:'',
+    cliente_id:null, fact_cliente_id:null,
+    cliente_nombre:'', cliente_telefono:'', cliente_correo:'',
     cliente_identificacion:'', cliente_tipo_ident:null, cliente_direccion:'', contacto_nombre:'',
     proyecto:'', tipo_proyecto:[],
     moneda:e.moneda_default||'CRC', tipo_cambio:0, iva_pct:_n(e.iva_default)||13,
@@ -25725,6 +25742,7 @@ async function abrirProforma(id){
   if(!d){ _toast('No se encontró la proforma'); return; }
   S.edit=JSON.parse(JSON.stringify(d));
   if(!Array.isArray(S.edit.tipo_proyecto)) S.edit.tipo_proyecto=[];
+  if(S.edit.fact_cliente_id===undefined) S.edit.fact_cliente_id=null;
   S.lineas=[]; S.adjuntos=[];
   renderBody();
   try{
@@ -25765,7 +25783,8 @@ async function guardarProforma(){
   var row={
     id:d.id, empresa_id:d.empresa_id, tipo_doc:'proforma', consecutivo:d.consecutivo,
     estado:d.estado, fecha:d.fecha, fecha_vence:d.fecha_vence,
-    cliente_id:d.cliente_id||null, cliente_nombre:d.cliente_nombre,
+    cliente_id:d.cliente_id||null, fact_cliente_id:d.fact_cliente_id||null,
+    cliente_nombre:d.cliente_nombre,
     cliente_telefono:d.cliente_telefono||'', cliente_correo:d.cliente_correo||'',
     cliente_identificacion:d.cliente_identificacion||'',
     cliente_tipo_ident:d.cliente_tipo_ident||null, cliente_direccion:d.cliente_direccion||'',
@@ -25873,7 +25892,10 @@ async function aPapelera(id){
   }catch(e){ console.error(e); _toast('Error: '+((e&&e.message)||e)); }
 }
 
-// ── Cliente: autocompletado sobre el CRM (solo lectura) ─────────────────────
+// ── Cliente: autocompletado sobre DOS fuentes, ambas de solo lectura ────────
+// 1. fact_clientes — los clientes de facturación (con cédula y correo listos)
+// 2. crm_clientes  — el CRM, que NO se modifica nunca desde aquí
+// Los de facturación van primero porque traen los datos que exige Hacienda.
 function buscarCliente(q){
   S.edit.cliente_nombre=q;
   S.dirty=true;
@@ -25881,30 +25903,84 @@ function buscarCliente(q){
   if(!ac) return;
   var t=_norm(q).trim();
   if(t.length<2){ ac.innerHTML=''; return; }
-  var cli=[];
-  try{ cli=(typeof getCRMClients==='function')?getCRMClients():(window._crmClientsCache||[]); }
-  catch(e){ cli=window._crmClientsCache||[]; }
-  var hits=(cli||[]).filter(function(c){
-    return _norm(c.nombreEmpresa).indexOf(t)>=0;
-  }).slice(0,12);
-  if(!hits.length){ ac.innerHTML=''; return; }
+
+  var fc=clientesEmpresa().filter(function(c){
+    if(c.activo===false) return false;
+    return _norm(String(c.nombre||'')+' '+String(c.identificacion||'')
+      +' '+_fmtIdent(c.identificacion,c.tipo_identificacion)).indexOf(t)>=0;
+  }).slice(0,10);
+
+  var yaCed={};
+  fc.forEach(function(c){ yaCed[String(c.identificacion||'').replace(/\D/g,'')]=1; });
+
+  // Del CRM se ofrecen solo los que NO están ya en facturación, para no duplicar
+  var crm=(_crmLista()||[]).filter(function(c){
+    var d=String(c.cedula||'').replace(/\D/g,'');
+    if(d && yaCed[d]) return false;
+    return _norm(String(c.nombreEmpresa||'')+' '+String(c.cedula||'')).indexOf(t)>=0;
+  }).slice(0,8);
+
+  if(!fc.length && !crm.length){
+    ac.innerHTML='<div class="fx-ac-list"><div style="cursor:default;color:var(--text3)">'
+      +'Sin coincidencias. Puede dejarlo como cliente libre, o crearlo en la subpestaña Clientes.'
+      +'</div></div>';
+    return;
+  }
+
   ac.innerHTML='<div class="fx-ac-list">'
-    +hits.map(function(c){
-      var ct=(c.contactos&&c.contactos[0])||{};
-      return '<div onmousedown="FACT.elegirCliente(\''+c.id+'\')"><b>'+_esc(c.nombreEmpresa)+'</b>'
-        +'<small>'+_esc(c.cedula||'sin cédula')+(ct.nombre?' · '+_esc(ct.nombre):'')+'</small></div>';
-    }).join('')
+    +(fc.length
+      ? '<div style="cursor:default;background:var(--surface2);font-size:9px;font-weight:900;'
+        +'color:var(--text3);text-transform:uppercase;letter-spacing:.08em;padding:4px 11px">'
+        +'Clientes de facturación</div>'
+        +fc.map(function(c){
+            return '<div onmousedown="FACT.elegirClienteFact(\''+c.id+'\')"><b>'+_esc(c.nombre)+'</b>'
+              +'<small>'+_esc(_fmtIdent(c.identificacion,c.tipo_identificacion))
+              +(c.correo?' · '+_esc(c.correo):' · sin correo')+'</small></div>';
+          }).join('')
+      : '')
+    +(crm.length
+      ? '<div style="cursor:default;background:var(--surface2);font-size:9px;font-weight:900;'
+        +'color:var(--text3);text-transform:uppercase;letter-spacing:.08em;padding:4px 11px">'
+        +'CRM (no está en facturación)</div>'
+        +crm.map(function(c){
+            var ct=(c.contactos&&c.contactos[0])||{};
+            return '<div onmousedown="FACT.elegirCliente(\''+c.id+'\')"><b>'+_esc(c.nombreEmpresa)+'</b>'
+              +'<small>'+_esc(c.cedula||'sin cédula')+(ct.nombre?' · '+_esc(ct.nombre):'')+'</small></div>';
+          }).join('')
+      : '')
     +'</div>';
 }
 
+// Escoger un cliente de FACTURACIÓN: trae todo lo que pide Hacienda
+function elegirClienteFact(fid){
+  var c=S.clientes.find(function(x){ return x.id===fid; });
+  if(!c) return;
+  var d=S.edit;
+  d.fact_cliente_id=c.id;
+  d.cliente_nombre=c.nombre||'';
+  d.cliente_identificacion=c.identificacion||'';
+  d.cliente_tipo_ident=_n(c.tipo_identificacion)||null;
+  d.cliente_correo=c.correo||'';
+  if(c.telefono) d.cliente_telefono=c.telefono;
+  d.cliente_direccion=[c.provincia_nombre,c.canton,c.distrito,c.barrio,c.otras_senales]
+    .filter(Boolean).join(', ');
+  // Si además coincide con el CRM, se guarda ese vínculo (sin tocar el CRM)
+  d.cliente_id=c.crm_cliente_id||null;
+  if(!d.cliente_id){
+    var coin=_crmCoincidencia(c);
+    if(coin) d.cliente_id=coin.cl.id;
+  }
+  S.dirty=true;
+  renderBody();
+}
+
+// Escoger un cliente del CRM: se copian sus datos, el CRM queda intacto
 function elegirCliente(cid){
-  var cli=[];
-  try{ cli=(typeof getCRMClients==='function')?getCRMClients():(window._crmClientsCache||[]); }
-  catch(e){ cli=window._crmClientsCache||[]; }
-  var c=(cli||[]).find(function(x){ return x.id===cid; });
+  var c=(_crmLista()||[]).find(function(x){ return x.id===cid; });
   if(!c) return;
   var d=S.edit, ct=(c.contactos&&c.contactos[0])||{};
   d.cliente_id=c.id;
+  d.fact_cliente_id=null;
   d.cliente_nombre=c.nombreEmpresa||'';
   d.cliente_identificacion=c.cedula||'';
   d.cliente_tipo_ident=_n(c.tipoCedula)||null;
@@ -25917,7 +25993,10 @@ function elegirCliente(cid){
 }
 
 function cerrarAC(){ setTimeout(function(){ var ac=document.getElementById('fact-cli-ac'); if(ac) ac.innerHTML=''; },160); }
-function desvincularCliente(){ S.edit.cliente_id=null; S.dirty=true; renderBody(); }
+function desvincularCliente(){
+  S.edit.cliente_id=null; S.edit.fact_cliente_id=null;
+  S.dirty=true; renderBody();
+}
 
 // ── Líneas ──────────────────────────────────────────────────────────────────
 function agregarLibre(){
@@ -27029,18 +27108,451 @@ async function guardarEmp(){
   }catch(er){ console.error('guardarEmp:',er); _toast(_errTabla(er,'fact_empresas')); }
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CLIENTES DE FACTURACIÓN
+// Viven en su propia tabla (fact_clientes). El CRM NO se toca: solo se LEE
+// para sugerir coincidencias por cédula o por nombre.
+// Crear, modificar y eliminar, igual que en GTI.
+// ══════════════════════════════════════════════════════════════════════════════
+
+var TIPOS_IDENT = [
+  {v:1, lbl:'Persona Física',   dig:[9,9],   fmt:'0-0000-0000'},
+  {v:2, lbl:'Persona Jurídica', dig:[10,10], fmt:'0-000-000000'},
+  {v:3, lbl:'DIMEX',            dig:[11,12], fmt:'000000000000'},
+  {v:4, lbl:'NITE',             dig:[10,10], fmt:'0000000000'},
+];
+function _tipoIdent(v){
+  return TIPOS_IDENT.find(function(t){ return t.v===_n(v); }) || TIPOS_IDENT[0];
+}
+
+// Las 7 provincias de Costa Rica con su código de Hacienda.
+// Cantón y distrito quedan de texto libre hasta la Etapa 3, cuando se
+// incorpora el catálogo oficial junto con el instructivo de GTI.
+var PROVINCIAS = [
+  {v:'1', lbl:'San José'},   {v:'2', lbl:'Alajuela'},  {v:'3', lbl:'Cartago'},
+  {v:'4', lbl:'Heredia'},    {v:'5', lbl:'Guanacaste'},{v:'6', lbl:'Puntarenas'},
+  {v:'7', lbl:'Limón'},
+];
+
+function clientesEmpresa(){
+  return S.clientes.filter(function(c){ return c.empresa_id===S.empresaId; });
+}
+
+// Cédula con guiones, solo para mostrar. En la base va sin guiones.
+function _fmtIdent(d, tipo){
+  var s=String(d||'').replace(/\D/g,'');
+  if(_n(tipo)===1 && s.length===9)  return s[0]+'-'+s.slice(1,5)+'-'+s.slice(5);
+  if(_n(tipo)===2 && s.length===10) return s[0]+'-'+s.slice(1,4)+'-'+s.slice(4);
+  if(_n(tipo)===4 && s.length===10) return s[0]+'-'+s.slice(1,4)+'-'+s.slice(4);
+  return s;   // DIMEX y cualquier otro largo: sin guiones
+}
+
+// ── Coincidencias con el CRM (solo lectura) ─────────────────────────────────
+function _crmLista(){
+  try{ return (typeof getCRMClients==='function')?getCRMClients():(window._crmClientsCache||[]); }
+  catch(e){ return window._crmClientsCache||[]; }
+}
+// Busca en el CRM un cliente con la misma cédula o el mismo nombre.
+// No modifica nada: solo informa.
+function _crmCoincidencia(cli){
+  var lista=_crmLista()||[];
+  var d=String(cli.identificacion||'').replace(/\D/g,'');
+  if(d){
+    var porCed=lista.find(function(x){ return String(x.cedula||'').replace(/\D/g,'')===d; });
+    if(porCed) return {cl:porCed, como:'cédula'};
+  }
+  var n=_norm(cli.nombre).trim();
+  if(n.length>3){
+    var porNom=lista.find(function(x){ return _norm(x.nombreEmpresa).trim()===n; });
+    if(porNom) return {cl:porNom, como:'nombre'};
+  }
+  return null;
+}
+
+// ── LISTA ───────────────────────────────────────────────────────────────────
+function renderClientes(b){
+  var todos=clientesEmpresa();
+  var q=_norm(S.fCli).trim();
+  var vis=todos.filter(function(c){
+    if(S.fCliRevisar && !c.revisar) return false;
+    if(!q) return true;
+    return _norm(String(c.identificacion||'')+' '+_fmtIdent(c.identificacion,c.tipo_identificacion)
+      +' '+String(c.nombre||'')+' '+String(c.correo||'')+' '+String(c.telefono||'')).indexOf(q)>=0;
+  });
+  var nRev=todos.filter(function(c){ return c.revisar; }).length;
+
+  // Paginación: con cientos de clientes, mostrarlos todos hace lenta la pantalla
+  var porPag=25;
+  var totPag=Math.max(1, Math.ceil(vis.length/porPag));
+  if(S.pagCli>totPag) S.pagCli=totPag;
+  var desde=(S.pagCli-1)*porPag;
+  var pagina=vis.slice(desde, desde+porPag);
+
+  b.innerHTML=
+    '<div class="fx-card">'
+      +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+        +'<div class="fx-h" style="margin:0">Clientes de '+_esc(_emp().nombre_comercial)
+          +' <span style="opacity:.6">('+todos.length+')</span></div>'
+        +'<button class="fx-b sm" style="margin-left:auto" onclick="FACT.nuevoCliente()">+ Nuevo cliente</button>'
+      +'</div>'
+      +'<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin-bottom:12px">'
+        +'Estos son los clientes de Facturación, en su propia tabla. '
+        +'El <b>CRM no se modifica</b>: cuando un cliente coincide por cédula o por nombre, se muestra el vínculo y nada más.'
+      +'</div>'
+      +'<div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:12px">'
+        +'<input class="fx-i" style="max-width:320px" placeholder="Buscar por cédula, nombre, correo o teléfono…"'
+          +' value="'+_esc(S.fCli)+'" oninput="FACT.setBuscaCli(this.value)">'
+        +(nRev
+          ? '<button class="fx-b sm '+(S.fCliRevisar?'':'gh')+'" onclick="FACT.togRevisar()">'
+            +'⚠ Por revisar <span style="opacity:.75">'+nRev+'</span></button>'
+          : '')
+        +(q||S.fCliRevisar
+          ? '<span style="font-size:11px;color:var(--text3)">'+vis.length+' de '+todos.length+'</span>'
+          : '')
+      +'</div>'
+      +(todos.length===0
+        ? '<div class="fx-empty">Todavía no hay clientes.<br>Agregue el primero, o ejecute <b>04_facturacion_clientes.sql</b> para traer los de GTI.</div>'
+        : vis.length===0
+        ? '<div class="fx-empty">Ningún cliente coincide'+(q?' con «'+_esc(S.fCli)+'»':'')+'.</div>'
+        : '<div class="fx-tbl-scroll"><table class="fx-t">'
+          +'<thead><tr><th style="width:118px">Cédula</th><th>Nombre</th>'
+          +'<th style="width:210px">Correo</th><th class="fx-c" style="width:88px">Tipo</th>'
+          +'<th style="width:110px">Teléfono</th><th class="fx-c" style="width:74px">CRM</th>'
+          +'<th class="fx-c" style="width:78px"></th></tr></thead><tbody>'
+          +pagina.map(filaCliente).join('')
+          +'</tbody></table></div>'
+          +paginador(totPag))
+    +'</div>';
+}
+
+function filaCliente(c){
+  var t=_tipoIdent(c.tipo_identificacion);
+  var coin=_crmCoincidencia(c);
+  return '<tr'+(c.activo===false?' style="opacity:.45"':'')+'>'
+    +'<td style="font-size:11.5px;font-weight:700;white-space:nowrap">'
+      +_esc(_fmtIdent(c.identificacion, c.tipo_identificacion))+'</td>'
+    +'<td><b>'+_esc(c.nombre)+'</b>'
+      +(c.revisar?'<div style="font-size:9.5px;color:var(--amber);font-weight:700;margin-top:2px">⚠ '
+        +_esc(c.revisar_motivo||'revisar')+'</div>':'')
+      +(c.activo===false?'<div style="font-size:9.5px;color:var(--text3);font-weight:800">inactivo</div>':'')+'</td>'
+    +'<td style="font-size:11px;word-break:break-all">'
+      +(c.correo?_esc(c.correo):'<span style="color:var(--amber);font-weight:700">sin correo</span>')
+      +((c.correos_copia&&c.correos_copia.length)
+        ?'<div style="font-size:9.5px;color:var(--text3)">+'+c.correos_copia.length+' en copia</div>':'')+'</td>'
+    +'<td class="fx-c" style="font-size:10.5px">'+_esc(t.lbl.replace('Persona ',''))+'</td>'
+    +'<td style="font-size:11px">'+(c.telefono?_esc(c.telefono):'<span style="color:var(--text3)">—</span>')+'</td>'
+    +'<td class="fx-c">'+(coin
+      ? '<span title="Coincide con «'+_esc(coin.cl.nombreEmpresa)+'» del CRM por '+coin.como
+        +'" style="color:var(--green);font-weight:800;font-size:11px">✓</span>'
+      : '<span style="color:var(--text3)">—</span>')+'</td>'
+    +'<td class="fx-c" style="white-space:nowrap">'
+      +'<button class="fx-b sm gh" onclick="FACT.editarCliente(\''+c.id+'\')" title="Modificar">✏</button> '
+      +'<button class="fx-b sm gh" style="color:var(--red)" onclick="FACT.borrarCliente(\''+c.id+'\')" title="Eliminar">🗑</button>'
+    +'</td></tr>';
+}
+
+function paginador(totPag){
+  if(totPag<=1) return '';
+  var p=S.pagCli, out=[];
+  function btn(n, lbl){
+    return '<button class="fx-b sm '+(n===p?'':'gh')+'" onclick="FACT.setPagCli('+n+')">'+(lbl||n)+'</button>';
+  }
+  // primeras, vecinas de la actual y últimas
+  var mostrar={1:1, 2:1};
+  for(var i=p-2;i<=p+2;i++) if(i>=1&&i<=totPag) mostrar[i]=1;
+  mostrar[totPag]=1; mostrar[totPag-1]=1;
+  var ult=0;
+  Object.keys(mostrar).map(Number).sort(function(a,b){return a-b;}).forEach(function(n){
+    if(n<1||n>totPag) return;
+    if(ult && n>ult+1) out.push('<span style="color:var(--text3);padding:0 3px">…</span>');
+    out.push(btn(n)); ult=n;
+  });
+  return '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:12px">'
+    +(p>1?btn(p-1,'‹'):'')+out.join('')+(p<totPag?btn(p+1,'›'):'')
+    +'<span style="font-size:11px;color:var(--text3);margin-left:8px">página '+p+' de '+totPag+'</span>'
+    +'</div>';
+}
+
+// ── FORMULARIO (crear / modificar) ──────────────────────────────────────────
+function nuevoCliente(){ modalCliente(null); }
+function editarCliente(id){
+  var c=S.clientes.find(function(x){ return x.id===id; });
+  if(c) modalCliente(c);
+}
+
+function modalCliente(c){
+  var esNuevo=!c;
+  var it=c||{id:_id('fcli'), empresa_id:S.empresaId, tipo_identificacion:1,
+    identificacion:'', nombre:'', correo:'', correos_copia:[],
+    actividad_economica:'', cod_pais_tel:'506', telefono:'',
+    provincia:'', provincia_nombre:'', canton:'', distrito:'', barrio:'',
+    otras_senales:'', crm_cliente_id:null, notas:'', activo:true};
+  S.cliEdit=JSON.parse(JSON.stringify(it));
+  S.cliOpc=!esNuevo && !!(it.actividad_economica||it.telefono||it.provincia||
+                          it.canton||it.distrito||it.barrio||it.otras_senales||
+                          (it.correos_copia&&it.correos_copia.length));
+
+  var ov=document.createElement('div');
+  ov.className='fx-ov'; ov.id='fact-cli-modal';
+  ov.innerHTML='<div class="fx-md" style="max-width:900px" onclick="event.stopPropagation()">'
+    +'<div id="fact-cli-form"></div></div>';
+  ov.onclick=function(){ cerrarModal('fact-cli-modal'); };
+  _root().appendChild(ov);
+  renderFormCliente(esNuevo);
+}
+
+function renderFormCliente(esNuevo){
+  var el=document.getElementById('fact-cli-form'); if(!el) return;
+  var it=S.cliEdit;
+  var t=_tipoIdent(it.tipo_identificacion);
+  var coin=_crmCoincidencia(it);
+
+  el.innerHTML=
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+      +'<div class="fx-h" style="margin:0">'+(esNuevo?'Nuevo cliente':'Modificar cliente')+'</div>'
+      +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.cerrarModal(\'fact-cli-modal\')">✕</button>'
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-bottom:14px">'
+      +'Los cuatro primeros campos son los que Hacienda exige. El resto es opcional: '
+      +'si se llena, se guarda; si no, no estorba.'
+    +'</div>'
+
+    // ── Obligatorios ──
+    +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">'
+      +campo('Tipo de identificación *','<select class="fx-i" onchange="FACT.setCli(\'tipo_identificacion\',this.value)">'
+        +TIPOS_IDENT.map(function(x){
+            return '<option value="'+x.v+'"'+(_n(it.tipo_identificacion)===x.v?' selected':'')+'>'+x.lbl+'</option>';
+          }).join('')
+        +'</select>')
+      +campo('N.º de identificación *',
+        '<input class="fx-i" id="fcli-ident" placeholder="'+t.fmt+'" value="'+_esc(it.identificacion||'')+'"'
+        +' oninput="FACT.setCli(\'identificacion\',this.value)">'
+        +'<div style="font-size:9.5px;color:var(--text3);margin-top:2px">'
+          +(t.dig[0]===t.dig[1]?t.dig[0]+' dígitos':t.dig[0]+' a '+t.dig[1]+' dígitos')
+          +' · se guarda sin guiones</div>')
+      +campo('Nombre o razón social *','<input class="fx-i" value="'+_esc(it.nombre||'')+'"'
+        +' oninput="FACT.setCli(\'nombre\',this.value)">')
+      +campo('Correo electrónico *','<input class="fx-i" type="email" value="'+_esc(it.correo||'')+'"'
+        +' oninput="FACT.setCli(\'correo\',this.value)">')
+    +'</div>'
+
+    // ── Coincidencia con el CRM ──
+    +(coin
+      ? '<div style="margin-top:11px;padding:9px 11px;border-radius:7px;background:rgba(34,197,94,.08);'
+        +'border:1px solid rgba(34,197,94,.3);font-size:11.5px;line-height:1.55">'
+        +'<b style="color:var(--green)">Coincide con el CRM</b> por '+coin.como+': «'+_esc(coin.cl.nombreEmpresa)+'»'
+        +'<div style="color:var(--text3);font-size:10.5px;margin-top:3px">'
+        +'Se guarda el vínculo. Los datos comerciales del CRM no se modifican.</div></div>'
+      : '<div style="margin-top:11px;font-size:11px;color:var(--text3)">'
+        +'No coincide con ningún cliente del CRM. Se guarda solo en Facturación.</div>')
+
+    // ── Opcionales ──
+    +'<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:13px">'
+      +'<button class="fx-b sm gh" onclick="FACT.togOpc()">'
+        +(S.cliOpc?'▾':'▸')+' Campos opcionales</button>'
+      +(S.cliOpc
+        ? '<div style="margin-top:12px">'
+          +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">'
+            +campo('Actividad económica','<input class="fx-i" value="'+_esc(it.actividad_economica||'')+'"'
+              +' placeholder="Código, p. ej. 4390" oninput="FACT.setCli(\'actividad_economica\',this.value)">')
+            +campo('Código de país','<input class="fx-i" value="'+_esc(it.cod_pais_tel||'506')+'"'
+              +' oninput="FACT.setCli(\'cod_pais_tel\',this.value)">')
+            +campo('Teléfono','<input class="fx-i" value="'+_esc(it.telefono||'')+'" placeholder="0000-0000"'
+              +' oninput="FACT.setCli(\'telefono\',this.value)">')
+            +campo('Provincia','<select class="fx-i" onchange="FACT.setProv(this.value)">'
+              +'<option value="">No aplica</option>'
+              +PROVINCIAS.map(function(p){
+                  return '<option value="'+p.v+'"'+(String(it.provincia)===p.v?' selected':'')+'>'+p.lbl+'</option>';
+                }).join('')
+              +'</select>')
+            +campo('Cantón','<input class="fx-i" value="'+_esc(it.canton||'')+'"'
+              +' oninput="FACT.setCli(\'canton\',this.value)">')
+            +campo('Distrito','<input class="fx-i" value="'+_esc(it.distrito||'')+'"'
+              +' oninput="FACT.setCli(\'distrito\',this.value)">')
+            +campo('Barrio','<input class="fx-i" value="'+_esc(it.barrio||'')+'"'
+              +' oninput="FACT.setCli(\'barrio\',this.value)">')
+          +'</div>'
+          +'<div style="height:10px"></div>'
+          +campo('Otras señales','<input class="fx-i" value="'+_esc(it.otras_senales||'')+'"'
+            +' oninput="FACT.setCli(\'otras_senales\',this.value)">')
+          +'<div style="height:12px"></div>'
+          // correos de copia (el botón "+" de GTI)
+          +'<div class="fx-f"><label>Correos en copia</label>'
+            +'<div id="fact-cli-copias">'+listaCopias()+'</div></div>'
+          +'<div style="height:10px"></div>'
+          +campo('Notas internas','<textarea class="fx-i" oninput="FACT.setCli(\'notas\',this.value)">'
+            +_esc(it.notas||'')+'</textarea>')
+          +'<div style="height:10px"></div>'
+          +'<label class="fx-chk"><input type="checkbox"'+(it.activo!==false?' checked':'')
+            +' onchange="FACT.setCli(\'activo\',this.checked)"> Activo</label>'
+          +'</div>'
+        : '')
+    +'</div>'
+
+    +'<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:18px">'
+      +'<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-cli-modal\')">Cancelar</button>'
+      +'<button class="fx-b" onclick="FACT.guardarCliente('+(esNuevo?'true':'false')+')">💾 Guardar cliente</button>'
+    +'</div>';
+}
+
+function listaCopias(){
+  var cc=S.cliEdit.correos_copia||[];
+  return cc.map(function(c,i){
+      return '<div style="display:flex;gap:6px;margin-bottom:5px">'
+        +'<input class="fx-i" type="email" value="'+_esc(c)+'" oninput="FACT.setCopia('+i+',this.value)">'
+        +'<button class="fx-b sm gh" style="color:var(--red)" onclick="FACT.quitarCopia('+i+')">✕</button>'
+        +'</div>';
+    }).join('')
+    +'<button class="fx-b sm gh" onclick="FACT.agregarCopia()">+ Agregar correo</button>';
+}
+
+function setCli(campo, val){
+  if(campo==='tipo_identificacion') S.cliEdit[campo]=_n(val);
+  else S.cliEdit[campo]=val;
+  if(campo==='tipo_identificacion' || campo==='identificacion' || campo==='nombre'){
+    // el recuadro del CRM y la ayuda de dígitos dependen de estos
+    renderFormCliente(!S.clientes.find(function(x){ return x.id===S.cliEdit.id; }));
+    var inp=document.getElementById('fcli-ident');
+    if(inp && campo==='identificacion'){ inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  }
+}
+function setProv(v){
+  S.cliEdit.provincia=v;
+  var p=PROVINCIAS.find(function(x){ return x.v===v; });
+  S.cliEdit.provincia_nombre=p?p.lbl:'';
+}
+function togOpc(){ S.cliOpc=!S.cliOpc; renderFormCliente(!S.clientes.find(function(x){ return x.id===S.cliEdit.id; })); }
+function agregarCopia(){
+  S.cliEdit.correos_copia=(S.cliEdit.correos_copia||[]).concat(['']);
+  var el=document.getElementById('fact-cli-copias'); if(el) el.innerHTML=listaCopias();
+}
+function setCopia(i, v){ S.cliEdit.correos_copia[i]=v; }
+function quitarCopia(i){
+  S.cliEdit.correos_copia.splice(i,1);
+  var el=document.getElementById('fact-cli-copias'); if(el) el.innerHTML=listaCopias();
+}
+
+async function guardarCliente(esNuevo){
+  var it=S.cliEdit;
+  var t=_tipoIdent(it.tipo_identificacion);
+  var d=String(it.identificacion||'').replace(/\D/g,'');
+
+  if(!d){ _toast('⚠ La identificación es obligatoria'); return; }
+  if(d.length<t.dig[0] || d.length>t.dig[1]){
+    _toast('⚠ '+t.lbl+' lleva '+(t.dig[0]===t.dig[1]?t.dig[0]:t.dig[0]+'-'+t.dig[1])
+      +' dígitos y usted puso '+d.length);
+    return;
+  }
+  if(!String(it.nombre||'').trim()){ _toast('⚠ El nombre o razón social es obligatorio'); return; }
+  var cor=String(it.correo||'').trim();
+  if(!cor){ _toast('⚠ El correo es obligatorio para poder enviar el comprobante'); return; }
+  if(!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(cor)){
+    if(!confirm('El correo «'+cor+'» no tiene la forma usual de una dirección.\n\n'
+      +'Si está mal, el comprobante no le llega al cliente. ¿Guardarlo así?')) return;
+  }
+
+  // Cédula repetida dentro de la misma empresa
+  var choque=S.clientes.find(function(x){
+    return x.empresa_id===S.empresaId && x.id!==it.id
+      && String(x.identificacion||'').replace(/\D/g,'')===d;
+  });
+  if(choque){ _toast('⚠ Esa cédula ya está registrada en «'+choque.nombre+'»'); return; }
+
+  var coin=_crmCoincidencia(it);
+  var copias=(it.correos_copia||[]).map(function(x){ return String(x||'').trim(); })
+                                   .filter(function(x){ return x; });
+
+  var row={
+    id:it.id, empresa_id:S.empresaId,
+    tipo_identificacion:_n(it.tipo_identificacion), identificacion:d,
+    nombre:String(it.nombre).trim(), correo:cor, correos_copia:copias,
+    actividad_economica:it.actividad_economica||'', cod_pais_tel:it.cod_pais_tel||'506',
+    telefono:it.telefono||'', provincia:it.provincia||'', provincia_nombre:it.provincia_nombre||'',
+    canton:it.canton||'', distrito:it.distrito||'', barrio:it.barrio||'',
+    otras_senales:it.otras_senales||'',
+    crm_cliente_id:(coin?coin.cl.id:(it.crm_cliente_id||null)),
+    notas:it.notas||'',
+    revisar:false, revisar_motivo:null,   // al guardarlo a mano queda revisado
+    activo:it.activo!==false,
+    actualizado_en:new Date().toISOString(),
+    creado_por:it.creado_por||((SESSION&&SESSION.nombre)||'')
+  };
+
+  try{
+    var r=await DB.from('fact_clientes').upsert([row],{onConflict:'id'});
+    if(r.error) throw r.error;
+    var idx=S.clientes.findIndex(function(x){ return x.id===it.id; });
+    if(idx>=0) S.clientes[idx]=row; else S.clientes.push(row);
+    cerrarModal('fact-cli-modal');
+    _toast('✅ Cliente guardado');
+    renderBody();
+  }catch(e){
+    console.error('guardarCliente:',e);
+    var msg=String((e&&e.message)||e);
+    if(/duplicate|unique/i.test(msg)) _toast('⚠ Esa cédula ya existe en la base');
+    else _toast(_errTabla(e,'fact_clientes'));
+  }
+}
+
+async function borrarCliente(id){
+  var c=S.clientes.find(function(x){ return x.id===id; });
+  if(!c) return;
+  // ¿Tiene proformas? Si sí, se desactiva en vez de borrarse: nunca se pierde
+  // la referencia de un documento ya emitido.
+  var usos=S.docs.filter(function(d){
+    return d.fact_cliente_id===id ||
+      (String(d.cliente_identificacion||'').replace(/\D/g,'')===String(c.identificacion||'').replace(/\D/g,'')
+       && String(c.identificacion||'').replace(/\D/g,''));
+  });
+  if(usos.length){
+    if(!confirm('«'+c.nombre+'» aparece en '+usos.length+' proforma(s).\n\n'
+      +'No se elimina para no perder la referencia de esos documentos: se marca como INACTIVO '
+      +'y deja de aparecer al crear proformas nuevas.\n\n¿Continuar?')) return;
+    try{
+      var ru=await DB.from('fact_clientes').update({activo:false, actualizado_en:new Date().toISOString()}).eq('id',id);
+      if(ru.error) throw ru.error;
+      var i2=S.clientes.findIndex(function(x){ return x.id===id; });
+      if(i2>=0) S.clientes[i2].activo=false;
+      _toast('Cliente marcado como inactivo');
+      renderBody();
+    }catch(e){ console.error(e); _toast('Error: '+((e&&e.message)||e)); }
+    return;
+  }
+
+  if(!confirm('¿Eliminar a «'+c.nombre+'» de los clientes de Facturación?\n\n'
+    +'El CRM no se toca.')) return;
+  try{
+    var r=await DB.from('fact_clientes').delete().eq('id',id);
+    if(r.error) throw r.error;
+    S.clientes=S.clientes.filter(function(x){ return x.id!==id; });
+    _toast('Cliente eliminado');
+    renderBody();
+  }catch(e){ console.error(e); _toast('Error: '+((e&&e.message)||e)); }
+}
+
+function setBuscaCli(v){
+  S.fCli=v; S.pagCli=1; renderBody();
+  var el=document.querySelector('#fact-body input[placeholder^="Buscar por c"]');
+  if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+}
+function togRevisar(){ S.fCliRevisar=!S.fCliRevisar; S.pagCli=1; renderBody(); }
+function setPagCli(n){ S.pagCli=n; renderBody(); }
+
 // ── Cambio de empresa / subpestaña ──────────────────────────────────────────
 function setEmpresa(id){
   var e=S.empresas.find(function(x){ return x.id===id; });
   if(!e || !e.activa){ _toast('Esa empresa se activa en la Etapa 5 — la estructura ya está lista'); return; }
   if(S.edit && S.dirty && !confirm('Hay cambios sin guardar en la proforma. ¿Cambiar de empresa?')) return;
   S.empresaId=id; S.edit=null; S.lineas=[]; S.adjuntos=[]; S.dirty=false;
+  S.fCli=''; S.fCliRevisar=false; S.pagCli=1;
   render();
 }
 function setSub(s){
   if(S.edit && S.dirty && !confirm('Hay cambios sin guardar en la proforma. ¿Salir?')) return;
   if(s!=='proformas'){ S.edit=null; S.lineas=[]; S.adjuntos=[]; S.dirty=false; }
   if(s!=='catalogo') S.fCat='';
+  if(s!=='clientes'){ S.fCli=''; S.fCliRevisar=false; S.pagCli=1; }
   S.sub=s;
   render();
 }
@@ -27063,7 +27575,13 @@ window.FACT={
   setDoc:setDoc, setMoneda:setMoneda, setIvaDoc:setIvaDoc,
   toggleTipo:toggleTipo, setEstado:setEstadoDoc,
   buscarCliente:buscarCliente, elegirCliente:elegirCliente,
+  elegirClienteFact:elegirClienteFact,
   cerrarAC:cerrarAC, desvincular:desvincularCliente,
+  nuevoCliente:nuevoCliente, editarCliente:editarCliente,
+  guardarCliente:guardarCliente, borrarCliente:borrarCliente,
+  setCli:setCli, setProv:setProv, togOpc:togOpc,
+  agregarCopia:agregarCopia, setCopia:setCopia, quitarCopia:quitarCopia,
+  setBuscaCli:setBuscaCli, togRevisar:togRevisar, setPagCli:setPagCli,
   agregarLibre:agregarLibre, agregarDeCatalogo:agregarDeCatalogo,
   agregarItem:agregarItem, filtrarCatModal:filtrarCatModal,
   setLinea:setLinea, quitarLinea:quitarLinea,
