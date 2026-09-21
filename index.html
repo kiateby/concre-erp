@@ -1635,7 +1635,7 @@ async function _loadFromSupabase(clave, fallbackLocalKey){
   return {}; // No encontrado en Supabase — sin fallback local
 }
 function _saveToSupabase(clave, valor, localKey){
-  // Guardar SOLO en Supabase — sin localStorage (cross-device, sin dependencia local)
+  // Guardar SOLO en Supabase — cross-device, sin almacenamiento local
   DB.from('configuracion').upsert(
     {clave:clave, valor:valor, updated_at:new Date().toISOString()},
     {onConflict:'clave'}
@@ -1661,7 +1661,7 @@ function saveData(uid){
   _saveToSupabase('user_horas_'+uid, REG, 'cc_h_'+uid);
   _saveToSupabase('user_ded_'+uid, DED, 'cc_d_'+uid);
 }
-// getDED: usa memoria si es el usuario actual, localStorage si es otro usuario
+// getDED: usa el cache en memoria, rehidratado desde Supabase al arrancar
 function getDED(uid){
   if(SESSION&&uid===SESSION.id) return DED;
   // Cache en memoria cargado desde Supabase al inicio.
@@ -1722,7 +1722,11 @@ async function loadAllDataFromDB(){
     };
     // Cargar PRIMERO los estados de pago/depósito con consulta dedicada,
     // así ya están disponibles cuando se mapeen las ventas en la fase 2.
-    try{ await loadPagoOverrides(); }catch(e){ console.error('loadPagoOverrides:',e); }
+    // Los estados de pago/depósito ya NO bloquean el arranque: viajan dentro del
+    // mismo lote paralelo. Como la fase 1 se espera completa antes de la fase 2,
+    // siguen estando listos cuando se mapean las ventas.
+    // Se agrega AL FINAL del arreglo a propósito, para no correr los índices
+    // phase1[0]..phase1[6] que se leen justo abajo.
     var phase1=await Promise.all([
       DB.from('usuarios').select('*').order('nombre'),
       _loadAllConfig(),
@@ -1730,7 +1734,8 @@ async function loadAllDataFromDB(){
       loadAllRows('crm_clientes','nombre_empresa'),
       loadAllRows('crm_links'),
       loadAllRows('papelera','deleted_at',false),
-      DB.from('proyectos').select('*').order('created_at',{ascending:false})
+      DB.from('proyectos').select('*').order('created_at',{ascending:false}),
+      loadPagoOverrides().catch(function(e){ console.error('loadPagoOverrides:',e); })
     ]);
 
     var users=phase1[0], configs=phase1[1], subs=phase1[2];
@@ -1810,6 +1815,20 @@ async function loadAllDataFromDB(){
           window._pagadoAdminOverrides[vid]=!!(row.valor.pagado);
         }
         // Ediciones de ventas guardadas como backup
+        if(row.clave&&row.clave.indexOf('aux_equipos_')===0){
+          var _suf=row.clave.replace('aux_equipos_','');
+          if(_suf==='cfg'){ window._auxCfg=row.valor||null; }
+          else if(_suf==='anios'){ window._auxAnios=Array.isArray(row.valor)?row.valor:[]; }
+          else if(/^\d{4}$/.test(_suf)){
+            if(!window._auxCache) window._auxCache={};
+            window._auxCache[parseInt(_suf)]=row.valor||{};
+          }
+        }
+        if(row.clave&&row.clave.startsWith('cxc_ov_')){
+          if(!window._cxcOverridesCache) window._cxcOverridesCache={};
+          var _ov=row.valor||{};
+          if(_ov&&_ov.__key) window._cxcOverridesCache[_ov.__key]=_ov;
+        }
         if(row.clave&&row.clave.startsWith('abonos_cliente_')){
           if(!window._abonosCache) window._abonosCache={};
           window._abonosCache[row.clave.replace('abonos_cliente_','')]=Array.isArray(row.valor)?row.valor:[];
@@ -1934,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260918112055';
+var APP_BUILD='20260921111615';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -3837,6 +3856,8 @@ function buildAdminTabs(){
     {id:'vacaciones',    label:'🌴 Vacaciones',      extra:'try{renderAdminVacSection();}catch(e){}'},
     {id:'fondos',        label:'📦 Fondos',          extra:'try{initAdminFondos();}catch(e){}'},
     {id:'ventas',        label:'📈 Ventas',          extra:'try{initAdminVentas();}catch(e){}'},
+    {id:'cxc',           label:'💰 Cuentas por cobrar', extra:'try{initCXCTab();}catch(e){console.error(e);}', optIn:true},
+    {id:'auxeq',         label:'🏗 Auxiliar equipos',   extra:'try{initAuxEquipos();}catch(e){console.error(e);}', saOnly:true},
     {id:'liquidaciones', label:'📋 Liquidaciones',   extra:'try{initLiquidaciones();}catch(e){}'},
     {id:'gastos-admin',  label:'🏗 Gastos',          extra:'try{initAdminGastos();}catch(e){}'},
     {id:'crm',           label:'👥 CRM',             extra:'try{initCRM();}catch(e){}'},
@@ -3855,8 +3876,7 @@ function buildAdminTabs(){
   var allowedBtns=btns.filter(function(b){
     if(b.saOnly&&!isSuperAdmin) return false; // saOnly tabs for superadmin only
     if(isSuperAdmin) return true;
-    // optIn: oculta por defecto incluso para admins — requiere autorización
-    // EXPLÍCITA del superadmin (mismo criterio que Radar para usuarios normales)
+    // optIn: oculta por defecto — solo visible si el superadmin la activó
     if(b.optIn) return !!(adminTabPerms&&adminTabPerms[b.id]===true);
     if(!adminTabPerms) return true; // no restrictions = all visible
     return adminTabPerms[b.id]!==false;
@@ -3891,6 +3911,7 @@ function buildUserTabs(){
     {id:'fibraplus',  label:'🧮 FibraPlus54'},
     {id:'radar',      label:'📡 Radar Comercial', optIn:true}, // requiere autorización EXPLÍCITA de superadmin (a diferencia de las demás pestañas)
     {id:'precios',    label:'📚 Precios e Info', optIn:true}, // oculta por defecto — superadmin decide quién la ve (solo documentos y listas publicadas)
+    {id:'cxc',        label:'💰 Cuentas por cobrar', optIn:true}, // oculta por defecto — solo lectura para quien la reciba
   ];
   var visible=allTabs.filter(function(t){
     if(t.optIn) return perms[t.id]===true; // oculta por defecto — solo visible si superadmin la activó explícitamente
@@ -3924,6 +3945,8 @@ function switchUserTab(tab, btn){
     if(pym) pym.style.display='none';
     var prm=document.getElementById('preciosUserModule');
     if(prm) prm.style.display='none';
+    var cxm=document.getElementById('cxcUserModule');
+    if(cxm) cxm.style.display='none';
     if(um) um.style.display='none';
     if(vm) vm.style.display='none';
     if(fm) fm.style.display='none';
@@ -3959,6 +3982,9 @@ function switchUserTab(tab, btn){
     } else if(tab==='proyectos'){
       if(pym){ pym.style.cssText='display:flex;flex:1;width:100%'; }
       try{ initProyectosTab('proyectosUserRoot'); }catch(e2){ console.error('initProyectosTab error:',e2); }
+    } else if(tab==='cxc'){
+      if(cxm){ cxm.style.cssText='display:flex;flex:1;width:100%'; }
+      try{ initCXCTab('cxcUserRoot'); }catch(e2){ console.error('initCXCTab error:',e2); }
     } else if(tab==='precios'){
       if(prm){ prm.style.cssText='display:flex;flex:1;width:100%'; }
       try{ initPreciosTab('preciosUserRoot'); }catch(e2){ console.error('initPreciosTab error:',e2); }
@@ -4801,7 +4827,7 @@ function renderAdminHorasTable(uid){
   const users=getUsers();
   const u=users.find(x=>x.id===uid);
   if(!u)return;
-  const regU=getREG(uid)||{}; // getREG reads localStorage('cc_h_'+uid) loaded by _loadUserDEDForAdmin
+  const regU=getREG(uid)||{}; // getREG lee el cache en memoria que puebla _loadUserDEDForAdmin desde Supabase
   const y=new Date().getFullYear();
   // Admin always shows main quincena days + any extra days el usuario llenó CON la marca
   // explícita quincenaOrigen (sin marca = pertenece a su quincena normal de calendario,
@@ -5209,29 +5235,36 @@ async function loadPagoOverrides(){
   window._pagadoAdminOverrides = window._pagadoAdminOverrides || {};
   window._depositoOverrides = window._depositoOverrides || {};
   window._cxcPagadoOverrides = window._cxcPagadoOverrides || {};
+  // RENDIMIENTO: antes los tres patrones se consultaban EN SERIE, cada uno
+  // esperando al anterior. Ahora viajan en paralelo: dos idas y vueltas menos.
   var patrones=[['cc_pagado_admin_%','pago'],['cc_deposito_%','dep'],['cc_cxc_pagado_%','cxc']];
-  for(var pi=0; pi<patrones.length; pi++){
-    var pref=patrones[pi][0], tipo=patrones[pi][1];
-    var from=0;
+  async function _traerPatron(pref){
+    var all=[], from=0;
     for(var i=0;i<50;i++){
       var r=await DB.from('configuracion').select('clave,valor').like('clave',pref).range(from,from+999);
       if(r.error){ console.error('loadPagoOverrides '+pref+':',r.error); break; }
       var rows=r.data||[];
-      rows.forEach(function(row){
-        if(!row.valor) return;
-        if(tipo==='pago'){
-          window._pagadoAdminOverrides[row.clave.replace('cc_pagado_admin_','')]=!!row.valor.pagado;
-        } else if(tipo==='cxc'){
-          window._cxcPagadoOverrides[row.clave.replace('cc_cxc_pagado_','')]=
-            {pagado:!!row.valor.pagado, fecha:row.valor.fecha||null};
-        } else {
-          window._depositoOverrides[row.clave.replace('cc_deposito_','')]=row.valor.deposito||'';
-        }
-      });
+      all=all.concat(rows);
       if(rows.length<1000) break;
       from+=1000;
     }
+    return all;
   }
+  var resultados=await Promise.all(patrones.map(function(pp){ return _traerPatron(pp[0]); }));
+  patrones.forEach(function(pp, pi){
+    var tipo=pp[1];
+    (resultados[pi]||[]).forEach(function(row){
+      if(!row.valor) return;
+      if(tipo==='pago'){
+        window._pagadoAdminOverrides[row.clave.replace('cc_pagado_admin_','')]=!!row.valor.pagado;
+      } else if(tipo==='cxc'){
+        window._cxcPagadoOverrides[row.clave.replace('cc_cxc_pagado_','')]=
+          {pagado:!!row.valor.pagado, fecha:row.valor.fecha||null};
+      } else {
+        window._depositoOverrides[row.clave.replace('cc_deposito_','')]=row.valor.deposito||'';
+      }
+    });
+  });
   console.log('Estados de pago cargados: '+Object.keys(window._pagadoAdminOverrides).length
     +' · Depósitos: '+Object.keys(window._depositoOverrides).length);
 }
@@ -6983,7 +7016,7 @@ function openVacLogModal(uid){
 }
 
 // ── NOTIFICATIONS ──
-// Cache en memoria poblado desde Supabase (sin localStorage — cross-device real).
+// Cache en memoria poblado desde Supabase (sin almacenamiento local — cross-device real).
 function getNotifications(uid){
   if(!window._notifCache) window._notifCache={};
   return window._notifCache[uid]||[];
@@ -7569,6 +7602,7 @@ function vacAdminProgramar(){
   const userSel=document.getElementById('vac-prog-user').value;
   const desde=document.getElementById('vac-prog-desde').value;
   const hasta=document.getElementById('vac-prog-hasta').value;
+  const nota=((document.getElementById('vac-prog-nota')||{}).value||'').trim();
   if(!desde||!hasta){ alert('Indica las fechas de inicio y fin.'); return; }
   const fromDate=parseDate(desde),toDate=parseDate(hasta);
   if(toDate<fromDate){ alert('La fecha de fin no puede ser anterior al inicio.'); return; }
@@ -7578,7 +7612,9 @@ function vacAdminProgramar(){
   users.forEach(u=>{
     const dias=countWorkingDays(fromDate,toDate,u.id,'full');
     // Deduct saldo FIRST so adjustVacSaldo writes its version
-    adjustVacSaldo(u.id,-dias,'Vacaciones obligatorias programadas por '+SESSION.nombre);
+    // La nota del superadmin queda dentro del motivo, que es lo que el historial muestra
+    adjustVacSaldo(u.id,-dias,'Vacaciones obligatorias programadas por '+SESSION.nombre
+      +(nota?' — '+nota:''));
     // Now read fresh and add request + usedDias on top
     const vd=getVacData(u.id);
     if(!vd.requests) vd.requests=[];
@@ -7588,16 +7624,19 @@ function vacAdminProgramar(){
       status:'approved',mandatory:true,
       created:new Date().toISOString(),
       approvedBy:SESSION.nombre,
-      motivo:'Vacaciones programadas por administración'
+      motivo:'Vacaciones programadas por administración'+(nota?' — '+nota:''),
+      nota:nota
     });
     if(!vd.usedDias) vd.usedDias=0;
     vd.usedDias=parseFloat((vd.usedDias+dias).toFixed(1));
     setVacData(u.id,vd);
     addNotification(u.id,'📅','Vacaciones programadas',
-      'La administración programó vacaciones del '+formatDate(fromDate)+' al '+formatDate(toDate)+' ('+dias.toFixed(1)+' días hábiles).');
+      'La administración programó vacaciones del '+formatDate(fromDate)+' al '+formatDate(toDate)+' ('+dias.toFixed(1)+' días hábiles).'
+      +(nota?' Nota: '+nota:''));
   });
   document.getElementById('vac-prog-desde').value='';
   document.getElementById('vac-prog-hasta').value='';
+  var _nEl=document.getElementById('vac-prog-nota'); if(_nEl) _nEl.value='';
   toast('✓ Vacaciones programadas para '+users.length+' colaborador(es)');
   renderAdminVacSection();
 }
@@ -9410,6 +9449,7 @@ function getVentasData(uid){
 }
 function setVentasData(uid, d){
   window._ventasCache[uid] = d;
+  if(typeof _crmInvalidarCache==='function') _crmInvalidarCache();
   // NO hacemos delete masivo — guardamos individualmente con insert/update
   // Esta función es llamada cuando se agrega/edita/elimina UNA venta
   // El guardado individual lo maneja _saveSingleVenta y _deleteSingleVenta
@@ -9418,6 +9458,7 @@ function setVentasData(uid, d){
 // Guardar UNA venta específica en Supabase (insert o update según si existe)
 function _saveSingleVenta(uid, v, mk){
   if(!v||!v.id) return;
+  if(typeof _crmInvalidarCache==='function') _crmInvalidarCache();
   var parts=(mk||'').split('-');
   // SOLO columnas que existen en la tabla ventas de Supabase
   var row={
@@ -9444,6 +9485,7 @@ function _saveSingleVenta(uid, v, mk){
     tc_used: v.tcUsed||0,
     usd: v.usd||0,
     deposito_num: v.depositoNum||'',
+    fecha_facturacion: v.fechaFact||null,
     notas: v.notas||'',
     estado: v.estado||'activo',
     is_admin_venta: v.isAdminVenta||false,
@@ -9487,6 +9529,7 @@ function _saveSingleVenta(uid, v, mk){
     tienePendiente:v.tienePendiente||false, pendMonto:v.pendMonto||0, pendCancelado:v.pendCancelado||'no',
     referido:v.referido||'', notas:v.notas||'', estado:v.estado||'activa',
     tieneMinimo:v.tieneMinimo||false, minimoArea:v.minimoArea||0,
+    fechaFact:v.fechaFact||'',
     ts: new Date().toISOString()
   };
   if(!window._ventaEditsCache) window._ventaEditsCache={};
@@ -9569,7 +9612,7 @@ async function loadVentasFromDB(uid,_rows){
   (data||[]).forEach(function(row){
     var mk=row.anio+'-'+pad(row.mes+1);
     if(!vd[mk]) vd[mk]={ventas:[],tc:525,comisVerif:false};
-    // Aplicar override de pagado_admin desde configuracion de Supabase (cross-device, sin localStorage)
+    // Aplicar override de pagado_admin desde configuracion de Supabase (cross-device, sin almacenamiento local)
     var configOverride=window._pagadoAdminOverrides&&window._pagadoAdminOverrides.hasOwnProperty(row.id)
       ? window._pagadoAdminOverrides[row.id] : null;
     var pagadoAdminFinal = configOverride!==null ? configOverride : (row.pagado_admin||false);
@@ -9605,6 +9648,7 @@ async function loadVentasFromDB(uid,_rows){
         tipoPago:editOverride.tipoPago||row.pago||'CONTADO',
         pago:editOverride.tipoPago||row.pago||'CONTADO',
         plazoCredito:editOverride.plazoCredito||row.plazo_credito||0,
+        fechaFact:editOverride.fechaFact||row.fecha_facturacion||'',
         comision:row.comision,
         esTercero:editOverride.esTercero||row.es_tercero||false,
         tercNombre:editOverride.tercNombre||'',
@@ -9663,6 +9707,7 @@ async function loadVentasFromDB(uid,_rows){
       tipoPago:row.pago||row.tipo_pago||row.tipoPago||'CONTADO',
       pago:row.pago||'CONTADO',
       plazoCredito:row.plazo_credito||0,
+      fechaFact:row.fecha_facturacion||((window._ventaEditsCache||{})[row.id]||{}).fechaFact||'',
       // Área del mínimo: prioriza la columna de la tabla; si aún no existe
       // (ventas guardadas antes de este cambio) la recupera del respaldo.
       tieneMinimo:(row.tiene_minimo!=null?!!row.tiene_minimo
@@ -9725,7 +9770,7 @@ async function loadVentasFromDB(uid,_rows){
       iva:e.ivaAmt||0, total:e.total||0, usdTotal:e.usdTotal||0,
       cliente:e.cliente||'', factura:e.factura||'', proyecto:e.proyecto||'',
       tipoPago:e.tipoPago||'CONTADO', pago:e.tipoPago||'CONTADO',
-      plazoCredito:e.plazoCredito||0, comision:0,
+      plazoCredito:e.plazoCredito||0, fechaFact:e.fechaFact||'', comision:0,
       esTercero:e.esTercero||false, tercNombre:e.tercNombre||'', tercMonto:e.tercMonto||0,
       pendPagada:e.pendPagada||false, pendEjecutada:e.pendEjecutada||false, pendCanceladaChk:e.pendCanceladaChk||false,
       pendPagadaAt:e.pendPagadaAt||'', pendEjecutadaAt:e.pendEjecutadaAt||'', pendCanceladaAt:e.pendCanceladaAt||'',
@@ -10103,6 +10148,8 @@ function clearVentaForm(){
   document.getElementById('vf-tipo-pago').value='CONTADO';
   document.getElementById('vf-plazo').value=30;
   document.getElementById('vf-plazo-wrap').style.display='none';
+  var _ffEl=document.getElementById('vf-fecha-fact'); if(_ffEl) _ffEl.value='';
+  var _ffW=document.getElementById('vf-fechafact-wrap'); if(_ffW) _ffW.style.display='none';
   document.getElementById('vf-is-usd').checked=false;
   document.getElementById('vf-pend-chk').checked=false;
   document.getElementById('vf-ins-chk').checked=false;
@@ -10174,6 +10221,19 @@ function _doSaveVenta(){
     return;
   }
   const fecha=document.getElementById('vf-fecha').value||todayCR();
+  // Crédito: plazo obligatorio (>0) y fecha de facturación obligatoria
+  var _errCred=_validarCredito(
+    document.getElementById('vf-tipo-pago').value,
+    document.getElementById('vf-plazo')?.value,
+    document.getElementById('vf-fecha-fact')?.value);
+  if(_errCred){
+    toast(_errCred);
+    var _foco=document.getElementById(
+      (!document.getElementById('vf-plazo')?.value||parseInt(document.getElementById('vf-plazo').value)<=0)
+      ?'vf-plazo':'vf-fecha-fact');
+    if(_foco) _foco.focus();
+    return;
+  }
   const isUsd=document.getElementById('vf-is-usd').checked;
   let subtotal=0, usd=0, tcUsed=0;
   var _qty=parseFloat(document.getElementById('vf-cantidad').value)||0;
@@ -10211,6 +10271,7 @@ function _doSaveVenta(){
     subtotal, ivaPct, ivaAmt, total:totalFinal,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:parseInt(document.getElementById('vf-plazo').value)||0,
+    fechaFact:document.getElementById('vf-fecha-fact')?.value||'',
     isUsd, usd, tcUsed, usdTotal,
     tieneInsumos:insChk,
     insDesc:insChk?document.getElementById('vf-ins-desc').value.trim():'',
@@ -11806,7 +11867,8 @@ function toggleVentaPago(uid,ventaId,chk){
       // Guardar TAMBIÉN en la tabla ventas (columna pagado_admin) — doble respaldo:
       // si el override de configuracion no llegara, la fila de ventas conserva el estado.
       try{ _saveSingleVenta(uid, vd[mk].ventas[idx], mk); }catch(e){ console.error('toggleVentaPago save:',e); }
-      if(newVal) toast('✓ Pago registrado — actualizado en Créditos pendientes y Saldos por cliente');
+      if(newVal) toast('✓ Pago registrado — actualizado en Cuentas por cobrar');
+      try{ if(typeof renderCXCTab==='function') renderCXCTab(); }catch(e){}
       // Re-render COMPLETO: actualiza Detalle, Créditos pendientes y Saldos por cliente
       try{ renderAdminVentas(); }catch(e){ console.error('render tras pago:',e); renderAdminVentasTable(); }
     }
@@ -12003,16 +12065,41 @@ function exportVentasAdmin(){
   toast('Función de exportación admin en desarrollo');
 }
 
+// ── CREDITO / PLAZO (formulario admin) ──
+function onAdminTipoPagoChange(){
+  var v=(document.getElementById('avf-tipo-pago')||{}).value;
+  var w=document.getElementById('avf-plazo-wrap');
+  if(w) w.style.display=v==='CREDITO'?'block':'none';
+  var f=document.getElementById('avf-fechafact-wrap');
+  if(f) f.style.display=v==='CREDITO'?'block':'none';
+}
+
 // ── CREDITO / PLAZO ──
 function onTipoPagoChange(){
   const v=document.getElementById('vf-tipo-pago').value;
   const w=document.getElementById('vf-plazo-wrap');
   if(w) w.style.display=v==='CREDITO'?'block':'none';
+  const f=document.getElementById('vf-fechafact-wrap');
+  if(f) f.style.display=v==='CREDITO'?'block':'none';
+}
+
+// ── VALIDACIÓN COMÚN DE CRÉDITO ──
+// Devuelve null si todo está bien, o el mensaje de error.
+// Solo aplica a ventas NUEVAS o al editar: las ventas viejas guardadas antes
+// de este cambio conservan su condición y no se tocan.
+function _validarCredito(tipoPago, plazo, fechaFact){
+  if(tipoPago!=='CREDITO') return null;
+  if(!plazo||parseInt(plazo)<=0) return 'Ingrese el plazo de crédito en días (no puede quedar en 0)';
+  if(!fechaFact) return 'La fecha de facturación es obligatoria para las ventas a crédito';
+  return null;
 }
 
 function getVencimientoDate(venta){
   if(venta.tipoPago!=='CREDITO'||!venta.plazoCredito) return null;
-  const d=parseDate(venta.fecha);
+  // El vencimiento se cuenta desde la FECHA DE FACTURACIÓN. Las ventas
+  // anteriores a ese campo no la tienen: para esas se sigue usando la fecha
+  // de la venta, igual que antes, para no alterar su comportamiento.
+  const d=parseDate(venta.fechaFact||venta.fecha);
   if(!d) return null;
   d.setDate(d.getDate()+(parseInt(venta.plazoCredito)||30));
   return d;
@@ -12027,24 +12114,13 @@ function diasParaVencer(venta){
 
 // Auto-cleanup: remove cxc marked paid > 7 days ago
 function cleanupOldCxc(){
-  const users=getUsers().filter(u=>u.rol==='user');
-  const now=new Date();
-  users.forEach(u=>{
-    const vd=getVentasData(u.id);
-    let changed=false;
-    Object.keys(vd).forEach(mk=>{
-      if(!vd[mk].ventas) return;
-      vd[mk].ventas=vd[mk].ventas.filter(v=>{
-        if(_esCxcPagado(v)&&_cxcPagadoFecha(v)){
-          const paid=new Date(_cxcPagadoFecha(v));
-          const diffDays=(now-paid)/(1000*60*60*24);
-          if(diffDays>7){ changed=true; return false; } // remove after 7 days
-        }
-        return true;
-      });
-    });
-    if(changed) setVentasData(u.id,vd);
-  });
+  // DESACTIVADA A PROPÓSITO.
+  // Antes esta función ELIMINABA del arreglo de ventas las cobradas con más de
+  // 7 días. Eso borraba la venta completa de la vista (y de los totales del mes)
+  // hasta recargar la página. Con la pestaña "Cuentas por cobrar" las cobradas
+  // deben conservarse indefinidamente en su propia tabla, así que ya no se
+  // depura nada. Se mantiene la función vacía porque hay llamadas existentes.
+  return;
 }
 
 // ── EDIT VENTA ──
@@ -12099,7 +12175,9 @@ function editVenta(ventaId){
   document.getElementById('vf-tipo-pago').value=found.tipoPago||'CONTADO';
   if(found.tipoPago==='CREDITO'){
     document.getElementById('vf-plazo-wrap').style.display='block';
+    var _ffwE=document.getElementById('vf-fechafact-wrap'); if(_ffwE) _ffwE.style.display='block';
     document.getElementById('vf-plazo').value=found.plazoCredito||30;
+    var _ffE=document.getElementById('vf-fecha-fact'); if(_ffE) _ffE.value=found.fechaFact||'';
   }
   document.getElementById('vf-is-usd').checked=found.isUsd||false;
     // Restore currency switch state
@@ -12197,7 +12275,10 @@ function updateVenta(){
   const insChk=document.getElementById('vf-ins-chk').checked;
   const tercChk=document.getElementById('vf-terc-chk').checked;
   const pendChk=document.getElementById('vf-pend-chk').checked;
-  const plazo=parseInt(document.getElementById('vf-plazo').value)||30;
+  const plazo=parseInt(document.getElementById('vf-plazo').value)||0;
+  var _errCredEd=_validarCredito(document.getElementById('vf-tipo-pago').value, plazo,
+    document.getElementById('vf-fecha-fact')?.value);
+  if(_errCredEd){ toast(_errCredEd); return; }
 
   var newProdId=document.getElementById('vf-prod').value;
   var newCliente=document.getElementById('vf-cliente').value.trim();
@@ -12218,6 +12299,7 @@ function updateVenta(){
     subtotal,ivaPct,ivaAmt,total:totalFinal,
     tipoPago:document.getElementById('vf-tipo-pago').value,
     plazoCredito:plazo,
+    fechaFact:document.getElementById('vf-fecha-fact')?.value||'',
     isUsd,usd,tcUsed,usdTotal,
     tieneInsumos:insChk,
     insDesc:insChk?document.getElementById('vf-ins-desc').value.trim():'',
@@ -12498,7 +12580,7 @@ function renderAdminCxcTable(allVentas,catMap){
   var _totCon=_pendientes.reduce(function(s,v){return s+(v.total||(v.subtotal||0)+(v.ivaAmt||0));},0);
   html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
     +'<td colspan="5" style="text-align:right;font-weight:900;font-family:var(--cond);font-size:13px">TOTAL PENDIENTE DE COBRO ('+_pendientes.length+' factura'+(_pendientes.length!==1?'s':'')+')</td>'
-    +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--amber)">'+fmt(_totSub)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:var(--amber)">'+fmt(_totSub)+'</td>'
     +'<td style="font-family:var(--cond);font-weight:900;font-size:14px;color:var(--red)">'+fmt(_totCon)+'</td>'
     +'<td colspan="4"></td></tr>';
   body.innerHTML=html;
@@ -12508,6 +12590,1987 @@ function renderAdminCxcTable(allVentas,catMap){
   });
 }
 
+
+
+
+// ══════════════════════════════════════════════════════════════
+//  AUXILIAR VENTA DE EQUIPOS E INSUMOS PARA LA CONSTRUCCIÓN
+//  Pestaña de CONCREEQUIPOS — solo superadmin.
+//  Tres subtablas: Ingresos, Gastos e Impuestos de importación.
+//  Se muestra el año en curso; los años cerrados quedan en historial.
+// ══════════════════════════════════════════════════════════════
+
+// Desde este mes las tres filas de categoría se calculan solas desde Ventas.
+// Los meses anteriores conservan los valores cargados del Excel original.
+var AUX_MES_AUTOMATICO = '2026-09';
+
+// Categorías de Ventas que alimentan los ingresos
+var AUX_CATS = [
+  {id:'cat15', nombre:'Equipo Liviano'},
+  {id:'cat16', nombre:'Herramienta Manual'},
+  {id:'cat17', nombre:'Repuestos'}
+];
+
+// ── Filas fijas ──
+var AUX_FILAS_ING = [
+  {id:'apertura', nombre:'Apertura de bancos',            tipo:'manual'},
+  {id:'aportes',  nombre:'Aportes de capital temporales', tipo:'manual'},
+  {id:'cat15',    nombre:'Equipo Liviano',                tipo:'auto'},
+  {id:'cat16',    nombre:'Herramienta Manual',            tipo:'auto'},
+  {id:'cat17',    nombre:'Repuestos',                     tipo:'auto'}
+];
+var AUX_FILAS_GAS = [
+  {id:'impSociedades', nombre:'Pago de impuesto a las sociedades',           tipo:'manual'},
+  {id:'recompra',      nombre:'Recompra más Nacionalización',                tipo:'manual'},
+  {id:'impFuera',      nombre:'Impuestos pagados fuera de los de importaciones', tipo:'manual'},
+  {id:'publicidad',    nombre:'Gasto de publicidad',                         tipo:'manual', def:120000},
+  {id:'facturacion',   nombre:'Pago del sistema de facturación',             tipo:'manual'},
+  {id:'telefono',      nombre:'Teléfono plan vendedor',                      tipo:'manual', def:17000},
+  {id:'timbres',       nombre:'Timbres de Hacienda',                         tipo:'manual'},
+  {id:'socios',        nombre:'Repartición a socios',                        tipo:'manual'},
+  {id:'alquiler',      nombre:'Alquiler de espacio de bodega',               tipo:'pct'},
+  {id:'comision',      nombre:'Comisión vendedores',                         tipo:'pct'},
+  {id:'renta2023',     nombre:'Renta 10% 2023 pendiente de pagar',           tipo:'manual'}
+];
+var AUX_FILAS_IMP = [
+  {id:'impAdelantado', nombre:'Impuesto pagado por adelantado / parciales', tipo:'manual'},
+  {id:'abonos',        nombre:'Abonos',                                     tipo:'manual'}
+];
+
+// ── Acceso a datos (Supabase vía configuracion) ──
+function auxAnioActual(){ return window._auxAnio || new Date().getFullYear(); }
+function auxCache(){ return window._auxCache||(window._auxCache={}); }
+
+function auxGetAnio(y){
+  var c=auxCache();
+  if(!c[y]) c[y]={year:y, meses:{}, filasExtra:[], cerrado:false};
+  if(!c[y].meses) c[y].meses={};
+  if(!c[y].filasExtra) c[y].filasExtra=[];
+  return c[y];
+}
+function auxSaveAnio(y){
+  var d=auxGetAnio(y);
+  _saveToSupabase('aux_equipos_'+y, d, '');
+}
+function auxMesKey(y,m){ return y+'-'+pad(m+1); }
+function auxGetMes(y,m){
+  var d=auxGetAnio(y), k=auxMesKey(y,m);
+  if(!d.meses[k]) d.meses[k]={};
+  return d.meses[k];
+}
+function auxSetCelda(y,m,filaId,val){
+  var mes=auxGetMes(y,m);
+  mes[filaId]=parseMon(val)||0;
+  auxSaveAnio(y);
+}
+
+// ── Configuración de porcentajes con vigencia por FECHA DE VENTA ──
+function auxCfg(){
+  if(!window._auxCfg) window._auxCfg={pctHist:[{desde:'2000-01-01',alquiler:10,comision:5}]};
+  if(!window._auxCfg.pctHist||!window._auxCfg.pctHist.length){
+    window._auxCfg.pctHist=[{desde:'2000-01-01',alquiler:10,comision:5}];
+  }
+  return window._auxCfg;
+}
+// Porcentajes vigentes para una fecha concreta de venta
+function auxPctEn(fechaStr){
+  var hist=auxCfg().pctHist.slice().sort(function(a,b){
+    return String(a.desde).localeCompare(String(b.desde));
+  });
+  var out=hist[0];
+  hist.forEach(function(h){ if(String(fechaStr)>=String(h.desde)) out=h; });
+  return {alquiler:parseFloat(out.alquiler)||0, comision:parseFloat(out.comision)||0};
+}
+function auxPctVigente(){
+  var hist=auxCfg().pctHist.slice().sort(function(a,b){
+    return String(b.desde).localeCompare(String(a.desde));
+  });
+  return hist[0];
+}
+function auxGuardarPct(alq, com, desde){
+  var a=parseFloat(alq), c=parseFloat(com);
+  if(isNaN(a)||a<0||isNaN(c)||c<0){ toast('Porcentajes inválidos'); return false; }
+  if(!desde){ toast('Indique desde qué fecha rigen los porcentajes'); return false; }
+  var cfg=auxCfg();
+  // Si ya existe una vigencia con esa misma fecha, se reemplaza
+  cfg.pctHist=cfg.pctHist.filter(function(h){ return h.desde!==desde; });
+  cfg.pctHist.push({desde:desde, alquiler:a, comision:c});
+  _saveToSupabase('aux_equipos_cfg', cfg, '');
+  return true;
+}
+
+// ── Ventas de las 3 categorías, por mes y por fecha ──
+function auxVentasDelMes(y,m){
+  var out=[];
+  getUsers().forEach(function(u){
+    var vd=getVentasData(u.id)||{};
+    var mk=auxMesKey(y,m);
+    var mv=vd[mk];
+    if(!mv||!mv.ventas) return;
+    mv.ventas.forEach(function(v){
+      if(v.estado==='incompleta') return;
+      if(AUX_CATS.every(function(c){ return c.id!==v.prodId; })) return;
+      out.push(v);
+    });
+  });
+  return out;
+}
+
+// ── Valor de una celda ya resuelto (auto o manual) ──
+function auxEsMesAutomatico(y,m){ return auxMesKey(y,m) >= AUX_MES_AUTOMATICO; }
+
+function auxValor(y,m,filaId){
+  var mes=auxGetMes(y,m);
+  var auto=auxEsMesAutomatico(y,m);
+
+  // Categorías: automáticas desde el mes de corte
+  if(filaId==='cat15'||filaId==='cat16'||filaId==='cat17'){
+    if(!auto) return parseFloat(mes[filaId])||0;
+    return auxVentasDelMes(y,m).reduce(function(s,v){
+      return s + (v.prodId===filaId ? (v.subtotal||0) : 0);
+    },0);
+  }
+
+  // Alquiler y comisión: % sobre la venta, con el porcentaje vigente a la
+  // FECHA DE CADA VENTA. Los meses anteriores al corte conservan lo cargado.
+  if(filaId==='alquiler'||filaId==='comision'){
+    if(!auto) return parseFloat(mes[filaId])||0;
+    return auxVentasDelMes(y,m).reduce(function(s,v){
+      var p=auxPctEn(v.fecha||auxMesKey(y,m)+'-01');
+      var pct=(filaId==='alquiler')?p.alquiler:p.comision;
+      return s + (v.subtotal||0)*pct/100;
+    },0);
+  }
+
+  return parseFloat(mes[filaId])||0;
+}
+
+// ── Totales calculados ──
+function auxTotalVenta(y,m){
+  return AUX_CATS.reduce(function(s,c){ return s+auxValor(y,m,c.id); },0);
+}
+function auxTotalFlujo(y,m){
+  return auxValor(y,m,'apertura')+auxValor(y,m,'aportes')+auxTotalVenta(y,m);
+}
+function auxFilasGastoTodas(y){
+  return AUX_FILAS_GAS.concat(
+    auxGetAnio(y).filasExtra.filter(function(f){ return f.tabla==='gasto'; })
+  );
+}
+function auxTotalGasto(y,m){
+  return auxFilasGastoTodas(y).reduce(function(s,f){ return s+auxValor(y,m,f.id); },0);
+}
+function auxFlujoDisponible(y,m){ return auxTotalFlujo(y,m)-auxTotalGasto(y,m); }
+
+// Saldo CORRIDO de impuestos: arrastra lo pendiente del mes anterior
+function auxSaldoImpuestos(y,m){
+  var saldo=0;
+  for(var i=0;i<=m;i++){
+    saldo += auxValor(y,i,'impAdelantado') - auxValor(y,i,'abonos');
+  }
+  return saldo;
+}
+
+// ── Acumulados del año ──
+function auxAcum(y, fn){
+  var s=0; for(var m=0;m<12;m++) s+=fn(y,m); return s;
+}
+
+// ══════════════════════════════════════════════
+//  RENDER
+// ══════════════════════════════════════════════
+var AUX_MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'];
+var _AUXFONT='-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,'
+  +'\'Helvetica Neue\',Arial,sans-serif';
+var _AUXNUM='font-family:'+_AUXFONT+';font-variant-numeric:tabular-nums;'
+  +'font-feature-settings:\'tnum\' 1;font-weight:600;font-size:12px;'
+  +'letter-spacing:.1px;-webkit-font-smoothing:antialiased;'
+  +'-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;'
+  +'white-space:nowrap;text-align:right;padding:5px 8px';
+var _AUXLBL='position:sticky;left:0;background:var(--surface);z-index:2;'
+  +'font-family:'+_AUXFONT+';font-size:12px;font-weight:500;padding:5px 11px;'
+  +'min-width:250px;-webkit-font-smoothing:antialiased;'
+  +'border-right:2px solid var(--border)';
+
+function auxRoot(){ return document.getElementById('auxEquiposRoot')||document; }
+function auxFmt(n){
+  n=Math.round((n||0)*100)/100;
+  if(n===0) return '<span style="color:var(--text3)">—</span>';
+  var t=fmt(Math.abs(n));
+  return n<0 ? '<span style="color:var(--red)">('+t+')</span>' : t;
+}
+
+function auxCeldaEditable(y,m,filaId,val,cerrado){
+  if(cerrado){
+    return '<td style="'+_AUXNUM+'">'+auxFmt(val)+'</td>';
+  }
+  return '<td style="padding:2px 3px">'
+    +'<input type="text" value="'+(val?Math.round(val*100)/100:'')+'" '
+    +'onfocus="this.select()" onchange="auxOnEdit('+y+','+m+',\''+filaId+'\',this.value)" '
+    +'style="width:100px;'+_AUXNUM+';border:1px solid transparent;border-radius:4px;'
+    +'background:transparent;outline:none" '
+    +'onmouseover="this.style.borderColor=\'var(--border2)\'" '
+    +'onmouseout="this.style.borderColor=\'transparent\'">'
+    +'</td>';
+}
+
+function auxOnEdit(y,m,filaId,val){
+  auxSetCelda(y,m,filaId,val);
+  renderAuxEquipos();
+}
+
+function auxHeaderMeses(y, titulo, colorBorde){
+  // Fondo claro y texto negro: sobre el gris oscuro los meses se leían mal.
+  var FONDO='#eceded';
+  var h='<tr style="background:'+FONDO+'">'
+    +'<th style="'+_AUXLBL+';background:'+FONDO+';color:#111;font-family:'+_AUXFONT+';'
+    +'font-size:12.5px;font-weight:700;text-align:left;letter-spacing:.3px;'
+    +'border-right:2px solid var(--red);border-bottom:2px solid #b9babb">'+titulo+'</th>';
+  for(var m=0;m<12;m++){
+    h+='<th style="color:#111;font-size:11.5px;font-weight:700;padding:7px 8px;text-align:right;'
+      +'font-family:'+_AUXFONT+';letter-spacing:.2px;-webkit-font-smoothing:antialiased;'
+      +'border-bottom:2px solid #b9babb">'+AUX_MESES[m]+' '+String(y).slice(2)+'</th>';
+  }
+  h+='<th style="color:#111;font-size:11.5px;font-weight:800;padding:7px 10px;text-align:right;'
+    +'font-family:'+_AUXFONT+';background:#f7dde2;letter-spacing:.3px;'
+    +'-webkit-font-smoothing:antialiased;border-bottom:2px solid var(--red)">ACUMULADO</th></tr>';
+  return h;
+}
+
+function auxFilaDatos(y, fila, cerrado, extra){
+  var acum=0, tds='';
+  for(var m=0;m<12;m++){
+    var v=auxValor(y,m,fila.id);
+    acum+=v;
+    var editable=(fila.tipo==='manual') ||
+                 ((fila.tipo==='auto'||fila.tipo==='pct') && !auxEsMesAutomatico(y,m));
+    tds += editable ? auxCeldaEditable(y,m,fila.id,v,cerrado)
+                    : '<td style="'+_AUXNUM+';background:rgba(88,89,91,.05)">'+auxFmt(v)+'</td>';
+  }
+  var icono = fila.tipo==='auto' ? ' <span title="Se calcula desde Ventas" style="font-size:9px;color:var(--green)">⚙</span>'
+            : fila.tipo==='pct'  ? ' <span title="Porcentaje sobre la venta del mes" style="font-size:9px;color:var(--green)">%</span>' : '';
+  var btnQuitar = (extra&&!cerrado)
+    ? ' <button onclick="auxQuitarFila(\''+fila.id+'\')" title="Quitar esta fila" '
+      +'style="border:none;background:none;cursor:pointer;font-size:10px;color:var(--red)">✕</button>' : '';
+  return '<tr>'
+    +'<td style="'+_AUXLBL+'">'+escHtml(fila.nombre)+icono+btnQuitar+'</td>'
+    +tds
+    +'<td style="'+_AUXNUM+';background:rgba(227,24,55,.06);font-weight:900;font-size:12px">'+auxFmt(acum)+'</td>'
+    +'</tr>';
+}
+
+// acumFn: para saldos corridos el acumulado NO es la suma de los meses,
+// sino el saldo del último mes. Se pasa aparte cuando aplica.
+function auxFilaTotal(y, nombre, fn, color, grande, acumFn){
+  var acum=0, tds='';
+  for(var m=0;m<12;m++){
+    var v=fn(y,m); acum+=v;
+    tds+='<td style="'+_AUXNUM+';font-weight:900;'+(grande?'font-size:12.5px;':'')
+      +(color?'color:'+color+';':'')+'">'+auxFmt(v)+'</td>';
+  }
+  return '<tr style="background:var(--surface2);border-top:2px solid '+(color||'var(--border2)')+'">'
+    +'<td style="'+_AUXLBL+';background:var(--surface2);font-weight:900;font-family:var(--cond);font-size:12.5px">'+nombre+'</td>'
+    +tds
+    +'<td style="'+_AUXNUM+';background:rgba(227,24,55,.1);font-weight:900;font-size:13px;'
+      +(color?'color:'+color+';':'')+'">'+auxFmt(acumFn?acumFn(y):acum)+'</td>'
+    +'</tr>';
+}
+
+function renderAuxEquipos(){
+  var root=auxRoot();
+  var cont=root.querySelector('#aux-tablas');
+  if(!cont) return;
+  var y=auxAnioActual();
+  var cerrado=auxGetAnio(y).cerrado;
+
+  // ── INGRESOS ──
+  var h='<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--green)">'
+    +'<span class="ath-title">📈 Ingresos</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Las tres categorías se cargan solas desde Ventas a partir de '
+      +AUX_MESES[parseInt(AUX_MES_AUTOMATICO.split('-')[1])-1]+' '+AUX_MES_AUTOMATICO.split('-')[0]+'</span>'
+    +'</div>'
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1500px;border-collapse:separate;border-spacing:0">'
+    +'<thead>'+auxHeaderMeses(y,'INGRESOS')+'</thead><tbody>';
+  AUX_FILAS_ING.forEach(function(f){ h+=auxFilaDatos(y,f,cerrado); });
+  h+=auxFilaTotal(y,'Total de venta mensual',auxTotalVenta,'var(--green)');
+  h+=auxFilaTotal(y,'Total de flujo de efectivo',auxTotalFlujo,'var(--green)',true);
+  h+='</tbody></table></div></div>';
+
+  // ── GASTOS ──
+  var pv=auxPctVigente();
+  h+='<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--red)">'
+    +'<span class="ath-title">📉 Gastos</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Alquiler '+pv.alquiler+'% · Comisión '+pv.comision+'% sobre la venta</span>'
+    +'</div>'
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1500px;border-collapse:separate;border-spacing:0">'
+    +'<thead>'+auxHeaderMeses(y,'GASTOS')+'</thead><tbody>';
+  auxFilasGastoTodas(y).forEach(function(f){
+    var esExtra=AUX_FILAS_GAS.every(function(x){return x.id!==f.id;});
+    var fila=Object.assign({},f);
+    if(f.id==='alquiler') fila.nombre='Alquiler de espacio de bodega ('+pv.alquiler+'%)';
+    if(f.id==='comision') fila.nombre='Comisión vendedores ('+pv.comision+'%)';
+    h+=auxFilaDatos(y,fila,cerrado,esExtra);
+  });
+  h+=auxFilaTotal(y,'Total de gasto mensual',auxTotalGasto,'var(--red)');
+  h+=auxFilaTotal(y,'Total de flujo disponible',auxFlujoDisponible,'var(--red)',true);
+  h+='</tbody></table></div>';
+  if(!cerrado){
+    h+='<div style="padding:10px 14px;border-top:1px solid var(--border)">'
+      +'<button onclick="auxAgregarFila()" style="padding:5px 12px;border-radius:6px;'
+      +'border:1px dashed var(--border2);background:var(--surface);cursor:pointer;'
+      +'font-size:11px;font-weight:700;color:var(--text2)">+ Agregar fila de gasto</button></div>';
+  }
+  h+='</div>';
+
+  // ── IMPUESTOS DE IMPORTACIÓN ──
+  h+='<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--amber)">'
+    +'<span class="ath-title">🧾 Impuestos de importación</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">El saldo arrastra lo pendiente del mes anterior hasta agotarse</span>'
+    +'</div>'
+    +'<div style="overflow-x:auto"><table class="atbl" style="min-width:1500px;border-collapse:separate;border-spacing:0">'
+    +'<thead>'+auxHeaderMeses(y,'IMPUESTOS')+'</thead><tbody>';
+  AUX_FILAS_IMP.forEach(function(f){ h+=auxFilaDatos(y,f,cerrado); });
+  h+=auxFilaTotal(y,'Saldo por aplicar',auxSaldoImpuestos,'var(--amber)',true,
+        function(yy){ return auxSaldoImpuestos(yy,11); });
+  h+='</tbody></table></div></div>';
+
+  cont.innerHTML=h;
+  try{ renderAuxComparativos(); }catch(e){ console.error('comparativos aux:',e); }
+}
+
+// ══════════════════════════════════════════════
+//  ACCIONES
+// ══════════════════════════════════════════════
+function auxGuard(){
+  if(!SESSION||SESSION.rol!=='superadmin'){ toast('Solo el superadmin puede modificar esta tabla'); return false; }
+  return true;
+}
+
+// ── Agregar / quitar filas de gasto ──
+function auxAgregarFila(){
+  if(!auxGuard()) return;
+  var nombre=prompt('Nombre de la nueva fila de gasto:');
+  if(!nombre||!nombre.trim()) return;
+  var y=auxAnioActual();
+  var d=auxGetAnio(y);
+  d.filasExtra.push({id:'gx'+Date.now(), tabla:'gasto', nombre:nombre.trim(), tipo:'manual'});
+  auxSaveAnio(y);
+  toast('✓ Fila agregada');
+  renderAuxEquipos();
+}
+function auxQuitarFila(filaId){
+  if(!auxGuard()) return;
+  var y=auxAnioActual(), d=auxGetAnio(y);
+  var f=d.filasExtra.filter(function(x){return x.id===filaId;})[0];
+  if(!f) return;
+  if(!confirm('¿Quitar la fila "'+f.nombre+'"?\n\nSe borran también los montos que tenga cargados en el año.')) return;
+  d.filasExtra=d.filasExtra.filter(function(x){return x.id!==filaId;});
+  Object.keys(d.meses).forEach(function(k){ delete d.meses[k][filaId]; });
+  auxSaveAnio(y);
+  toast('Fila eliminada');
+  renderAuxEquipos();
+}
+
+// ── Porcentajes ──
+function auxAbrirPct(){
+  if(!auxGuard()) return;
+  var pv=auxPctVigente();
+  var el=auxRoot().querySelector('#aux-pct-panel');
+  if(!el) return;
+  var abierto=el.style.display!=='none';
+  el.style.display=abierto?'none':'block';
+  if(!abierto){
+    auxRoot().querySelector('#aux-pct-alq').value=pv.alquiler;
+    auxRoot().querySelector('#aux-pct-com').value=pv.comision;
+    auxRoot().querySelector('#aux-pct-desde').value=todayCR();
+    auxRenderPctHist();
+  }
+}
+function auxRenderPctHist(){
+  var el=auxRoot().querySelector('#aux-pct-hist');
+  if(!el) return;
+  var hist=auxCfg().pctHist.slice().sort(function(a,b){
+    return String(b.desde).localeCompare(String(a.desde));
+  });
+  el.innerHTML='<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:4px">Historial de porcentajes</div>'
+    +hist.map(function(h){
+      return '<div style="font-size:11px;padding:2px 0;color:var(--text2)">'
+        +'Desde '+(h.desde==='2000-01-01'?'el inicio':formatDate(parseDate(h.desde)))
+        +' → Alquiler <strong>'+h.alquiler+'%</strong> · Comisión <strong>'+h.comision+'%</strong></div>';
+    }).join('');
+}
+function auxSavePct(){
+  if(!auxGuard()) return;
+  var r=auxRoot();
+  var ok=auxGuardarPct(
+    r.querySelector('#aux-pct-alq').value,
+    r.querySelector('#aux-pct-com').value,
+    r.querySelector('#aux-pct-desde').value);
+  if(!ok) return;
+  toast('✓ Porcentajes guardados — rigen para las ventas desde esa fecha');
+  auxRenderPctHist();
+  renderAuxEquipos();
+}
+
+// ── Cierre anual ──
+function auxCerrarAnio(){
+  if(!auxGuard()) return;
+  var y=auxAnioActual();
+  var d=auxGetAnio(y);
+  if(d.cerrado){ toast('El año '+y+' ya está cerrado'); return; }
+  var cierre=auxAcum(y,auxFlujoDisponible);
+  if(!confirm('¿Cerrar el año '+y+' y abrir el '+(y+1)+'?\n\n'
+    +'• El año '+y+' pasa al historial y queda solo de consulta.\n'
+    +'• La apertura de bancos de enero '+(y+1)+' será '+fmt(cierre)+'.\n\n'
+    +'Esta acción se puede revertir desde el historial.')) return;
+
+  d.cerrado=true; d.cerradoAt=new Date().toISOString();
+  d.cerradoBy=(SESSION.nombre||SESSION.id);
+  d.resumen={venta:auxAcum(y,auxTotalVenta), flujo:auxAcum(y,auxTotalFlujo),
+             gasto:auxAcum(y,auxTotalGasto), disponible:cierre};
+  auxSaveAnio(y);
+
+  var n=auxGetAnio(y+1);
+  n.meses[auxMesKey(y+1,0)]=Object.assign({}, n.meses[auxMesKey(y+1,0)]||{}, {apertura:cierre});
+  n.cerrado=false;
+  auxSaveAnio(y+1);
+
+  var lista=(window._auxAnios||[]);
+  if(lista.indexOf(y+1)<0) lista.push(y+1);
+  window._auxAnios=lista;
+  _saveToSupabase('aux_equipos_anios', lista, '');
+
+  window._auxAnio=y+1;
+  toast('✓ Año '+y+' cerrado — apertura de '+(y+1)+': '+fmt(cierre));
+  initAuxEquipos();
+}
+function auxReabrirAnio(y){
+  if(!auxGuard()) return;
+  if(!confirm('¿Reabrir el año '+y+' para editarlo de nuevo?')) return;
+  var d=auxGetAnio(y);
+  d.cerrado=false; auxSaveAnio(y);
+  window._auxAnio=y;
+  toast('Año '+y+' reabierto');
+  initAuxEquipos();
+}
+function auxCambiarAnio(v){
+  window._auxAnio=parseInt(v)||new Date().getFullYear();
+  initAuxEquipos();
+}
+
+// ══════════════════════════════════════════════
+//  COMPARATIVOS VISUALES (los tres que se acordaron)
+// ══════════════════════════════════════════════
+function auxAniosDisponibles(){
+  var s={};
+  Object.keys(auxCache()).forEach(function(k){ s[parseInt(k)]=true; });
+  s[auxAnioActual()]=true;
+  return Object.keys(s).map(Number).sort();
+}
+
+function auxResumenAnio(y){
+  var d=auxGetAnio(y);
+  if(d.cerrado&&d.resumen) return d.resumen;
+  return {venta:auxAcum(y,auxTotalVenta), flujo:auxAcum(y,auxTotalFlujo),
+          gasto:auxAcum(y,auxTotalGasto), disponible:auxAcum(y,auxFlujoDisponible)};
+}
+
+function _auxBarra(label, val, max, color){
+  var pct=max>0?Math.max(2,Math.round(Math.abs(val)/max*100)):0;
+  return '<div style="margin-bottom:7px">'
+    +'<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">'
+      +'<span style="font-weight:700">'+label+'</span>'
+      +'<span style="'+_AUXNUM+';padding:0">'+(val<0?'-':'')+fmt(Math.abs(val))+'</span>'
+    +'</div>'
+    +'<div style="background:var(--border);border-radius:3px;height:9px;overflow:hidden">'
+      +'<div style="background:'+color+';height:9px;border-radius:3px;width:'+pct+'%"></div>'
+    +'</div></div>';
+}
+
+// 1) Año contra año — totales
+function auxCompAnioAnio(){
+  var anios=auxAniosDisponibles();
+  if(anios.length<2) return '<div style="font-size:12px;color:var(--text3);padding:14px">'
+    +'Disponible cuando exista más de un año registrado.</div>';
+  var datos=anios.map(function(y){ return Object.assign({y:y}, auxResumenAnio(y)); });
+  var max=Math.max.apply(null, datos.map(function(d){
+    return Math.max(Math.abs(d.venta),Math.abs(d.gasto),Math.abs(d.disponible)); }));
+  var h='<div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">';
+  datos.forEach(function(d){
+    h+='<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px">'
+      +'<div style="font-family:var(--cond);font-size:15px;font-weight:900;margin-bottom:10px">Año '+d.y
+        +(auxGetAnio(d.y).cerrado?' <span style="font-size:9px;color:var(--text3);font-weight:700">CERRADO</span>':'')+'</div>'
+      +_auxBarra('Venta',d.venta,max,'var(--green)')
+      +_auxBarra('Gasto',d.gasto,max,'var(--red)')
+      +_auxBarra('Flujo disponible',d.disponible,max,d.disponible<0?'var(--red)':'var(--amber)')
+      +'</div>';
+  });
+  h+='</div>';
+  // Variación contra el año anterior
+  if(datos.length>=2){
+    var a=datos[datos.length-2], b=datos[datos.length-1];
+    function varia(x,z){ return x===0?null:Math.round((z-x)/Math.abs(x)*1000)/10; }
+    h+='<div style="padding:0 14px 14px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px">';
+    [['Venta',varia(a.venta,b.venta)],['Gasto',varia(a.gasto,b.gasto)],
+     ['Flujo disponible',varia(a.disponible,b.disponible)]].forEach(function(p){
+      var v=p[1];
+      var col=v===null?'var(--text3)':(p[0]==='Gasto'?(v>0?'var(--red)':'var(--green)'):(v>=0?'var(--green)':'var(--red)'));
+      h+='<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;text-align:center">'
+        +'<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">'+p[0]+' '+b.y+' vs '+a.y+'</div>'
+        +'<div style="font-size:20px;font-weight:900;color:'+col+';font-family:var(--cond)">'
+          +(v===null?'—':(v>0?'▲ +':'▼ ')+v+'%')+'</div></div>';
+    });
+    h+='</div>';
+  }
+  return h;
+}
+
+// 2) Composición del gasto del año
+function auxCompComposicion(){
+  var y=auxAnioActual();
+  var filas=auxFilasGastoTodas(y).map(function(f){
+    return {nombre:f.nombre, total:auxAcum(y,function(yy,mm){ return auxValor(yy,mm,f.id); })};
+  }).filter(function(f){ return f.total>0; }).sort(function(a,b){ return b.total-a.total; });
+  if(!filas.length) return '<div style="font-size:12px;color:var(--text3);padding:14px">Sin gastos registrados en '+y+'.</div>';
+  var tot=filas.reduce(function(s,f){return s+f.total;},0);
+  var cols=['#E31837','#58595B','#1a9e5c','#d97706','#7c3aed','#0ea5e9','#db2777','#65a30d','#c2410c','#0f766e','#a16207'];
+  var h='<div style="padding:14px">'
+    +'<div style="display:flex;height:22px;border-radius:6px;overflow:hidden;margin-bottom:14px">';
+  filas.forEach(function(f,i){
+    h+='<div title="'+escHtml(f.nombre)+': '+fmt(f.total)+'" style="background:'+cols[i%cols.length]
+      +';width:'+(f.total/tot*100)+'%"></div>';
+  });
+  h+='</div>';
+  filas.forEach(function(f,i){
+    var pct=Math.round(f.total/tot*1000)/10;
+    h+='<div style="display:flex;align-items:center;gap:8px;font-size:11.5px;padding:3px 0;border-bottom:1px solid var(--border)">'
+      +'<span style="width:11px;height:11px;border-radius:3px;background:'+cols[i%cols.length]+';flex-shrink:0"></span>'
+      +'<span style="flex:1">'+escHtml(f.nombre)+'</span>'
+      +'<span style="'+_AUXNUM+';padding:0">'+fmt(f.total)+'</span>'
+      +'<span style="width:52px;text-align:right;font-weight:800;color:var(--text3)">'+pct+'%</span>'
+    +'</div>';
+  });
+  h+='<div style="display:flex;gap:8px;font-size:12px;padding:7px 0;font-weight:900">'
+    +'<span style="flex:1;padding-left:19px">Total del año '+y+'</span>'
+    +'<span style="'+_AUXNUM+';padding:0">'+fmt(tot)+'</span><span style="width:52px"></span></div>';
+  return h+'</div>';
+}
+
+// 3) Evolución mensual del flujo disponible + acumulado
+function auxCompEvolucion(){
+  var y=auxAnioActual();
+  var mens=[], acum=[], run=0;
+  for(var m=0;m<12;m++){ var v=auxFlujoDisponible(y,m); mens.push(v); run+=v; acum.push(run); }
+  var todos=mens.concat(acum);
+  var max=Math.max.apply(null,todos), min=Math.min.apply(null,todos);
+  if(max===min){ max=max||1; min=0; }
+  var W=1100,H=210,padL=8,padB=26,padT=10;
+  var chartH=H-padB-padT;
+  function yPos(v){ return padT+chartH-((v-min)/(max-min))*chartH; }
+  var bw=Math.floor((W-padL*2)/12)-10;
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto" xmlns="http://www.w3.org/2000/svg">';
+  var y0=yPos(0);
+  svg+='<line x1="'+padL+'" y1="'+y0+'" x2="'+(W-padL)+'" y2="'+y0+'" stroke="#c9cacb" stroke-width="1"/>';
+  var pts=[];
+  for(var i=0;i<12;i++){
+    var x=padL+i*((W-padL*2)/12)+5;
+    var v=mens[i], yv=yPos(v);
+    var alto=Math.abs(y0-yv);
+    svg+='<rect x="'+x+'" y="'+Math.min(y0,yv)+'" width="'+bw+'" height="'+Math.max(1,alto)+'" '
+      +'rx="2" fill="'+(v<0?'rgba(227,24,55,.75)':'rgba(26,158,92,.7)')+'"><title>'
+      +AUX_MESES[i]+': '+fmt(v)+'</title></rect>';
+    pts.push((x+bw/2)+','+yPos(acum[i]));
+    svg+='<text x="'+(x+bw/2)+'" y="'+(H-9)+'" text-anchor="middle" font-size="10" '
+      +'font-family="Barlow,sans-serif" fill="#58595B">'+AUX_MESES[i]+'</text>';
+  }
+  svg+='<polyline points="'+pts.join(' ')+'" fill="none" stroke="#E31837" stroke-width="2.2" '
+    +'stroke-linejoin="round" stroke-linecap="round"/>';
+  pts.forEach(function(p){
+    var xy=p.split(',');
+    svg+='<circle cx="'+xy[0]+'" cy="'+xy[1]+'" r="3" fill="#E31837"/>';
+  });
+  svg+='</svg>';
+  return '<div style="padding:14px">'+svg
+    +'<div style="display:flex;gap:16px;font-size:11px;margin-top:8px;justify-content:center">'
+    +'<span><span style="display:inline-block;width:11px;height:11px;background:rgba(26,158,92,.7);border-radius:2px"></span> Flujo del mes</span>'
+    +'<span><span style="display:inline-block;width:11px;height:11px;background:rgba(227,24,55,.75);border-radius:2px"></span> Mes negativo</span>'
+    +'<span><span style="display:inline-block;width:16px;height:3px;background:#E31837;vertical-align:middle"></span> Acumulado del año</span>'
+    +'</div>'
+    +'<div style="text-align:center;margin-top:8px;font-size:12px">Cierre acumulado '+y+': '
+    +'<strong style="'+_AUXNUM+';padding:0;font-size:14px;color:'+(acum[11]<0?'var(--red)':'var(--green)')+'">'
+    +fmt(acum[11])+'</strong></div></div>';
+}
+
+function renderAuxComparativos(){
+  var root=auxRoot();
+  function put(id,html){ var e=root.querySelector(id); if(e) e.innerHTML=html; }
+  put('#aux-comp-anios', auxCompAnioAnio());
+  put('#aux-comp-gasto', auxCompComposicion());
+  put('#aux-comp-evol',  auxCompEvolucion());
+}
+
+// ══════════════════════════════════════════════
+//  INFORME — las tres tablas en un solo documento
+// ══════════════════════════════════════════════
+function _auxFilasInforme(y){
+  var b=[];
+  b.push({tipo:'sec', nombre:'INGRESOS'});
+  AUX_FILAS_ING.forEach(function(f){ b.push({tipo:'dato', id:f.id, nombre:f.nombre}); });
+  b.push({tipo:'tot', nombre:'Total de venta mensual', fn:auxTotalVenta});
+  b.push({tipo:'tot', nombre:'Total de flujo de efectivo', fn:auxTotalFlujo});
+  b.push({tipo:'sec', nombre:'GASTOS'});
+  var pv=auxPctVigente();
+  auxFilasGastoTodas(y).forEach(function(f){
+    var n=f.nombre;
+    if(f.id==='alquiler') n='Alquiler de espacio de bodega ('+pv.alquiler+'%)';
+    if(f.id==='comision') n='Comisión vendedores ('+pv.comision+'%)';
+    b.push({tipo:'dato', id:f.id, nombre:n});
+  });
+  b.push({tipo:'tot', nombre:'Total de gasto mensual', fn:auxTotalGasto});
+  b.push({tipo:'tot', nombre:'Total de flujo disponible', fn:auxFlujoDisponible});
+  b.push({tipo:'sec', nombre:'IMPUESTOS DE IMPORTACIÓN'});
+  AUX_FILAS_IMP.forEach(function(f){ b.push({tipo:'dato', id:f.id, nombre:f.nombre}); });
+  b.push({tipo:'tot', nombre:'Saldo por aplicar', fn:auxSaldoImpuestos, acumUlt:true});
+  return b;
+}
+function _auxNum(n){
+  n=Math.round((n||0)*100)/100;
+  if(n===0) return '—';
+  return (n<0?'(':'')+fmt(Math.abs(n))+(n<0?')':'');
+}
+
+function auxInformePDF(){
+  var y=auxAnioActual();
+  var filas=_auxFilasInforme(y);
+  var hoy=new Date();
+  var emitida=hoy.toLocaleDateString('es-CR',{day:'2-digit',month:'long',year:'numeric'});
+  var body='';
+  filas.forEach(function(f){
+    if(f.tipo==='sec'){
+      body+='<tr class="sec"><td colspan="14">'+f.nombre+'</td></tr>'; return;
+    }
+    var acum=0, tds='';
+    for(var m=0;m<12;m++){
+      var v=(f.tipo==='tot')?f.fn(y,m):auxValor(y,m,f.id);
+      acum+=v;
+      tds+='<td class="n'+(v<0?' neg':'')+'">'+_auxNum(v)+'</td>';
+    }
+    if(f.acumUlt) acum=f.fn(y,11);
+    body+='<tr'+(f.tipo==='tot'?' class="tot"':'')+'><td class="lb">'+escHtml(f.nombre)+'</td>'
+      +tds+'<td class="n ac">'+_auxNum(acum)+'</td></tr>';
+  });
+  var ths=AUX_MESES.map(function(m){ return '<th>'+m+'</th>'; }).join('');
+  var html='<!DOCTYPE html><html><head><meta charset="utf-8">'
+   +'<title>Auxiliar venta de equipos '+y+'</title><style>'
+   +'@page{size:letter landscape;margin:10mm}'
+   +'*{box-sizing:border-box}'
+   +'body{font-family:Arial,Helvetica,sans-serif;color:#1c1c1c;margin:0;font-size:10px}'
+   +'@media screen{body{background:#e9e9ec;padding:0 0 28px}'
+   +'.hoja{background:#fff;max-width:1180px;margin:0 auto;padding:22px 26px 26px;'
+   +'box-shadow:0 2px 14px rgba(0,0,0,.13);border-radius:3px}}'
+   +'@media print{.hoja{max-width:none;margin:0;padding:0;box-shadow:none}.noprint{display:none}}'
+   +'.hd{display:flex;justify-content:space-between;align-items:flex-start;'
+   +'border-bottom:3px solid #E31837;padding-bottom:9px}'
+   +'.lg{font-size:26px;font-weight:900;letter-spacing:-1px}.lg span{color:#E31837}'
+   +'.ei{text-align:right;font-size:9px;color:#58595B;line-height:1.5}'
+   +'h1{font-size:14px;margin:11px 0 2px}.sb{font-size:9px;color:#777;margin-bottom:9px}'
+   +'table{width:100%;border-collapse:collapse}'
+   +'th{background:#58595B;color:#fff;font-size:8.5px;padding:4px 3px;text-align:right}'
+   +'th:first-child{text-align:left}'
+   +'td{padding:3px;border-bottom:1px solid #ececec;font-size:8.5px}'
+   +'td.lb{text-align:left;min-width:160px}'
+   +'td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}'
+   +'td.neg{color:#E31837}td.ac{background:#fbe9ec;font-weight:900}'
+   +'tr.sec td{background:#58595B;color:#fff;font-weight:900;font-size:9.5px;'
+   +'letter-spacing:.6px;padding:5px 6px}'
+   +'tr.tot td{background:#f0f0f0;font-weight:900;border-top:1.5px solid #58595B}'
+   +'.ft{margin-top:12px;padding-top:7px;border-top:1px solid #ddd;font-size:8px;'
+   +'color:#999;display:flex;justify-content:space-between}'
+   +'.noprint{margin:16px 0;text-align:center}'
+   +'</style></head><body>'
+   +'<div class="noprint"><button onclick="window.print()" style="background:#E31837;color:#fff;'
+   +'border:none;border-radius:6px;padding:9px 20px;font-size:13px;font-weight:700;cursor:pointer">'
+   +'🖨 Imprimir / Guardar PDF</button></div>'
+   +'<div class="hoja"><div class="hd"><div><div class="lg">CON<span>C</span>RE</div></div>'
+   +'<div class="ei"><strong>'+EMPRESA.nombre+'</strong><br>Céd. jurídica '+EMPRESA.cedula
+   +'<br>'+EMPRESA.telefono+'<br>'+EMPRESA.correo+'</div></div>'
+   +'<h1>Auxiliar venta de equipos e insumos para la construcción</h1>'
+   +'<div class="sb">Año '+y+' · Emitido: '+emitida+'</div>'
+   +'<table><thead><tr><th>Partida</th>'+ths+'<th>Acumulado</th></tr></thead>'
+   +'<tbody>'+body+'</tbody></table>'
+   +'<div class="ft"><span>'+EMPRESA.nombre+' · Documento interno</span>'
+   +'<span>Sistema CONCRE · '+emitida+'</span></div></div></body></html>';
+  var w=window.open('','_blank','width=1250,height=900,scrollbars=yes');
+  if(!w){ toast('Permita las ventanas emergentes para generar el informe'); return; }
+  w.document.write(html); w.document.close();
+}
+
+function auxInformeExcel(){
+  var y=auxAnioActual();
+  var filas=_auxFilasInforme(y);
+  var ths=AUX_MESES.map(function(m){ return '<th>'+m+' '+y+'</th>'; }).join('');
+  var html='<table border="1">'
+    +'<tr><td colspan="14" style="font-size:15px;font-weight:bold">'+EMPRESA.nombre
+      +' — Auxiliar venta de equipos e insumos para la construcción</td></tr>'
+    +'<tr><td colspan="14">Céd. jurídica '+EMPRESA.cedula+' · '+EMPRESA.telefono+'</td></tr>'
+    +'<tr><td colspan="14">Año '+y+'</td></tr><tr></tr>'
+    +'<tr style="background:#E31837;color:#fff;font-weight:bold"><th>Partida</th>'+ths+'<th>Acumulado</th></tr>';
+  filas.forEach(function(f){
+    if(f.tipo==='sec'){
+      html+='<tr style="background:#58595B;color:#fff;font-weight:bold">'
+        +'<td colspan="14">'+f.nombre+'</td></tr>'; return;
+    }
+    var acum=0, tds='';
+    for(var m=0;m<12;m++){
+      var v=(f.tipo==='tot')?f.fn(y,m):auxValor(y,m,f.id);
+      acum+=v;
+      tds+='<td>'+(Math.round(v*100)/100)+'</td>';
+    }
+    if(f.acumUlt) acum=f.fn(y,11);
+    html+='<tr'+(f.tipo==='tot'?' style="background:#f0f0f0;font-weight:bold"':'')+'>'
+      +'<td>'+escHtml(f.nombre)+'</td>'+tds+'<td>'+(Math.round(acum*100)/100)+'</td></tr>';
+  });
+  html+='</table>';
+  var blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-excel'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download='Auxiliar_equipos_'+y+'.xls';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1500);
+  toast('✓ Informe exportado');
+}
+
+// ══════════════════════════════════════════════
+//  MONTAJE DE LA PESTAÑA
+// ══════════════════════════════════════════════
+function _auxHTML(){
+  return ''
+  +'<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px">'
+    +'<div style="font-family:var(--cond);font-size:20px;font-weight:900;flex:1;min-width:260px">'
+      +'🏗 Auxiliar venta de equipos e insumos para la construcción'
+      +'<div style="font-size:11px;font-weight:600;color:var(--text3);font-family:var(--sans)">CONCREEQUIPOS</div>'
+    +'</div>'
+    +'<select id="aux-anio" class="apb-sel" style="font-size:12px;padding:5px 9px" onchange="auxCambiarAnio(this.value)"></select>'
+    +'<button onclick="auxAbrirPct()" style="padding:6px 12px;border-radius:7px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;font-size:11px;font-weight:800">⚙ Porcentajes</button>'
+    +'<button onclick="auxCerrarAnio()" style="padding:6px 12px;border-radius:7px;border:1px solid rgba(217,119,6,.35);background:rgba(217,119,6,.1);color:var(--amber);cursor:pointer;font-size:11px;font-weight:800">🔒 Cerrar año</button>'
+    +'<button onclick="auxInformePDF()" style="padding:6px 12px;border-radius:7px;border:1px solid rgba(227,24,55,.3);background:rgba(227,24,55,.1);color:var(--red);cursor:pointer;font-size:11px;font-weight:800">📄 PDF</button>'
+    +'<button onclick="auxInformeExcel()" style="padding:6px 12px;border-radius:7px;border:1px solid rgba(26,158,92,.3);background:var(--green-dim);color:var(--green);cursor:pointer;font-size:11px;font-weight:800">📊 Excel</button>'
+  +'</div>'
+
+  +'<div id="aux-cerrado-note" style="display:none;background:rgba(217,119,6,.08);border:1px solid rgba(217,119,6,.3);border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:var(--amber);font-weight:700"></div>'
+
+  +'<div id="aux-pct-panel" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px">'
+    +'<div style="font-family:var(--cond);font-size:14px;font-weight:900;margin-bottom:4px">Porcentajes sobre la venta</div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Rigen para las ventas con fecha igual o posterior a la indicada. Los montos ya calculados de fechas anteriores no cambian.</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">'
+      +'<div><div class="form-label" style="margin-bottom:4px">Alquiler de bodega %</div>'
+        +'<input type="number" step="0.01" min="0" id="aux-pct-alq" class="form-inp" style="width:110px"></div>'
+      +'<div><div class="form-label" style="margin-bottom:4px">Comisión vendedores %</div>'
+        +'<input type="number" step="0.01" min="0" id="aux-pct-com" class="form-inp" style="width:110px"></div>'
+      +'<div><div class="form-label" style="margin-bottom:4px">Rige desde</div>'
+        +'<input type="date" id="aux-pct-desde" class="form-inp"></div>'
+      +'<button onclick="auxSavePct()" class="modal-btn save" style="white-space:nowrap">Guardar</button>'
+    +'</div>'
+    +'<div id="aux-pct-hist" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)"></div>'
+  +'</div>'
+
+  +'<div id="aux-tablas"></div>'
+
+  +'<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr"><span class="ath-title">📊 Comparativo año contra año</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Solo las partidas acumuladas</span></div>'
+    +'<div id="aux-comp-anios"></div></div>'
+
+  +'<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr"><span class="ath-title">🥧 Composición del gasto</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Peso de cada partida sobre el total del año</span></div>'
+    +'<div id="aux-comp-gasto"></div></div>'
+
+  +'<div class="admin-table-wrap" style="margin-bottom:16px">'
+    +'<div class="admin-table-hdr"><span class="ath-title">📈 Evolución del flujo disponible</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Barras: mes a mes · Línea: acumulado</span></div>'
+    +'<div id="aux-comp-evol"></div></div>';
+}
+
+function initAuxEquipos(){
+  var root=document.getElementById('auxEquiposRoot');
+  if(!root) return;
+  if(root.getAttribute('data-aux-mounted')!=='1'){
+    root.innerHTML=_auxHTML();
+    root.setAttribute('data-aux-mounted','1');
+  }
+  var y=auxAnioActual();
+
+  // Selector de años: los registrados más el actual
+  var anios=auxAniosDisponibles();
+  var sel=root.querySelector('#aux-anio');
+  if(sel){
+    sel.innerHTML=anios.map(function(a){
+      return '<option value="'+a+'"'+(a===y?' selected':'')+'>'+a
+        +(auxGetAnio(a).cerrado?' (historial)':'')+'</option>';
+    }).join('');
+  }
+
+  var d=auxGetAnio(y);
+  var nota=root.querySelector('#aux-cerrado-note');
+  if(nota){
+    if(d.cerrado){
+      nota.style.display='block';
+      nota.innerHTML='🔒 Año '+y+' cerrado el '
+        +(d.cerradoAt?formatDate(new Date(d.cerradoAt)):'—')
+        +(d.cerradoBy?' por '+escHtml(d.cerradoBy):'')
+        +' — solo consulta. <button onclick="auxReabrirAnio('+y+')" style="margin-left:8px;'
+        +'padding:3px 10px;border-radius:6px;border:1px solid rgba(217,119,6,.4);'
+        +'background:var(--surface);color:var(--amber);cursor:pointer;font-size:11px;'
+        +'font-weight:800">Reabrir</button>';
+    } else nota.style.display='none';
+  }
+  renderAuxEquipos();
+}
+
+// ══════════════════════════════════════════════════════════════
+//  CUENTAS POR COBRAR — pestaña propia (superadmin; opt-in para otros)
+//  Agrupa por N° de factura + cliente. Las ventas SIN número de factura
+//  quedan como una línea individual (no se agrupan).
+//  IMPORTANTE: esta agrupación aplica ÚNICAMENTE a esta pestaña.
+//  Ninguna otra tabla ni reporte del sistema cambia su comportamiento.
+// ══════════════════════════════════════════════════════════════
+
+var CXC_SUBTAB='pend'; // 'pend' | 'cobr'
+
+// Facturas anteriores al sistema actual que se registraron en COLONES pero
+// se facturaron en dólares. Solo para estas se habilita una casilla donde el
+// superadmin escribe el tipo de cambio usado; el sistema divide los montos
+// en colones entre ese TC para mostrarlos en dólares.
+// Para el resto de las ventas el sistema ya guarda los dólares nativos.
+var CXC_FACTURAS_TC_MANUAL = ['634','636','647'];
+
+function _cxcPermiteTcManual(factura){
+  return CXC_FACTURAS_TC_MANUAL.indexOf(String(factura||'').trim())>=0;
+}
+
+// Solo el superadmin puede modificar. El resto entra en modo lectura.
+function cxcPuedeEditar(){ return SESSION && SESSION.rol==='superadmin'; }
+
+function _cxcFacturaVacia(f){
+  var t=String(f==null?'':f).trim();
+  return t===''||t==='-'||t.toUpperCase()==='NA'||t.toUpperCase()==='N/A'||t.toUpperCase()==='S/F';
+}
+
+// Clave de agrupación: factura + cliente. Sin factura -> clave única por venta.
+function _cxcGrupoKey(v){
+  if(_cxcFacturaVacia(v.factura)) return 'SOLA::'+v.id;
+  return 'F::'+String(v.factura).trim().toLowerCase()
+        +'::'+String(v.cliente||'').trim().toLowerCase();
+}
+
+// ── Overrides persistidos (Supabase, tabla configuracion) ──
+function _cxcOv(){ return window._cxcOverridesCache||(window._cxcOverridesCache={}); }
+function _cxcGetOv(key){ return _cxcOv()[key]||{}; }
+function _cxcSetOv(key, patch){
+  var o=Object.assign({}, _cxcGetOv(key), patch, {__key:key});
+  _cxcOv()[key]=o;
+  _saveToSupabase('cxc_ov_'+_cxcSafe(key), o, '');
+  return o;
+}
+function _cxcSafe(k){ return String(k).replace(/[^a-zA-Z0-9]/g,'_').slice(0,120); }
+
+// ── Abonos por factura ──
+function _cxcAbonos(key){ return (_cxcGetOv(key).abonos)||[]; }
+function _cxcTotalAbonos(key){
+  return _cxcAbonos(key).reduce(function(s,a){ return s+(a.monto||0); },0);
+}
+
+// ══════════════════════════════════════════════
+//  Construcción de los grupos
+// ══════════════════════════════════════════════
+function cxcBuildGrupos(){
+  var grupos={};
+  getUsers().forEach(function(u){
+    var vd=getVentasData(u.id)||{};
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(v){
+        if(v.tipoPago!=='CREDITO') return;
+        if(v.estado==='incompleta') return;
+        var key=_cxcGrupoKey(v);
+        if(!grupos[key]){
+          grupos[key]={
+            key:key, factura:(_cxcFacturaVacia(v.factura)?'':String(v.factura).trim()),
+            cliente:(v.cliente||'Sin cliente').trim(),
+            ventas:[], subtotal:0, iva:0, total:0, usd:0,
+            uid:u.id, uname:u.nombre||u.id, hayUsd:false
+          };
+        }
+        var g=grupos[key];
+        g.ventas.push(Object.assign({uid:u.id, uname:u.nombre||u.id}, v));
+        g.subtotal+=(v.subtotal||0);
+        g.iva+=(v.ivaAmt||v.iva||0);
+        g.total+=(v.total||(v.subtotal||0)+(v.ivaAmt||0));
+        if(v.isUsd){
+          g.hayUsd=true; g.usd+=(v.usdTotal||v.usd||0);
+          // Tipo de cambio con el que se registró la venta. Se usa para
+          // convertir abono y saldo cuando el check de dólares está marcado.
+          if(!g.tc && (v.tcUsed||0)>0) g.tc=v.tcUsed;
+        }
+      });
+    });
+  });
+  // Estado del grupo: cobrado si TODAS sus ventas están cobradas
+  Object.keys(grupos).forEach(function(k){
+    var g=grupos[k];
+    g.cobrado=g.ventas.length>0 && g.ventas.every(function(v){ return _esCxcPagado(v); });
+
+    // ── Montos PENDIENTES: solo las líneas que aún no se han cobrado ──
+    // Al marcar ✓ Pago en el Detalle completo de una línea suelta, esa línea
+    // deja de sumar acá, pero la factura sigue agrupada en pendientes hasta
+    // que se cancelen todas. Los totales de la factura completa (g.subtotal,
+    // g.iva, g.total) se conservan aparte para la tabla de cobradas.
+    g.pendSubtotal=0; g.pendIva=0; g.pendTotal=0;
+    g.lineasPend=0; g.lineasCobradas=0;
+    g.ventas.forEach(function(v){
+      if(_esCxcPagado(v)){ g.lineasCobradas++; return; }
+      g.lineasPend++;
+      g.pendSubtotal+=(v.subtotal||0);
+      g.pendIva+=(v.ivaAmt||v.iva||0);
+      g.pendTotal+=(v.total||(v.subtotal||0)+(v.ivaAmt||0));
+    });
+    // Fecha de facturación del grupo (la más antigua de sus ventas)
+    var ff=null;
+    g.ventas.forEach(function(v){
+      var d=parseDate(v.fechaFact||v.fecha);
+      if(d&&(!ff||d<ff)) ff=d;
+    });
+    var ov=_cxcGetOv(k);
+    if(ov.fechaFact){ var od=parseDate(ov.fechaFact); if(od) ff=od; }
+    g.fechaFactDate=ff;
+    g.fechaFactStr=ff?ff.toISOString().slice(0,10):'';
+    // Bloqueo de edición: la factura queda en modo lectura solo si TODAS sus
+    // líneas son posteriores al cambio (todas tienen fecha de facturación).
+    // Antes se usaba .some(), y bastaba una sola línea nueva para congelar
+    // facturas viejas completas — ese era el caso de la 684.
+    g.tieneFechaPropia=g.ventas.length>0 && g.ventas.every(function(v){ return !!v.fechaFact; });
+    // Vencimiento: fecha de facturación + el mayor plazo del grupo
+    var plazo=0;
+    g.ventas.forEach(function(v){ plazo=Math.max(plazo, parseInt(v.plazoCredito)||0); });
+    g.plazo=plazo;
+    if(ff&&plazo>0){
+      var venc=new Date(ff.getTime());
+      venc.setDate(venc.getDate()+plazo);
+      g.venc=venc;
+      g.dias=Math.ceil((venc-new Date())/(1000*60*60*24));
+    } else { g.venc=null; g.dias=null; }
+    g.abonado=_cxcTotalAbonos(k);
+
+    // ── Montos en dólares ──
+    g.permiteTcManual=_cxcPermiteTcManual(g.factura);
+    g.tcManual=parseFloat(ov.tcManual)||0;
+    g.puedeUsd=g.hayUsd||g.permiteTcManual;
+    var tcConv=0;
+    if(g.hayUsd){
+      // Venta registrada en dólares: se usan los montos nativos
+      g.subUsd=_cxcUsdDe(g,'sub'); g.ivaUsd=_cxcUsdDe(g,'iva'); g.totalUsd=_cxcUsdDe(g,'tot');
+      tcConv=g.tc||0;
+      g.pendSubUsd=_cxcUsdDe(g,'sub',true); g.pendIvaUsd=_cxcUsdDe(g,'iva',true);
+      g.pendTotalUsd=_cxcUsdDe(g,'tot',true);
+    } else if(g.permiteTcManual&&g.tcManual>0){
+      // Factura vieja en colones: se divide entre el TC que digitó el superadmin
+      tcConv=g.tcManual;
+      g.subUsd=g.subtotal/tcConv; g.ivaUsd=g.iva/tcConv; g.totalUsd=g.total/tcConv;
+      g.pendSubUsd=g.pendSubtotal/tcConv; g.pendIvaUsd=g.pendIva/tcConv;
+      g.pendTotalUsd=g.pendTotal/tcConv;
+    } else {
+      g.subUsd=0; g.ivaUsd=0; g.totalUsd=0;
+      g.pendSubUsd=0; g.pendIvaUsd=0; g.pendTotalUsd=0;
+    }
+    g.abonadoUsd=(tcConv>0)?(g.abonado/tcConv):0;
+    // El saldo se mide contra lo que queda pendiente, no contra la factura completa
+    g.saldo=g.pendTotal-g.abonado;
+    g.saldoUsd=g.pendTotalUsd-g.abonadoUsd;
+    // Solo se muestra en dólares si además hay con qué convertir
+    g.verUsd=!!ov.verUsd&&g.puedeUsd&&(g.hayUsd||g.tcManual>0);
+    g.borrado=!!ov.borrado;
+  });
+  return grupos;
+}
+
+function cxcListaPendientes(){
+  var g=cxcBuildGrupos();
+  return Object.keys(g).map(function(k){return g[k];})
+    .filter(function(x){ return !x.cobrado && !x.borrado; })
+    .sort(function(a,b){
+      var da=a.venc||new Date(9999,0), db=b.venc||new Date(9999,0);
+      return da-db;
+    });
+}
+function cxcListaCobradas(){
+  var g=cxcBuildGrupos();
+  return Object.keys(g).map(function(k){return g[k];})
+    .filter(function(x){ return x.cobrado && !x.borrado; })
+    .sort(function(a,b){
+      var da=a.venc||new Date(0), db=b.venc||new Date(0);
+      return db-da;
+    });
+}
+
+// ── Formato de monto según el check de dólares del grupo ──
+function cxcFmtMonto(g, campoCRC, campoUSD){
+  if(g.verUsd){
+    var val=(campoUSD!=null?campoUSD:0);
+    return '$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+  return fmt(campoCRC||0);
+}
+function _cxcUsdDe(g, cual, soloPendientes){
+  if(!g.hayUsd) return 0;
+  var s=0,i=0,t=0;
+  g.ventas.forEach(function(v){
+    if(!v.isUsd) return;
+    if(soloPendientes && _esCxcPagado(v)) return;
+    var u=(v.usd||0);
+    var ip=(v.ivaPct||0)/100;
+    s+=u; i+=u*ip; t+=u*(1+ip);
+  });
+  return cual==='sub'?s:cual==='iva'?i:t;
+}
+
+
+// ── Formato de números legible ──
+// Barlow Condensed hacía que 1/7, 3/8 y 0/6 se confundieran a este tamaño.
+// Se usa la fuente normal con cifras tabulares (todas del mismo ancho), para
+// que las columnas queden alineadas y los dígitos sean inconfundibles.
+var _CXCNUM='font-family:var(--sans);font-variant-numeric:tabular-nums;'
+  +'font-feature-settings:\'tnum\' 1;letter-spacing:.3px;font-weight:700;'
+  +'font-size:12.5px;white-space:nowrap;text-align:right';
+
+// ── Celda de dólares: check + casilla de tipo de cambio para las facturas viejas ──
+function _cxcCeldaUsd(g, dis){
+  if(!g.puedeUsd) return '';
+  var h='<label style="display:block;font-size:9px;font-weight:700;color:var(--text3);margin-bottom:3px;cursor:pointer">'
+    +'<input type="checkbox" '+(g.verUsd?'checked':'')+dis
+    +' onchange="cxcToggleUsd(\''+g.key+'\',this.checked)"> $ USD</label>';
+  // Solo las facturas listadas en CXC_FACTURAS_TC_MANUAL piden el tipo de cambio
+  if(g.permiteTcManual&&_cxcGetOv(g.key).verUsd){
+    h+='<div style="margin-bottom:4px">'
+      +'<span style="font-size:8.5px;font-weight:800;color:var(--text3);display:block">T/C usado</span>'
+      +'<input type="number" step="0.01" min="0" value="'+(g.tcManual||'')+'" placeholder="510"'+dis
+      +' onchange="cxcSetTcManual(\''+g.key+'\',this.value)"'
+      +' style="width:64px;font-size:11px;padding:2px 4px;border:1.5px solid var(--amber);'
+      +'border-radius:5px;text-align:center;'+(g.tcManual>0?'':'background:rgba(217,119,6,.1)')+'">'
+      +(g.tcManual>0?'':'<div style="font-size:8px;color:var(--amber);font-weight:800">Falta el T/C</div>')
+      +'</div>';
+  }
+  return h;
+}
+
+// ── Historial de abonos, editable por el superadmin ──
+function _cxcHistorialAbonos(g, editable){
+  var lista=_cxcAbonos(g.key);
+  if(!lista.length) return '';
+  var h='<div style="margin-top:4px;border-top:1px dashed var(--border2);padding-top:3px">';
+  lista.forEach(function(a){
+    var f=a.fecha?new Date(a.fecha):null;
+    h+='<div style="display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-bottom:2px">'
+      +'<span title="'+(f?f.toLocaleDateString('es-CR'):'')+(a.by?(' · '+escHtml(a.by)):'')
+        +(a.editadoAt?' · corregido':'')+'" style="'+_CXCNUM+';font-size:10.5px;color:var(--green)">'
+      +(g.verUsd&&g.abonadoUsd>0?fmtUSD(a.monto/(g.total/g.totalUsd)):fmt(a.monto))+'</span>';
+    if(editable){
+      h+='<button onclick="cxcEditarAbono(\''+g.key+'\',\''+a.id+'\')" title="Editar este abono"'
+        +' style="border:none;background:none;cursor:pointer;font-size:10px;padding:0 1px">✏️</button>'
+        +'<button onclick="cxcBorrarAbono(\''+g.key+'\',\''+a.id+'\')" title="Eliminar este abono"'
+        +' style="border:none;background:none;cursor:pointer;font-size:10px;padding:0 1px">🗑</button>';
+    }
+    h+='</div>';
+  });
+  if(lista.length>1){
+    h+='<div style="'+_CXCNUM+';font-size:10.5px;color:var(--green);border-top:1px solid var(--border2);padding-top:2px">'
+      +'Σ '+cxcFmtMonto(g,g.abonado,g.abonadoUsd)+'</div>';
+  }
+  return h+'</div>';
+}
+
+// ══════════════════════════════════════════════
+//  RENDER — subpestañas
+// ══════════════════════════════════════════════
+function _cxcRoot(){
+  return document.getElementById(window._cxcRootId||'cxcAdminRoot')||document;
+}
+function cxcSwitchSub(which, btn){
+  CXC_SUBTAB=which;
+  var r=_cxcRoot();
+  ['pend','cobr'].forEach(function(k){
+    var el=r.querySelector('#cxc-sub-'+k);
+    if(el) el.style.display=(k===which)?'block':'none';
+  });
+  r.querySelectorAll('.cxc-subtab').forEach(function(b){
+    b.classList.remove('on');
+    b.style.borderBottomColor='transparent'; b.style.color='var(--text2)';
+  });
+  if(btn){ btn.classList.add('on'); btn.style.borderBottomColor='var(--red)'; btn.style.color='var(--red)'; }
+  renderCXCTab();
+}
+
+
+// ══════════════════════════════════════════════
+//  AUTOCOMPLETADO — lista plegable + búsqueda por mejor coincidencia
+//  Usado en los filtros de tabla y de informe (cliente y N° de factura).
+//  No depende de applySearchableSelects: eso solo actúa sobre <select>.
+// ══════════════════════════════════════════════
+
+// Opciones disponibles según la subpestaña activa
+function _cxcOpciones(which, campo){
+  var base=(which==='cobr')?cxcListaCobradas():cxcListaPendientes();
+  var set={};
+  base.forEach(function(g){
+    var v=(campo==='factura')?g.factura:g.cliente;
+    v=String(v==null?'':v).trim();
+    if(v) set[v]=true;
+  });
+  return Object.keys(set).sort(function(a,b){
+    return a.localeCompare(b,'es',{numeric:true,sensitivity:'base'});
+  });
+}
+
+function _cxcNorm(s){
+  s=String(s==null?'':s).toLowerCase();
+  s=s.replace(/[áàä]/g,'a').replace(/[éèë]/g,'e').replace(/[íìï]/g,'i')
+     .replace(/[óòö]/g,'o').replace(/[úùü]/g,'u').replace(/ñ/g,'n');
+  return s.replace(/[^a-z0-9]/g,'');
+}
+
+// Puntaje: 3 = empieza igual, 2 = contiene, 1 = coincidencia difusa en orden
+function _cxcScore(opt, q){
+  if(!q) return 3;
+  var o=_cxcNorm(opt), n=_cxcNorm(q);
+  if(!n) return 3;
+  if(o.indexOf(n)===0) return 3;
+  if(o.indexOf(n)>=0) return 2;
+  var i=0;
+  for(var k=0;k<o.length&&i<n.length;k++){ if(o[k]===n[i]) i++; }
+  return i===n.length?1:0;
+}
+
+function _cxcFiltrarOpts(opts, q){
+  return opts.map(function(o){ return {o:o, s:_cxcScore(o,q)}; })
+    .filter(function(x){ return x.s>0; })
+    .sort(function(a,b){ return b.s-a.s || a.o.localeCompare(b.o,'es',{numeric:true}); })
+    .slice(0,60)
+    .map(function(x){ return x.o; });
+}
+
+// Conecta un input de texto con su lista desplegable.
+// getOpts() devuelve el arreglo de opciones vigente en cada apertura.
+function _cxcAutocomplete(input, getOpts, onPick){
+  if(!input || input.dataset.cxcAuto==='1') return;
+  input.dataset.cxcAuto='1';
+  input.setAttribute('autocomplete','off');
+
+  // Envoltura para posicionar el panel
+  var wrap=document.createElement('span');
+  wrap.dataset.cxcWrap='1';
+  wrap.style.cssText='position:relative;display:inline-block';
+  // Si el input venía oculto, el envoltorio nace oculto (caso del informe)
+  if(input.style.display==='none'){ wrap.style.display='none'; input.style.display=''; }
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+
+  var panel=document.createElement('div');
+  panel.style.cssText='position:absolute;z-index:9999;top:calc(100% + 2px);left:0;min-width:100%;'
+    +'max-height:230px;overflow-y:auto;background:var(--surface,#fff);border:1.5px solid var(--border2,#ccc);'
+    +'border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.18);display:none;font-size:12px';
+  wrap.appendChild(panel);
+
+  // Flecha para indicar que es desplegable
+  var caret=document.createElement('span');
+  caret.textContent='▾';
+  caret.style.cssText='position:absolute;right:7px;top:50%;transform:translateY(-50%);'
+    +'font-size:10px;color:var(--text3,#888);pointer-events:none';
+  wrap.appendChild(caret);
+  input.style.paddingRight='18px';
+
+  var idx=-1, items=[];
+
+  function pintar(){
+    var q=input.value||'';
+    items=_cxcFiltrarOpts(getOpts()||[], q);
+    if(!items.length){
+      panel.innerHTML='<div style="padding:8px 10px;color:var(--text3,#888)">Sin coincidencias</div>';
+      panel.style.display='block'; return;
+    }
+    panel.innerHTML=items.map(function(o,i){
+      return '<div data-i="'+i+'" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border,#eee);'
+        +(i===idx?'background:var(--surface2,#f0f0f0);':'')+'">'+escHtml(o)+'</div>';
+    }).join('');
+    panel.style.display='block';
+  }
+  function cerrar(){ panel.style.display='none'; idx=-1; }
+  function elegir(v){
+    input.value=v;
+    cerrar();
+    if(onPick) onPick(v);
+  }
+
+  input.addEventListener('focus', pintar);
+  input.addEventListener('click', function(e){ e.stopPropagation(); pintar(); });
+  input.addEventListener('input', function(){ idx=-1; pintar(); if(onPick) onPick(input.value); });
+  input.addEventListener('keydown', function(e){
+    if(panel.style.display==='none'){ if(e.key==='ArrowDown') pintar(); return; }
+    if(e.key==='ArrowDown'){ e.preventDefault(); idx=Math.min(idx+1, items.length-1); pintar(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); idx=Math.max(idx-1, 0); pintar(); }
+    else if(e.key==='Enter'){ if(idx>=0&&items[idx]){ e.preventDefault(); elegir(items[idx]); } else cerrar(); }
+    else if(e.key==='Escape'){ cerrar(); }
+  });
+  panel.addEventListener('mousedown', function(e){
+    var d=e.target.closest('[data-i]');
+    if(!d) return;
+    e.preventDefault();
+    elegir(items[parseInt(d.dataset.i)]);
+  });
+  document.addEventListener('click', function(e){
+    if(!wrap.contains(e.target)) cerrar();
+  });
+}
+
+// Conecta los cuatro filtros de tabla y los dos de informe
+function _cxcMontarAutocompletes(){
+  var r=_cxcRoot();
+  [['cxcp','pend'],['cxcc','cobr']].forEach(function(par){
+    var pref=par[0], which=par[1];
+    _cxcAutocomplete(r.querySelector('#'+pref+'-f-cliente'),
+      function(){ return _cxcOpciones(which,'cliente'); }, function(){ renderCXCTab(); });
+    _cxcAutocomplete(r.querySelector('#'+pref+'-f-factura'),
+      function(){ return _cxcOpciones(which,'factura'); }, function(){ renderCXCTab(); });
+    // Informe: las opciones dependen del tipo elegido
+    _cxcAutocomplete(r.querySelector('#'+pref+'-r-valor'), function(){
+      var t=(r.querySelector('#'+pref+'-r-tipo')||{}).value||'cliente';
+      return _cxcOpciones(which, t==='factura'?'factura':'cliente');
+    }, null);
+  });
+}
+
+function _cxcHTML(){
+  return ''
+    +'<div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:2px solid var(--border);padding-bottom:0">'
+    +'<button class="cxc-subtab on" data-sub="pend" onclick="cxcSwitchSub(\'pend\',this)" style="padding:9px 18px;border:none;background:none;font-family:Barlow,sans-serif;font-size:13px;font-weight:800;color:var(--text2);cursor:pointer;border-bottom:3px solid transparent">⏳ Créditos pendientes de cobro</button>'
+    +'<button class="cxc-subtab" data-sub="cobr" onclick="cxcSwitchSub(\'cobr\',this)" style="padding:9px 18px;border:none;background:none;font-family:Barlow,sans-serif;font-size:13px;font-weight:800;color:var(--text2);cursor:pointer;border-bottom:3px solid transparent">✅ Créditos cobrados</button>'
+    +'</div>'
+    +'<div id="cxc-readonly-note" style="display:none;background:rgba(217,119,6,.08);border:1px solid rgba(217,119,6,.3);border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:var(--amber);font-weight:700">👁 Modo consulta — puede filtrar las tablas y generar informes en PDF y Excel. Solo el superadmin puede registrar abonos, marcar cobros o editar datos.</div>'
+    +'<div id="cxc-sub-pend">'
+    +'<div class="admin-table-wrap" style="margin-bottom:14px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--amber)">'
+    +'<span class="ath-title">⏳ Créditos pendientes de cobro</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Agrupado por N° de factura + cliente · histórico completo</span>'
+    +'</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border)"><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Filtrar</span><input type="text" id="cxcp-f-cliente" placeholder="Cliente" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:150px"><input type="text" id="cxcp-f-factura" placeholder="N° factura" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:120px"><input type="date" id="cxcp-f-fecha" onchange="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="document.getElementById(\'cxcp-f-cliente\').value=\'\';document.getElementById(\'cxcp-f-factura\').value=\'\';document.getElementById(\'cxcp-f-fecha\').value=\'\';renderCXCTab()" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;font-weight:700">Limpiar</button><span style="flex:1"></span><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Informe</span><select id="cxcp-r-tipo" onchange="cxcOnTipoInforme(\'pend\')" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><option value="">Todos</option><option value="cliente">Por cliente</option><option value="factura">Por factura</option><option value="fecha">Por fecha</option></select><input type="text" id="cxcp-r-valor" placeholder="Valor" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:130px"><input type="date" id="cxcp-r-fecha" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="cxcInformePDF(\'pend\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(227,24,55,.3);background:rgba(227,24,55,.1);color:var(--red);cursor:pointer;font-weight:800">📄 PDF</button><button onclick="cxcInformeExcel(\'pend\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(26,158,92,.3);background:var(--green-dim);color:var(--green);cursor:pointer;font-weight:800">📊 Excel</button></div>'
+    +'<table class="atbl" style="min-width:1270px">'
+    +'<thead><tr>'
+    +'<th>Colaborador</th><th>Fecha facturación</th><th>Factura</th><th>Crédito (días)</th><th>Cliente</th>'
+    +'<th>Subtotal s/IVA</th><th>IVA</th><th>Total c/IVA</th>'
+    +'<th>Vencimiento</th><th>Estado</th><th>Abono</th><th>Saldo</th><th>Acción</th>'
+    +'</tr></thead>'
+    +'<tbody id="cxc-pend-body"></tbody>'
+    +'</table>'
+    +'</div>'
+    +'<div class="admin-table-wrap" style="margin-bottom:14px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--red)">'
+    +'<span class="ath-title">🧾 Saldos por cliente — cuentas por cobrar</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Deuda histórica acumulada por cliente</span>'
+    +'</div>'
+    +'<table class="atbl" style="min-width:800px">'
+    +'<thead><tr>'
+    +'<th>Cliente</th><th>Facturas</th><th>Subtotal s/IVA</th><th>Total con IVA</th><th>Saldo pendiente</th>'
+    +'</tr></thead>'
+    +'<tbody id="cxc-saldos-body"></tbody>'
+    +'</table>'
+    +'</div>'
+    +'</div>'
+    +'<div id="cxc-sub-cobr" style="display:none">'
+    +'<div class="admin-table-wrap" style="margin-bottom:14px">'
+    +'<div class="admin-table-hdr" style="border-bottom-color:var(--green)">'
+    +'<span class="ath-title">✅ Créditos cobrados</span>'
+    +'<span style="font-size:11px;color:rgba(255,255,255,.5)">Se conservan indefinidamente · reversables</span>'
+    +'</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border)"><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Filtrar</span><input type="text" id="cxcc-f-cliente" placeholder="Cliente" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:150px"><input type="text" id="cxcc-f-factura" placeholder="N° factura" oninput="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:120px"><input type="date" id="cxcc-f-fecha" onchange="renderCXCTab()" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="document.getElementById(\'cxcc-f-cliente\').value=\'\';document.getElementById(\'cxcc-f-factura\').value=\'\';document.getElementById(\'cxcc-f-fecha\').value=\'\';renderCXCTab()" style="font-size:10px;padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface);cursor:pointer;font-weight:700">Limpiar</button><span style="flex:1"></span><span style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase">Informe</span><select id="cxcc-r-tipo" onchange="cxcOnTipoInforme(\'cobr\')" style="font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><option value="">Todos</option><option value="cliente">Por cliente</option><option value="factura">Por factura</option><option value="fecha">Por fecha</option></select><input type="text" id="cxcc-r-valor" placeholder="Valor" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px;width:130px"><input type="date" id="cxcc-r-fecha" style="display:none;font-size:11px;padding:4px 8px;border:1.5px solid var(--border2);border-radius:6px"><button onclick="cxcInformePDF(\'cobr\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(227,24,55,.3);background:rgba(227,24,55,.1);color:var(--red);cursor:pointer;font-weight:800">📄 PDF</button><button onclick="cxcInformeExcel(\'cobr\')" style="font-size:10px;padding:5px 12px;border-radius:6px;border:1px solid rgba(26,158,92,.3);background:var(--green-dim);color:var(--green);cursor:pointer;font-weight:800">📊 Excel</button></div>'
+    +'<table class="atbl" style="min-width:1050px">'
+    +'<thead><tr>'
+    +'<th>Colaborador</th><th>Fecha facturación</th><th>Factura</th><th>Cliente</th>'
+    +'<th>Subtotal s/IVA</th><th>IVA</th><th>Total c/IVA</th><th>Fecha de cobro</th><th>$</th><th>Acción</th>'
+    +'</tr></thead>'
+    +'<tbody id="cxc-cobr-body"></tbody>'
+    +'</table>'
+    +'</div>'
+    +'</div>';
+}
+
+// Monta la pestaña en el contenedor indicado (admin o usuario).
+// Se monta UNA sola vez por contenedor para no duplicar IDs.
+// Un usuario con rol 'user' solo carga SUS ventas al iniciar sesión (el batch
+// completo es exclusivo de admin/superadmin). Si el superadmin le compartió
+// Cuentas por cobrar, necesita ver las de todos, así que se cargan aquí — una
+// sola vez y solo de lectura, sin alterar nada más de su sesión.
+function _cxcAsegurarDatos(){
+  if(window._cxcDatosListos) return Promise.resolve();
+  if(SESSION&&(SESSION.rol==='admin'||SESSION.rol==='superadmin')){
+    window._cxcDatosListos=true; return Promise.resolve();
+  }
+  window._cxcDatosListos=true;
+  return loadAllRows('ventas','fecha').then(function(r){
+    var todas=(r&&r.data)||[];
+    return Promise.all(getUsers().map(function(u){
+      return loadVentasFromDB(u.id, todas);
+    }));
+  }).catch(function(e){ console.error('_cxcAsegurarDatos:',e); });
+}
+
+function initCXCTab(rootId){
+  var id=rootId||'cxcAdminRoot';
+  var root=document.getElementById(id);
+  if(!root) return;
+  if(root.getAttribute('data-cxc-mounted')!=='1'){
+    root.innerHTML=_cxcHTML();
+    root.setAttribute('data-cxc-mounted','1');
+  }
+  window._cxcRootId=id;
+  var nota=root.querySelector('#cxc-readonly-note');
+  if(nota) nota.style.display=cxcPuedeEditar()?'none':'block';
+  cxcSwitchSub(CXC_SUBTAB, root.querySelector('.cxc-subtab[data-sub="'+CXC_SUBTAB+'"]'));
+  try{
+    _cxcMontarAutocompletes();
+    cxcOnTipoInforme('pend'); cxcOnTipoInforme('cobr');
+  }catch(e){ console.error('autocompletes cxc:',e); }
+  // Si es un usuario normal, traer las ventas de todos y re-dibujar al terminar
+  try{ _cxcAsegurarDatos().then(function(){ renderCXCTab(); }); }catch(e){}
+}
+
+
+// Filtros
+function _cxcFiltro(lista, pref){
+  var r=_cxcRoot();
+  var cli=(r.querySelector('#'+pref+'-f-cliente')||{}).value||'';
+  var fac=(r.querySelector('#'+pref+'-f-factura')||{}).value||'';
+  var fec=(r.querySelector('#'+pref+'-f-fecha')||{}).value||'';
+  return lista.filter(function(g){
+    if(cli && String(g.cliente).toLowerCase().indexOf(cli.toLowerCase())<0) return false;
+    if(fac && String(g.factura).toLowerCase().indexOf(fac.toLowerCase())<0) return false;
+    if(fec && g.fechaFactStr!==fec) return false;
+    return true;
+  });
+}
+
+function renderCXCTab(){
+  try{
+    if(CXC_SUBTAB==='pend'){ renderCXCPendientes(); renderCXCSaldosCliente(); }
+    else { renderCXCCobradas(); }
+  }catch(e){ console.error('renderCXCTab:',e); }
+}
+
+// ── TABLA 1: Créditos pendientes de cobro ──
+function renderCXCPendientes(){
+  var body=_cxcRoot().querySelector('#cxc-pend-body');
+  if(!body) return;
+  var editable=cxcPuedeEditar();
+  var lista=_cxcFiltro(cxcListaPendientes(),'cxcp');
+  if(!lista.length){
+    body.innerHTML='<tr><td colspan="13" style="text-align:center;color:var(--text3);padding:16px">Sin créditos pendientes de cobro</td></tr>';
+    return;
+  }
+  var html='';
+  lista.forEach(function(g){
+    var vencido=g.dias!==null&&g.dias<0;
+    var urgente=g.dias!==null&&g.dias<=7&&g.dias>=0;
+    var sk=_cxcSafe(g.key);
+    var dis=editable?'':' disabled';
+    html+='<tr style="'+(vencido?'background:rgba(227,24,55,.06)':urgente?'background:rgba(217,119,6,.06)':'')+'">'
+      +'<td style="font-size:11px;color:var(--text3)">'+escHtml(g.uname)+'</td>'
+      +'<td style="white-space:nowrap">'
+        +(editable&&!g.tieneFechaPropia
+          ? '<input type="date" value="'+(g.fechaFactStr||'')+'" onchange="cxcEditFechaFact(\''+g.key+'\',this.value)" style="font-size:11px;padding:2px 4px;border:1.5px solid var(--border2);border-radius:5px">'
+          : '<span style="font-size:11px">'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</span>')
+      +'</td>'
+      +'<td style="font-weight:800;'+_CXCNUM+'">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
+        +(g.ventas.length>1?'<span style="font-size:9px;color:'+(g.lineasCobradas>0?'var(--green)':'var(--text3)')+';font-weight:700;display:block">'+(g.lineasCobradas>0?(g.lineasPend+' de '+g.ventas.length+' pendientes'):(g.ventas.length+' líneas'))+'</span>':'')+'</td>'
+      +'<td style="text-align:center">'
+        +(editable&&!g.tieneFechaPropia
+          ? '<input type="number" min="1" value="'+(g.plazo||'')+'" onchange="cxcEditPlazo(\''+g.key+'\',this.value)" style="width:56px;font-size:11px;padding:2px 4px;border:1.5px solid var(--border2);border-radius:5px;text-align:center">'
+          : '<span style="'+_CXCNUM+';font-weight:800">'+(g.plazo>0?g.plazo+'d':'—')+'</span>')
+      +'</td>'
+      +'<td>'+escHtml(g.cliente)+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.pendSubtotal,g.pendSubUsd)+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.pendIva,g.pendIvaUsd)+'</td>'
+      +'<td style="'+_CXCNUM+';color:var(--green)">'+cxcFmtMonto(g,g.pendTotal,g.pendTotalUsd)+'</td>'
+      +'<td style="white-space:nowrap;font-size:11px">'+(g.venc?formatDate(g.venc):'—')+'</td>'
+      +'<td style="color:'+(vencido?'var(--red)':urgente?'var(--amber)':'var(--green)')+';font-weight:700;font-size:11px">'
+        +(g.dias===null?'—':g.dias<0?'⚠ '+Math.abs(g.dias)+'d vencido':g.dias+'d restantes')+'</td>'
+      +'<td style="text-align:center;white-space:nowrap">'
+        +'<input type="text" id="cxc-ab-'+sk+'" placeholder="Monto" oninput="fmtInp(this)"'+dis
+          +' style="width:78px;font-size:11px;padding:3px 5px;border:1.5px solid var(--border2);border-radius:5px;margin-right:3px">'
+        +'<button onclick="cxcAplicarAbono(\''+g.key+'\')"'+dis
+          +' style="padding:3px 8px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+'">+</button>'
+        +_cxcHistorialAbonos(g, editable)
+      +'</td>'
+      +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:'+(g.saldo<=0?'var(--green)':'var(--red)')+'">'
+        +cxcFmtMonto(g,g.saldo,g.saldoUsd)+'</td>'
+      +'<td style="text-align:center;white-space:nowrap">'
+        +_cxcCeldaUsd(g, dis)
+        +'<button onclick="cxcMarcarCobrado(\''+g.key+'\')"'+dis
+          +' style="padding:4px 9px;border-radius:6px;background:var(--green-dim);border:1px solid rgba(26,158,92,.3);color:var(--green);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+';white-space:nowrap">✓ Pago recibido</button>'
+      +'</td></tr>';
+  });
+  var tSub=lista.reduce(function(s,g){return s+g.pendSubtotal;},0);
+  var tIva=lista.reduce(function(s,g){return s+g.pendIva;},0);
+  var tTot=lista.reduce(function(s,g){return s+g.pendTotal;},0);
+  var tSal=lista.reduce(function(s,g){return s+g.saldo;},0);
+  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--amber)">'
+    +'<td colspan="5" style="text-align:right;font-weight:900;'+_CXCNUM+';font-size:13px">TOTAL PENDIENTE ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:var(--amber)">'+fmt(tSub)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:13px">'+fmt(tIva)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:var(--red)">'+fmt(tTot)+'</td>'
+    +'<td colspan="3"></td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:15px;color:var(--red)">'+fmt(tSal)+'</td>'
+    +'<td></td></tr>';
+  body.innerHTML=html;
+}
+
+// ── TABLA 2: Créditos cobrados ──
+function renderCXCCobradas(){
+  var body=_cxcRoot().querySelector('#cxc-cobr-body');
+  if(!body) return;
+  var editable=cxcPuedeEditar();
+  var lista=_cxcFiltro(cxcListaCobradas(),'cxcc');
+  if(!lista.length){
+    body.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--text3);padding:16px">Sin créditos cobrados</td></tr>';
+    return;
+  }
+  var html='';
+  lista.forEach(function(g){
+    var dis=editable?'':' disabled';
+    var fPago=null;
+    g.ventas.forEach(function(v){ var f=_cxcPagadoFecha(v); if(f){ var d=new Date(f); if(!fPago||d>fPago) fPago=d; } });
+    html+='<tr style="background:rgba(22,163,74,.05)">'
+      +'<td style="font-size:11px;color:var(--text3)">'+escHtml(g.uname)+'</td>'
+      +'<td style="font-size:11px;white-space:nowrap">'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
+      +'<td style="font-weight:800;'+_CXCNUM+'">'+(g.factura?escHtml(g.factura):'<span style="color:var(--text3)">—</span>')
+        +(g.ventas.length>1?'<span style="font-size:9px;color:var(--text3);font-weight:700"> ('+g.ventas.length+' líneas)</span>':'')+'</td>'
+      +'<td>'+escHtml(g.cliente)+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.subtotal,g.subUsd)+'</td>'
+      +'<td style="'+_CXCNUM+'">'+cxcFmtMonto(g,g.iva,g.ivaUsd)+'</td>'
+      +'<td style="'+_CXCNUM+';color:var(--green)">'+cxcFmtMonto(g,g.total,g.totalUsd)+'</td>'
+      +'<td style="font-size:11px;white-space:nowrap">'+(fPago?formatDate(fPago):'—')+'</td>'
+      +'<td style="text-align:center">'
+        +_cxcCeldaUsd(g, dis)
+      +'</td>'
+      +'<td style="text-align:center;white-space:nowrap">'
+        +'<button onclick="cxcReversar(\''+g.key+'\')"'+dis
+          +' style="padding:3px 8px;border-radius:6px;background:var(--amber-dim,rgba(217,119,6,.12));border:1px solid rgba(217,119,6,.3);color:var(--amber);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+';margin-right:4px">↩ Reversar</button>'
+        +'<button onclick="cxcBorrar(\''+g.key+'\')"'+dis
+          +' style="padding:3px 8px;border-radius:6px;background:rgba(227,24,55,.1);border:1px solid rgba(227,24,55,.3);color:var(--red);font-size:10px;font-weight:800;cursor:'+(editable?'pointer':'not-allowed')+';opacity:'+(editable?'1':'.5')+'">🗑</button>'
+      +'</td></tr>';
+  });
+  var tSub=lista.reduce(function(s,g){return s+g.subtotal;},0);
+  var tIva=lista.reduce(function(s,g){return s+g.iva;},0);
+  var tTot=lista.reduce(function(s,g){return s+g.total;},0);
+  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--green)">'
+    +'<td colspan="4" style="text-align:right;font-weight:900;'+_CXCNUM+';font-size:13px">TOTAL COBRADO ('+lista.length+' factura'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px">'+fmt(tSub)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:13px">'+fmt(tIva)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:var(--green)">'+fmt(tTot)+'</td>'
+    +'<td colspan="3"></td></tr>';
+  body.innerHTML=html;
+}
+
+// ── TABLA 3: Saldos por cliente (sin columnas de abono) ──
+function renderCXCSaldosCliente(){
+  var body=_cxcRoot().querySelector('#cxc-saldos-body');
+  if(!body) return;
+  var porCliente={};
+  cxcListaPendientes().forEach(function(g){
+    var key=String(g.cliente).toLowerCase();
+    if(!porCliente[key]) porCliente[key]={nombre:g.cliente,facturas:0,subtotal:0,total:0,abonado:0};
+    porCliente[key].facturas++;
+    porCliente[key].subtotal+=g.pendSubtotal;
+    porCliente[key].total+=g.pendTotal;
+    porCliente[key].abonado+=g.abonado;
+  });
+  var lista=Object.keys(porCliente).map(function(k){
+    var o=porCliente[k]; o.saldo=o.total-o.abonado; return o;
+  }).sort(function(a,b){ return b.saldo-a.saldo; });
+  if(!lista.length){
+    body.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:16px">Sin saldos pendientes por cliente</td></tr>';
+    return;
+  }
+  var html=lista.map(function(o){
+    return '<tr'+(o.saldo<=0?' style="background:rgba(22,163,74,.06)"':'')+'>'
+      +'<td><strong>'+escHtml(o.nombre)+'</strong></td>'
+      +'<td style="text-align:center">'+o.facturas+'</td>'
+      +'<td style="'+_CXCNUM+';font-weight:800">'+fmt(o.subtotal)+'</td>'
+      +'<td style="'+_CXCNUM+';font-weight:800">'+fmt(o.total)+'</td>'
+      +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px;color:'+(o.saldo<=0?'var(--green)':'var(--red)')+'">'+fmt(o.saldo)+'</td>'
+      +'</tr>';
+  }).join('');
+  var tSub=lista.reduce(function(s,o){return s+o.subtotal;},0);
+  var tTot=lista.reduce(function(s,o){return s+o.total;},0);
+  var tSal=lista.reduce(function(s,o){return s+o.saldo;},0);
+  html+='<tr style="background:var(--surface2);border-top:2.5px solid var(--red)">'
+    +'<td colspan="2" style="text-align:right;font-weight:900;'+_CXCNUM+';font-size:13px">TOTAL POR COBRAR ('+lista.length+' cliente'+(lista.length!==1?'s':'')+')</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px">'+fmt(tSub)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:14px">'+fmt(tTot)+'</td>'
+    +'<td style="'+_CXCNUM+';font-weight:900;font-size:16px;color:var(--red)">'+fmt(tSal)+'</td></tr>';
+  body.innerHTML=html;
+}
+
+// ══════════════════════════════════════════════
+//  ACCIONES — solo superadmin
+// ══════════════════════════════════════════════
+function _cxcGuard(){
+  if(!cxcPuedeEditar()){ toast('Solo el superadmin puede modificar Cuentas por cobrar'); return false; }
+  return true;
+}
+function _cxcGrupo(key){
+  var g=cxcBuildGrupos();
+  return g[key]||null;
+}
+
+// Editar fecha de facturación (solo grupos SIN fecha propia — ventas viejas)
+function cxcEditFechaFact(key, val){
+  if(!_cxcGuard()) return;
+  _cxcSetOv(key,{fechaFact:val||''});
+  toast('✓ Fecha de facturación actualizada');
+  renderCXCTab();
+}
+
+// Editar el plazo de crédito en días.
+// Solo para las ventas anteriores al arreglo del formulario (las que no
+// tienen fecha de facturación propia). Las nuevas ya lo guardan bien y su
+// casilla se muestra en modo lectura.
+// Se escribe en la venta real: así el vencimiento queda correcto en TODO
+// el sistema, no solo en esta tabla.
+function cxcEditPlazo(key, val){
+  if(!_cxcGuard()) return;
+  var n=parseInt(val)||0;
+  if(n<=0){ toast('El plazo debe ser mayor que 0'); renderCXCTab(); return; }
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(g.tieneFechaPropia){
+    toast('Esta venta ya se registró con su plazo — no se puede modificar aquí');
+    renderCXCTab(); return;
+  }
+  g.ventas.forEach(function(v){
+    var vd=getVentasData(v.uid)||{};
+    Object.keys(vd).forEach(function(mk){
+      (vd[mk].ventas||[]).forEach(function(x){
+        if(x.id!==v.id) return;
+        x.plazoCredito=n;
+        _saveSingleVenta(v.uid, x, mk);
+      });
+    });
+    window._ventasCache[v.uid]=vd;
+  });
+  toast('✓ Plazo actualizado a '+n+' días');
+  renderCXCTab();
+}
+
+// Check de dólares — se guarda y define cómo se ve y cómo se exporta
+function cxcToggleUsd(key, on){
+  if(!_cxcGuard()) return;
+  _cxcSetOv(key,{verUsd:!!on});
+  renderCXCTab();
+}
+
+// Tipo de cambio manual — solo para las facturas viejas listadas arriba
+function cxcSetTcManual(key, val){
+  if(!_cxcGuard()) return;
+  var tc=parseFloat(String(val).replace(/,/g,''))||0;
+  if(tc<0){ toast('El tipo de cambio no puede ser negativo'); renderCXCTab(); return; }
+  _cxcSetOv(key,{tcManual:tc});
+  if(tc>0) toast('✓ Tipo de cambio ₡'+tc+' aplicado');
+  renderCXCTab();
+}
+
+// Editar un abono ya aplicado
+function cxcEditarAbono(key, abonoId){
+  if(!_cxcGuard()) return;
+  var lista=_cxcAbonos(key).slice();
+  var ab=lista.filter(function(a){ return a.id===abonoId; })[0];
+  if(!ab){ toast('Abono no encontrado'); return; }
+  var nuevo=prompt('Nuevo monto del abono (en colones):', ab.monto);
+  if(nuevo===null) return;
+  var m=parseMon(nuevo)||0;
+  if(m<=0){ toast('El monto debe ser mayor que 0'); return; }
+  lista=lista.map(function(a){
+    if(a.id!==abonoId) return a;
+    return Object.assign({},a,{monto:m, editadoAt:new Date().toISOString(),
+                               editadoBy:(SESSION.nombre||SESSION.id)});
+  });
+  _cxcSetOv(key,{abonos:lista});
+  toast('✓ Abono corregido a '+fmt(m));
+  renderCXCTab();
+}
+
+// Borrar un abono
+function cxcBorrarAbono(key, abonoId){
+  if(!_cxcGuard()) return;
+  var lista=_cxcAbonos(key);
+  var ab=lista.filter(function(a){ return a.id===abonoId; })[0];
+  if(!ab){ toast('Abono no encontrado'); return; }
+  if(!confirm('¿Eliminar el abono de '+fmt(ab.monto)+'?\n\nEl saldo de la factura volverá a subir por ese monto.')) return;
+  _cxcSetOv(key,{abonos:lista.filter(function(a){ return a.id!==abonoId; })});
+  toast('🗑 Abono eliminado');
+  renderCXCTab();
+}
+
+// Abono parcial por factura
+function cxcAplicarAbono(key){
+  if(!_cxcGuard()) return;
+  var el=_cxcRoot().querySelector('#cxc-ab-'+_cxcSafe(key));
+  var monto=parseMon(el?el.value:'')||0;
+  if(monto<=0){ toast('Ingrese el monto del abono'); if(el) el.focus(); return; }
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(!confirm('¿Aplicar abono de '+fmt(monto)+' a la factura '+(g.factura||'(sin número)')+' de '+g.cliente+'?')) return;
+  var lista=_cxcAbonos(key).slice();
+  lista.push({id:'ab'+Date.now(), monto:monto, fecha:new Date().toISOString(),
+              by:(SESSION.nombre||SESSION.id)});
+  _cxcSetOv(key,{abonos:lista});
+  if(el) el.value='';
+  toast('✓ Abono de '+fmt(monto)+' aplicado');
+  renderCXCTab();
+}
+
+// ── Marcar/desmarcar una venta como cobrada ──
+// El estado "cobrado" vive en CINCO lugares y _esCxcPagado los consulta en
+// cascada. Tocar solo uno no alcanza: por eso el reverso "no hacía nada".
+//   1. window._cxcPagadoOverrides[id]   ← máxima prioridad
+//   2. venta.cxcPagado / cxcPagadoDate
+//   3. window._pagadoAdminOverrides[id] ─┐ el ✓ Pago del Detalle completo
+//   4. venta.pagadoAdmin                ─┘
+//   5. respaldos en configuracion (cc_cxc_pagado_* y cc_pagado_admin_*)
+// Esta función escribe los cinco, igual que hace toggleVentaPago, para que
+// Cuentas por cobrar y el Detalle completo nunca queden en desacuerdo.
+function _cxcSetPagadoVenta(uid, ventaId, newVal){
+  var vd=getVentasData(uid)||{};
+  var fecha=newVal?new Date().toISOString():null;
+  var hecho=false;
+  Object.keys(vd).forEach(function(mk){
+    var idx=(vd[mk].ventas||[]).findIndex(function(v){ return v.id===ventaId; });
+    if(idx<0) return;
+    var v=vd[mk].ventas[idx];
+    v.cxcPagado=newVal; v.cxcPagadoDate=fecha; v.pagadoAdmin=newVal;
+    if(!window._cxcPagadoOverrides) window._cxcPagadoOverrides={};
+    if(!window._pagadoAdminOverrides) window._pagadoAdminOverrides={};
+    window._cxcPagadoOverrides[ventaId]={pagado:newVal,fecha:fecha};
+    window._pagadoAdminOverrides[ventaId]=newVal;
+    DB.from('configuracion').upsert(
+      {clave:'cc_cxc_pagado_'+ventaId,
+       valor:{pagado:newVal,fecha:fecha,ventaId:ventaId,uid:uid},
+       updated_at:new Date().toISOString()},{onConflict:'clave'}
+    ).then(function(r){ if(r.error) console.error('cxc_pagado save:',r.error); });
+    DB.from('configuracion').upsert(
+      {clave:'cc_pagado_admin_'+ventaId,
+       valor:{pagado:newVal,ventaId:ventaId,uid:uid,ts:new Date().toISOString()},
+       updated_at:new Date().toISOString()},{onConflict:'clave'}
+    ).then(function(r){ if(r.error) console.error('pagado_admin save:',r.error); });
+    window._ventasCache[uid]=vd;
+    try{ _saveSingleVenta(uid, v, mk); }catch(e){ console.error('_cxcSetPagadoVenta:',e); }
+    hecho=true;
+  });
+  return hecho;
+}
+
+// Marcar cobrado: marca TODAS las ventas del grupo
+function cxcMarcarCobrado(key){
+  if(!_cxcGuard()) return;
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(!confirm('¿Confirmar pago recibido de la factura '+(g.factura||'(sin número)')+' de '+g.cliente+'?\n\n'
+    +g.ventas.length+' línea(s) · '+fmt(g.total)+'\n\nPasará a "Créditos cobrados".')) return;
+  g.ventas.forEach(function(v){ _cxcSetPagadoVenta(v.uid, v.id, true); });
+  toast('✓ Factura marcada como cobrada');
+  renderCXCTab();
+  try{ renderAdminVentas(); }catch(e){}
+}
+
+// Reversar: vuelve a pendientes
+function cxcReversar(key){
+  if(!_cxcGuard()) return;
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(!confirm('¿Reversar el cobro de la factura '+(g.factura||'(sin número)')+' de '+g.cliente+'?\n\n'
+    +'Volverá a "Créditos pendientes de cobro".')) return;
+  var ok=0;
+  g.ventas.forEach(function(v){ if(_cxcSetPagadoVenta(v.uid, v.id, false)) ok++; });
+  if(!ok){ toast('No se pudo reversar: no se encontraron las ventas'); return; }
+  // La factura vuelve a "Créditos pendientes de cobro": se cambia de subpestaña
+  // para que se vea de inmediato dónde quedó.
+  toast('↩ Cobro reversado — la factura volvió a Créditos pendientes de cobro');
+  var _btn=_cxcRoot().querySelector('.cxc-subtab[data-sub="pend"]');
+  cxcSwitchSub('pend', _btn);
+  try{ renderAdminVentas(); }catch(e){}
+}
+
+// Borrar: va a la papelera (recuperable). NO elimina la venta.
+function cxcBorrar(key){
+  if(!_cxcGuard()) return;
+  var g=_cxcGrupo(key);
+  if(!g){ toast('Factura no encontrada'); return; }
+  if(!confirm('¿Enviar a la papelera el crédito cobrado de la factura '
+    +(g.factura||'(sin número)')+' de '+g.cliente+'?\n\n'
+    +'La venta NO se elimina: solo deja de aparecer en Cuentas por cobrar.\n'
+    +'Podrás restaurarlo desde la Papelera.')) return;
+  addToTrash({
+    type:'cxc_cobrado', uid:g.uid, uNombre:g.uname,
+    data:{ key:key, factura:g.factura, cliente:g.cliente,
+           subtotal:g.subtotal, iva:g.iva, total:g.total,
+           ventaIds:g.ventas.map(function(v){return v.id;}) }
+  });
+  _cxcSetOv(key,{borrado:true});
+  toast('🗑 Enviado a la papelera — restaurable');
+  renderCXCTab();
+}
+
+// Restaurar desde papelera
+function cxcRestaurarDesdeTrash(key){
+  _cxcSetOv(key,{borrado:false});
+  try{ renderCXCTab(); }catch(e){}
+}
+
+// ══════════════════════════════════════════════
+//  INFORMES — PDF (impresión del navegador) y Excel
+//  Filtro por cliente, fecha o factura (uno a la vez).
+//  Montos en colones, salvo las facturas con el check de dólares marcado.
+// ══════════════════════════════════════════════
+function _cxcFiltroInforme(lista, tipo, valor){
+  if(!tipo||!valor) return lista;
+  return lista.filter(function(g){
+    if(tipo==='cliente') return String(g.cliente).toLowerCase().indexOf(String(valor).toLowerCase())>=0;
+    if(tipo==='factura') return String(g.factura).toLowerCase().indexOf(String(valor).toLowerCase())>=0;
+    if(tipo==='fecha')   return g.fechaFactStr===valor;
+    return true;
+  });
+}
+function _cxcOrdenFecha(lista){
+  return lista.slice().sort(function(a,b){
+    var da=a.fechaFactDate||new Date(9999,0), db=b.fechaFactDate||new Date(9999,0);
+    return da-db; // de más viejas a más nuevas
+  });
+}
+// En "Créditos pendientes" el informe refleja lo que falta por cobrar;
+// en "Créditos cobrados" refleja la factura completa.
+function _cxcMonto(g,cual,soloPend){
+  var crc, usd;
+  if(cual==='abo'){ crc=g.abonado||0; usd=g.abonadoUsd||0; }
+  else if(cual==='sal'){ crc=g.saldo||0; usd=g.saldoUsd||0; }
+  else if(soloPend){
+    crc=(cual==='sub'?g.pendSubtotal:cual==='iva'?g.pendIva:g.pendTotal);
+    usd=(cual==='sub'?g.pendSubUsd:cual==='iva'?g.pendIvaUsd:g.pendTotalUsd);
+  } else {
+    crc=(cual==='sub'?g.subtotal:cual==='iva'?g.iva:g.total);
+    usd=(cual==='sub'?g.subUsd:cual==='iva'?g.ivaUsd:g.totalUsd);
+  }
+  if(g.verUsd){
+    return '$'+Number(usd||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+  return fmt(crc||0);
+}
+
+function _cxcDatosInforme(which){
+  var pref=(which==='cobr')?'cxcc':'cxcp';
+  var r=_cxcRoot();
+  var tipo=(r.querySelector('#'+pref+'-r-tipo')||{}).value||'';
+  var valor='';
+  if(tipo==='fecha') valor=(r.querySelector('#'+pref+'-r-fecha')||{}).value||'';
+  else if(tipo)      valor=(r.querySelector('#'+pref+'-r-valor')||{}).value||'';
+  var base=(which==='cobr')?cxcListaCobradas():cxcListaPendientes();
+  return { filas:_cxcOrdenFecha(_cxcFiltroInforme(base,tipo,valor)), tipo:tipo, valor:valor };
+}
+
+function cxcOnTipoInforme(which){
+  var pref=(which==='cobr')?'cxcc':'cxcp';
+  var r=_cxcRoot();
+  var t=(r.querySelector('#'+pref+'-r-tipo')||{}).value||'';
+  var f=r.querySelector('#'+pref+'-r-fecha');
+  var v=r.querySelector('#'+pref+'-r-valor');
+  // El input vive dentro de una envoltura creada por el autocompletado:
+  // se muestra/oculta la envoltura, no el input.
+  var vw=(v&&v.parentNode&&v.parentNode.dataset&&v.parentNode.dataset.cxcWrap==='1')?v.parentNode:v;
+  if(f) f.style.display=(t==='fecha')?'':'none';
+  if(vw) vw.style.display=(t&&t!=='fecha')?'inline-block':'none';
+  if(v){ v.placeholder=(t==='cliente')?'Nombre del cliente':'N° de factura'; v.value=''; }
+}
+
+function cxcInformePDF(which){
+  var d=_cxcDatosInforme(which);
+  if(!d.filas.length){ toast('No hay datos con ese filtro'); return; }
+  var titulo=(which==='cobr')?'Créditos cobrados':'Créditos pendientes de cobro';
+  var _soloPend=(which!=='cobr');
+  var hoy=new Date();
+  var emitida=hoy.toLocaleDateString('es-CR',{day:'2-digit',month:'long',year:'numeric'});
+  var subFiltro=d.tipo?('Filtrado por '+d.tipo+': '+d.valor):'Todos los registros';
+  var filas='', tSub=0, tIva=0, tTot=0, tSaldo=0;
+  // Las facturas marcadas en dólares no pueden sumarse con las de colones:
+  // se acumulan aparte y se muestran en su propia línea de total.
+  var tSaldoUsd=0, nCrc=0, nUsd=0;
+  d.filas.forEach(function(g){
+    var venc=g.venc?formatDate(g.venc):'—';
+    var diasVenc=(g.dias!==null&&g.dias<0)?Math.abs(g.dias):0;
+    if(!g.verUsd){
+      tSub+=(_soloPend?g.pendSubtotal:g.subtotal);
+      tIva+=(_soloPend?g.pendIva:g.iva);
+      tTot+=(_soloPend?g.pendTotal:g.total);
+      tSaldo+=(g.saldo||0);
+      nCrc++;
+    } else {
+      tSaldoUsd+=(_soloPend?(g.saldoUsd||0):(g.totalUsd||0));
+      nUsd++;
+    }
+    filas+='<tr>'
+      +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
+      +'<td>'+(g.factura||'—')+'</td>'
+      +'<td>'+escHtml(g.cliente)+'</td>'
+      +'<td class="n">'+_cxcMonto(g,'sub',_soloPend)+'</td>'
+      +'<td class="n">'+_cxcMonto(g,'iva',_soloPend)+'</td>'
+      +'<td class="n">'+_cxcMonto(g,'tot',_soloPend)+'</td>'
+      +(_soloPend?('<td class="n">'+_cxcMonto(g,'abo',true)+'</td>'
+                  +'<td class="n"><strong>'+_cxcMonto(g,'sal',true)+'</strong></td>'):'')
+      +'<td>'+venc+'</td>'
+      +'<td class="c">'+(diasVenc>0?'<span class="vz">'+diasVenc+'</span>':'—')+'</td>'
+      +'</tr>';
+  });
+  var html='<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+titulo+'</title>'
+   +'<style>'
+   +'@page{size:letter portrait;margin:14mm}'
+   +'*{box-sizing:border-box}'
+   +'body{font-family:Arial,Helvetica,sans-serif;color:#1c1c1c;margin:0;font-size:11px}'
+   // En pantalla la regla @page no aplica, así que el contenido quedaba pegado a
+   // los bordes de la ventana. Estos márgenes son SOLO para la vista previa y
+   // desaparecen al imprimir, donde manda @page.
+   +'@media screen{'
+     +'body{background:#e9e9ec;padding:0 0 28px}'
+     +'.hoja{background:#fff;max-width:880px;margin:0 auto;padding:26px 34px 30px;'
+       +'box-shadow:0 2px 14px rgba(0,0,0,.13);border-radius:3px}'
+   +'}'
+   +'@media print{.hoja{max-width:none;margin:0;padding:0;box-shadow:none;border-radius:0}}'
+   +'.hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #E31837;padding-bottom:10px;margin-bottom:4px}'
+   +'.lg{font-size:30px;font-weight:900;letter-spacing:-1px}.lg span{color:#E31837}'
+   +'.ei{text-align:right;font-size:10px;color:#58595B;line-height:1.5}'
+   +'h1{font-size:16px;margin:12px 0 2px}'
+   +'.sb{font-size:10px;color:#777;margin-bottom:10px}'
+   +'table{width:100%;border-collapse:collapse;margin-top:6px}'
+   +'th{background:#58595B;color:#fff;font-size:9.5px;text-transform:uppercase;padding:6px 5px;text-align:left;letter-spacing:.3px}'
+   +'td{padding:5px;border-bottom:1px solid #e6e6e6;font-size:10px}'
+   +'td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}'
+   +'td.c{text-align:center}'
+   +'tr:nth-child(even) td{background:#fafafa}'
+   +'.vz{color:#E31837;font-weight:900}'
+   +'tfoot td{background:#f0f0f0;font-weight:900;border-top:2px solid #58595B;font-size:11px}'
+   +'.ft{margin-top:14px;padding-top:8px;border-top:1px solid #ddd;font-size:9px;color:#999;display:flex;justify-content:space-between}'
+   +'.noprint{margin:16px 0;text-align:center}'
+   +'@media print{.noprint{display:none}}'
+   +'</style></head><body>'
+   +'<div class="noprint"><button onclick="window.print()" style="background:#E31837;color:#fff;border:none;border-radius:6px;padding:9px 20px;font-size:13px;font-weight:700;cursor:pointer">🖨 Imprimir / Guardar PDF</button></div>'
+   +'<div class="hoja">'
+   +'<div class="hd"><div><div class="lg">CON<span>C</span>RE</div></div>'
+   +'<div class="ei"><strong>'+EMPRESA.nombre+'</strong><br>Céd. jurídica '+EMPRESA.cedula
+   +'<br>'+EMPRESA.telefono+'<br>'+EMPRESA.correo+'</div></div>'
+   +'<h1>'+titulo+'</h1>'
+   +'<div class="sb">'+subFiltro+' · Emitido: '+emitida+'</div>'
+   +'<table><thead><tr><th>Fecha facturación</th><th>N° factura</th><th>Cliente</th>'
+   +'<th style="text-align:right">Subtotal s/IVA</th><th style="text-align:right">IVA</th>'
+   +'<th style="text-align:right">Total c/IVA</th>'
+   +(_soloPend?'<th style="text-align:right">Abono</th><th style="text-align:right">Saldo</th>':'')
+   +'<th>Vencimiento</th><th style="text-align:center">Días vencidos</th></tr></thead>'
+   +'<tbody>'+filas+'</tbody>'
+   +'<tfoot>'
+   +(_soloPend
+      ? ((nCrc>0
+          ? '<tr><td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO — COLONES ('
+            +nCrc+' factura'+(nCrc!==1?'s':'')+')</td>'
+            +'<td class="n" colspan="2" style="font-size:13px">'+fmt(tSaldo)+'</td><td colspan="2"></td></tr>'
+          : '')
+        +(nUsd>0
+          ? '<tr><td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO — DÓLARES ('
+            +nUsd+' factura'+(nUsd!==1?'s':'')+')</td>'
+            +'<td class="n" colspan="2" style="font-size:13px">'+fmtUSD(tSaldoUsd)+'</td><td colspan="2"></td></tr>'
+          : ''))
+      : '<tr><td colspan="3">TOTAL ('+d.filas.length+' factura'+(d.filas.length!==1?'s':'')+')</td>'
+        +'<td class="n">'+fmt(tSub)+'</td><td class="n">'+fmt(tIva)+'</td><td class="n">'+fmt(tTot)+'</td>'
+        +'<td colspan="2"></td></tr>')
+   +'</tfoot></table>'
+   +'<div class="ft"><span>'+EMPRESA.nombre+' · Documento oficial</span><span>Sistema CONCRE · '+emitida+'</span></div>'
+   +'</div>'
+   +'</body></html>';
+  var w=window.open('','_blank','width=900,height=1000,scrollbars=yes');
+  if(!w){ toast('Permita las ventanas emergentes para generar el informe'); return; }
+  w.document.write(html); w.document.close();
+}
+
+function cxcInformeExcel(which){
+  var d=_cxcDatosInforme(which);
+  if(!d.filas.length){ toast('No hay datos con ese filtro'); return; }
+  var titulo=(which==='cobr')?'Creditos cobrados':'Creditos pendientes de cobro';
+  var _soloPend=(which!=='cobr');
+  var tSub=0,tIva=0,tTot=0,tSaldo=0;
+  var tSaldoUsd=0,nCrc=0,nUsd=0;
+  var _NC=_soloPend?10:8;
+  var html='<table border="1">'
+    +'<tr><td colspan="'+_NC+'" style="font-size:16px;font-weight:bold">'+EMPRESA.nombre+' — '+titulo+'</td></tr>'
+    +'<tr><td colspan="'+_NC+'">Céd. jurídica '+EMPRESA.cedula+' · '+EMPRESA.telefono+' · '+EMPRESA.correo+'</td></tr>'
+    +'<tr><td colspan="'+_NC+'">'+(d.tipo?('Filtrado por '+d.tipo+': '+d.valor):'Todos los registros')+'</td></tr>'
+    +'<tr></tr>'
+    +'<tr style="background:#E31837;color:#fff;font-weight:bold">'
+    +'<th>Fecha facturación</th><th>N° factura</th><th>Cliente</th><th>Subtotal s/IVA</th>'
+    +'<th>IVA</th><th>Total c/IVA</th>'
+    +(_soloPend?'<th>Abono</th><th>Saldo</th>':'')
+    +'<th>Vencimiento</th><th>Días vencidos</th></tr>';
+  d.filas.forEach(function(g){
+    var diasVenc=(g.dias!==null&&g.dias<0)?Math.abs(g.dias):0;
+    if(!g.verUsd){
+      tSub+=(_soloPend?g.pendSubtotal:g.subtotal);
+      tIva+=(_soloPend?g.pendIva:g.iva);
+      tTot+=(_soloPend?g.pendTotal:g.total);
+      tSaldo+=(g.saldo||0);
+      nCrc++;
+    } else {
+      tSaldoUsd+=(_soloPend?(g.saldoUsd||0):(g.totalUsd||0));
+      nUsd++;
+    }
+    html+='<tr>'
+      +'<td>'+(g.fechaFactDate?formatDate(g.fechaFactDate):'—')+'</td>'
+      +'<td>'+(g.factura||'—')+'</td>'
+      +'<td>'+escHtml(g.cliente)+'</td>'
+      +'<td>'+_cxcMonto(g,'sub',_soloPend)+'</td>'
+      +'<td>'+_cxcMonto(g,'iva',_soloPend)+'</td>'
+      +'<td>'+_cxcMonto(g,'tot',_soloPend)+'</td>'
+      +(_soloPend?('<td>'+_cxcMonto(g,'abo',true)+'</td>'
+                  +'<td><b>'+_cxcMonto(g,'sal',true)+'</b></td>'):'')
+      +'<td>'+(g.venc?formatDate(g.venc):'—')+'</td>'
+      +'<td'+(diasVenc>0?' style="color:#E31837;font-weight:bold"':'')+'>'+(diasVenc>0?diasVenc:'—')+'</td>'
+      +'</tr>';
+  });
+  html+= _soloPend
+    ? ((nCrc>0
+        ? '<tr style="background:#f0f0f0;font-weight:bold">'
+          +'<td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO — COLONES ('+nCrc+' facturas)</td>'
+          +'<td colspan="2">'+fmt(tSaldo)+'</td><td colspan="2"></td></tr>'
+        : '')
+      +(nUsd>0
+        ? '<tr style="background:#f0f0f0;font-weight:bold">'
+          +'<td colspan="6" style="text-align:right">TOTAL PENDIENTE DE COBRO — DÓLARES ('+nUsd+' facturas)</td>'
+          +'<td colspan="2">'+fmtUSD(tSaldoUsd)+'</td><td colspan="2"></td></tr>'
+        : '')
+      +'</table>')
+    : ('<tr style="background:#f0f0f0;font-weight:bold"><td colspan="3">TOTAL ('+d.filas.length+')</td>'
+       +'<td>'+fmt(tSub)+'</td><td>'+fmt(tIva)+'</td><td>'+fmt(tTot)+'</td><td colspan="2"></td></tr></table>');
+  var blob=new Blob(['\ufeff'+html],{type:'application/vnd.ms-excel'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url;
+  a.download=titulo.replace(/ /g,'_')+'_'+new Date().toISOString().slice(0,10)+'.xls';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },1500);
+  toast('✓ Informe exportado');
+}
 
 // ══════════════════════════════════════════════
 //  SALDOS POR CLIENTE — cuentas por cobrar con abonos
@@ -14473,6 +16536,9 @@ function openEditAdminOwnVenta(vid){
   if(_tpEl) _tpEl.value=found.tipoPago||'CONTADO';
   var _plzEl=document.getElementById('avf-plazo');
   if(_plzEl) _plzEl.value=found.plazoCredito||30;
+  var _affEl=document.getElementById('avf-fecha-fact');
+  if(_affEl) _affEl.value=found.fechaFact||'';
+  try{ onAdminTipoPagoChange(); }catch(e){}
   // Restaurar también el IVA de la venta
   var _ivaEl=document.getElementById('avf-iva');
   if(_ivaEl) _ivaEl.value=(found.ivaPct===0||!found.ivaPct)?'no':(found.ivaPct===13?'13':String(found.ivaPct));
@@ -14658,6 +16724,19 @@ function saveAdminVenta(){
       return;
     }
   }
+  // Crédito: plazo obligatorio (>0) y fecha de facturación obligatoria
+  var _errCredA=_validarCredito(
+    document.getElementById('avf-tipo-pago')?.value,
+    document.getElementById('avf-plazo')?.value,
+    document.getElementById('avf-fecha-fact')?.value);
+  if(_errCredA){
+    toast('⚠ '+_errCredA);
+    var _fA=document.getElementById(
+      (!document.getElementById('avf-plazo')?.value||parseInt(document.getElementById('avf-plazo').value)<=0)
+      ?'avf-plazo':'avf-fecha-fact');
+    if(_fA){ _fA.focus(); _fA.style.border='2px solid var(--red)'; setTimeout(function(){_fA.style.border='';},2500); }
+    return;
+  }
   var isUsd=document.getElementById('avf-is-usd')?.checked||false;
   var ivaSel=document.getElementById('avf-iva')?.value;
   var ivaPct=ivaSel==='13'?13:0;
@@ -14686,9 +16765,13 @@ function saveAdminVenta(){
     ivaAmt:ivaAmt,
     total:sub+ivaAmt,
     tipoPago:(document.getElementById('avf-tipo-pago')?.value||'CONTADO'),
+    // FIX: 'plazoCredito' estaba declarado DOS veces en este objeto y la
+    // segunda (plazoCredito:0) pisaba a la primera, por lo que el formulario
+    // de admin/superadmin SIEMPRE guardaba 0 y descartaba el plazo tecleado.
     plazoCredito:(document.getElementById('avf-tipo-pago')?.value==='CREDITO'
-      ?(parseInt(document.getElementById('avf-plazo')?.value)||30):0),
-    plazoCredito:0,
+      ?(parseInt(document.getElementById('avf-plazo')?.value)||0):0),
+    fechaFact:(document.getElementById('avf-tipo-pago')?.value==='CREDITO'
+      ?(document.getElementById('avf-fecha-fact')?.value||''):''),
     isUsd:isUsd,usd:usdAmt,tcUsed:tcUsed,
     tieneInsumos:(document.getElementById('avf-ins-chk')?.checked||false),
     insDesc:(document.getElementById('avf-ins-chk')?.checked?(document.getElementById('avf-ins-desc')?.value.trim()||''):''),
@@ -15519,9 +17602,9 @@ function getClosedLiqPeriods(){
     var d=getLiqData(s.id);
     Object.keys(d).forEach(function(pk){
       var state=getLiqPeriodState(s.id, pk);
-      // cerrada: prefer localStorage state (may have been updated this session),
+      // cerrada: prefiere el estado en memoria (pudo actualizarse en esta sesión),
       // but fall back to the value loaded from DB in the cache (d[pk].cerrada).
-      // This fixes the Planillas tab showing empty when localStorage wasn't set yet.
+      // Esto evita que la pestaña Planillas salga vacía si el cache aún no se pobló.
       var isCerrada=state.cerrada||d[pk].cerrada||false;
       if(isCerrada){
         var period=getLiqPeriod(s.id, pk);
@@ -15811,7 +17894,7 @@ function renderPlanillaHistoricaTable(){
     +'</tr></thead>'
     +'<tbody>';
 
-  // Pre-load: get REG and DED from localStorage (loaded by _loadUserDEDForAdmin at startup)
+  // Pre-carga: toma REG y DED del cache en memoria (lo puebla _loadUserDEDForAdmin desde Supabase al arrancar)
   var regUser=getREG(uid)||{};
   var dedUser=getDED(uid)||{};
   // DED deducciones are flat: ccss_monto, rb_monto, extra_monto
@@ -16078,7 +18161,7 @@ function renderPagosUsuarios(){
       }
     }
 
-    // ── 4. DEDUCCIONES — ccss+rb apply both quincenas, extra only Q1 ──
+    // ── 4. DEDUCCIONES — ccss, rb y extra aplican en AMBAS quincenas ──
     var dedTotal;
     if(hist&&(hist.deduccion_total||0)>0){
       dedTotal=Math.round((hist.deduccion_total||0)/2);
@@ -16090,7 +18173,11 @@ function renderPagosUsuarios(){
       // Deducciones VIGENTES para esta quincena (no las actuales si cambiaron después)
       var _dv=getDedVigente(u.id,y,m,q);
       ccss=_dv.ccss; rb=_dv.rb; extraReb=_dv.extra;
-      dedTotal=((u.ccssSoloQ1&&q!==1)?0:ccss)+rb+(q===1?extraReb:0);
+      // "Otro rebajo" (extra) se aplica en las dos quincenas, igual que el
+      // préstamo. Desde cuándo rige lo decide el selector de vigencia:
+      // getDedVigente ya devuelve 0 para las quincenas anteriores a la
+      // vigencia elegida por el superadmin.
+      dedTotal=((u.ccssSoloQ1&&q!==1)?0:ccss)+rb+extraReb;
     }
 
     // ── 5. TOTALS ──────────────────────────────────────────
@@ -16208,6 +18295,7 @@ function getCRMClients(){
 }
 function setCRMClients(d){
   window._crmClientsCache=d;
+  _crmInvalidarCache();
   if(!d||!d.length) return;
   // Upsert only — NEVER delete. Each client saved individually by ID.
   var rows=d.map(function(cl){
@@ -16242,6 +18330,7 @@ function getCRMLinks(){
   return window._crmLinksCache||[];
 }
 function setCRMLinks(d){
+  _crmInvalidarCache();
   window._crmLinksCache=d;
   if(!d||!d.length) return;
   // Upsert by venta_id — safe, never wipes other users' links
@@ -16327,25 +18416,65 @@ function renderCRMKPIs(){
 }
 
 // ── Get all ventas for CRM (via links or fuzzy match) ──
+// ── RENDIMIENTO: resultado memorizado ──────────────────────────────────────
+// Esta función se llamaba hasta 8 veces por render, y una de ellas dentro de
+// un bucle por cliente. Cada llamada recorría TODAS las ventas haciendo un
+// .find() sobre los links y, si no había link, un fuzzyMatch contra TODOS los
+// clientes. Con varios cientos de ventas eso son cientos de miles de
+// comparaciones repetidas: era la causa de que el CRM se pegara.
+//
+// Ahora el resultado se calcula UNA vez y se reutiliza hasta que cambien las
+// ventas o los datos del CRM. La invalidación es explícita
+// (_crmInvalidarCache) para no depender de comparaciones costosas.
+function _crmInvalidarCache(){ window._crmVentasMemo=null; }
+
 function getAllVentasForCRM(){
+  if(window._crmVentasMemo) return window._crmVentasMemo;
+
   var links=getCRMLinks();
   var clients=getCRMClients();
   var result=[];
   var users=getUsers();
+
+  // Índice de links por ventaId — evita un .find() por cada venta
+  var linkPorVenta={};
+  links.forEach(function(l){ if(l&&l.ventaId) linkPorVenta[l.ventaId]=l; });
+
+  // Nombres de cliente ya normalizados — evita re-normalizar en cada fuzzyMatch
+  var cliNorm=clients.map(function(cl){
+    return {cl:cl, n:String(cl.nombreEmpresa||'').toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')};
+  });
+  // Memoria de nombres ya resueltos: el mismo cliente se repite mucho
+  var matchMemo={};
+  function matchPorNombre(nombre){
+    var q=String(nombre||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    if(!q) return null;
+    if(Object.prototype.hasOwnProperty.call(matchMemo,q)) return matchMemo[q];
+    var tokens=q.split(' ').filter(Boolean);
+    var hit=null;
+    for(var i=0;i<cliNorm.length;i++){
+      var n=cliNorm[i].n;
+      if(n.indexOf(q)>=0){ hit=cliNorm[i].cl; break; }
+      var todos=true;
+      for(var t=0;t<tokens.length;t++){ if(n.indexOf(tokens[t])<0){ todos=false; break; } }
+      if(todos&&tokens.length){ hit=cliNorm[i].cl; break; }
+    }
+    matchMemo[q]=hit;
+    return hit;
+  }
+
   users.forEach(function(u){
     var vd=getVentasData(u.id);
     Object.values(vd).forEach(function(mv){
       (mv.ventas||[]).forEach(function(v){
-        var link=links.find(function(l){return l.ventaId===v.id;});
+        var link=linkPorVenta[v.id];
         if(link){
           result.push({ventaId:v.id,clienteId:link.clienteId,contactoId:link.contactoId,
             fecha:v.fecha,subtotal:v.subtotal,prodId:v.prodId,uid:u.id,
             cliente:v.cliente,proyecto:v.proyecto||''});
         } else if(v.cliente){
-          // No link — try to match by client name
-          var matched=clients.find(function(cl){
-            return fuzzyMatch(cl.nombreEmpresa,v.cliente.toLowerCase());
-          });
+          var matched=matchPorNombre(v.cliente);
           if(matched){
             result.push({ventaId:v.id,clienteId:matched.id,contactoId:'',
               fecha:v.fecha,subtotal:v.subtotal,prodId:v.prodId,uid:u.id,
@@ -16355,11 +18484,20 @@ function getAllVentasForCRM(){
       });
     });
   });
+
+  window._crmVentasMemo=result;
+  // Índice por cliente, para que getClientVentas no filtre la lista completa
+  var porCliente={};
+  result.forEach(function(v){
+    (porCliente[v.clienteId]||(porCliente[v.clienteId]=[])).push(v);
+  });
+  window._crmVentasPorCliente=porCliente;
   return result;
 }
 
 function getClientVentas(clienteId){
-  return getAllVentasForCRM().filter(function(v){return v.clienteId===clienteId;});
+  getAllVentasForCRM();
+  return (window._crmVentasPorCliente||{})[clienteId]||[];
 }
 
 function getClientLastPurchaseDate(clienteId){
@@ -16406,16 +18544,20 @@ function renderTop(elId, selId, type){
   var allVentas=getAllVentasForCRM();
   var filtered=filterVentasByPeriod(allVentas,period);
 
+  // Una sola pasada agrupando por cliente, en vez de un filter por cada uno
+  var idx={};
+  filtered.forEach(function(v){
+    var b=idx[v.clienteId]||(idx[v.clienteId]={dias:{},monto:0});
+    b.dias[v.fecha]=1; b.monto+=(v.subtotal||0);
+  });
   var scores=clients.map(function(cl){
-    var cv=filtered.filter(function(v){return v.clienteId===cl.id;});
-    var freq=new Set(cv.map(function(v){return v.fecha;})).size;
-    var monto=cv.reduce(function(s,v){return s+v.subtotal;},0);
-    return {cl:cl, freq:freq, monto:monto};
+    var b=idx[cl.id];
+    return {cl:cl, freq:b?Object.keys(b.dias).length:0, monto:b?b.monto:0};
   });
 
   var sorted=scores.slice().sort(function(a,b){
     return type==='freq'?(b.freq-a.freq):(b.monto-a.monto);
-  }).slice(0,10).filter(function(s){
+  }).slice(0,20).filter(function(s){
     return type==='freq'?s.freq>0:s.monto>0;
   });
 
@@ -16460,32 +18602,45 @@ function getCRMSemesters(){
   return {s1:{start:s1start,end:s1end,label:label1},s2:{start:s2start,end:s2end,label:label2}};
 }
 
-function renderCRMSemestral(){
-  var canvas=document.getElementById('crm-sem-chart');
-  var summaryEl=document.getElementById('crm-sem-summary');
-  var labelEl=document.getElementById('crm-sem-label');
+// ── Comparativo de frecuencia (motor común para semestral y anual) ──
+// Compara dos períodos y dibuja barras + resumen de quiénes subieron y bajaron.
+// Lo usan renderCRMSemestral() y renderCRMAnual() con distintos períodos.
+function _renderCRMComparativo(cfg){
+  var canvas=document.getElementById(cfg.canvasId);
+  var summaryEl=document.getElementById(cfg.summaryId);
+  var labelEl=document.getElementById(cfg.labelId);
   if(!canvas) return;
 
-  var sems=getCRMSemesters();
-  if(labelEl) labelEl.textContent=sems.s1.label+' vs '+sems.s2.label;
+  var p=cfg.periodos;
+  if(labelEl) labelEl.textContent=p.s1.label+' vs '+p.s2.label;
 
   var clients=getCRMClients();
   var allVentas=getAllVentasForCRM();
 
-  function freqInPeriod(clienteId, start, end){
-    var cv=allVentas.filter(function(v){
-      return v.clienteId===clienteId && new Date(v.fecha)>=start && new Date(v.fecha)<=end;
-    });
-    return new Set(cv.map(function(v){return v.fecha;})).size;
-  }
+  // Una sola pasada sobre las ventas resolviendo AMBOS períodos a la vez.
+  // Antes se filtraba la lista completa dos veces por cada cliente.
+  var a1=p.s1.start.getTime(), b1=p.s1.end.getTime();
+  var a2=p.s2.start.getTime(), b2=p.s2.end.getTime();
+  var idx={};
+  allVentas.forEach(function(v){
+    var t=new Date(v.fecha).getTime();
+    if(isNaN(t)) return;
+    var en1=(t>=a1&&t<=b1), en2=(t>=a2&&t<=b2);
+    if(!en1&&!en2) return;
+    var b=idx[v.clienteId]||(idx[v.clienteId]={d1:{},d2:{}});
+    if(en1) b.d1[v.fecha]=1;
+    if(en2) b.d2[v.fecha]=1;
+  });
 
   var data=clients.map(function(cl){
-    var f1=freqInPeriod(cl.id,sems.s1.start,sems.s1.end);
-    var f2=freqInPeriod(cl.id,sems.s2.start,sems.s2.end);
+    var b=idx[cl.id];
+    var f1=b?Object.keys(b.d1).length:0;
+    var f2=b?Object.keys(b.d2).length:0;
     return {cl:cl,f1:f1,f2:f2,delta:f2-f1};
-  }).filter(function(d){return d.f1>0||d.f2>0;}).sort(function(a,b){return Math.abs(b.delta)-Math.abs(a.delta);}).slice(0,10);
+  }).filter(function(d){return d.f1>0||d.f2>0;})
+    .sort(function(a,b){return Math.abs(b.delta)-Math.abs(a.delta);})
+    .slice(0,cfg.top||10);
 
-  // Draw chart
   var ctx=canvas.getContext('2d');
   var W=canvas.offsetWidth||600; var H=120;
   canvas.width=W; canvas.height=H;
@@ -16502,30 +18657,25 @@ function renderCRMSemestral(){
 
     data.forEach(function(d,i){
       var x=padL+i*(groupW+16);
-      // S1 bar
       var h1=maxVal>0?Math.round(d.f1/maxVal*chartH):0;
       ctx.fillStyle='rgba(88,89,91,.5)';
       ctx.fillRect(x,H-padB-h1,barW,h1);
-      // S2 bar
       var h2=maxVal>0?Math.round(d.f2/maxVal*chartH):0;
       var col=d.delta>0?'rgba(26,158,92,.8)':d.delta<0?'rgba(227,24,55,.8)':'rgba(88,89,91,.4)';
       ctx.fillStyle=col;
       ctx.fillRect(x+barW+gap,H-padB-h2,barW,h2);
-      // Label
       ctx.fillStyle='#3e3f41'; ctx.font='9px Barlow,sans-serif'; ctx.textAlign='center';
       var name=d.cl.nombreEmpresa.split(' ')[0].slice(0,8);
       ctx.fillText(name,x+barW,H-padB+12);
     });
 
-    // Legend
     ctx.fillStyle='rgba(88,89,91,.5)'; ctx.fillRect(W-120,8,12,10);
     ctx.fillStyle='#3e3f41'; ctx.font='10px Barlow,sans-serif'; ctx.textAlign='left';
-    ctx.fillText(sems.s1.label,W-104,17);
+    ctx.fillText(p.s1.label,W-104,17);
     ctx.fillStyle='rgba(26,158,92,.8)'; ctx.fillRect(W-120,22,12,10);
-    ctx.fillText(sems.s2.label,W-104,31);
+    ctx.fillText(p.s2.label,W-104,31);
   }
 
-  // Summary cards
   var increased=data.filter(function(d){return d.delta>0;});
   var decreased=data.filter(function(d){return d.delta<0;});
   if(summaryEl){
@@ -16549,6 +18699,30 @@ function renderCRMSemestral(){
         }).join(''):'<div style="font-size:11px;color:var(--text3)">Ninguno en este período</div>')
       +'</div>';
   }
+}
+
+function renderCRMSemestral(){
+  _renderCRMComparativo({
+    periodos:getCRMSemesters(),
+    canvasId:'crm-sem-chart', summaryId:'crm-sem-summary', labelId:'crm-sem-label', top:10
+  });
+  renderCRMAnual();
+}
+
+// ── Análisis anual: año en curso contra el anterior, ambos completos ──
+function getCRMYears(){
+  var y=new Date().getFullYear();
+  return {
+    s1:{start:new Date(y-1,0,1), end:new Date(y-1,11,31,23,59,59), label:'Año '+(y-1)},
+    s2:{start:new Date(y,0,1),   end:new Date(y,11,31,23,59,59),   label:'Año '+y}
+  };
+}
+
+function renderCRMAnual(){
+  _renderCRMComparativo({
+    periodos:getCRMYears(),
+    canvasId:'crm-anual-chart', summaryId:'crm-anual-summary', labelId:'crm-anual-label', top:10
+  });
 }
 
 // ── Inactive alert ──
@@ -18029,6 +20203,7 @@ var USER_TAB_DEFS = [
   {id:'inventario',  label:'Inventario'},
   {id:'fibraplus',   label:'FibraPlus54'},
   {id:'radar',       label:'Radar Comercial'},
+  {id:'cxc',         label:'Cuentas por cobrar (solo lectura)'},
 ];
 var ADMIN_TAB_DEFS = [
   {id:'overview',       label:'Resumen'},
@@ -18047,6 +20222,7 @@ var ADMIN_TAB_DEFS = [
   {id:'inventario',     label:'Inventario'},
   {id:'fibraplus',      label:'FibraPlus54'},
   {id:'radar',          label:'Radar Comercial'},
+  {id:'cxc',            label:'Cuentas por cobrar (solo lectura)'},
   {id:'facturacion',    label:'Facturación'},
 ];
 
@@ -18097,10 +20273,10 @@ function renderUserTabPermsRow(userId){
     +'<div style="display:flex;flex-wrap:wrap;gap:6px">'
     +tabs.map(function(t){
       // 'radar' para usuarios normales (no admin) es opt-in: requiere true explícito, oculta por defecto
-      // 'facturacion' es opt-in para TODOS (incluidos admins): el superadmin la autoriza uno por uno
-      var esRadarOptIn=(t.id==='radar'&&!targetIsAdmin);
-      var esOptInSiempre=(t.id==='facturacion');
-      var allowed=(esRadarOptIn||esOptInSiempre)?(perms[t.id]===true):(perms[t.id]!==false);
+      // 'cxc' es opt-in para todos los roles; 'radar' solo para usuarios normales
+      // 'facturacion' también es opt-in: el superadmin la autoriza uno por uno
+      var esRadarOptIn=(t.id==='radar'&&!targetIsAdmin)||t.id==='cxc'||t.id==='facturacion';
+      var allowed=esRadarOptIn?(perms[t.id]===true):(perms[t.id]!==false);
       var disabled=targetIsAdmin&&!isSA; // only superadmin can restrict admins
       return '<label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:'+(disabled?'not-allowed':'pointer')+';opacity:'+(disabled?'0.5':'1')+'">'
         +'<input type="checkbox" class="tab-perm-chk" data-uid="'+userId+'" data-tab="'+t.id+'" '
@@ -18120,7 +20296,7 @@ function onTabPermChange(chk){
   var users=getUsers();
   var targetUser=users.find(function(x){return x.id===uid;})||{};
   var targetIsAdmin=targetUser.rol==='admin'||targetUser.rol==='superadmin';
-  var esOptIn=(tab==='radar'&&!targetIsAdmin); // 'radar' para usuarios normales requiere true explícito, no basta con ausencia de 'false'
+  var esOptIn=(tab==='radar'&&!targetIsAdmin)||tab==='cxc'; // requieren true explícito; no basta con ausencia de 'false'
   if(esOptIn){
     if(allowed){ perms[tab]=true; }
     else { delete perms[tab]; }
@@ -18296,7 +20472,7 @@ function addToTrash(reg){
 
   // Notify admins/superadmins
   var admins=getUsers().filter(function(u){return u.rol==='admin'||u.rol==='superadmin';});
-  var typeName={'venta':'venta','gasto':'gasto de proyecto','fondos':'gasto de fondos','cliente_crm':'cliente CRM','inv_item':'ítem de inventario'}[reg.type]||reg.type;
+  var typeName={'venta':'venta','gasto':'gasto de proyecto','fondos':'gasto de fondos','cliente_crm':'cliente CRM','inv_item':'ítem de inventario','cxc_cobrado':'crédito cobrado'}[reg.type]||reg.type;
   var msg='🗑 '+reg.uNombre+' eliminó un registro de '+typeName;
   if(reg.data&&reg.data.nombre) msg+=' ('+reg.data.nombre+')';
   else if(reg.data&&reg.data.proyecto) msg+=' ('+reg.data.proyecto+')';
@@ -18339,6 +20515,14 @@ async function restoreFromTrash(trashId, restoreToUser){
         pd.proyectos.push(lp.proj);
         saveLiqPeriod(lp.subId,lp.periodKey,pd);
       }
+    } else if(item.type==='cxc_cobrado'){
+      // Restaurar crédito cobrado — vuelve a verse en Cuentas por cobrar.
+      // La venta nunca se eliminó: solo se había ocultado de esa pestaña.
+      try{ cxcRestaurarDesdeTrash(item.data.key); }catch(e){ console.error('restaurar cxc:',e); }
+      setTrash(trash.filter(function(t){return t.id!==trashId;}));
+      renderTrashPanel();
+      toast('✅ Crédito de la factura '+(item.data.factura||'(sin número)')+' restaurado');
+      return;
     } else if(item.type==='inv_item'){
       // Restaurar ítem de inventario — reactivar en Supabase
       var invItem=item.data;
@@ -18429,7 +20613,7 @@ function renderTrashPanel(){
     el.innerHTML='<div style="padding:24px;text-align:center;color:var(--text3)">🗑 Papelera vacía — sin registros pendientes</div>';
     return;
   }
-  var TYPE_LABELS={'venta':'Venta','gasto':'Gasto Proyecto','fondos':'Fondos','cliente_crm':'Cliente CRM','inv_item':'Inv/Activo'};
+  var TYPE_LABELS={'venta':'Venta','gasto':'Gasto Proyecto','fondos':'Fondos','cliente_crm':'Cliente CRM','inv_item':'Inv/Activo','cxc_cobrado':'Crédito cobrado'};
   el.innerHTML='<table class="atbl" style="min-width:800px"><thead><tr>'
     +'<th>Fecha borrado</th><th>Usuario</th><th>Tipo</th><th>Registro</th>'
     +'<th>Estado</th><th>Acciones</th></tr></thead><tbody>'
@@ -19026,8 +21210,9 @@ function collectCRM(){
   var clients=getCRMClients();
   var links=getCRMLinks();
   var rows=[];
+  getAllVentasForCRM(); // calcula una sola vez y arma el índice por cliente
   clients.forEach(function(cl){
-    var cv=getAllVentasForCRM().filter(function(v){return v.clienteId===cl.id;});
+    var cv=getClientVentas(cl.id);
     var monto=cv.reduce(function(s,v){return s+v.subtotal;},0);
     var days=new Set(cv.map(function(v){return v.fecha;})).size;
     var last=getClientLastPurchaseDate(cl.id);
@@ -19411,7 +21596,13 @@ function executeRestore(){
 
 
 // ── STARTUP: purga de residuos locales — la app es 100% nube ──
-// Elimina cualquier clave legacy cc_* de localStorage en cada arranque.
+//
+// ⚠ ESTA ES LA ÚNICA PARTE DEL SISTEMA QUE MENCIONA localStorage, y NO guarda
+//   nada: solo BORRA. Recorre el almacenamiento del navegador y elimina claves
+//   legacy (cc_*, concre_*) que dejaron versiones antiguas de la app.
+//   No existe ni un solo setItem/getItem de datos en todo el archivo:
+//   todo vive en Supabase. Si esta función se elimina, la basura vieja
+//   quedaría en los navegadores de los usuarios sin que nadie la limpie.
 (function purgeLocalResidue(){
   try{
     var keysToRemove=[];
@@ -21863,7 +24054,7 @@ const FCK_OPTS=[
   {v:50.66,l:"C50/57*  (f'c=517 kg/cm²  |  MR=45.0 kg/cm²)"},
 ];
 
-// ── PROYECTOS — Supabase (compartido por todos) + localStorage fallback ─────
+// ── PROYECTOS — Supabase (compartido por todos, sin almacenamiento local) ─────
 const _LS='concre_fp54_v3';
 
 // Cache en memoria para evitar múltiples lecturas
@@ -25078,7 +27269,6 @@ window.initCalcCONCRE=initCalcCONCRE;
 
 
 
-
 </script>
 
 <!-- ════════════════════════════════════════════════════════════════════════
@@ -27980,6 +30170,11 @@ window.initFacturacion=async function(){
               </div>
               <button class="modal-btn save" style="white-space:nowrap" onclick="vacAdminProgramar()">📅 Programar</button>
             </div>
+            <div style="margin-top:10px">
+              <div class="form-label" style="margin-bottom:5px">Nota (opcional) — queda guardada en el historial del colaborador</div>
+              <input type="text" class="form-inp" id="vac-prog-nota" maxlength="300"
+                placeholder="Ej. Cierre de planta por fin de año" style="width:100%">
+            </div>
             <div id="vac-prog-preview" style="margin-top:10px;font-size:12px;color:var(--text3)"></div>
           </div>
 
@@ -28149,6 +30344,13 @@ window.initFacturacion=async function(){
         </div>
 
           <!-- ADMIN VENTAS SECTION -->
+
+          <div id="sec-auxeq" class="admin-section">
+            <div id="auxEquiposRoot"></div>
+          </div>
+          <div id="sec-cxc" class="admin-section">
+            <div id="cxcAdminRoot"></div>
+          </div>
           <div id="sec-ventas" class="admin-section">
           <div class="page-title">Ventas y Comisiones</div>
           <div class="page-sub">Control de ventas, comisiones y proyectos por colaborador</div>
@@ -28183,7 +30385,9 @@ window.initFacturacion=async function(){
                 <div><span class="vf-label">Cantidad / M²</span><input type="number" class="vf-inp" id="avf-cantidad" min="0" step="any" oninput="calcAdminVentaPreview()"></div>
                 <div><span class="vf-label" id="avf-precio-label">Precio unitario ₡</span><input type="text" class="vf-inp" id="avf-precio" placeholder="0" oninput="fmtInp(this);calcAdminVentaPreview()"></div>
                 <div><span class="vf-label">IVA</span><select class="vf-sel" id="avf-iva" onchange="calcAdminVentaPreview()"><option value="no">Sin IVA</option><option value="13">13%</option></select></div>
-                <div><span class="vf-label">Pago</span><select class="vf-sel" id="avf-tipo-pago"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
+                <div><span class="vf-label">Pago</span><select class="vf-sel" id="avf-tipo-pago" onchange="onAdminTipoPagoChange()"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
+                <div id="avf-plazo-wrap" style="display:none"><span class="vf-label">Plazo crédito (días) *</span><input type="number" class="vf-inp" id="avf-plazo" min="1" placeholder="30" value="30"></div>
+                <div id="avf-fechafact-wrap" style="display:none"><span class="vf-label">Fecha de facturación *</span><input type="date" class="vf-inp" id="avf-fecha-fact"></div>
               </div>
               <!-- Moneda switch admin -->
               <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;padding:8px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
@@ -28393,35 +30597,8 @@ window.initFacturacion=async function(){
             </table>
           </div>
 
-          <!-- CXC / Credits tracking -->
-          <div class="admin-table-wrap" style="margin-bottom:14px">
-            <div class="admin-table-hdr" style="border-bottom-color:var(--amber)">
-              <span class="ath-title">⏳ Créditos pendientes de cobro</span>
-              <span style="font-size:11px;color:rgba(255,255,255,.5)">Histórico completo — todos los meses y años · desaparecen 7 días después de marcar como pagado</span>
-            </div>
-            <table class="atbl" style="min-width:1000px">
-              <thead><tr>
-                <th>Colaborador</th><th>Fecha</th><th>Factura</th><th>Producto</th><th>Cliente</th>
-                <th>Subtotal s/IVA</th><th>Total con IVA</th><th>Vencimiento</th><th>Estado</th><th>Notas</th><th>Acción</th>
-              </tr></thead>
-              <tbody id="av-cxc-body"></tbody>
-            </table>
-          </div>
-
-          <!-- Saldos por cliente con abonos -->
-          <div class="admin-table-wrap" style="margin-bottom:14px">
-            <div class="admin-table-hdr" style="border-bottom-color:var(--red)">
-              <span class="ath-title">🧾 Saldos por cliente — cuentas por cobrar</span>
-              <span style="font-size:11px;color:rgba(255,255,255,.5)">Deuda histórica acumulada por cliente · aplique abonos parciales</span>
-            </div>
-            <table class="atbl" style="min-width:1000px">
-              <thead><tr>
-                <th>Cliente</th><th>Facturas</th><th>Subtotal s/IVA</th><th>Total con IVA</th>
-                <th>Abonos aplicados</th><th>Saldo pendiente</th><th style="text-align:center">Aplicar abono</th>
-              </tr></thead>
-              <tbody id="av-saldos-cliente-body"></tbody>
-            </table>
-          </div>
+          <!-- Las tablas de Créditos pendientes de cobro y Saldos por cliente
+               se movieron a la pestaña "Cuentas por cobrar" (sec-cxc). -->
 
           <!-- Full sales detail -->
           <div class="admin-table-wrap" style="overflow-x:auto;position:relative">
@@ -28816,7 +30993,7 @@ window.initFacturacion=async function(){
               <!-- Top periodicidad -->
               <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden">
                 <div style="background:var(--gray-dark);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid var(--red)">
-                  <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">🏆 Top 10 — Mayor frecuencia</span>
+                  <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">🏆 Top 20 — Mayor frecuencia</span>
                   <select id="crm-top-freq-period" class="apb-sel" style="font-size:10px;padding:3px 6px" onchange="renderCRMTops()">
                     <option value="month">Este mes</option>
                     <option value="quarter">Trimestre</option>
@@ -28825,12 +31002,12 @@ window.initFacturacion=async function(){
                     <option value="all">Acumulado</option>
                   </select>
                 </div>
-                <div id="crm-top-freq" style="padding:10px"></div>
+                <div id="crm-top-freq" style="padding:10px;max-height:420px;overflow-y:auto"></div>
               </div>
               <!-- Top monto -->
               <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden">
                 <div style="background:var(--gray-dark);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid var(--red)">
-                  <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">💰 Top 10 — Mayor monto</span>
+                  <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">💰 Top 20 — Mayor monto</span>
                   <select id="crm-top-monto-period" class="apb-sel" style="font-size:10px;padding:3px 6px" onchange="renderCRMTops()">
                     <option value="month">Este mes</option>
                     <option value="quarter">Trimestre</option>
@@ -28839,7 +31016,7 @@ window.initFacturacion=async function(){
                     <option value="all">Acumulado</option>
                   </select>
                 </div>
-                <div id="crm-top-monto" style="padding:10px"></div>
+                <div id="crm-top-monto" style="padding:10px;max-height:420px;overflow-y:auto"></div>
               </div>
             </div>
 
@@ -28852,6 +31029,18 @@ window.initFacturacion=async function(){
               <div style="padding:14px">
                 <canvas id="crm-sem-chart" height="120" style="width:100%;max-width:100%"></canvas>
                 <div id="crm-sem-summary" style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px"></div>
+              </div>
+            </div>
+
+            <!-- Annual analysis -->
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--sh);overflow:hidden;margin-bottom:16px">
+              <div style="background:var(--gray-dark);padding:10px 14px;border-bottom:2px solid var(--red);display:flex;align-items:center;justify-content:space-between">
+                <span style="font-family:var(--cond);font-size:13px;font-weight:800;color:#fff">📅 Análisis anual de frecuencia</span>
+                <span id="crm-anual-label" style="font-size:11px;color:rgba(255,255,255,.6)"></span>
+              </div>
+              <div style="padding:14px">
+                <canvas id="crm-anual-chart" height="120" style="width:100%;max-width:100%"></canvas>
+                <div id="crm-anual-summary" style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px"></div>
               </div>
             </div>
 
@@ -29574,8 +31763,12 @@ window.initFacturacion=async function(){
               </select>
             </div>
             <div id="vf-plazo-wrap" style="display:none">
-              <span class="vf-label">Plazo crédito (días)</span>
+              <span class="vf-label">Plazo crédito (días) *</span>
               <input type="number" class="vf-inp" id="vf-plazo" min="1" placeholder="30" value="30">
+            </div>
+            <div id="vf-fechafact-wrap" style="display:none">
+              <span class="vf-label">Fecha de facturación *</span>
+              <input type="date" class="vf-inp" id="vf-fecha-fact">
             </div>
           </div>
 
@@ -29763,6 +31956,9 @@ window.initFacturacion=async function(){
 <!-- GASTOS DE PROYECTO MODULE -->
 <div id="preciosUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
   <div id="preciosUserRoot" style="flex:1;padding:16px 20px;width:100%;max-width:100%;box-sizing:border-box"></div>
+</div>
+<div id="cxcUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
+  <div id="cxcUserRoot" style="flex:1;padding:16px 20px;width:100%;max-width:100%;box-sizing:border-box"></div>
 </div>
 <div id="proyectosUserModule" style="display:none;flex:1;min-height:calc(100vh - 60px);width:100%">
   <div id="proyectosUserRoot" style="flex:1;padding:16px 20px;width:100%;max-width:100%;box-sizing:border-box"></div>
