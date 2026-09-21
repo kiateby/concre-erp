@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260921111615';
+var APP_BUILD='20260921113319';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -23189,7 +23189,10 @@ function invShowMovDetail(movId){
     +(mov.nombre_vendedor?'<tr><td style="padding:5px 0;color:var(--text3)">Vendedor</td><td>'+mov.nombre_vendedor+'</td></tr>':'')
     +'<tr><td style="padding:5px 0;color:var(--text3)">Nota</td><td>'+mov.nota+'</td></tr>'
     +'<tr><td style="padding:5px 0;color:var(--text3)">Fecha</td><td>'+invDateFmt(mov.created_at)+'</td></tr>'
-    +'</tbody></table></div>';
+    +'</tbody></table>'
+    // Bitácora de ediciones: qué cambió, quién y cuándo
+    +(function(){ try{ return (window.INVED&&INVED.leyenda)?INVED.leyenda(mov):''; }catch(e){ return ''; } })()
+    +'</div>';
 
   // Show as modal or inline
   var m=document.getElementById('invMovDetailModal');
@@ -23197,7 +23200,11 @@ function invShowMovDetail(movId){
   m.innerHTML='<div class="modal" style="width:500px;max-width:96vw">'
     +'<div class="modal-hdr"><span class="modal-title">Detalle de Movimiento</span><button class="modal-close" onclick="document.getElementById(\'invMovDetailModal\').classList.add(\'hidden\')">✕</button></div>'
     +'<div class="modal-body">'+html+'</div>'
-    +'<div class="modal-footer"><button class="modal-btn cancel" onclick="document.getElementById(\'invMovDetailModal\').classList.add(\'hidden\')">Cerrar</button></div>'
+    +'<div class="modal-footer">'
+      +'<button class="modal-btn cancel" onclick="document.getElementById(\'invMovDetailModal\').classList.add(\'hidden\')">Cerrar</button>'
+      // Modificar: solo lo ve quien registró la salida, o el superadmin
+      +(function(){ try{ return (window.INVED&&INVED.boton)?INVED.boton(mov):''; }catch(e){ return ''; } })()
+    +'</div>'
     +'</div>';
   m.classList.remove('hidden');
 }
@@ -27272,6 +27279,434 @@ window.initCalcCONCRE=initCalcCONCRE;
 </script>
 
 <!-- ════════════════════════════════════════════════════════════════════════
+     INVENTARIO · EDICIÓN DE SALIDAS — bloque de guion propio.
+     Aislado del script principal: un error aquí no tumba el resto.
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+// INVENTARIO — Edición de salidas con bitácora
+//
+// Quién puede: quien registró la salida, y el superadmin todas.
+// Qué queda: una bitácora con el dato anterior, el nuevo, quién lo cambió y
+// cuándo. Se guarda el histórico completo, no solo el último cambio.
+//
+// Va en su propio bloque de guion para que un error aquí no afecte al resto
+// del sistema, y al revés. Solo expone window.INVED.
+// Requiere la columna inv_movimientos.ediciones (05_inventario_ediciones.sql).
+// ══════════════════════════════════════════════════════════════════════════════
+(function(){
+'use strict';
+
+var S = { mov:null, borrador:null };
+
+function _n(x){ var v=parseFloat(x); return isNaN(v)?0:v; }
+function _esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function _toast(m){ try{ toast(m); }catch(e){ console.log(m); } }
+function _fmt(n){ try{ return invFmt(n); }catch(e){ return String(n); } }
+function _fecha(iso){ try{ return invDateFmt(iso); }catch(e){ return String(iso||''); } }
+
+var CATS_SALIDA = [
+  {v:'uso_propio',   lbl:'Uso propio de negocio'},
+  {v:'venta_cliente',lbl:'Venta cliente'},
+  {v:'ajuste',       lbl:'Ajuste'},
+];
+
+// ── ¿Quién puede editar este movimiento? ────────────────────────────────────
+function puedeEditar(mov){
+  if(!SESSION || !mov) return false;
+  if(mov.tipo!=='salida') return false;             // solo salidas, como se pidió
+  if(SESSION.rol==='superadmin') return true;       // el superadmin, todas
+  return mov.uid_responsable===SESSION.id;          // los demás, solo las suyas
+}
+function motivoNoPuede(mov){
+  if(!mov) return '';
+  if(mov.tipo!=='salida') return 'Solo se pueden modificar las salidas.';
+  return 'Solo puede modificarla '+(mov.nombre_responsable||mov.uid_responsable)
+    +', que fue quien la registró, o el superadmin.';
+}
+
+// ── La leyenda de la bitácora, para mostrar en el detalle ───────────────────
+function leyenda(mov){
+  var eds=(mov&&mov.ediciones)||[];
+  if(!eds.length) return '';
+  return '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">'
+    +'<div style="font-size:10px;font-weight:900;color:var(--text3);text-transform:uppercase;'
+    +'letter-spacing:.07em;margin-bottom:8px">Historial de cambios ('+eds.length+')</div>'
+    +eds.slice().reverse().map(function(e){
+      return '<div style="background:var(--surface2);border-left:3px solid var(--amber);'
+        +'border-radius:6px;padding:8px 11px;margin-bottom:6px;font-size:11.5px;line-height:1.6">'
+        +'<div style="font-weight:800">'+_esc(e.nombre||e.uid||'—')
+        +' <span style="font-weight:600;color:var(--text3)">· '+_fecha(e.ts)+'</span></div>'
+        +(e.cambios||[]).map(function(c){
+            return '<div style="color:var(--text2)">'+_esc(c.etiqueta||c.campo)+': '
+              +'<span style="text-decoration:line-through;color:var(--text3)">'
+              +_esc(c.antes===''||c.antes==null?'(vacío)':c.antes)+'</span>'
+              +' → <b>'+_esc(c.despues===''||c.despues==null?'(vacío)':c.despues)+'</b></div>';
+          }).join('')
+        +(e.stock_ajuste
+            ? '<div style="color:var(--text3);font-size:10.5px;margin-top:3px">'
+              +'Stock corregido en '+(e.stock_ajuste>0?'+':'')+_fmt(e.stock_ajuste)+'</div>'
+            : '')
+        +(e.nota_venta
+            ? '<div style="color:var(--amber);font-size:10.5px;margin-top:3px">'+_esc(e.nota_venta)+'</div>'
+            : '')
+        +'</div>';
+    }).join('')
+    +'</div>';
+}
+
+// ── El botón que se inserta en el detalle del movimiento ───────────────────
+function boton(mov){
+  if(!mov) return '';
+  if(puedeEditar(mov)){
+    return '<button class="modal-btn" style="background:var(--blue);color:#fff;border:none"'
+      +' onclick="INVED.abrir(\''+mov.id+'\')">✏ Modificar</button>';
+  }
+  if(mov.tipo==='salida'){
+    return '<span style="font-size:10.5px;color:var(--text3);align-self:center;max-width:280px;'
+      +'line-height:1.45">'+_esc(motivoNoPuede(mov))+'</span>';
+  }
+  return '';
+}
+
+// ── Formulario ──────────────────────────────────────────────────────────────
+function abrir(movId){
+  var mov=(window._invMovs||[]).find(function(m){ return m.id===movId; });
+  if(!mov){ _toast('Movimiento no encontrado'); return; }
+  if(!puedeEditar(mov)){ _toast('⚠ '+motivoNoPuede(mov)); return; }
+
+  S.mov=mov;
+  // Se separa la boleta de la nota: al guardar se vuelven a unir igual que
+  // cuando se creó el movimiento (BOL:xxx | nota | Vendedor:xxx)
+  S.borrador={
+    cantidad:_n(mov.cantidad),
+    categoria:mov.categoria||'uso_propio',
+    boleta:mov.boleta_salida||'',
+    nota:_notaLimpia(mov),
+    uid_vendedor:mov.uid_vendedor||'',
+  };
+
+  var ov=document.createElement('div');
+  ov.id='invEdModal'; ov.className='modal-overlay';
+  document.body.appendChild(ov);
+  render();
+}
+
+// Devuelve la nota sin los prefijos que agrega el sistema
+function _notaLimpia(mov){
+  var n=String(mov.nota||'');
+  n=n.replace(/^BOL:[^|]*\|?\s*/,'');
+  n=n.replace(/\s*\|\s*Vendedor:.*$/,'');
+  return n.trim();
+}
+
+function render(){
+  var ov=document.getElementById('invEdModal'); if(!ov) return;
+  var mov=S.mov, b=S.borrador;
+  var item=(window._invItems||[]).find(function(i){ return i.id===mov.item_id; })||{nombre:mov.item_id};
+  var lote=mov.lote_id?(window._invLotes||[]).find(function(l){ return l.id===mov.lote_id; }):null;
+
+  // Stock disponible ahora mismo, y a cuánto quedaría con el cambio
+  var stockAhora=lote?_n(lote.cantidad_actual):_n(item.cantidad);
+  var ajuste=_n(mov.cantidad)-_n(b.cantidad);      // salida: menos cantidad = más stock
+  var stockQueda=stockAhora+ajuste;
+
+  var usuarios=[];
+  try{ usuarios=getUsers()||[]; }catch(e){ usuarios=[]; }
+
+  // ¿Hay una venta generada por esta salida?
+  var venta=_ventaLigada(mov);
+
+  ov.innerHTML='<div class="modal" style="width:560px;max-width:96vw">'
+    +'<div class="modal-hdr"><span class="modal-title">Modificar salida '+_esc(mov.id)+'</span>'
+      +'<button class="modal-close" onclick="INVED.cerrar()">✕</button></div>'
+    +'<div class="modal-body">'
+      +'<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin-bottom:14px">'
+        +'Ítem: <b style="color:var(--text)">'+_esc(item.nombre)+'</b>'
+        +(lote?' · Lote: <b style="color:var(--text)">'+_esc(lote.nombre)+'</b>':'')
+        +'<br>Registrada por '+_esc(mov.nombre_responsable||mov.uid_responsable)
+        +' el '+_fecha(mov.created_at)+'.'
+        +'<br>Todo cambio queda anotado con el dato anterior y su nombre.'
+      +'</div>'
+
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px">'
+        // Va como texto con teclado numérico, no como input[type=number]: el
+        // recuadro se vuelve a dibujar en cada tecla para recalcular el stock,
+        // y en un campo numérico el navegador no permite reponer el cursor
+        // (setSelectionRange lanza InvalidStateError). Además así no se borra
+        // el punto mientras se escribe "1.5".
+        +_campo('Cantidad *','<input type="text" inputmode="decimal" id="invEdCant" class="liq-inp"'
+          +' style="width:100%" value="'+_esc(String(b.cantidad))+'"'
+          +' oninput="INVED.set(\'cantidad\',this.value)">')
+        +_campo('Categoría *','<select class="liq-inp" style="width:100%" onchange="INVED.set(\'categoria\',this.value)">'
+          +CATS_SALIDA.map(function(c){
+              return '<option value="'+c.v+'"'+(b.categoria===c.v?' selected':'')+'>'+c.lbl+'</option>';
+            }).join('')
+          +'</select>')
+        +_campo('N.º de boleta *','<input class="liq-inp" style="width:100%" value="'+_esc(b.boleta)+'"'
+          +' oninput="INVED.set(\'boleta\',this.value)">')
+        +(b.categoria==='venta_cliente'
+          ? _campo('Vendedor *','<select class="liq-inp" style="width:100%" onchange="INVED.set(\'uid_vendedor\',this.value)">'
+              +'<option value="">— escoja —</option>'
+              +usuarios.map(function(u){
+                  return '<option value="'+u.id+'"'+(b.uid_vendedor===u.id?' selected':'')+'>'+_esc(u.nombre)+'</option>';
+                }).join('')
+              +'</select>')
+          : '')
+      +'</div>'
+      +'<div style="height:11px"></div>'
+      +_campo('Nota *','<textarea class="liq-inp" style="width:100%;min-height:60px"'
+        +' oninput="INVED.set(\'nota\',this.value)">'+_esc(b.nota)+'</textarea>')
+
+      // Efecto en el stock
+      +'<div style="margin-top:14px;padding:10px 12px;border-radius:8px;'
+        +(stockQueda<0?'background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.35)'
+                      :'background:var(--surface2);border:1px solid var(--border)')
+        +';font-size:12px;line-height:1.7">'
+        +'<b>Efecto en el stock</b><br>'
+        +'Disponible ahora: <b>'+_fmt(stockAhora)+'</b> '+_esc(item.unidad||'')+'<br>'
+        +(ajuste===0
+          ? '<span style="color:var(--text3)">La cantidad no cambia: el stock queda igual.</span>'
+          : 'Con este cambio: <b>'+_fmt(stockQueda)+'</b> '+_esc(item.unidad||'')
+            +' <span style="color:var(--text3)">('+(ajuste>0?'+':'')+_fmt(ajuste)+')</span>')
+        +(stockQueda<0
+          ? '<br><b style="color:var(--red)">⚠ El stock quedaría negativo. Baje la cantidad.</b>'
+          : '')
+      +'</div>'
+
+      // Aviso si la salida generó una venta
+      +(venta
+        ? '<div style="margin-top:11px;padding:10px 12px;border-radius:8px;'
+          +'background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);'
+          +'font-size:11.5px;line-height:1.6">'
+          +'<b>Esta salida generó una línea en Ventas</b><br>'
+          +(venta.v.estado==='incompleta'
+            ? 'Sigue incompleta, así que su cantidad se corrige junto con esta salida.'
+            : 'Ya fue completada con precios'+(_n(venta.v.comision)>0?' y comisión':'')+', '
+              +'así que <b>no se toca</b>: si la cantidad cambia, ajústela usted en Ventas '
+              +'(vendedor: '+_esc(venta.nombreU)+').')
+          +'</div>'
+        : '')
+
+      +leyenda(mov)
+    +'</div>'
+    +'<div class="modal-footer">'
+      +'<button class="modal-btn cancel" onclick="INVED.cerrar()">Cancelar</button>'
+      +'<button class="modal-btn" style="background:var(--blue);color:#fff;border:none"'
+      +(stockQueda<0?' disabled style="opacity:.5"':'')
+      +' onclick="INVED.guardar()">💾 Guardar cambios</button>'
+    +'</div></div>';
+  ov.classList.remove('hidden');
+}
+
+function _campo(lbl, ctrl){
+  return '<div><span class="liq-label">'+_esc(lbl)+'</span>'+ctrl+'</div>';
+}
+
+// Busca la venta que generó esta salida (invMovId), sin modificar nada
+function _ventaLigada(mov){
+  if(!mov.uid_vendedor) return null;
+  try{
+    var vd=getVentasData(mov.uid_vendedor)||{};
+    var ks=Object.keys(vd);
+    for(var i=0;i<ks.length;i++){
+      var arr=(vd[ks[i]]&&vd[ks[i]].ventas)||[];
+      for(var j=0;j<arr.length;j++){
+        if(arr[j].invMovId===mov.id){
+          var u=(getUsers()||[]).find(function(x){ return x.id===mov.uid_vendedor; });
+          return {v:arr[j], mk:ks[i], uid:mov.uid_vendedor, nombreU:(u&&u.nombre)||mov.uid_vendedor};
+        }
+      }
+    }
+  }catch(e){ console.warn('INVED._ventaLigada:',e); }
+  return null;
+}
+
+function set(campo, val){
+  // La cantidad se guarda tal como se escribió; todos los cálculos la pasan
+  // por _n(), así que "1." o "" no rompen nada y no estorban al escribir.
+  S.borrador[campo]=val;
+  // La cantidad y la categoría cambian lo que se muestra (stock, vendedor)
+  if(campo==='cantidad'||campo==='categoria'){
+    render();
+    if(campo==='cantidad'){
+      var inp=document.getElementById('invEdCant');
+      if(inp){
+        try{
+          inp.focus();
+          var n=String(inp.value||'').length;
+          inp.setSelectionRange(n,n);
+        }catch(e){}
+      }
+    }
+  }
+}
+
+function cerrar(){
+  var ov=document.getElementById('invEdModal');
+  if(ov) ov.remove();
+  S.mov=null; S.borrador=null;
+}
+
+// ── Guardar ─────────────────────────────────────────────────────────────────
+async function guardar(){
+  var mov=S.mov, b=S.borrador;
+  if(!mov) return;
+  if(!puedeEditar(mov)){ _toast('⚠ '+motivoNoPuede(mov)); return; }
+
+  var cant=_n(b.cantidad);
+  if(cant<=0){ _toast('⚠ La cantidad debe ser mayor a 0'); return; }
+  if(!String(b.boleta||'').trim()){ _toast('⚠ El N.º de boleta es obligatorio'); return; }
+  if(!String(b.nota||'').trim()){ _toast('⚠ La nota es obligatoria'); return; }
+  if(b.categoria==='venta_cliente' && !b.uid_vendedor){
+    _toast('⚠ Escoja el vendedor'); return;
+  }
+
+  var item=(window._invItems||[]).find(function(i){ return i.id===mov.item_id; });
+  var lote=mov.lote_id?(window._invLotes||[]).find(function(l){ return l.id===mov.lote_id; }):null;
+  if(!item){ _toast('⚠ No se encontró el ítem'); return; }
+
+  var stockAhora=lote?_n(lote.cantidad_actual):_n(item.cantidad);
+  var ajuste=_n(mov.cantidad)-cant;              // salida: menos cantidad = más stock
+  var stockNuevo=stockAhora+ajuste;
+  if(stockNuevo<0){ _toast('⚠ El stock quedaría negativo'); return; }
+
+  // ── Qué cambió, para la bitácora ──
+  var usuarios=[];
+  try{ usuarios=getUsers()||[]; }catch(e){}
+  var nomVendAntes=mov.nombre_vendedor||'';
+  var vendNuevo=b.uid_vendedor?usuarios.find(function(u){ return u.id===b.uid_vendedor; }):null;
+  var nomVendNuevo=vendNuevo?vendNuevo.nombre:'';
+  var catLbl=function(v){ var c=CATS_SALIDA.find(function(x){ return x.v===v; }); return c?c.lbl:(v||'—'); };
+
+  var cambios=[];
+  if(_n(mov.cantidad)!==cant)
+    cambios.push({campo:'cantidad', etiqueta:'Cantidad', antes:_fmt(mov.cantidad), despues:_fmt(cant)});
+  if((mov.categoria||'')!==b.categoria)
+    cambios.push({campo:'categoria', etiqueta:'Categoría', antes:catLbl(mov.categoria), despues:catLbl(b.categoria)});
+  if((mov.boleta_salida||'')!==String(b.boleta).trim())
+    cambios.push({campo:'boleta_salida', etiqueta:'N.º de boleta', antes:mov.boleta_salida||'', despues:String(b.boleta).trim()});
+  if(_notaLimpia(mov)!==String(b.nota).trim())
+    cambios.push({campo:'nota', etiqueta:'Nota', antes:_notaLimpia(mov), despues:String(b.nota).trim()});
+  if((mov.uid_vendedor||'')!==(b.uid_vendedor||''))
+    cambios.push({campo:'uid_vendedor', etiqueta:'Vendedor', antes:nomVendAntes||'(ninguno)', despues:nomVendNuevo||'(ninguno)'});
+
+  if(!cambios.length){ _toast('No hay nada que cambiar'); return; }
+
+  // ── La venta ligada: solo si sigue incompleta ──
+  var venta=_ventaLigada(mov);
+  var notaVenta='';
+  var tocarVenta=false;
+  if(venta && _n(mov.cantidad)!==cant){
+    if(venta.v.estado==='incompleta'){
+      tocarVenta=true;
+      notaVenta='La línea de venta incompleta pasó de '+_fmt(venta.v.cantidad)+' a '+_fmt(cant)+'.';
+    } else {
+      notaVenta='La venta ligada ya estaba completada y NO se modificó — ajustar en Ventas ('
+        +venta.nombreU+').';
+    }
+  }
+
+  // ── Reconstruir la nota como la arma el sistema al crear el movimiento ──
+  var notaFull='BOL:'+String(b.boleta).trim();
+  if(String(b.nota).trim()) notaFull+=' | '+String(b.nota).trim();
+  if(b.uid_vendedor) notaFull+=' | Vendedor:'+(nomVendNuevo||b.uid_vendedor);
+
+  var entrada={
+    ts:new Date().toISOString(),
+    uid:(SESSION&&SESSION.id)||'',
+    nombre:(SESSION&&SESSION.nombre)||'',
+    cambios:cambios,
+    stock_ajuste:ajuste
+  };
+  if(notaVenta) entrada.nota_venta=notaVenta;
+  var eds=((mov.ediciones)||[]).concat([entrada]);
+
+  // cantidad_despues del propio movimiento, para que la fila quede coherente
+  var despuesNuevo=_n(mov.cantidad_antes)-cant;
+
+  var row={
+    cantidad:cant,
+    categoria:b.categoria,
+    boleta_salida:String(b.boleta).trim(),
+    nota:notaFull,
+    uid_vendedor:b.uid_vendedor||'',
+    nombre_vendedor:nomVendNuevo||'',
+    cantidad_despues:despuesNuevo,
+    ediciones:eds
+  };
+
+  try{
+    var r=await DB.from('inv_movimientos').update(row).eq('id',mov.id);
+    if(r.error) throw r.error;
+
+    // Stock: el lote manda, y el ítem se recalcula desde sus lotes activos
+    if(lote){
+      var rl=await DB.from('inv_lotes')
+        .update({cantidad_actual:stockNuevo, updated_at:new Date().toISOString()})
+        .eq('id',lote.id);
+      if(rl.error) throw rl.error;
+      lote.cantidad_actual=stockNuevo;
+      var total=(window._invLotes||[])
+        .filter(function(l){ return l.item_id===item.id && l.estado==='activo'; })
+        .reduce(function(s,l){ return s+_n(l.cantidad_actual); },0);
+      var ri=await DB.from('inv_items')
+        .update({cantidad:total, updated_at:new Date().toISOString()}).eq('id',item.id);
+      if(ri.error) throw ri.error;
+      item.cantidad=total;
+    } else if(ajuste!==0){
+      var ri2=await DB.from('inv_items')
+        .update({cantidad:stockNuevo, updated_at:new Date().toISOString()}).eq('id',item.id);
+      if(ri2.error) throw ri2.error;
+      item.cantidad=stockNuevo;
+    }
+
+    // Refrescar el movimiento en memoria
+    Object.keys(row).forEach(function(k){ mov[k]=row[k]; });
+
+    // La venta ligada, solo si seguía incompleta
+    if(tocarVenta){
+      try{
+        venta.v.cantidad=cant;
+        venta.v.invCantidad=cant;
+        var vd=getVentasData(venta.uid);
+        setVentasData(venta.uid, vd);
+        _saveSingleVenta(venta.uid, venta.v, venta.mk);
+      }catch(e){ console.warn('INVED: no se pudo actualizar la venta ligada:',e); }
+    }
+
+    // Alerta de mínimo, con el stock nuevo
+    try{
+      var stockFinal=lote?_n(item.cantidad):stockNuevo;
+      if(stockFinal<=_n(item.cantidad_minima)) await invCheckMinimo(item.id, stockFinal, item.cantidad_minima);
+    }catch(e){}
+
+    cerrar();
+    _toast('✅ Salida modificada — el cambio quedó anotado en su historial');
+    if(notaVenta && !tocarVenta) setTimeout(function(){ _toast('⚠ '+notaVenta); }, 2600);
+
+    // Re-render de lo que esté a la vista, sin cambiar de pestaña
+    try{ if(typeof initInventario==='function') initInventario(); }catch(e){}
+    try{ if(typeof renderVentasUser==='function') renderVentasUser(); }catch(e){}
+  }catch(e){
+    console.error('INVED.guardar:',e);
+    var msg=String((e&&e.message)||e);
+    if(/ediciones|column|schema cache/i.test(msg)){
+      _toast('⚠ Falta ejecutar 05_inventario_ediciones.sql en Supabase');
+    } else {
+      _toast('Error al guardar: '+msg);
+    }
+  }
+}
+
+window.INVED={ abrir:abrir, cerrar:cerrar, set:set, guardar:guardar,
+               puedeEditar:puedeEditar, boton:boton, leyenda:leyenda };
+})();
+
+</script>
+
+<!-- ════════════════════════════════════════════════════════════════════════
      MÓDULO FACTURACIÓN — va en su propio bloque de guion, a propósito.
      Aparte del script principal para que un error en cualquier otra parte
      del sistema no lo deje sin cargar, y para que un error suyo no afecte
@@ -27311,6 +27746,9 @@ var S = {
   fEstado: 'todas',
   fBusca: '',
   fCat: '',            // buscador de la subpestaña Catálogo
+  docOpc: false,       // ¿opcionales del receptor desplegados en la proforma?
+  fDesde: '',          // rango de fechas de la lista de proformas
+  fHasta: '',
   clientes: [],        // clientes de facturación (tabla propia)
   fCli: '',            // buscador de la subpestaña Clientes
   fCliRevisar: false,  // filtro "solo los que hay que revisar"
@@ -27572,15 +28010,71 @@ function renderBody(){
 }
 
 // ── LISTA DE PROFORMAS ──────────────────────────────────────────────────────
+// Puntaje de coincidencia de un documento contra lo buscado.
+// Devuelve 0 si no coincide. Cuanto más alto, mejor la coincidencia, y con eso
+// se ORDENA el resultado: primero lo que más se parece a lo que se escribió.
+function puntajeDoc(d, q, qDig){
+  if(!q && !qDig) return 1;
+  var cons = _norm(d.consecutivo);
+  var nom  = _norm(d.cliente_nombre);
+  var proy = _norm(d.proyecto);
+  var ced  = String(d.cliente_identificacion||'').replace(/\D/g,'');
+  var mejor = 0;
+
+  // ── Cédula: se compara solo con dígitos, así da igual cómo se escriba ──
+  if(qDig && ced){
+    if(ced === qDig) mejor = Math.max(mejor, 100);          // cédula exacta
+    else if(ced.indexOf(qDig) === 0) mejor = Math.max(mejor, 85);  // empieza igual
+    else if(ced.indexOf(qDig) > 0) mejor = Math.max(mejor, 60);    // la contiene
+  }
+  if(!q) return mejor;
+
+  // ── Número de documento ──
+  if(cons === q) mejor = Math.max(mejor, 98);
+  else if(cons.indexOf(q) === 0) mejor = Math.max(mejor, 80);
+  else if(cons.indexOf(q) >= 0) mejor = Math.max(mejor, 55);
+
+  // ── Nombre del cliente: exacto, empieza, contiene, o todas las palabras ──
+  if(nom === q) mejor = Math.max(mejor, 95);
+  else if(nom.indexOf(q) === 0) mejor = Math.max(mejor, 78);
+  else if(nom.indexOf(q) >= 0) mejor = Math.max(mejor, 62);
+  else {
+    var tks = q.split(' ').filter(Boolean);
+    if(tks.length > 1 && tks.every(function(t){ return nom.indexOf(t) >= 0; }))
+      mejor = Math.max(mejor, 50);
+  }
+
+  // ── Proyecto: vale menos que el cliente ──
+  if(proy.indexOf(q) === 0) mejor = Math.max(mejor, 40);
+  else if(proy.indexOf(q) >= 0) mejor = Math.max(mejor, 30);
+
+  return mejor;
+}
+
 function renderLista(b){
   var docs=docsEmpresa();
   var q=_norm(S.fBusca).trim();
+  var qDig=String(S.fBusca||'').replace(/\D/g,'');   // para buscar por cédula
+  if(qDig.length<3) qDig='';                          // 1-2 dígitos no discriminan
+
   var vis=docs.filter(function(d){
     if(S.fEstado!=='todas' && d.estado!==S.fEstado) return false;
-    if(!q) return true;
-    return _norm(String(d.consecutivo||'')+' '+String(d.cliente_nombre||'')+' '+String(d.proyecto||''))
-      .indexOf(q)>=0;
+    // Rango de fechas (cualquiera de los dos extremos puede ir solo)
+    if(S.fDesde && String(d.fecha||'') < S.fDesde) return false;
+    if(S.fHasta && String(d.fecha||'') > S.fHasta) return false;
+    if(!q && !qDig) return true;
+    return puntajeDoc(d, q, qDig) > 0;
   });
+
+  // Si se está buscando, se ordena por mejor coincidencia; si no, por fecha
+  if(q || qDig){
+    vis = vis.map(function(d){ return {d:d, p:puntajeDoc(d, q, qDig)}; })
+             .sort(function(a,c){
+               if(c.p !== a.p) return c.p - a.p;
+               return String(c.d.fecha||'').localeCompare(String(a.d.fecha||''));
+             })
+             .map(function(x){ return x.d; });
+  }
 
   var cuenta={};
   Object.keys(ESTADOS).forEach(function(k){ cuenta[k]=docs.filter(function(d){return d.estado===k;}).length; });
@@ -27599,15 +28093,41 @@ function renderLista(b){
     '<div class="fx-card">'
     +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
       +'<button class="fx-b" onclick="FACT.nueva()"'+(puedeCrear?'':' disabled')+'>+ Nueva proforma</button>'
-      +'<input class="fx-i" style="max-width:260px" placeholder="Buscar por número, cliente o proyecto…"'
+      +'<input class="fx-i" style="max-width:290px" placeholder="Buscar por número, cédula, cliente o proyecto…"'
         +' value="'+_esc(S.fBusca)+'" oninput="FACT.setBusca(this.value)">'
       +'<div style="display:flex;gap:5px;flex-wrap:wrap;margin-left:auto">'+chips+'</div>'
+    +'</div>'
+    // ── Rango de fechas ──
+    +'<div style="display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">'
+      +'<div class="fx-f"><label>Desde</label><input type="date" class="fx-i" style="width:auto"'
+        +' value="'+_esc(S.fDesde)+'" onchange="FACT.setDesde(this.value)"></div>'
+      +'<div class="fx-f"><label>Hasta</label><input type="date" class="fx-i" style="width:auto"'
+        +' value="'+_esc(S.fHasta)+'" onchange="FACT.setHasta(this.value)"></div>'
+      +[['hoy','Hoy'],['semana','Últimos 7 días'],['mes','Este mes'],['anio','Este año']]
+        .map(function(a){
+          return '<button class="fx-b sm gh" onclick="FACT.rangoRapido(\''+a[0]+'\')">'+a[1]+'</button>';
+        }).join('')
+      +((S.fDesde||S.fHasta||S.fBusca)
+        ? '<button class="fx-b sm sec" onclick="FACT.limpiarFiltros()">✕ Limpiar</button>'
+        : '')
+      +((S.fDesde||S.fHasta||S.fBusca)
+        ? '<span style="font-size:11px;color:var(--text3);margin-left:4px">'
+          +vis.length+' de '+docs.length
+          +(S.fDesde||S.fHasta
+            ? ' · '+(S.fDesde?'desde '+_fechaCorta(S.fDesde):'')
+              +(S.fDesde&&S.fHasta?' ':'')+(S.fHasta?'hasta '+_fechaCorta(S.fHasta):'')
+            : '')
+          +'</span>'
+        : '')
     +'</div>'
     +(vis.length===0
       ? '<div class="fx-empty">'+(docs.length===0
           ? 'Todavía no hay proformas para '+_esc(e.nombre_comercial)+'.<br>La primera llevará el número <b>'
             +_esc((e.id==='concre'?'CO':e.id==='concreequipos'?'CE':'FB'))+'1</b>.'
-          : 'Ninguna proforma coincide con el filtro.')+'</div>'
+          : 'Ninguna proforma coincide'
+            +(S.fBusca?' con «'+_esc(S.fBusca)+'»':'')
+            +((S.fDesde||S.fHasta)?' en ese rango de fechas':'')
+            +'.')+'</div>'
       : '<div class="fx-tbl-scroll"><table class="fx-t">'
         +'<thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th><th>Proyecto</th>'
         +'<th class="fx-r">Total</th><th class="fx-c">Estado</th><th class="fx-c">Acciones</th></tr></thead><tbody>'
@@ -27636,8 +28156,9 @@ function filaDoc(d){
     +'<td class="fx-r"><b>'+_mon(d.total, d.moneda)+'</b></td>'
     +'<td class="fx-c"><span class="fx-badge" style="color:'+st.color+';background:'+st.bg+'">'+st.lbl+'</span></td>'
     +'<td class="fx-c" style="white-space:nowrap">'
-      +'<button class="fx-b sm gh" onclick="FACT.abrir(\''+d.id+'\')" title="Abrir">✏</button> '
+      +'<button class="fx-b sm gh" onclick="FACT.abrir(\''+d.id+'\')" title="Modificar">✏</button> '
       +'<button class="fx-b sm gh" onclick="FACT.imprimir(\''+d.id+'\')" title="Imprimir / PDF">🖨</button> '
+      +'<button class="fx-b sm gh" onclick="FACT.facturar(\''+d.id+'\')" title="Facturar — revisar qué falta">🧾</button> '
       +'<button class="fx-b sm gh" onclick="FACT.duplicar(\''+d.id+'\')" title="Duplicar">⧉</button> '
       +'<button class="fx-b sm gh" onclick="FACT.aPapelera(\''+d.id+'\')" title="Enviar a papelera" style="color:var(--red)">🗑</button>'
     +'</td></tr>';
@@ -27688,6 +28209,7 @@ function renderEditor(b){
         +'<button class="fx-b" onclick="FACT.guardar()">💾 Guardar</button>'
         +(esNueva?'':'<button class="fx-b sec" onclick="FACT.imprimir(\''+d.id+'\')">🖨 Imprimir / PDF</button>')
         +(esNueva?'':'<button class="fx-b sec" onclick="FACT.abrirExport()">→ Pasar a Ventas</button>')
+        +(esNueva?'':'<button class="fx-b sec" onclick="FACT.facturar(\''+d.id+'\')">🧾 Facturar</button>')
       +'</div>'
     +'</div>'
 
@@ -27737,6 +28259,55 @@ function renderEditor(b){
           +' <button class="fx-b sm gh" style="margin-left:8px;font-weight:600" onclick="FACT.desvincular()">Desvincular</button></div>'
         : '<div style="margin-top:9px;font-size:11px;color:var(--text3)">'
           +'Cliente libre — sirve para la proforma. Para facturar tendrá que existir en Clientes.</div>')
+
+      // ── Los opcionales que pide la ficha del receptor de GTI ──
+      +'<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">'
+        +'<button class="fx-b sm gh" onclick="FACT.togOpcDoc()">'
+          +(S.docOpc?'▾':'▸')+' Datos opcionales del receptor'
+          +(_opcLlenos(d)?' <span style="color:var(--green);font-weight:800">· '+_opcLlenos(d)+' llenos</span>':'')
+        +'</button>'
+        +(S.docOpc
+          ? '<div style="margin-top:12px">'
+            +'<div style="font-size:11px;color:var(--text3);line-height:1.6;margin-bottom:11px">'
+              +'Son los mismos campos opcionales de GTI. No hacen falta para la proforma, '
+              +'pero si los llena se pueden <b>guardar al cliente</b> y ya vienen listos la próxima vez.'
+            +'</div>'
+            +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">'
+              +campo('Actividad económica','<input class="fx-i" value="'+_esc(d.cliente_actividad||'')+'"'
+                +' placeholder="Código, p. ej. 4390" onchange="FACT.setDoc(\'cliente_actividad\',this.value)">')
+              +campo('Código de país','<input class="fx-i" value="'+_esc(d.cliente_cod_pais||'506')+'"'
+                +' onchange="FACT.setDoc(\'cliente_cod_pais\',this.value)">')
+              +campo('Provincia','<select class="fx-i" onchange="FACT.setProvDoc(this.value)">'
+                +'<option value="">No aplica</option>'
+                +PROVINCIAS.map(function(p){
+                    return '<option value="'+p.v+'"'+(String(d.cliente_provincia)===p.v?' selected':'')+'>'+p.lbl+'</option>';
+                  }).join('')
+                +'</select>')
+              +campo('Cantón','<input class="fx-i" value="'+_esc(d.cliente_canton||'')+'"'
+                +' onchange="FACT.setDoc(\'cliente_canton\',this.value)">')
+              +campo('Distrito','<input class="fx-i" value="'+_esc(d.cliente_distrito||'')+'"'
+                +' onchange="FACT.setDoc(\'cliente_distrito\',this.value)">')
+              +campo('Barrio','<input class="fx-i" value="'+_esc(d.cliente_barrio||'')+'"'
+                +' onchange="FACT.setDoc(\'cliente_barrio\',this.value)">')
+            +'</div>'
+            +'<div style="height:10px"></div>'
+            +campo('Otras señales','<input class="fx-i" value="'+_esc(d.cliente_otras_senales||'')+'"'
+              +' onchange="FACT.setDoc(\'cliente_otras_senales\',this.value)">')
+            +'<div style="height:11px"></div>'
+            +'<div class="fx-f"><label>Correos en copia</label><div id="fact-doc-copias">'
+              +copiasDoc()+'</div></div>'
+            +(d.fact_cliente_id
+              ? '<div style="margin-top:13px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">'
+                +'<button class="fx-b sm" onclick="FACT.guardarOpcAlCliente()">'
+                +'⬆ Guardar estos datos al cliente</button>'
+                +'<span style="font-size:10.5px;color:var(--text3)">'
+                +'Quedan en su ficha y vienen llenos en las próximas proformas y facturas.</span></div>'
+              : '<div style="margin-top:13px;font-size:11px;color:var(--text3)">'
+                +'Para poder guardarlos al cliente, primero escójalo de la lista de Clientes '
+                +'(hoy es un cliente libre).</div>')
+            +'</div>'
+          : '')
+      +'</div>'
     +'</div>'
 
     // ── Proyecto y tipo ──
@@ -27804,6 +28375,83 @@ function renderEditor(b){
   renderLineas();
   renderTotales();
   if(!esNueva) renderAdjuntos();
+}
+
+// Cuántos opcionales del receptor van llenos, para mostrarlo en el botón
+function _opcLlenos(d){
+  var n=0;
+  ['cliente_actividad','cliente_provincia','cliente_canton','cliente_distrito',
+   'cliente_barrio','cliente_otras_senales'].forEach(function(k){
+    if(String(d[k]||'').trim()) n++;
+  });
+  if((d.cliente_correos_copia||[]).filter(function(x){return String(x||'').trim();}).length) n++;
+  return n;
+}
+
+function copiasDoc(){
+  var cc=S.edit.cliente_correos_copia||[];
+  return cc.map(function(c,i){
+      return '<div style="display:flex;gap:6px;margin-bottom:5px">'
+        +'<input class="fx-i" type="email" value="'+_esc(c)+'" oninput="FACT.setCopiaDoc('+i+',this.value)">'
+        +'<button class="fx-b sm gh" style="color:var(--red)" onclick="FACT.quitarCopiaDoc('+i+')">✕</button>'
+        +'</div>';
+    }).join('')
+    +'<button class="fx-b sm gh" onclick="FACT.agregarCopiaDoc()">+ Agregar correo</button>';
+}
+
+function togOpcDoc(){ S.docOpc=!S.docOpc; renderBody(); }
+function setProvDoc(v){
+  S.edit.cliente_provincia=v;
+  var p=PROVINCIAS.find(function(x){ return x.v===v; });
+  S.edit.cliente_provincia_nombre=p?p.lbl:'';
+  S.dirty=true;
+}
+function agregarCopiaDoc(){
+  S.edit.cliente_correos_copia=(S.edit.cliente_correos_copia||[]).concat(['']);
+  S.dirty=true;
+  var el=document.getElementById('fact-doc-copias'); if(el) el.innerHTML=copiasDoc();
+}
+function setCopiaDoc(i,v){ S.edit.cliente_correos_copia[i]=v; S.dirty=true; }
+function quitarCopiaDoc(i){
+  S.edit.cliente_correos_copia.splice(i,1);
+  S.dirty=true;
+  var el=document.getElementById('fact-doc-copias'); if(el) el.innerHTML=copiasDoc();
+}
+
+// Sube al cliente los opcionales que se llenaron en la proforma.
+// Solo toca los campos opcionales: no pisa nombre, cédula ni correo principal.
+async function guardarOpcAlCliente(){
+  var d=S.edit;
+  if(!d.fact_cliente_id){ _toast('⚠ Primero escoja el cliente de la lista'); return; }
+  var c=S.clientes.find(function(x){ return x.id===d.fact_cliente_id; });
+  if(!c){ _toast('⚠ No se encontró el cliente'); return; }
+
+  var copias=(d.cliente_correos_copia||[]).map(function(x){ return String(x||'').trim(); })
+                                          .filter(function(x){ return x; });
+  var row={
+    id:c.id,
+    actividad_economica:d.cliente_actividad||'',
+    cod_pais_tel:d.cliente_cod_pais||'506',
+    telefono:d.cliente_telefono||c.telefono||'',
+    provincia:d.cliente_provincia||'',
+    provincia_nombre:d.cliente_provincia_nombre||'',
+    canton:d.cliente_canton||'',
+    distrito:d.cliente_distrito||'',
+    barrio:d.cliente_barrio||'',
+    otras_senales:d.cliente_otras_senales||'',
+    correos_copia:copias,
+    actualizado_en:new Date().toISOString()
+  };
+  try{
+    var r=await DB.from('fact_clientes').update(row).eq('id',c.id);
+    if(r.error) throw r.error;
+    Object.keys(row).forEach(function(k){ if(k!=='id') c[k]=row[k]; });
+    _toast('✅ Datos guardados en la ficha de '+c.nombre);
+    renderBody();
+  }catch(e){
+    console.error('guardarOpcAlCliente:',e);
+    _toast(_errTabla(e,'fact_clientes'));
+  }
 }
 
 function campo(lbl, ctrl){
@@ -27915,6 +28563,10 @@ function nuevaProforma(){
     estado:'borrador', fecha:hoy, fecha_vence:_sumaDias(hoy, _n(e.vigencia_dias)||15),
     cliente_id:null, fact_cliente_id:null,
     cliente_nombre:'', cliente_telefono:'', cliente_correo:'',
+    cliente_actividad:'', cliente_cod_pais:'506',
+    cliente_provincia:'', cliente_provincia_nombre:'', cliente_canton:'',
+    cliente_distrito:'', cliente_barrio:'', cliente_otras_senales:'',
+    cliente_correos_copia:[],
     cliente_identificacion:'', cliente_tipo_ident:null, cliente_direccion:'', contacto_nombre:'',
     proyecto:'', tipo_proyecto:[],
     moneda:e.moneda_default||'CRC', tipo_cambio:0, iva_pct:_n(e.iva_default)||13,
@@ -27933,6 +28585,7 @@ async function abrirProforma(id){
   S.edit=JSON.parse(JSON.stringify(d));
   if(!Array.isArray(S.edit.tipo_proyecto)) S.edit.tipo_proyecto=[];
   if(S.edit.fact_cliente_id===undefined) S.edit.fact_cliente_id=null;
+  if(!Array.isArray(S.edit.cliente_correos_copia)) S.edit.cliente_correos_copia=[];
   S.lineas=[]; S.adjuntos=[];
   renderBody();
   try{
@@ -27979,6 +28632,12 @@ async function guardarProforma(){
     cliente_identificacion:d.cliente_identificacion||'',
     cliente_tipo_ident:d.cliente_tipo_ident||null, cliente_direccion:d.cliente_direccion||'',
     contacto_nombre:d.contacto_nombre||'',
+    cliente_actividad:d.cliente_actividad||'', cliente_cod_pais:d.cliente_cod_pais||'506',
+    cliente_provincia:d.cliente_provincia||'',
+    cliente_provincia_nombre:d.cliente_provincia_nombre||'',
+    cliente_canton:d.cliente_canton||'', cliente_distrito:d.cliente_distrito||'',
+    cliente_barrio:d.cliente_barrio||'', cliente_otras_senales:d.cliente_otras_senales||'',
+    cliente_correos_copia:d.cliente_correos_copia||[],
     proyecto:d.proyecto||'', tipo_proyecto:d.tipo_proyecto||[],
     moneda:d.moneda, tipo_cambio:_n(d.tipo_cambio), iva_pct:_n(d.iva_pct),
     condiciones:d.condiciones||'', notas:d.notas||'', texto_legal:d.texto_legal||'',
@@ -28082,62 +28741,60 @@ async function aPapelera(id){
   }catch(e){ console.error(e); _toast('Error: '+((e&&e.message)||e)); }
 }
 
-// ── Cliente: autocompletado sobre DOS fuentes, ambas de solo lectura ────────
-// 1. fact_clientes — los clientes de facturación (con cédula y correo listos)
-// 2. crm_clientes  — el CRM, que NO se modifica nunca desde aquí
-// Los de facturación van primero porque traen los datos que exige Hacienda.
+// ── Cliente: autocompletado SOLO sobre la tabla de facturación ─────────────
+// Por decisión de Kia, este campo NO consulta el CRM: en una proforma o
+// factura lo que importa son los datos fiscales, y esos viven en fact_clientes.
+// El CRM sigue intacto y se vincula solo, por cédula o nombre, al guardar.
 function buscarCliente(q){
   S.edit.cliente_nombre=q;
   S.dirty=true;
   var ac=document.getElementById('fact-cli-ac');
   if(!ac) return;
   var t=_norm(q).trim();
-  if(t.length<2){ ac.innerHTML=''; return; }
+  var tDig=String(q||'').replace(/\D/g,'');
+  if(tDig.length<3) tDig='';
+  if(t.length<2 && !tDig){ ac.innerHTML=''; return; }
 
-  var fc=clientesEmpresa().filter(function(c){
-    if(c.activo===false) return false;
-    return _norm(String(c.nombre||'')+' '+String(c.identificacion||'')
-      +' '+_fmtIdent(c.identificacion,c.tipo_identificacion)).indexOf(t)>=0;
-  }).slice(0,10);
+  // Puntaje, para que arriba salga la mejor coincidencia
+  var hits=clientesEmpresa().filter(function(c){ return c.activo!==false; })
+    .map(function(c){
+      var nom=_norm(c.nombre), ced=String(c.identificacion||'').replace(/\D/g,''), p=0;
+      if(tDig && ced){
+        if(ced===tDig) p=Math.max(p,100);
+        else if(ced.indexOf(tDig)===0) p=Math.max(p,85);
+        else if(ced.indexOf(tDig)>0) p=Math.max(p,60);
+      }
+      if(t){
+        if(nom===t) p=Math.max(p,95);
+        else if(nom.indexOf(t)===0) p=Math.max(p,80);
+        else if(nom.indexOf(t)>=0) p=Math.max(p,62);
+        else {
+          var tks=t.split(' ').filter(Boolean);
+          if(tks.length>1 && tks.every(function(x){ return nom.indexOf(x)>=0; })) p=Math.max(p,48);
+        }
+      }
+      return {c:c, p:p};
+    })
+    .filter(function(x){ return x.p>0; })
+    .sort(function(a,b){ return b.p-a.p || _norm(a.c.nombre).localeCompare(_norm(b.c.nombre)); })
+    .slice(0,12);
 
-  var yaCed={};
-  fc.forEach(function(c){ yaCed[String(c.identificacion||'').replace(/\D/g,'')]=1; });
-
-  // Del CRM se ofrecen solo los que NO están ya en facturación, para no duplicar
-  var crm=(_crmLista()||[]).filter(function(c){
-    var d=String(c.cedula||'').replace(/\D/g,'');
-    if(d && yaCed[d]) return false;
-    return _norm(String(c.nombreEmpresa||'')+' '+String(c.cedula||'')).indexOf(t)>=0;
-  }).slice(0,8);
-
-  if(!fc.length && !crm.length){
+  if(!hits.length){
     ac.innerHTML='<div class="fx-ac-list"><div style="cursor:default;color:var(--text3)">'
-      +'Sin coincidencias. Puede dejarlo como cliente libre, o crearlo en la subpestaña Clientes.'
+      +'Sin coincidencias en Clientes. Puede dejarlo como cliente libre para la proforma, '
+      +'o crearlo en la subpestaña Clientes.'
       +'</div></div>';
     return;
   }
 
   ac.innerHTML='<div class="fx-ac-list">'
-    +(fc.length
-      ? '<div style="cursor:default;background:var(--surface2);font-size:9px;font-weight:900;'
-        +'color:var(--text3);text-transform:uppercase;letter-spacing:.08em;padding:4px 11px">'
-        +'Clientes de facturación</div>'
-        +fc.map(function(c){
-            return '<div onmousedown="FACT.elegirClienteFact(\''+c.id+'\')"><b>'+_esc(c.nombre)+'</b>'
-              +'<small>'+_esc(_fmtIdent(c.identificacion,c.tipo_identificacion))
-              +(c.correo?' · '+_esc(c.correo):' · sin correo')+'</small></div>';
-          }).join('')
-      : '')
-    +(crm.length
-      ? '<div style="cursor:default;background:var(--surface2);font-size:9px;font-weight:900;'
-        +'color:var(--text3);text-transform:uppercase;letter-spacing:.08em;padding:4px 11px">'
-        +'CRM (no está en facturación)</div>'
-        +crm.map(function(c){
-            var ct=(c.contactos&&c.contactos[0])||{};
-            return '<div onmousedown="FACT.elegirCliente(\''+c.id+'\')"><b>'+_esc(c.nombreEmpresa)+'</b>'
-              +'<small>'+_esc(c.cedula||'sin cédula')+(ct.nombre?' · '+_esc(ct.nombre):'')+'</small></div>';
-          }).join('')
-      : '')
+    +hits.map(function(x){
+      var c=x.c;
+      return '<div onmousedown="FACT.elegirClienteFact(\''+c.id+'\')"><b>'+_esc(c.nombre)+'</b>'
+        +'<small>'+_esc(_fmtIdent(c.identificacion,c.tipo_identificacion))
+        +(c.correo?' · '+_esc(c.correo):' · sin correo')
+        +(c.telefono?' · '+_esc(c.telefono):'')+'</small></div>';
+    }).join('')
     +'</div>';
 }
 
@@ -28152,6 +28809,17 @@ function elegirClienteFact(fid){
   d.cliente_tipo_ident=_n(c.tipo_identificacion)||null;
   d.cliente_correo=c.correo||'';
   if(c.telefono) d.cliente_telefono=c.telefono;
+  // Los opcionales de GTI viajan uno por uno, no aplastados en una sola línea:
+  // así se pueden ver, corregir y volver a guardar al cliente.
+  d.cliente_actividad=c.actividad_economica||'';
+  d.cliente_cod_pais=c.cod_pais_tel||'506';
+  d.cliente_provincia=c.provincia||'';
+  d.cliente_provincia_nombre=c.provincia_nombre||'';
+  d.cliente_canton=c.canton||'';
+  d.cliente_distrito=c.distrito||'';
+  d.cliente_barrio=c.barrio||'';
+  d.cliente_otras_senales=c.otras_senales||'';
+  d.cliente_correos_copia=(c.correos_copia||[]).slice();
   d.cliente_direccion=[c.provincia_nombre,c.canton,c.distrito,c.barrio,c.otras_senales]
     .filter(Boolean).join(', ');
   // Si además coincide con el CRM, se guarda ese vínculo (sin tocar el CRM)
@@ -29729,6 +30397,171 @@ function setBuscaCli(v){
 function togRevisar(){ S.fCliRevisar=!S.fCliRevisar; S.pagCli=1; renderBody(); }
 function setPagCli(n){ S.pagCli=n; renderBody(); }
 
+
+// ── FACTURAR ────────────────────────────────────────────────────────────────
+// Todavía NO emite nada ante Hacienda: eso necesita las Etapas 2 y 3 (las
+// funciones serverless en Vercel y la conexión con GTI). Lo que hace hoy es
+// la REVISIÓN PREVIA de verdad: recorre todo lo que Hacienda va a exigir y
+// dice exactamente qué le falta a esta proforma. Sirve desde ya para ir
+// limpiando los datos, y el día que se conecte GTI este mismo chequeo es el
+// que corre antes de emitir.
+//
+// A propósito no hay ningún botón que "emita": una factura electrónica es un
+// documento fiscal, y aparentar que se emitió sin que Hacienda la reciba
+// sería peor que no tener el botón.
+
+function revisarParaFacturar(d, lineas){
+  var faltas=[], avisos=[];
+  var e=S.empresas.find(function(x){ return x.id===d.empresa_id; })||_emp();
+
+  // ── El emisor ──
+  if(!String(e.identificacion||'').trim()) faltas.push('La empresa no tiene cédula registrada (Datos de la empresa).');
+  if(!String(e.actividad_economica||'').trim()) faltas.push('La empresa no tiene actividad económica (Datos de la empresa).');
+  if(!String(e.correo||'').trim()) faltas.push('La empresa no tiene correo (Datos de la empresa).');
+  if(!e.gti_num_cuenta) avisos.push('Falta el número de cuenta de GTI en Datos de la empresa (se configura en la Etapa 2).');
+
+  // ── El receptor ──
+  var cli=d.fact_cliente_id?S.clientes.find(function(x){ return x.id===d.fact_cliente_id; }):null;
+  if(!cli){
+    faltas.push('El cliente no está en la lista de Clientes: para facturar tiene que existir ahí, '
+      +'no basta el nombre libre de la proforma.');
+  } else {
+    var dig=String(cli.identificacion||'').replace(/\D/g,'');
+    var t=_tipoIdent(cli.tipo_identificacion);
+    if(!dig) faltas.push('El cliente no tiene cédula.');
+    else if(dig.length<t.dig[0] || dig.length>t.dig[1])
+      faltas.push('La cédula del cliente no cuadra con '+t.lbl+' ('+dig.length+' dígitos).');
+    var cor=String(cli.correo||'').trim();
+    if(!cor) faltas.push('El cliente no tiene correo: Hacienda lo exige para enviarle el comprobante.');
+    else if(!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(cor))
+      faltas.push('El correo del cliente «'+cor+'» no tiene forma de dirección válida.');
+    if(cli.revisar) avisos.push('El cliente está marcado para revisar: '+(cli.revisar_motivo||''));
+    if(!String(cli.telefono||'').trim()) avisos.push('El cliente no tiene teléfono (opcional).');
+    if(!String(cli.provincia||'').trim()) avisos.push('El cliente no tiene ubicación (opcional).');
+  }
+
+  // ── Las líneas ──
+  if(!lineas.length) faltas.push('La proforma no tiene líneas.');
+  var sinCabys=lineas.filter(function(l){ return !/^\d{13}$/.test(String(l.cabys||'')); });
+  if(sinCabys.length){
+    faltas.push(sinCabys.length+' línea(s) sin código CABYS de 13 dígitos: '
+      +sinCabys.slice(0,3).map(function(l){ return '«'+(l.descripcion||'sin descripción')+'»'; }).join(', ')
+      +(sinCabys.length>3?' y '+(sinCabys.length-3)+' más':'')+'.');
+  }
+  var sinPrecio=lineas.filter(function(l){ return _n(l.precio_unitario)<=0; });
+  if(sinPrecio.length) faltas.push(sinPrecio.length+' línea(s) con precio en 0.');
+  var sinUnidad=lineas.filter(function(l){ return !String(l.unidad||'').trim(); });
+  if(sinUnidad.length) faltas.push(sinUnidad.length+' línea(s) sin unidad de medida.');
+  var unidGenerica=lineas.filter(function(l){ return String(l.unidad||'')==='Unidad'||String(l.unidad||'')==='Unid'; });
+  if(unidGenerica.length===lineas.length && lineas.length)
+    avisos.push('Todas las líneas están en "Unidad": revise si alguna va en m², ml o m³.');
+
+  // ── El documento ──
+  if(d.moneda==='USD' && _n(d.tipo_cambio)<=0)
+    faltas.push('La proforma está en dólares y no tiene tipo de cambio.');
+  if(_n(d.total)<=0) faltas.push('El total es 0.');
+  if(d.estado!=='aceptada')
+    avisos.push('La proforma está en «'+((ESTADOS[d.estado]||{}).lbl||d.estado)
+      +'»: lo normal es facturar una vez aceptada por el cliente.');
+
+  return {faltas:faltas, avisos:avisos, cliente:cli};
+}
+
+async function facturar(id){
+  var d, lineas;
+  if(S.edit && S.edit.id===id){
+    if(S.dirty){ _toast('⚠ Guarde los cambios antes de revisar'); return; }
+    d=S.edit; lineas=S.lineas;
+  } else {
+    d=S.docs.find(function(x){ return x.id===id; });
+    if(!d){ _toast('No se encontró la proforma'); return; }
+    try{
+      var rl=await loadAllRowsEq('fact_lineas','doc_id',id,'orden');
+      lineas=(rl.error?[]:(rl.data||[]));
+    }catch(e){ lineas=[]; }
+  }
+  if(!d.consecutivo){ _toast('⚠ Guarde la proforma primero'); return; }
+
+  var r=revisarParaFacturar(d, lineas);
+  var listo=r.faltas.length===0;
+
+  var ov=document.createElement('div');
+  ov.className='fx-ov'; ov.id='fact-fac-modal';
+  ov.innerHTML='<div class="fx-md" style="max-width:720px" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+      +'<div class="fx-h" style="margin:0">Facturar — proforma '+_esc(d.consecutivo)+'</div>'
+      +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.cerrarModal(\'fact-fac-modal\')">✕</button>'
+    +'</div>'
+
+    // Estado de la conexión, sin rodeos
+    +'<div style="padding:11px 13px;border-radius:8px;margin-bottom:14px;font-size:12px;line-height:1.65;'
+      +'background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35)">'
+      +'<b>Todavía no se puede emitir ante Hacienda.</b> Falta la Etapa 2: las funciones '
+      +'serverless en Vercel que guardan las credenciales de GTI, y la conexión al ambiente '
+      +'de pruebas (cuenta 5662). Las credenciales no pueden vivir en este archivo porque '
+      +'corre en el navegador y cualquiera podría emitir facturas a nombre de la empresa.'
+      +'<br>Mientras tanto, esta ventana revisa todo lo que Hacienda va a exigir, para ir '
+      +'arreglando los datos desde ya.'
+    +'</div>'
+
+    // Resultado de la revisión
+    +'<div style="padding:11px 13px;border-radius:8px;margin-bottom:14px;font-size:13px;font-weight:700;'
+      +(listo?'background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);color:var(--green)'
+             :'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:var(--red)')+'">'
+      +(listo
+        ? '✓ Los datos están completos: esta proforma se podría facturar en cuanto GTI quede conectado.'
+        : '⚠ Faltan '+r.faltas.length+' cosa(s) antes de poder facturarla.')
+    +'</div>'
+
+    +(r.faltas.length
+      ? '<div class="fx-card" style="margin-bottom:12px">'
+        +'<div class="fx-h">Hay que corregir</div>'
+        +'<ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.75;color:var(--text2)">'
+        +r.faltas.map(function(f){ return '<li>'+_esc(f)+'</li>'; }).join('')
+        +'</ul></div>'
+      : '')
+
+    +(r.avisos.length
+      ? '<div class="fx-card" style="margin-bottom:12px">'
+        +'<div class="fx-h">Conviene revisar (no bloquea)</div>'
+        +'<ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.75;color:var(--text3)">'
+        +r.avisos.map(function(a){ return '<li>'+_esc(a)+'</li>'; }).join('')
+        +'</ul></div>'
+      : '')
+
+    // Qué va a pasar cuando se conecte
+    +'<div class="fx-card" style="margin-bottom:12px">'
+      +'<div class="fx-h">Cómo va a funcionar</div>'
+      +'<div style="font-size:11.5px;line-height:1.8;color:var(--text2)">'
+        +'1. La proforma se convierte en factura electrónica y se le asigna su consecutivo de 20 dígitos.<br>'
+        +'2. GTI genera el XML, lo firma y lo manda a Hacienda. Nosotros no firmamos nada.<br>'
+        +'3. Se consulta el estado a los 30 segundos, 2 minutos y 5 minutos (GTI no avisa solo).<br>'
+        +'4. Se guardan el XML y el PDF la primera vez que se piden, porque GTI los da una sola vez.<br>'
+        +'5. La factura queda ligada a esta proforma y al cliente.'
+      +'</div>'
+    +'</div>'
+
+    +'<div style="display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap">'
+      +'<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fac-modal\')">Cerrar</button>'
+      +(r.cliente
+        ? '<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fac-modal\');FACT.irACliente(\''
+          +r.cliente.id+'\')">Ver la ficha del cliente</button>'
+        : '')
+      +'<button class="fx-b" disabled title="Se habilita cuando GTI quede conectado (Etapa 3)"'
+        +' style="opacity:.45;cursor:not-allowed">Emitir factura electrónica</button>'
+    +'</div></div>';
+  ov.onclick=function(){ cerrarModal('fact-fac-modal'); };
+  _root().appendChild(ov);
+}
+
+// Saltar a la ficha del cliente desde la revisión
+function irACliente(cid){
+  S.edit=null; S.lineas=[]; S.adjuntos=[]; S.dirty=false;
+  S.sub='clientes'; S.fCli=''; S.fCliRevisar=false; S.pagCli=1;
+  render();
+  setTimeout(function(){ editarCliente(cid); }, 120);
+}
+
 // ── Cambio de empresa / subpestaña ──────────────────────────────────────────
 function setEmpresa(id){
   var e=S.empresas.find(function(x){ return x.id===id; });
@@ -29743,11 +30576,28 @@ function setSub(s){
   if(s!=='proformas'){ S.edit=null; S.lineas=[]; S.adjuntos=[]; S.dirty=false; }
   if(s!=='catalogo') S.fCat='';
   if(s!=='clientes'){ S.fCli=''; S.fCliRevisar=false; S.pagCli=1; }
+  if(s!=='proformas'){ S.fBusca=''; S.fDesde=''; S.fHasta=''; }
   S.sub=s;
   render();
 }
 function setEstadoFiltro(k){ S.fEstado=k; renderBody(); }
-function setBusca(v){ S.fBusca=v; renderBody(); }
+function setBusca(v){
+  S.fBusca=v; renderBody();
+  var el=document.querySelector('#fact-body input[placeholder^="Buscar por n"]');
+  if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+}
+function setDesde(v){ S.fDesde=v; renderBody(); }
+function setHasta(v){ S.fHasta=v; renderBody(); }
+function limpiarFiltros(){ S.fBusca=''; S.fDesde=''; S.fHasta=''; renderBody(); }
+function rangoRapido(cual){
+  var h=new Date();
+  var iso=function(d){ return d.getFullYear()+'-'+_pad(d.getMonth()+1)+'-'+_pad(d.getDate()); };
+  if(cual==='hoy'){ S.fDesde=iso(h); S.fHasta=iso(h); }
+  else if(cual==='semana'){ var d=new Date(h); d.setDate(d.getDate()-6); S.fDesde=iso(d); S.fHasta=iso(h); }
+  else if(cual==='mes'){ S.fDesde=h.getFullYear()+'-'+_pad(h.getMonth()+1)+'-01'; S.fHasta=iso(h); }
+  else if(cual==='anio'){ S.fDesde=h.getFullYear()+'-01-01'; S.fHasta=iso(h); }
+  renderBody();
+}
 function setBuscaCat(v){
   S.fCat=v; renderBody();
   // devolver el foco al buscador para poder seguir escribiendo
@@ -29759,10 +30609,15 @@ function setBuscaCat(v){
 window.FACT={
   setEmpresa:setEmpresa, setSub:setSub,
   setEstadoFiltro:setEstadoFiltro, setBusca:setBusca, setBuscaCat:setBuscaCat,
+  setDesde:setDesde, setHasta:setHasta, limpiarFiltros:limpiarFiltros,
+  rangoRapido:rangoRapido,
   nueva:nuevaProforma, abrir:abrirProforma, cerrarEditor:cerrarEditor,
   guardar:guardarProforma, duplicar:duplicarProforma, aPapelera:aPapelera,
   imprimir:imprimirProforma,
   setDoc:setDoc, setMoneda:setMoneda, setIvaDoc:setIvaDoc,
+  togOpcDoc:togOpcDoc, setProvDoc:setProvDoc,
+  agregarCopiaDoc:agregarCopiaDoc, setCopiaDoc:setCopiaDoc,
+  quitarCopiaDoc:quitarCopiaDoc, guardarOpcAlCliente:guardarOpcAlCliente,
   toggleTipo:toggleTipo, setEstado:setEstadoDoc,
   buscarCliente:buscarCliente, elegirCliente:elegirCliente,
   elegirClienteFact:elegirClienteFact,
@@ -29779,6 +30634,7 @@ window.FACT={
   abrirExport:abrirExport, expTogLinea:expTogLinea, expSetGrupo:expSetGrupo,
   expSetCat:expSetCat, expSetSub:expSetSub, expPagoChange:expPagoChange,
   confirmarExport:confirmarExport,
+  facturar:facturar, irACliente:irACliente,
   nuevoItem:nuevoItem, editarItem:editarItem, guardarItem:guardarItem, borrarItem:borrarItem,
   verAnexo:verAnexo, editarAnexo:editarAnexo, guardarAnexo:guardarAnexo,
   setEmp:setEmp, guardarEmp:guardarEmp,
