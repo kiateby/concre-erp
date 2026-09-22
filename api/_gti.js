@@ -116,6 +116,16 @@ function credenciales(empresaId, ambiente) {
     : process.env.GTI_URL_PRUEBAS;
   if (!url) faltan.push(ambiente === 'produccion' ? 'GTI_URL_PRODUCCION' : 'GTI_URL_PRUEBAS');
 
+  // En modo simulador no se le pide nada de GTI: justamente sirve para probar
+  // todo el camino ANTES de tener la clave del portal y la URL del manual.
+  if (faltan.length && SIMULADOR) {
+    return {
+      usuario: usuario || 'SIMULADO', clave: clave || 'SIMULADO',
+      cuenta: cuenta || 'SIMULADO', url: url || 'https://simulador.local',
+      ambiente: ambiente || 'pruebas', incompleta: faltan,
+    };
+  }
+
   if (faltan.length) {
     const e = new Error('Faltan variables de entorno en Vercel: ' + faltan.join(', '));
     e.configuracion = true;
