@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260921113319';
+var APP_BUILD='20260922100650';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -27879,6 +27879,14 @@ async function cargar(){
 
   S.cargado=true;
   marcarVencidas();
+
+  // Se le pregunta al puente una sola vez, al abrir la pestaña, para saber si
+  // está publicado y si va en modo simulador. No bloquea: si no contesta, la
+  // pestaña funciona igual y el panel de preparación lo dice.
+  _tocarPuente().then(function(r){
+    window._factPuente=r;
+    if(S.sub==='facturas') renderBody();
+  });
 }
 
 // Marca como vencidas las proformas cuya fecha de vigencia ya pasó.
@@ -27969,6 +27977,7 @@ function render(){
   var e=_emp();
   var subs=[
     ['proformas','📄 Proformas'],
+    ['facturas','🧾 Facturas'],
     ['clientes','👥 Clientes'],
     ['catalogo','📦 Catálogo'],
     ['anexos','📎 Anexos técnicos'],
@@ -27987,7 +27996,7 @@ function render(){
       +'</div>'
       +'<div style="font-size:11px;color:var(--text3);line-height:1.5">'
         +(e.razon_social?'<b style="color:var(--text2)">'+_esc(e.razon_social)+'</b> · ':'')
-        +'Proformas · Etapa 1'
+        +'Proformas y facturación electrónica'
       +'</div>'
     +'</div>'
     +'<div class="fx-subtabs">'
@@ -28003,6 +28012,7 @@ function render(){
 function renderBody(){
   var b=document.getElementById('fact-body'); if(!b) return;
   if(S.sub==='proformas'){ S.edit ? renderEditor(b) : renderLista(b); }
+  else if(S.sub==='facturas') renderFacturas(b);
   else if(S.sub==='clientes') renderClientes(b);
   else if(S.sub==='catalogo') renderCatalogo(b);
   else if(S.sub==='anexos')   renderAnexos(b);
@@ -30494,15 +30504,33 @@ async function facturar(id){
     +'</div>'
 
     // Estado de la conexión, sin rodeos
-    +'<div style="padding:11px 13px;border-radius:8px;margin-bottom:14px;font-size:12px;line-height:1.65;'
-      +'background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35)">'
-      +'<b>Todavía no se puede emitir ante Hacienda.</b> Falta la Etapa 2: las funciones '
-      +'serverless en Vercel que guardan las credenciales de GTI, y la conexión al ambiente '
-      +'de pruebas (cuenta 5662). Las credenciales no pueden vivir en este archivo porque '
-      +'corre en el navegador y cualquiera podría emitir facturas a nombre de la empresa.'
-      +'<br>Mientras tanto, esta ventana revisa todo lo que Hacienda va a exigir, para ir '
-      +'arreglando los datos desde ya.'
-    +'</div>'
+    +(function(){
+        var pu=window._factPuente;
+        if(pu && !pu.simulador){
+          return '<div style="padding:11px 13px;border-radius:8px;margin-bottom:14px;font-size:12px;'
+            +'line-height:1.65;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3)">'
+            +'<b>Esto emite de verdad.</b> Una factura aceptada por Hacienda no se puede '
+            +'modificar ni borrar: se corrige con una nota de crédito.'
+          +'</div>';
+        }
+        if(pu && pu.simulador){
+          return '<div style="padding:11px 13px;border-radius:8px;margin-bottom:14px;font-size:12px;'
+            +'line-height:1.65;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.28)">'
+            +'<b>Modo simulador.</b> El puente arma el documento y lo valida completo, pero no '
+            +'sale a GTI ni a Hacienda. Sirve para confirmar que los datos están bien antes de '
+            +'emitir de verdad. Se apaga borrando <code>GTI_SIMULADOR</code> en Vercel.'
+          +'</div>';
+        }
+        return '<div style="padding:11px 13px;border-radius:8px;margin-bottom:14px;font-size:12px;'
+          +'line-height:1.65;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35)">'
+          +'<b>El puente todavía no ha contestado.</b> Hay que subir la carpeta <code>api/</code> '
+          +'a Vercel y crear ahí las variables de GTI — las credenciales no pueden vivir en este '
+          +'archivo porque corre en el navegador. Mientras tanto esta ventana sí revisa todo lo '
+          +'que Hacienda va a exigir.'
+          +'<br><button class="fx-b sm gh" style="margin-top:8px" onclick="FACT.probarPuente()">'
+          +'Probar el puente</button>'
+        +'</div>';
+      })()
 
     // Resultado de la revisión
     +'<div style="padding:11px 13px;border-radius:8px;margin-bottom:14px;font-size:13px;font-weight:700;'
@@ -30547,8 +30575,12 @@ async function facturar(id){
         ? '<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fac-modal\');FACT.irACliente(\''
           +r.cliente.id+'\')">Ver la ficha del cliente</button>'
         : '')
-      +'<button class="fx-b" disabled title="Se habilita cuando GTI quede conectado (Etapa 3)"'
-        +' style="opacity:.45;cursor:not-allowed">Emitir factura electrónica</button>'
+      +(listo
+        ? '<button class="fx-b" onclick="FACT.emitir(\''+d.id+'\')">'
+          +(window._factPuente&&window._factPuente.simulador?'Emitir (simulador)':'Emitir factura electrónica')
+          +'</button>'
+        : '<button class="fx-b" disabled title="Primero hay que corregir lo de arriba"'
+          +' style="opacity:.45;cursor:not-allowed">Emitir factura electrónica</button>')
     +'</div></div>';
   ov.onclick=function(){ cerrarModal('fact-fac-modal'); };
   _root().appendChild(ov);
@@ -30560,6 +30592,451 @@ function irACliente(cid){
   S.sub='clientes'; S.fCli=''; S.fCliRevisar=false; S.pagCli=1;
   render();
   setTimeout(function(){ editarCliente(cid); }, 120);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ETAPA 2 — EMISIÓN ANTE HACIENDA (lado de la pestaña)
+//
+// El navegador NO habla con GTI. Encola el trabajo en fact_emisiones y toca
+// /api/gti-procesar, que corre en Vercel y es el único que tiene las
+// credenciales. Ver api/LEEME.md para el porqué.
+//
+// Requiere 06_facturacion_hacienda.sql corrido en Supabase.
+// ══════════════════════════════════════════════════════════════════════════════
+
+var ESTADO_HAC = {
+  sin_enviar: {lbl:'Sin enviar', color:'var(--text3)', bg:'rgba(148,163,184,.15)'},
+  en_cola:    {lbl:'En cola',    color:'var(--amber)', bg:'rgba(245,158,11,.12)'},
+  enviando:   {lbl:'Enviando…',  color:'var(--amber)', bg:'rgba(245,158,11,.12)'},
+  recibido:   {lbl:'En Hacienda',color:'var(--blue)',  bg:'rgba(59,130,246,.12)'},
+  aceptado:   {lbl:'Aceptada',   color:'var(--green)', bg:'rgba(34,197,94,.12)'},
+  rechazado:  {lbl:'Rechazada',  color:'var(--red)',   bg:'rgba(239,68,68,.12)'},
+  error:      {lbl:'Error',      color:'var(--red)',   bg:'rgba(239,68,68,.12)'},
+};
+
+var BUCKET_COMP = 'fact-comprobantes';
+
+// Documentos fiscales de la empresa activa (todo lo que no es proforma)
+function facturasEmpresa(){
+  return S.docs.filter(function(d){
+    return d.empresa_id===S.empresaId && d.tipo_doc && d.tipo_doc!=='proforma';
+  });
+}
+
+function badgeHac(d){
+  var k=d.estado_hacienda||'sin_enviar';
+  var e=ESTADO_HAC[k]||ESTADO_HAC.sin_enviar;
+  return '<span class="fx-badge" style="color:'+e.color+';background:'+e.bg+'"'
+    +(d.estado_hacienda_msg?' title="'+_esc(d.estado_hacienda_msg)+'"':'')+'>'+e.lbl+'</span>';
+}
+
+// ── El toque al puente ──────────────────────────────────────────────────────
+// No lleva datos: solo le dice «revisá la cola». Si falla, no se pierde nada:
+// el Cron de Vercel la revisa igual, solo tarda más.
+async function _tocarPuente(){
+  try{
+    var r=await fetch('/api/gti-procesar', {method:'POST'});
+    var j=await r.json().catch(function(){ return null; });
+    if(j && j.simulador) window._factSimulador=true;
+    return j;
+  }catch(e){ console.warn('el puente no contestó:', e); return null; }
+}
+
+// ── Sondeo local ────────────────────────────────────────────────────────────
+// El puente consulta a GTI a los 30 s, 2 min y 5 min. Esto es aparte: relee
+// el documento en Supabase para que la pantalla se actualice sola, sin que
+// el usuario tenga que recargar.
+var _sondeos={};
+function _sondear(docId, paso){
+  paso=paso||0;
+  var esperas=[4000,9000,20000,40000,75000,150000,300000];
+  if(paso>=esperas.length) return;
+  clearTimeout(_sondeos[docId]);
+  _sondeos[docId]=setTimeout(async function(){
+    try{
+      var r=await DB.from('fact_docs').select('*').eq('id',docId).limit(1);
+      var d=(r.data||[])[0];
+      if(d){
+        var i=S.docs.findIndex(function(x){ return x.id===docId; });
+        if(i>=0) S.docs[i]=d; else S.docs.unshift(d);
+        if(S.sub==='facturas' && !S.edit) renderBody();
+        if(d.estado_hacienda==='aceptado' || d.estado_hacienda==='rechazado'
+           || d.estado_hacienda==='error'){
+          delete _sondeos[docId];
+          _toast(d.estado_hacienda==='aceptado' ? '✓ Hacienda aceptó '+(d.consecutivo||'')
+                : '⚠ '+(ESTADO_HAC[d.estado_hacienda]||{}).lbl+': '+(d.estado_hacienda_msg||''));
+          return;
+        }
+      }
+    }catch(e){ console.warn('_sondear:',e); }
+    _sondear(docId, paso+1);
+  }, esperas[paso]);
+}
+
+// ── Emitir: de la proforma a la factura ─────────────────────────────────────
+// Se crea un documento nuevo (la factura) y la proforma queda intacta, ligada.
+// Así la proforma sigue sirviendo de historial y la factura es el documento
+// fiscal, que no se puede modificar después.
+async function emitirDesdeProforma(id){
+  var prof=S.docs.find(function(x){ return x.id===id; });
+  if(!prof){ _toast('No se encontró la proforma'); return; }
+  if(prof.factura_id){
+    _toast('Esa proforma ya se facturó');
+    S.sub='facturas'; render(); return;
+  }
+
+  var rl=await loadAllRowsEq('fact_lineas','doc_id',id,'orden');
+  var lineas=(rl.error?[]:(rl.data||[]));
+
+  var rev=revisarParaFacturar(prof, lineas);
+  if(rev.faltas.length){
+    _toast('⚠ Faltan datos: revise la ventana de Facturar');
+    facturar(id);
+    return;
+  }
+
+  if(!confirm('Se va a emitir la factura electrónica de '+(prof.consecutivo||'')+' por '
+      +_mon(prof.total, prof.moneda)+'.\n\n'
+      +'Una factura aceptada por Hacienda NO se puede modificar ni borrar: se corrige '
+      +'con una nota de crédito.\n\n¿Continuar?')) return;
+
+  var e=_emp();
+  var fid=_id('fac');
+  var ahora=new Date().toISOString();
+
+  // Consecutivo interno, para tener cómo referirse a ella mientras Hacienda
+  // resuelve. El consecutivo fiscal de 20 dígitos lo asigna la emisión.
+  var cons='';
+  try{
+    var rc=await DB.rpc('fact_next_consecutivo', {p_empresa:S.empresaId, p_tipo:'FE'});
+    if(!rc.error && rc.data) cons=String(rc.data);
+  }catch(err){ console.warn('consecutivo FE:',err); }
+  if(!cons) cons='FE-'+String(Date.now()).slice(-6);
+
+  var fac={};
+  Object.keys(prof).forEach(function(k){ fac[k]=prof[k]; });
+  fac.id=fid;
+  fac.tipo_doc='FE';
+  fac.consecutivo=cons;
+  fac.estado='aceptada';                 // estado comercial: ya se facturó
+  fac.fecha=_hoy();
+  fac.fecha_vence=null;
+  fac.proforma_origen_id=prof.id;
+  fac.factura_id=null;
+  fac.clave=null; fac.consecutivo_fiscal=null; fac.gti_id=null;
+  fac.estado_hacienda='en_cola';
+  fac.estado_hacienda_msg=null;
+  fac.enviado_en=null; fac.resuelto_en=null;
+  fac.xml_path=null; fac.xml_resp_path=null; fac.pdf_path=null; fac.archivos_en=null;
+  fac.exportada_ventas=false;
+  fac.usuario_id=(SESSION&&SESSION.id)||null;
+  fac.usuario_nombre=(SESSION&&SESSION.nombre)||null;
+  fac.cond_venta=prof.cond_venta||'01';
+  fac.medio_pago=prof.medio_pago||'01';
+  fac.creado_en=ahora; fac.actualizado_en=ahora;
+
+  var ins=await DB.from('fact_docs').insert(fac);
+  if(ins.error){ _toast('⚠ No se pudo crear la factura: '+ins.error.message); return; }
+
+  // Las líneas se copian, no se mueven: la proforma conserva las suyas.
+  var copias=lineas.map(function(l, i){
+    var c={};
+    Object.keys(l).forEach(function(k){ c[k]=l[k]; });
+    c.id=_id('fl'); c.doc_id=fid; c.orden=i;
+    c.venta_id=null; c.exportada=false; c.creado_en=ahora;
+    return c;
+  });
+  if(copias.length){
+    var il=await DB.from('fact_lineas').insert(copias);
+    if(il.error){ _toast('⚠ No se pudieron copiar las líneas: '+il.error.message); return; }
+  }
+
+  // El trabajo en la cola. El índice único de fact_emisiones impide que dos
+  // clics seguidos manden la misma factura dos veces.
+  var enc=await DB.from('fact_emisiones').insert({
+    empresa_id:S.empresaId, doc_id:fid, accion:'emitir', estado:'pendiente',
+    correr_en:ahora,
+    usuario_id:(SESSION&&SESSION.id)||null,
+    usuario_nombre:(SESSION&&SESSION.nombre)||null,
+  });
+  if(enc.error){ _toast('⚠ No se pudo encolar: '+enc.error.message); return; }
+
+  await DB.from('fact_docs').update({factura_id:fid, actualizado_en:ahora}).eq('id',prof.id);
+  prof.factura_id=fid;
+  S.docs.unshift(fac);
+
+  cerrarModal('fact-fac-modal');
+  _toast('Factura en cola — el puente la está enviando');
+  S.sub='facturas'; S.edit=null; render();
+
+  await _tocarPuente();
+  _sondear(fid, 0);
+}
+
+// Volver a preguntarle a Hacienda por un documento que quedó sin resolver
+async function reconsultar(docId){
+  var d=S.docs.find(function(x){ return x.id===docId; });
+  if(!d || !d.clave){ _toast('Ese documento todavía no tiene clave'); return; }
+  var r=await DB.from('fact_emisiones').insert({
+    empresa_id:d.empresa_id, doc_id:docId, accion:'estado', estado:'pendiente',
+    correr_en:new Date().toISOString(),
+    usuario_id:(SESSION&&SESSION.id)||null, usuario_nombre:(SESSION&&SESSION.nombre)||null,
+  });
+  if(r.error){ _toast('⚠ '+r.error.message); return; }
+  _toast('Consultando a Hacienda…');
+  await _tocarPuente();
+  _sondear(docId, 0);
+}
+
+// Pedir el XML y el PDF. GTI los entrega una sola vez y dentro de los 3 días.
+async function bajarArchivos(docId){
+  var d=S.docs.find(function(x){ return x.id===docId; });
+  if(!d || !d.clave){ _toast('Ese documento todavía no tiene clave'); return; }
+  var r=await DB.from('fact_emisiones').insert({
+    empresa_id:d.empresa_id, doc_id:docId, accion:'descargar', estado:'pendiente',
+    correr_en:new Date().toISOString(),
+    usuario_id:(SESSION&&SESSION.id)||null, usuario_nombre:(SESSION&&SESSION.nombre)||null,
+  });
+  if(r.error){ _toast('⚠ '+r.error.message); return; }
+  _toast('Pidiendo el XML y el PDF…');
+  await _tocarPuente();
+  _sondear(docId, 0);
+}
+
+// Los comprobantes están en un bucket privado: se abre con una URL firmada
+// de cinco minutos, no con un enlace público.
+async function verArchivo(docId, cual){
+  var d=S.docs.find(function(x){ return x.id===docId; });
+  var ruta=d && (cual==='pdf'?d.pdf_path:cual==='resp'?d.xml_resp_path:d.xml_path);
+  if(!ruta){ _toast('Ese archivo todavía no está guardado'); return; }
+  try{
+    var r=await DB.storage.from(BUCKET_COMP).createSignedUrl(ruta, 300);
+    if(r.error||!r.data){ _toast('⚠ No se pudo abrir: '+((r.error&&r.error.message)||'')); return; }
+    window.open(r.data.signedUrl, '_blank');
+  }catch(e){ _toast('⚠ '+(e.message||e)); }
+}
+
+// ── Bitácora de un documento ────────────────────────────────────────────────
+async function verBitacora(docId){
+  var d=S.docs.find(function(x){ return x.id===docId; })||{};
+  var filas=[];
+  try{
+    var r=await DB.from('fact_emisiones').select('*').eq('doc_id',docId)
+      .order('creado_en',{ascending:false}).limit(60);
+    filas=(r.data||[]);
+  }catch(e){ console.warn('verBitacora:',e); }
+
+  var ov=document.createElement('div');
+  ov.className='fx-ov'; ov.id='fact-bit-modal';
+  ov.innerHTML='<div class="fx-md" style="max-width:860px" onclick="event.stopPropagation()">'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+      +'<div class="fx-h" style="margin:0">Bitácora — '+_esc(d.consecutivo||docId)+'</div>'
+      +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.cerrarModal(\'fact-bit-modal\')">✕</button>'
+    +'</div>'
+    +(d.clave?'<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Clave '
+      +'<b style="color:var(--text2);letter-spacing:.3px">'+_esc(d.clave)+'</b></div>':'')
+    +(filas.length===0
+      ? '<div class="fx-empty">Todavía no hay intentos registrados.</div>'
+      : '<div class="fx-tbl-scroll" style="max-height:50vh"><table class="fx-t">'
+        +'<thead><tr><th>Cuándo</th><th>Acción</th><th class="fx-c">Estado</th>'
+        +'<th class="fx-c">HTTP</th><th>Quién</th><th>Detalle</th></tr></thead><tbody>'
+        +filas.map(function(f){
+            return '<tr>'
+              +'<td style="white-space:nowrap;font-size:11px">'+_esc(_fechaHora(f.creado_en))+'</td>'
+              +'<td>'+_esc(f.accion)+'</td>'
+              +'<td class="fx-c">'+_esc(f.estado)+(f.intentos>1?' ('+f.intentos+')':'')+'</td>'
+              +'<td class="fx-c">'+(f.http_status||'—')+'</td>'
+              +'<td style="font-size:11px">'+_esc(f.usuario_nombre||f.usuario_id||'—')+'</td>'
+              +'<td style="font-size:11px;color:var(--text3);max-width:280px">'
+                +_esc(String(f.error||_resumenResp(f.respuesta)||'').slice(0,180))+'</td>'
+            +'</tr>';
+          }).join('')
+        +'</tbody></table></div>')
+    +'<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:14px">'
+      +'<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-bit-modal\')">Cerrar</button>'
+    +'</div></div>';
+  ov.onclick=function(){ cerrarModal('fact-bit-modal'); };
+  _root().appendChild(ov);
+}
+
+function _resumenResp(r){
+  if(!r) return '';
+  try{ return (r.mensaje||r.Mensaje||r.estado||r.Estado||JSON.stringify(r)).toString(); }
+  catch(e){ return ''; }
+}
+function _fechaHora(iso){
+  if(!iso) return '—';
+  try{
+    var d=new Date(iso);
+    return _pad(d.getDate())+'/'+_pad(d.getMonth()+1)+' '+_pad(d.getHours())+':'+_pad(d.getMinutes());
+  }catch(e){ return String(iso); }
+}
+
+// ── SUBPESTAÑA FACTURAS ─────────────────────────────────────────────────────
+function renderFacturas(b){
+  var docs=facturasEmpresa();
+  b.innerHTML=
+    cardPreparacion()
+    +'<div class="fx-card">'
+      +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'
+        +'<div class="fx-h" style="margin:0">Facturas electrónicas</div>'
+        +'<span style="font-size:11px;color:var(--text3)">'+docs.length+'</span>'
+        +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.refrescarFacturas()">↻ Actualizar</button>'
+      +'</div>'
+      +(docs.length===0
+        ? '<div class="fx-empty">Todavía no se ha emitido ninguna factura.<br>'
+          +'Se emiten desde una proforma, con el botón 🧾 de su fila.</div>'
+        : '<div class="fx-tbl-scroll"><table class="fx-t">'
+          +'<thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th>'
+          +'<th class="fx-r">Total</th><th class="fx-c">Hacienda</th><th>Clave</th>'
+          +'<th class="fx-c">Acciones</th></tr></thead><tbody>'
+          +docs.map(filaFactura).join('')
+          +'</tbody></table></div>')
+    +'</div>';
+}
+
+function filaFactura(d){
+  var hay=function(p){ return !!p; };
+  return '<tr>'
+    +'<td><b style="font-size:13px;color:var(--red)">'+_esc(d.consecutivo||'—')+'</b>'
+      +(d.consecutivo_fiscal
+        ?'<div style="font-size:9px;color:var(--text3);margin-top:2px">'+_esc(d.consecutivo_fiscal)+'</div>':'')
+      +(d.proforma_origen_id
+        ?'<div style="font-size:9px;color:var(--text3)">de proforma</div>':'')+'</td>'
+    +'<td style="white-space:nowrap">'+_fechaCorta(d.fecha)+'</td>'
+    +'<td><b>'+_esc(d.cliente_nombre)+'</b></td>'
+    +'<td class="fx-r"><b>'+_mon(d.total, d.moneda)+'</b></td>'
+    +'<td class="fx-c">'+badgeHac(d)
+      +(d.estado_hacienda_msg
+        ?'<div style="font-size:9px;color:var(--text3);max-width:150px">'
+          +_esc(String(d.estado_hacienda_msg).slice(0,70))+'</div>':'')+'</td>'
+    +'<td style="font-size:10px;color:var(--text3);word-break:break-all;max-width:170px">'
+      +_esc(d.clave||'—')+'</td>'
+    +'<td class="fx-c" style="white-space:nowrap">'
+      +(hay(d.xml_path)
+        ?'<button class="fx-b sm gh" onclick="FACT.verArchivo(\''+d.id+'\',\'xml\')" title="Ver el XML firmado">XML</button> ':'')
+      +(hay(d.pdf_path)
+        ?'<button class="fx-b sm gh" onclick="FACT.verArchivo(\''+d.id+'\',\'pdf\')" title="Ver el PDF">PDF</button> ':'')
+      +(d.clave && !hay(d.xml_path)
+        ?'<button class="fx-b sm gh" onclick="FACT.bajarArchivos(\''+d.id+'\')" title="Pedir el XML y el PDF a GTI">⤓</button> ':'')
+      +(d.clave && d.estado_hacienda!=='aceptado' && d.estado_hacienda!=='rechazado'
+        ?'<button class="fx-b sm gh" onclick="FACT.reconsultar(\''+d.id+'\')" title="Volver a preguntar a Hacienda">↻</button> ':'')
+      +'<button class="fx-b sm gh" onclick="FACT.verBitacora(\''+d.id+'\')" title="Bitácora de la emisión">🕑</button> '
+      +'<button class="fx-b sm gh" onclick="FACT.imprimir(\''+d.id+'\')" title="Imprimir">🖨</button>'
+    +'</td></tr>';
+}
+
+async function refrescarFacturas(){
+  try{
+    var r=await loadAllRows('fact_docs','fecha',false);
+    if(!r.error){
+      S.docs=(r.data||[]).filter(function(d){ return !d.en_papelera; });
+      _toast('Actualizado');
+    }
+  }catch(e){ _toast('⚠ '+(e.message||e)); }
+  renderBody();
+}
+
+// ── Panel de preparación ────────────────────────────────────────────────────
+// Lo que hoy bloquea la primera emisión real, contado sobre los datos de
+// verdad. Sirve como lista de pendientes: cada línea se puede ir cerrando.
+function cardPreparacion(){
+  var e=_emp();
+  var cat=catEmpresa().filter(function(c){ return c.activo!==false; });
+  var cli=clientesEmpresa();
+
+  var emp=[];
+  if(!String(e.identificacion||'').trim()) emp.push('cédula jurídica');
+  if(!String(e.actividad_economica||'').trim()) emp.push('actividad económica');
+  if(!String(e.correo||'').trim()) emp.push('correo');
+  if(!String(e.provincia||'').trim()) emp.push('ubicación');
+
+  var sinPrecio=cat.filter(function(c){ return _n(c.precio)<=0; });
+  var sinCabys=cat.filter(function(c){ return !/^\d{13}$/.test(String(c.cabys||'')); });
+
+  var sinCorreo=cli.filter(function(c){ return !String(c.correo||'').trim(); });
+  var correoMalo=cli.filter(function(c){
+    var v=String(c.correo||'').trim();
+    return v && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(v);
+  });
+  var porRevisar=cli.filter(function(c){ return c.revisar; });
+
+  var listas=docsEmpresa().filter(function(d){
+    return d.estado==='aceptada' && !d.factura_id && _n(d.total)>0;
+  });
+
+  var pun=function(ok, txt, accion){
+    return '<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:1.7">'
+      +'<span style="color:'+(ok?'var(--green)':'var(--amber)')+';font-weight:800">'+(ok?'✓':'○')+'</span>'
+      +'<div style="flex:1">'+txt+'</div>'
+      +(accion||'')+'</div>';
+  };
+
+  var bridge=window._factPuente;
+  var txtPuente = bridge===undefined
+    ? 'Estado del puente: sin comprobar.'
+    : bridge===null
+      ? 'El puente no contesta todavía: falta subir la carpeta <code>api/</code> a Vercel.'
+      : (bridge.simulador
+          ? 'El puente responde, en <b>modo simulador</b>: arma y valida el documento pero no sale a GTI.'
+          : 'El puente responde y está apuntando a GTI.');
+
+  return '<div class="fx-card">'
+    +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
+      +'<div class="fx-h" style="margin:0">Listo para facturar</div>'
+      +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.probarPuente()">Probar el puente</button>'
+    +'</div>'
+
+    +'<div style="padding:10px 12px;border-radius:8px;margin-bottom:12px;font-size:12px;line-height:1.65;'
+      +'background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.28)">'+txtPuente+'</div>'
+
+    +'<div style="display:grid;gap:7px">'
+    +pun(emp.length===0,
+        emp.length===0 ? 'Los datos fiscales de la empresa están completos.'
+          : 'A la empresa le falta: <b>'+_esc(emp.join(', '))+'</b>.',
+        emp.length?'<button class="fx-b sm gh" onclick="FACT.setSub(\'config\')">Arreglar</button>':'')
+    +pun(sinPrecio.length===0,
+        sinPrecio.length===0 ? 'Todos los productos del catálogo tienen precio.'
+          : '<b>'+sinPrecio.length+'</b> de '+cat.length+' productos están en precio 0. '
+            +'Hacienda no acepta una línea en 0.',
+        sinPrecio.length?'<button class="fx-b sm gh" onclick="FACT.setSub(\'catalogo\')">Ver</button>':'')
+    +pun(sinCabys.length===0,
+        sinCabys.length===0 ? 'Todos los productos tienen CABYS de 13 dígitos.'
+          : '<b>'+sinCabys.length+'</b> productos sin CABYS de 13 dígitos.',
+        sinCabys.length?'<button class="fx-b sm gh" onclick="FACT.setSub(\'catalogo\')">Ver</button>':'')
+    +pun(sinCorreo.length===0 && correoMalo.length===0,
+        (sinCorreo.length===0 && correoMalo.length===0)
+          ? 'Todos los clientes tienen un correo con forma válida.'
+          : '<b>'+(sinCorreo.length+correoMalo.length)+'</b> clientes sin correo usable ('
+            +sinCorreo.length+' vacío, '+correoMalo.length+' mal escrito). '
+            +'Hacienda exige el correo del receptor.',
+        (sinCorreo.length+correoMalo.length)
+          ?'<button class="fx-b sm gh" onclick="FACT.irARevisar()">Ver</button>':'')
+    +pun(porRevisar.length===0,
+        porRevisar.length===0 ? 'Ningún cliente quedó marcado para revisar.'
+          : '<b>'+porRevisar.length+'</b> clientes marcados para revisar desde la carga de GTI.',
+        porRevisar.length?'<button class="fx-b sm gh" onclick="FACT.irARevisar()">Ver</button>':'')
+    +pun(listas.length>0,
+        listas.length>0
+          ? '<b>'+listas.length+'</b> proforma(s) aceptadas y sin facturar: listas para emitir.'
+          : 'No hay proformas aceptadas pendientes de facturar.',
+        listas.length?'<button class="fx-b sm gh" onclick="FACT.setSub(\'proformas\')">Ver</button>':'')
+    +'</div>'
+    +'</div>';
+}
+
+async function probarPuente(){
+  _toast('Probando el puente…');
+  window._factPuente=await _tocarPuente();
+  renderBody();
+  if(!window._factPuente) _toast('⚠ El puente no contestó');
+  else _toast(window._factPuente.simulador?'El puente responde (simulador)':'El puente responde');
+}
+
+function irARevisar(){
+  S.sub='clientes'; S.fCli=''; S.fCliRevisar=true; S.pagCli=1;
+  render();
 }
 
 // ── Cambio de empresa / subpestaña ──────────────────────────────────────────
@@ -30638,7 +31115,11 @@ window.FACT={
   nuevoItem:nuevoItem, editarItem:editarItem, guardarItem:guardarItem, borrarItem:borrarItem,
   verAnexo:verAnexo, editarAnexo:editarAnexo, guardarAnexo:guardarAnexo,
   setEmp:setEmp, guardarEmp:guardarEmp,
-  cerrarModal:cerrarModal
+  cerrarModal:cerrarModal,
+  // Etapa 2 — emisión ante Hacienda
+  emitir:emitirDesdeProforma, reconsultar:reconsultar, bajarArchivos:bajarArchivos,
+  verArchivo:verArchivo, verBitacora:verBitacora, refrescarFacturas:refrescarFacturas,
+  probarPuente:probarPuente, irARevisar:irARevisar
 };
 
 // ── Punto de entrada (lo llama buildAdminTabs) ──────────────────────────────
