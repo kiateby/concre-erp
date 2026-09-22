@@ -324,11 +324,25 @@ function simularEmision(doc) {
   };
 }
 
-function simularEstado(doc, intento) {
-  if (intento >= 2) {
-    return { estado: 'aceptado', mensaje: 'SIMULADO — aceptado',
+// Se decide por el tiempo transcurrido desde el envío, NO por el número de
+// intento: cada consulta de estado es un trabajo distinto en la cola y todos
+// llegan con su propio contador en cero, así que contando intentos el
+// simulado nunca pasaba de «recibido» y el camino no terminaba nunca.
+//
+// Con el tiempo queda igual al camino real: la consulta de los 30 segundos
+// dice «en proceso» y la de los 2 minutos ya dice «aceptado».
+const SIM_SEG_ACEPTA = 60;
+
+function simularEstado(doc) {
+  const desde = doc && doc.enviado_en ? new Date(doc.enviado_en).getTime() : 0;
+  const seg = desde ? (Date.now() - desde) / 1000 : 999;
+
+  if (seg >= SIM_SEG_ACEPTA) {
+    return { estado: 'aceptado',
+             mensaje: 'SIMULADO — aceptado (no salió a GTI ni a Hacienda)',
              xml: '<?xml version="1.0"?><FacturaElectronica><!-- simulado --></FacturaElectronica>',
-             respuestaXml: '<?xml version="1.0"?><MensajeHacienda><Mensaje>1</Mensaje></MensajeHacienda>' };
+             respuestaXml: '<?xml version="1.0"?><MensajeHacienda><Mensaje>1</Mensaje>'
+                         + '<DetalleMensaje>SIMULADO</DetalleMensaje></MensajeHacienda>' };
   }
   return { estado: 'recibido', mensaje: 'SIMULADO — en proceso en Hacienda' };
 }

@@ -187,7 +187,7 @@ async function consultarEstado(t) {
                    claveComprobante: doc.clave, id: doc.gti_id || undefined };  // ⚠ manual
 
   const r = await G.llamarGTI(cred, P.RUTAS.estado, cuerpo,
-    () => P.simularEstado(doc, t.intentos || 0));
+    () => P.simularEstado(doc));
 
   await G.sbPatch('fact_emisiones', 'id=eq.' + t.id, {
     enviado: G.sinSecretos(cuerpo), respuesta: G.sinSecretos(r.datos), http_status: r.status,
