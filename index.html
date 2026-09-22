@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260922105747';
+var APP_BUILD='20260922111626';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -28395,6 +28395,19 @@ function renderEditor(b){
           +'<button class="fx-b sm" onclick="FACT.subirAdjunto()">⬆ Subir</button>'
           +'<span id="fact-adj-status" style="font-size:11px;color:var(--text3)"></span></div>'
           +'<div id="fact-adjuntos"></div>')
+    +'</div>'
+
+    // ── Barra inferior: lo mismo que arriba, para no tener que subir ──
+    +'<div class="fx-card" style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;'
+      +'position:sticky;bottom:0;z-index:5">'
+      +'<button class="fx-b gh" onclick="FACT.cerrarEditor()">← Volver</button>'
+      +'<div style="font-size:11px;color:var(--text3)">Total</div>'
+      +'<div id="fact-total-pie" style="font-size:17px;font-weight:900">'+_mon(d.total, d.moneda)+'</div>'
+      +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap">'
+        +(esNueva?'':'<button class="fx-b sec" onclick="FACT.imprimir(\''+d.id+'\')">🖨 Imprimir / PDF</button>')
+        +(esNueva?'':'<button class="fx-b sec" onclick="FACT.facturar(\''+d.id+'\')">🧾 Facturar</button>')
+        +'<button class="fx-b" onclick="FACT.guardar()">💾 Guardar</button>'
+      +'</div>'
     +'</div>';
 
   renderLineas();
@@ -28510,9 +28523,11 @@ function renderLineas(){
         +'<td><select class="fx-i" onchange="FACT.setLinea(\''+l.id+'\',\'unidad\',this.value)">'
           +UNIDADES.map(function(u){ return '<option'+(l.unidad===u?' selected':'')+'>'+u+'</option>'; }).join('')
           +'</select></td>'
-        +'<td><input type="number" step="0.01" class="fx-i fx-r" value="'+_n(l.cantidad)+'"'
+        +'<td><input type="number" step="0.01" class="fx-i fx-r" data-campo="cantidad"'
+          +' value="'+_n(l.cantidad)+'"'
           +' oninput="FACT.setLinea(\''+l.id+'\',\'cantidad\',this.value)"></td>'
-        +'<td><input type="number" step="0.01" class="fx-i fx-r" value="'+_n(l.precio_unitario)+'"'
+        +'<td><input type="number" step="0.01" class="fx-i fx-r" data-campo="precio_unitario"'
+          +' value="'+_n(l.precio_unitario)+'"'
           +' oninput="FACT.setLinea(\''+l.id+'\',\'precio_unitario\',this.value)"></td>'
         +'<td><input type="number" step="0.01" min="0" max="100" class="fx-i fx-r" value="'+_n(l.descuento_pct)+'"'
           +' oninput="FACT.setLinea(\''+l.id+'\',\'descuento_pct\',this.value)"></td>'
@@ -28556,9 +28571,13 @@ function calcTotales(){
 }
 
 function renderTotales(){
-  var el=document.getElementById('fact-totales'); if(!el) return;
+  var el=document.getElementById('fact-totales');
   calcTotales();
   var d=S.edit, m=d.moneda;
+  // El total también va en la barra de abajo
+  var pie=document.getElementById('fact-total-pie');
+  if(pie) pie.textContent=_mon(d.total, m);
+  if(!el) return;
   var ivaGrupos={};
   S.lineas.forEach(function(l){
     var p=_n(l.iva_pct);
@@ -28929,7 +28948,8 @@ function agregarDeCatalogo(){
     +'</div>'
     +'<input class="fx-i" placeholder="Filtrar…" style="margin-bottom:10px" oninput="FACT.filtrarCatModal(this.value)">'
     +'<div id="fact-cat-modal-list" style="max-height:52vh;overflow-y:auto">'+listaCatModal(grupos)+'</div>'
-    +'<div style="margin-top:12px;font-size:11px;color:var(--text3)">Haga clic en un ítem para agregarlo. Puede agregar varios.</div>'
+    +'<div style="margin-top:12px;font-size:11px;color:var(--text3)">Haga clic en un ítem: se agrega, se cierra la ventana '
+      +'y el cursor queda en la cantidad de esa línea.</div>'
     +'</div>';
   ov.onclick=function(){ cerrarModal('fact-cat-modal'); };
   _root().appendChild(ov);
@@ -28983,8 +29003,31 @@ function agregarItem(cid){
     venta_categoria:c.venta_categoria_default||null, exportada:false
   });
   S.dirty=true;
+
+  // Se cierra la ventana y el cursor queda en la cantidad de la línea nueva,
+  // que es lo que uno va a escribir enseguida. Para agregar otra se vuelve a
+  // abrir el catálogo: es un clic más, pero no hay que ir a buscar el campo.
+  cerrarModal('fact-cat-modal');
   renderLineas(); renderTotales();
+  var nueva=S.lineas[S.lineas.length-1];
+  enfocarLinea(nueva.id, 'cantidad');
   _toast('+ '+c.descripcion);
+}
+
+// Pone el cursor en un campo de una línea y le selecciona el contenido, para
+// que al escribir se reemplace en vez de quedar pegado al valor que traía.
+function enfocarLinea(lid, campo){
+  setTimeout(function(){
+    var tr=document.querySelector('[data-lid="'+lid+'"]');
+    if(!tr) return;
+    var inp=tr.querySelector('[data-campo="'+campo+'"]');
+    if(!inp) return;
+    try{
+      inp.scrollIntoView({block:'center', behavior:'smooth'});
+      inp.focus();
+      inp.select();
+    }catch(e){ try{ inp.focus(); }catch(e2){} }
+  }, 60);
 }
 
 // ── Campos sueltos del documento ────────────────────────────────────────────
@@ -30804,6 +30847,40 @@ async function reconsultar(docId){
   _sondear(docId, 0);
 }
 
+// Volver a intentar una emisión que no llegó a salir. Solo aplica cuando el
+// documento NO tiene clave: si ya la tiene, ya salió a Hacienda y reenviarlo
+// serían dos documentos fiscales.
+async function reintentar(docId){
+  var d=S.docs.find(function(x){ return x.id===docId; });
+  if(!d){ _toast('No se encontró la factura'); return; }
+  if(d.clave){ _toast('Esa factura ya salió: use ↻ para consultar el estado'); return; }
+
+  // Se descarta el trabajo viejo para que el índice único deje encolar otro.
+  // Nunca uno que esté 'procesando': ese puede estar saliendo a GTI en este
+  // momento. Si termina bien, el documento queda con clave y el trabajo nuevo
+  // se detiene solo al ver que ya tiene.
+  try{
+    await DB.from('fact_emisiones').update({estado:'descartado'})
+      .eq('doc_id',docId).eq('accion','emitir').neq('estado','procesando');
+  }catch(e){ console.warn('reintentar/limpiar:',e); }
+
+  var r=await DB.from('fact_emisiones').insert({
+    empresa_id:d.empresa_id, doc_id:docId, accion:'emitir', estado:'pendiente',
+    correr_en:new Date().toISOString(),
+    usuario_id:(SESSION&&SESSION.id)||null, usuario_nombre:(SESSION&&SESSION.nombre)||null,
+  });
+  if(r.error){ _toast('⚠ '+r.error.message); return; }
+
+  await DB.from('fact_docs').update({estado_hacienda:'en_cola', estado_hacienda_msg:null,
+    actualizado_en:new Date().toISOString()}).eq('id',docId);
+  d.estado_hacienda='en_cola'; d.estado_hacienda_msg=null;
+  renderBody();
+
+  _toast('Reintentando la emisión…');
+  await _tocarPuente();
+  _sondear(docId, 0);
+}
+
 // Pedir el XML y el PDF. GTI los entrega una sola vez y dentro de los 3 días.
 async function bajarArchivos(docId){
   var d=S.docs.find(function(x){ return x.id===docId; });
@@ -30937,6 +31014,9 @@ function filaFactura(d){
         ?'<button class="fx-b sm gh" onclick="FACT.bajarArchivos(\''+d.id+'\')" title="Pedir el XML y el PDF a GTI">⤓</button> ':'')
       +(d.clave && d.estado_hacienda!=='aceptado' && d.estado_hacienda!=='rechazado'
         ?'<button class="fx-b sm gh" onclick="FACT.reconsultar(\''+d.id+'\')" title="Volver a preguntar a Hacienda">↻</button> ':'')
+      +(!d.clave && (d.estado_hacienda==='error' || d.estado_hacienda==='en_cola')
+        ?'<button class="fx-b sm gh" onclick="FACT.reintentar(\''+d.id+'\')"'
+          +' title="Volver a intentar la emisión">↻ Reintentar</button> ':'')
       +'<button class="fx-b sm gh" onclick="FACT.verBitacora(\''+d.id+'\')" title="Bitácora de la emisión">🕑</button> '
       +'<button class="fx-b sm gh" onclick="FACT.imprimir(\''+d.id+'\')" title="Imprimir">🖨</button>'
     +'</td></tr>';
@@ -31132,7 +31212,8 @@ window.FACT={
   setEmp:setEmp, guardarEmp:guardarEmp,
   cerrarModal:cerrarModal,
   // Etapa 2 — emisión ante Hacienda
-  emitir:emitirDesdeProforma, reconsultar:reconsultar, bajarArchivos:bajarArchivos,
+  emitir:emitirDesdeProforma, reconsultar:reconsultar, reintentar:reintentar,
+  bajarArchivos:bajarArchivos,
   verArchivo:verArchivo, verBitacora:verBitacora, refrescarFacturas:refrescarFacturas,
   probarPuente:probarPuente, irARevisar:irARevisar
 };
