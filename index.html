@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260922111626';
+var APP_BUILD='20260922113840';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -27755,6 +27755,9 @@ var S = {
   pagCli: 1,
   cliEdit: null,       // cliente en el formulario
   cliOpc: false,       // ¿campos opcionales desplegados?
+  cliFix: null,        // borrador al completar los datos del cliente para facturar
+  ver: null,           // id del documento abierto en solo lectura (factura emitida)
+  fFacturadas: false,  // filtro "solo las proformas ya facturadas"
   // exportación a ventas
   expSel: {},          // lineaId -> true
   expGrupo: {},        // lineaId -> 'g1'
@@ -28027,7 +28030,7 @@ function render(){
 function renderBody(){
   var b=document.getElementById('fact-body'); if(!b) return;
   if(S.sub==='proformas'){ S.edit ? renderEditor(b) : renderLista(b); }
-  else if(S.sub==='facturas') renderFacturas(b);
+  else if(S.sub==='facturas'){ S.ver ? renderVista(b) : renderFacturas(b); }
   else if(S.sub==='clientes') renderClientes(b);
   else if(S.sub==='catalogo') renderCatalogo(b);
   else if(S.sub==='anexos')   renderAnexos(b);
@@ -28084,6 +28087,7 @@ function renderLista(b){
 
   var vis=docs.filter(function(d){
     if(S.fEstado!=='todas' && d.estado!==S.fEstado) return false;
+    if(S.fFacturadas && !d.factura_id) return false;
     // Rango de fechas (cualquiera de los dos extremos puede ir solo)
     if(S.fDesde && String(d.fecha||'') < S.fDesde) return false;
     if(S.fHasta && String(d.fecha||'') > S.fHasta) return false;
@@ -28104,12 +28108,20 @@ function renderLista(b){
   var cuenta={};
   Object.keys(ESTADOS).forEach(function(k){ cuenta[k]=docs.filter(function(d){return d.estado===k;}).length; });
 
+  var nFact=docs.filter(function(d){ return !!d.factura_id; }).length;
+
   var chips=['todas'].concat(Object.keys(ESTADOS)).map(function(k){
     var n=(k==='todas')?docs.length:cuenta[k];
     var lbl=(k==='todas')?'Todas':ESTADOS[k].lbl;
     return '<button class="fx-b sm '+(S.fEstado===k?'':'gh')+'" onclick="FACT.setEstadoFiltro(\''+k+'\')">'
       +lbl+' <span style="opacity:.6">'+n+'</span></button>';
-  }).join('');
+  }).join('')
+  // Las ya facturadas: se pueden aislar para consultarlas, o dejarlas de lado
+  +(nFact
+    ? ' <button class="fx-b sm '+(S.fFacturadas?'':'gh')+'" onclick="FACT.togFacturadas()"'
+      +' title="Solo las proformas que ya se facturaron">🧾 Facturadas'
+      +' <span style="opacity:.6">'+nFact+'</span></button>'
+    : '');
 
   var e=_emp();
   var puedeCrear=e.activa;
@@ -28170,6 +28182,7 @@ function filaDoc(d){
   }).join('');
   return '<tr>'
     +'<td><b style="font-size:13px;color:var(--red)">'+_esc(d.consecutivo||'—')+'</b>'
+      +(d.factura_id?'<div style="font-size:9px;color:var(--blue);font-weight:800;margin-top:2px">🧾 Facturada</div>':'')
       +(d.exportada_ventas?'<div style="font-size:9px;color:var(--green);font-weight:800;margin-top:2px">✓ En Ventas</div>':'')+'</td>'
     +'<td style="white-space:nowrap">'+_fechaCorta(d.fecha)
       +'<div style="font-size:9.5px;color:var(--text3)">vence '+_fechaCorta(d.fecha_vence)+'</div></td>'
@@ -28183,7 +28196,10 @@ function filaDoc(d){
     +'<td class="fx-c" style="white-space:nowrap">'
       +'<button class="fx-b sm gh" onclick="FACT.abrir(\''+d.id+'\')" title="Modificar">✏</button> '
       +'<button class="fx-b sm gh" onclick="FACT.imprimir(\''+d.id+'\')" title="Imprimir / PDF">🖨</button> '
-      +'<button class="fx-b sm gh" onclick="FACT.facturar(\''+d.id+'\')" title="Facturar — revisar qué falta">🧾</button> '
+      +(d.factura_id
+        ? '<button class="fx-b sm gh" onclick="FACT.verFactura(\''+d.factura_id+'\')"'
+          +' title="Ver la factura: líneas, pasar a Ventas, imprimir">👁</button> '
+        : '<button class="fx-b sm gh" onclick="FACT.facturar(\''+d.id+'\')" title="Facturar — revisar qué falta">🧾</button> ')
       +'<button class="fx-b sm gh" onclick="FACT.duplicar(\''+d.id+'\')" title="Duplicar">⧉</button> '
       +'<button class="fx-b sm gh" onclick="FACT.aPapelera(\''+d.id+'\')" title="Enviar a papelera" style="color:var(--red)">🗑</button>'
     +'</td></tr>';
@@ -28284,6 +28300,12 @@ function renderEditor(b){
           +' <button class="fx-b sm gh" style="margin-left:8px;font-weight:600" onclick="FACT.desvincular()">Desvincular</button></div>'
         : '<div style="margin-top:9px;font-size:11px;color:var(--text3)">'
           +'Cliente libre — sirve para la proforma. Para facturar tendrá que existir en Clientes.</div>')
+
+      // Lo escrito acá vale para esta proforma. Si además quiere que quede en la
+      // ficha del cliente, hay que decirlo: no se pisa la ficha por accidente.
+      // Va en su propio recuadro para poder repintarlo sin redibujar el resto,
+      // que al escribir haría perder el cursor.
+      +'<div id="fact-aviso-ficha">'+avisoFicha(d)+'</div>'
 
       // ── Los opcionales que pide la ficha del receptor de GTI ──
       +'<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">'
@@ -28490,6 +28512,35 @@ async function guardarOpcAlCliente(){
     console.error('guardarOpcAlCliente:',e);
     _toast(_errTabla(e,'fact_clientes'));
   }
+}
+
+// El aviso del bloque Cliente: qué le falta a la ficha, o qué se cambió solo
+// en este documento. Devuelve cadena vacía cuando no hay nada que decir.
+function avisoFicha(d){
+  if(!d || !d.fact_cliente_id) return '';
+  var cli=S.clientes.find(function(x){ return x.id===d.fact_cliente_id; });
+  var falt=faltasCliente(cli);
+  var marcado=!!(cli&&cli.revisar)||_nombreEsCedula(cli);
+  var difs=_difiereDelCliente(d);
+  if(!difs.length && !falt.length && !marcado) return '';
+
+  return '<div style="margin-top:11px;padding:10px 12px;border-radius:8px;font-size:11.5px;'
+    +'line-height:1.65;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3)">'
+    +(falt.length||marcado
+      ? 'A la ficha de este cliente le falta <b>'+_esc(falt.join(', ')||'confirmar los datos')
+        +'</b>. Para la proforma no importa; <b>para facturar sí</b>.'
+        +'<div><button class="fx-b sm" style="margin-top:8px" onclick="FACT.completarCliente(\''+d.id+'\')">'
+        +'✎ Completar ahora</button></div>'
+      : 'Cambió el '+_esc(difs.join(' y el '))+' en esta proforma. '
+        +'Queda solo en este documento, salvo que lo guarde en la ficha.'
+        +'<div><button class="fx-b sm" style="margin-top:8px" onclick="FACT.guardarDatosAlCliente()">'
+        +'⬆ Guardar en la ficha del cliente</button></div>')
+    +'</div>';
+}
+
+function pintarAvisoFicha(){
+  var el=document.getElementById('fact-aviso-ficha');
+  if(el) el.innerHTML=avisoFicha(S.edit);
 }
 
 function campo(lbl, ctrl){
@@ -29035,6 +29086,9 @@ function setDoc(campo, val){
   if(['tipo_cambio'].indexOf(campo)>=0) S.edit[campo]=_n(val);
   else S.edit[campo]=val;
   S.dirty=true;
+  // Si se tocó un dato del receptor, el aviso de la ficha puede cambiar.
+  // Se repinta solo ese recuadro: redibujar todo haría perder el cursor.
+  if(campo.indexOf('cliente_')===0) pintarAvisoFicha();
   if(campo==='fecha'){
     var e=_emp();
     S.edit.fecha_vence=_sumaDias(val, _n(e.vigencia_dias)||15);
@@ -30503,7 +30557,19 @@ function revisarParaFacturar(d, lineas){
     if(!cor) faltas.push('El cliente no tiene correo: Hacienda lo exige para enviarle el comprobante.');
     else if(!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(cor))
       faltas.push('El correo del cliente «'+cor+'» no tiene forma de dirección válida.');
-    if(cli.revisar) avisos.push('El cliente está marcado para revisar: '+(cli.revisar_motivo||''));
+    // Pedido: en factura los datos del receptor tienen que estar completos y
+    // correctos. Un cliente marcado para revisar viene de la carga de GTI con
+    // datos sin confirmar, así que bloquea. Guardar su ficha una vez le quita
+    // la marca, de modo que no traba nada de verdad.
+    if(cli.revisar){
+      faltas.push('El cliente está marcado para revisar'
+        +(cli.revisar_motivo?' ('+cli.revisar_motivo+')':'')
+        +': confirme sus datos. Al guardarlos se le quita la marca.');
+    }
+    if(_nombreEsCedula(cli)){
+      faltas.push('El nombre del cliente es solo un número: ponga el nombre o la razón '
+        +'social, que es lo que sale en la factura.');
+    }
     if(!String(cli.telefono||'').trim()) avisos.push('El cliente no tiene teléfono (opcional).');
     if(!String(cli.provincia||'').trim()) avisos.push('El cliente no tiene ubicación (opcional).');
   }
@@ -30629,10 +30695,13 @@ async function facturar(id){
 
     +'<div style="display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap">'
       +'<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fac-modal\')">Cerrar</button>'
-      +(r.cliente
-        ? '<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fac-modal\');FACT.irACliente(\''
-          +r.cliente.id+'\')">Ver la ficha del cliente</button>'
-        : '')
+      +(faltasCliente(r.cliente).length || (r.cliente&&r.cliente.revisar) || _nombreEsCedula(r.cliente)
+        ? '<button class="fx-b" onclick="FACT.completarCliente(\''+d.id+'\')">'
+          +'✎ Completar los datos del cliente</button>'
+        : (r.cliente
+            ? '<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fac-modal\');FACT.irACliente(\''
+              +r.cliente.id+'\')">Ver la ficha del cliente</button>'
+            : ''))
       +(listo
         ? '<button class="fx-b" onclick="FACT.emitir(\''+d.id+'\')">'
           +(window._factPuente&&window._factPuente.simulador?'Emitir (simulador)':'Emitir factura electrónica')
@@ -30787,7 +30856,10 @@ async function emitirDesdeProforma(id){
   fac.estado_hacienda_msg=null;
   fac.enviado_en=null; fac.resuelto_en=null;
   fac.xml_path=null; fac.xml_resp_path=null; fac.pdf_path=null; fac.archivos_en=null;
-  fac.exportada_ventas=false;
+  // Se hereda el estado de exportación de la proforma. Si sus líneas ya
+  // pasaron a Ventas, las de la factura NO se pueden volver a pasar: serían
+  // dos ventas por el mismo trabajo y el reporte quedaría inflado.
+  fac.exportada_ventas=!!prof.exportada_ventas;
   fac.usuario_id=(SESSION&&SESSION.id)||null;
   fac.usuario_nombre=(SESSION&&SESSION.nombre)||null;
   fac.cond_venta=prof.cond_venta||'01';
@@ -30802,7 +30874,9 @@ async function emitirDesdeProforma(id){
     var c={};
     Object.keys(l).forEach(function(k){ c[k]=l[k]; });
     c.id=_id('fl'); c.doc_id=fid; c.orden=i;
-    c.venta_id=null; c.exportada=false; c.creado_en=ahora;
+    // venta_id y exportada se COPIAN, no se borran: una línea que ya está en
+    // Ventas no debe poder pasarse otra vez desde la factura.
+    c.creado_en=ahora;
     return c;
   });
   if(copias.length){
@@ -31006,6 +31080,8 @@ function filaFactura(d){
     +'<td style="font-size:10px;color:var(--text3);word-break:break-all;max-width:170px">'
       +_esc(d.clave||'—')+'</td>'
     +'<td class="fx-c" style="white-space:nowrap">'
+      +'<button class="fx-b sm gh" onclick="FACT.verFactura(\''+d.id+'\')"'
+        +' title="Ver: líneas, pasar a Ventas, imprimir">👁</button> '
       +(hay(d.xml_path)
         ?'<button class="fx-b sm gh" onclick="FACT.verArchivo(\''+d.id+'\',\'xml\')" title="Ver el XML firmado">XML</button> ':'')
       +(hay(d.pdf_path)
@@ -31134,6 +31210,473 @@ function irARevisar(){
   render();
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COMPLETAR LOS DATOS DEL CLIENTE SIN SALIR DEL DOCUMENTO
+//
+// La proforma no exige nada: sirve para cotizar y el cliente puede ir con el
+// nombre suelto. La FACTURA sí exige, porque Hacienda la rechaza sin cédula
+// válida y sin correo del receptor.
+//
+// Antes, cuando faltaba un dato había que salir a la subpestaña Clientes,
+// arreglarlo, volver y empezar de nuevo. Esto lo arregla en el mismo lugar:
+// se corrige, se guarda en la ficha del cliente —para que sirva la próxima
+// vez— y la revisión previa se vuelve a correr sola.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Qué le falta al cliente para poder facturarle. Devuelve la lista de campos,
+// vacía si está listo. Es la misma regla que aplica revisarParaFacturar.
+function faltasCliente(cli){
+  var f=[];
+  if(!cli) return ['El cliente no está en la lista de Clientes.'];
+
+  if(!String(cli.nombre||'').trim()) f.push('nombre');
+
+  var dig=String(cli.identificacion||'').replace(/\D/g,'');
+  var t=_tipoIdent(cli.tipo_identificacion);
+  if(!dig) f.push('cédula');
+  else if(dig.length<t.dig[0] || dig.length>t.dig[1]) f.push('cédula (no cuadra con '+t.lbl+')');
+
+  var cor=String(cli.correo||'').trim();
+  if(!cor) f.push('correo');
+  else if(!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(cor)) f.push('correo (mal escrito)');
+
+  return f;
+}
+
+// El nombre no puede ser solo la cédula: así vinieron 4 de la carga de GTI.
+function _nombreEsCedula(cli){
+  var n=String((cli&&cli.nombre)||'').replace(/[\s-]/g,'');
+  return /^\d{9,12}$/.test(n);
+}
+
+// ── El formulario ───────────────────────────────────────────────────────────
+function completarCliente(docId){
+  var d=(S.edit && S.edit.id===docId) ? S.edit
+        : S.docs.find(function(x){ return x.id===docId; });
+  if(!d){ _toast('No se encontró el documento'); return; }
+
+  if(!d.fact_cliente_id){
+    _toast('Ese documento tiene un cliente libre: créelo primero en la subpestaña Clientes');
+    S.sub='clientes'; S.fCli=String(d.cliente_nombre||''); S.pagCli=1;
+    cerrarModal('fact-fac-modal'); render();
+    return;
+  }
+  var cli=S.clientes.find(function(x){ return x.id===d.fact_cliente_id; });
+  if(!cli){ _toast('No se encontró la ficha del cliente'); return; }
+
+  S.cliFix={
+    id:cli.id, docId:docId,
+    nombre:cli.nombre||'',
+    tipo_identificacion:cli.tipo_identificacion||2,
+    identificacion:cli.identificacion||'',
+    correo:cli.correo||'',
+    telefono:cli.telefono||'',
+    _revisar:!!cli.revisar, _motivo:cli.revisar_motivo||'',
+  };
+
+  cerrarModal('fact-fac-modal');
+  var ov=document.createElement('div');
+  ov.className='fx-ov'; ov.id='fact-fix-modal';
+  ov.innerHTML='<div class="fx-md" style="max-width:600px" onclick="event.stopPropagation()">'
+    +'<div id="fact-fix-cuerpo"></div></div>';
+  ov.onclick=function(){ cerrarModal('fact-fix-modal'); };
+  _root().appendChild(ov);
+  pintarCliFix();
+}
+
+function pintarCliFix(){
+  var el=document.getElementById('fact-fix-cuerpo'); if(!el) return;
+  var b=S.cliFix;
+  var f=faltasCliente(b);
+  var listo=f.length===0;
+  var t=_tipoIdent(b.tipo_identificacion);
+  var dig=String(b.identificacion||'').replace(/\D/g,'');
+
+  el.innerHTML=
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+      +'<div class="fx-h" style="margin:0">Completar los datos del cliente</div>'
+      +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.cerrarModal(\'fact-fix-modal\')">✕</button>'
+    +'</div>'
+
+    +'<div style="font-size:11.5px;color:var(--text3);line-height:1.65;margin-bottom:14px">'
+      +'Hacienda exige estos datos para emitir una factura electrónica. Al guardarlos '
+      +'quedan en la ficha del cliente y ya vienen listos la próxima vez.'
+    +'</div>'
+
+    +(b._revisar
+      ? '<div style="padding:9px 12px;border-radius:8px;margin-bottom:13px;font-size:11.5px;'
+        +'line-height:1.6;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35)">'
+        +'Este cliente venía <b>marcado para revisar</b> de la carga de GTI'
+        +(b._motivo?': '+_esc(b._motivo):'')+'. Al guardar acá se le quita la marca, '
+        +'así que confirme que los datos son los correctos.'
+        +'</div>'
+      : '')
+
+    +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">'
+      +campo('Nombre o razón social *','<input class="fx-i" value="'+_esc(b.nombre)+'"'
+        +' oninput="FACT.setCliFix(\'nombre\',this.value)">')
+      +campo('Tipo de identificación *','<select class="fx-i" onchange="FACT.setCliFix(\'tipo_identificacion\',this.value)">'
+        +[1,2,3,4].map(function(v){
+            var ti=_tipoIdent(v);
+            return '<option value="'+v+'"'+(String(b.tipo_identificacion)===String(v)?' selected':'')
+              +'>'+ti.lbl+'</option>';
+          }).join('')
+        +'</select>')
+      +campo('Cédula *','<input class="fx-i" value="'+_esc(b.identificacion)+'"'
+        +' placeholder="'+t.dig[0]+(t.dig[1]!==t.dig[0]?' a '+t.dig[1]:'')+' dígitos"'
+        +' oninput="FACT.setCliFix(\'identificacion\',this.value)">')
+      +campo('Correo *','<input class="fx-i" type="email" value="'+_esc(b.correo)+'"'
+        +' placeholder="a donde llega el comprobante"'
+        +' oninput="FACT.setCliFix(\'correo\',this.value)">')
+      +campo('Teléfono','<input class="fx-i" value="'+_esc(b.telefono)+'"'
+        +' oninput="FACT.setCliFix(\'telefono\',this.value)">')
+    +'</div>'
+
+    // Lo que todavía falta, dicho en el momento
+    +'<div style="margin-top:14px;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.6;'
+      +(listo?'background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);color:var(--green)'
+             :'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:var(--red)')+'">'
+      +(listo
+        ? '✓ Con esto ya se le puede facturar.'
+        : 'Falta: <b>'+f.map(_esc).join('</b>, <b>')+'</b>')
+      +(dig&&dig.length!==0&&!listo?'':'')
+    +'</div>'
+
+    +(_nombreEsCedula(b)
+      ? '<div style="margin-top:9px;font-size:11px;color:var(--amber);line-height:1.6">'
+        +'⚠ El nombre es solo un número. Así vinieron algunos de GTI; conviene poner '
+        +'el nombre o la razón social de verdad, porque es lo que sale en la factura.</div>'
+      : '')
+
+    +'<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">'
+      +'<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fix-modal\')">Cancelar</button>'
+      +'<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fix-modal\');FACT.irACliente(\''
+        +b.id+'\')">Abrir la ficha completa</button>'
+      +'<button class="fx-b" onclick="FACT.guardarCliFix()"'+(listo?'':' disabled style="opacity:.45;cursor:not-allowed"')+'>'
+        +'Guardar y seguir</button>'
+    +'</div>';
+}
+
+function setCliFix(campo, val){
+  if(!S.cliFix) return;
+  S.cliFix[campo]=val;
+  pintarCliFix();
+}
+
+// ── Guardar ─────────────────────────────────────────────────────────────────
+// Esto SÍ pisa nombre, cédula y correo de la ficha: es el único lugar donde se
+// hace, y solo porque el usuario lo pidió expresamente desde acá. El guardado
+// de los opcionales sigue sin tocarlos.
+async function guardarCliFix(){
+  var b=S.cliFix; if(!b) return;
+  var f=faltasCliente(b);
+  if(f.length){ _toast('⚠ Todavía falta: '+f.join(', ')); return; }
+
+  var c=S.clientes.find(function(x){ return x.id===b.id; });
+  if(!c){ _toast('⚠ No se encontró el cliente'); return; }
+
+  var row={
+    nombre:String(b.nombre).trim(),
+    tipo_identificacion:parseInt(b.tipo_identificacion,10)||2,
+    identificacion:String(b.identificacion||'').replace(/\D/g,''),
+    correo:String(b.correo||'').trim(),
+    telefono:String(b.telefono||'').trim(),
+    // Se corrigió a mano y quedó completo: se le quita la marca de revisar.
+    revisar:false, revisar_motivo:null,
+    actualizado_en:new Date().toISOString(),
+  };
+
+  try{
+    var r=await DB.from('fact_clientes').update(row).eq('id',b.id);
+    if(r.error) throw r.error;
+  }catch(e){
+    console.error('guardarCliFix:',e);
+    _toast(_errTabla(e,'fact_clientes'));
+    return;
+  }
+
+  Object.keys(row).forEach(function(k){ c[k]=row[k]; });
+
+  // El documento lleva su propia copia de los datos del receptor: se pone al
+  // día para que la factura salga con lo corregido y no con lo viejo.
+  var docId=b.docId;
+  var copia={
+    cliente_nombre:row.nombre,
+    cliente_identificacion:row.identificacion,
+    cliente_tipo_ident:row.tipo_identificacion,
+    cliente_correo:row.correo,
+    cliente_telefono:row.telefono,
+    actualizado_en:row.actualizado_en,
+  };
+  var d=(S.edit && S.edit.id===docId) ? S.edit : S.docs.find(function(x){ return x.id===docId; });
+  if(d){
+    Object.keys(copia).forEach(function(k){ d[k]=copia[k]; });
+    var enBase=S.docs.find(function(x){ return x.id===docId; });
+    if(enBase && enBase!==d) Object.keys(copia).forEach(function(k){ enBase[k]=copia[k]; });
+    if(d.consecutivo){
+      try{ await DB.from('fact_docs').update(copia).eq('id',docId); }
+      catch(e){ console.warn('guardarCliFix/doc:',e); }
+    }
+  }
+
+  S.cliFix=null;
+  cerrarModal('fact-fix-modal');
+  _toast('✅ Datos guardados en la ficha de '+row.nombre);
+  renderBody();
+
+  // Se vuelve a correr la revisión, que es lo que uno quiere ver enseguida.
+  setTimeout(function(){ facturar(docId); }, 150);
+}
+
+// ── Guardar al cliente los datos escritos en el documento ───────────────────
+// Va en el bloque Cliente del editor. Sirve cuando uno corrige el correo o la
+// cédula ahí mismo y quiere que queden en la ficha, no solo en esta proforma.
+function _difiereDelCliente(d){
+  if(!d.fact_cliente_id) return [];
+  var c=S.clientes.find(function(x){ return x.id===d.fact_cliente_id; });
+  if(!c) return [];
+  var difs=[];
+  var pares=[
+    ['cliente_correo','correo','correo'],
+    ['cliente_identificacion','identificacion','cédula'],
+    ['cliente_telefono','telefono','teléfono'],
+  ];
+  pares.forEach(function(p){
+    var enDoc=String(d[p[0]]||'').trim();
+    var enCli=String(c[p[1]]||'').trim();
+    if(p[1]==='identificacion'){
+      enDoc=enDoc.replace(/\D/g,''); enCli=enCli.replace(/\D/g,'');
+    }
+    if(enDoc && enDoc!==enCli) difs.push(p[2]);
+  });
+  return difs;
+}
+
+async function guardarDatosAlCliente(){
+  var d=S.edit;
+  if(!d || !d.fact_cliente_id){ _toast('⚠ Primero escoja el cliente de la lista'); return; }
+  var c=S.clientes.find(function(x){ return x.id===d.fact_cliente_id; });
+  if(!c){ _toast('⚠ No se encontró el cliente'); return; }
+
+  var row={ actualizado_en:new Date().toISOString() };
+  var cor=String(d.cliente_correo||'').trim();
+  var ced=String(d.cliente_identificacion||'').replace(/\D/g,'');
+  var tel=String(d.cliente_telefono||'').trim();
+
+  if(cor){
+    if(!/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(cor)){
+      _toast('⚠ El correo «'+cor+'» no tiene forma de dirección válida');
+      return;
+    }
+    row.correo=cor;
+  }
+  if(ced) row.identificacion=ced;
+  if(tel) row.telefono=tel;
+
+  if(Object.keys(row).length===1){ _toast('No hay nada nuevo que guardar'); return; }
+
+  // Si con esto la ficha queda completa, se le quita la marca de revisar.
+  var prueba={};
+  Object.keys(c).forEach(function(k){ prueba[k]=c[k]; });
+  Object.keys(row).forEach(function(k){ prueba[k]=row[k]; });
+  if(c.revisar && faltasCliente(prueba).length===0){
+    row.revisar=false; row.revisar_motivo=null;
+  }
+
+  try{
+    var r=await DB.from('fact_clientes').update(row).eq('id',c.id);
+    if(r.error) throw r.error;
+    Object.keys(row).forEach(function(k){ c[k]=row[k]; });
+    _toast('✅ Guardado en la ficha de '+c.nombre);
+    renderBody();
+  }catch(e){
+    console.error('guardarDatosAlCliente:',e);
+    _toast(_errTabla(e,'fact_clientes'));
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VER UN DOCUMENTO YA EMITIDO — solo lectura
+//
+// Una factura aceptada por Hacienda no se puede modificar: se corrige con una
+// nota de crédito. Por eso NO se abre en el editor, sino en esta vista, que
+// muestra todo pero no deja cambiar nada.
+//
+// Lo que sí se puede hacer desde acá es lo que el usuario necesita después:
+//   · imprimirla o guardarla en PDF para mandarla al cliente;
+//   · escoger líneas y agruparlas a categorías para el reporte de Ventas,
+//     con el mismo flujo de siempre;
+//   · ver el XML, la respuesta de Hacienda y la bitácora;
+//   · saltar a la proforma de la que salió.
+//
+// El documento se carga en S.edit y S.lineas porque así funcionan sin cambios
+// «Pasar a Ventas» e «Imprimir». S.ver marca que es solo lectura.
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function verFactura(id){
+  var d=S.docs.find(function(x){ return x.id===id; });
+  if(!d){ _toast('No se encontró el documento'); return; }
+
+  try{
+    var r=await loadAllRowsEq('fact_lineas','doc_id',id,'orden');
+    S.lineas=(r.error?[]:(r.data||[]));
+  }catch(e){ console.warn('verFactura:',e); S.lineas=[]; }
+
+  S.edit=d;              // para que Exportar e Imprimir funcionen igual
+  S.ver=id;              // marca de solo lectura
+  S.dirty=false;
+  S.adjuntos=[];
+  S.sub='facturas';
+  render();
+}
+
+function cerrarVista(){
+  S.ver=null; S.edit=null; S.lineas=[]; S.adjuntos=[]; S.dirty=false;
+  render();
+}
+
+function renderVista(b){
+  var d=S.edit; if(!d){ cerrarVista(); return; }
+  var eh=ESTADO_HAC[d.estado_hacienda||'sin_enviar']||ESTADO_HAC.sin_enviar;
+  var prof=d.proforma_origen_id
+    ? S.docs.find(function(x){ return x.id===d.proforma_origen_id; })
+    : null;
+  var sinExportar=S.lineas.filter(function(l){ return !l.exportada; }).length;
+
+  b.innerHTML=
+    // ── Encabezado ──
+    '<div class="fx-card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+      +'<button class="fx-b gh" onclick="FACT.cerrarVista()">← Volver</button>'
+      +'<div><div style="font-size:9.5px;font-weight:900;color:var(--text3);text-transform:uppercase;letter-spacing:.1em">'
+        +'Factura electrónica</div>'
+        +'<div style="font-size:22px;font-weight:900;color:var(--red);line-height:1.1">'
+        +_esc(d.consecutivo||'—')+'</div></div>'
+      +'<span class="fx-badge" style="color:'+eh.color+';background:'+eh.bg+'">'+eh.lbl+'</span>'
+      +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap">'
+        +'<button class="fx-b sec" onclick="FACT.imprimir(\''+d.id+'\')">🖨 Imprimir / PDF</button>'
+        +'<button class="fx-b" onclick="FACT.abrirExport()">→ Pasar a Ventas</button>'
+        +(d.xml_path?'<button class="fx-b sec" onclick="FACT.verArchivo(\''+d.id+'\',\'xml\')">XML</button>':'')
+        +(d.pdf_path?'<button class="fx-b sec" onclick="FACT.verArchivo(\''+d.id+'\',\'pdf\')">PDF de GTI</button>':'')
+        +'<button class="fx-b sec" onclick="FACT.verBitacora(\''+d.id+'\')">🕑 Bitácora</button>'
+      +'</div>'
+    +'</div>'
+
+    // ── Solo lectura, dicho de frente ──
+    +'<div class="fx-card" style="background:rgba(59,130,246,.06);border-color:rgba(59,130,246,.25)">'
+      +'<div style="font-size:12px;line-height:1.7;color:var(--text2)">'
+        +'<b>Este documento no se puede modificar.</b> Una factura electrónica es un documento '
+        +'fiscal: si hay que corregir algo se emite una <b>nota de crédito</b>, no se cambia la '
+        +'factura. Lo que sí puede hacer acá es imprimirla, mandarla al cliente y pasar sus '
+        +'líneas al reporte de Ventas.'
+      +'</div>'
+    +'</div>'
+
+    // ── Lo que dice Hacienda ──
+    +'<div class="fx-card">'
+      +'<div class="fx-h">Ante Hacienda</div>'
+      +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">'
+        +_dato('Estado', eh.lbl)
+        +_dato('Clave (50 dígitos)', d.clave||'—', true)
+        +_dato('Consecutivo fiscal', d.consecutivo_fiscal||'—', true)
+        +_dato('Enviada', d.enviado_en?_fechaHora(d.enviado_en):'—')
+        +_dato('Resuelta', d.resuelto_en?_fechaHora(d.resuelto_en):'—')
+        +_dato('Archivos', (d.xml_path?'XML':'')+(d.pdf_path?(d.xml_path?' · PDF':'PDF'):'')
+          ||'todavía no se han bajado')
+      +'</div>'
+      +(d.estado_hacienda_msg
+        ? '<div style="margin-top:11px;font-size:11.5px;color:var(--text3);line-height:1.6">'
+          +'<b>Mensaje:</b> '+_esc(d.estado_hacienda_msg)+'</div>'
+        : '')
+      +(prof
+        ? '<div style="margin-top:11px;font-size:11.5px">'
+          +'Salió de la proforma <b>'+_esc(prof.consecutivo||'')+'</b> '
+          +'<button class="fx-b sm gh" onclick="FACT.abrir(\''+prof.id+'\')">Ver la proforma</button>'
+          +'</div>'
+        : '')
+    +'</div>'
+
+    // ── Receptor ──
+    +'<div class="fx-card">'
+      +'<div class="fx-h">Cliente</div>'
+      +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">'
+        +_dato('Nombre o razón social', d.cliente_nombre||'—')
+        +_dato('Cédula', _fmtIdent({identificacion:d.cliente_identificacion}, d.cliente_tipo_ident)
+          ||d.cliente_identificacion||'—')
+        +_dato('Correo', d.cliente_correo||'—')
+        +_dato('Teléfono', d.cliente_telefono||'—')
+        +_dato('Proyecto', d.proyecto||'—')
+        +_dato('Condición de venta', String(d.cond_venta)==='02'
+          ? 'Crédito'+(d.plazo_credito?' · '+d.plazo_credito+' días':'') : 'Contado')
+      +'</div>'
+    +'</div>'
+
+    // ── Líneas, sin campos editables ──
+    +'<div class="fx-card">'
+      +'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+        +'<div class="fx-h" style="margin:0">Líneas</div>'
+        +'<span style="font-size:11px;color:var(--text3)">'+S.lineas.length+'</span>'
+        +(sinExportar
+          ? '<button class="fx-b sm" style="margin-left:auto" onclick="FACT.abrirExport()">'
+            +'→ Pasar '+sinExportar+' línea(s) a Ventas</button>'
+          : '<span style="margin-left:auto;font-size:11px;color:var(--green);font-weight:700">'
+            +'✓ Todas las líneas ya están en Ventas</span>')
+      +'</div>'
+      +(S.lineas.length===0
+        ? '<div class="fx-empty">Esta factura no tiene líneas.</div>'
+        : '<div class="fx-tbl-scroll"><table class="fx-t">'
+          +'<thead><tr><th style="width:26px"></th><th>Descripción</th><th style="width:80px">Unidad</th>'
+          +'<th class="fx-r" style="width:86px">Cantidad</th><th class="fx-r" style="width:110px">Precio unit.</th>'
+          +'<th class="fx-r" style="width:74px">IVA %</th><th class="fx-r" style="width:118px">Total</th>'
+          +'<th class="fx-c" style="width:96px">Ventas</th></tr></thead><tbody>'
+          +S.lineas.map(function(l,i){
+              return '<tr>'
+                +'<td class="fx-c" style="color:var(--text3);font-size:11px">'+(i+1)+'</td>'
+                +'<td><b style="font-size:12px">'+_esc(l.descripcion||'')+'</b>'
+                  +(l.detalle?'<div style="font-size:10.5px;color:var(--text3);margin-top:2px">'
+                    +_esc(l.detalle)+'</div>':'')
+                  +(l.cabys?'<div style="font-size:9px;color:var(--text3);font-weight:800;margin-top:3px">'
+                    +(l.codigo?_esc(l.codigo)+' · ':'')+'CABYS '+_esc(l.cabys)+'</div>':'')
+                +'</td>'
+                +'<td>'+_esc(l.unidad||'Unid')+'</td>'
+                +'<td class="fx-r">'+_num(l.cantidad,2)+'</td>'
+                +'<td class="fx-r">'+_mon(l.precio_unitario, d.moneda)+'</td>'
+                +'<td class="fx-r">'+_num(l.iva_pct,0)+'%</td>'
+                +'<td class="fx-r"><b>'+_mon(l.total, d.moneda)+'</b>'
+                  +'<div style="font-size:9.5px;color:var(--text3)">base '+_mon(l.subtotal, d.moneda)+'</div></td>'
+                +'<td class="fx-c">'+(l.exportada
+                    ? '<span style="font-size:9.5px;color:var(--green);font-weight:800">✓ En Ventas</span>'
+                    : '<span style="font-size:9.5px;color:var(--text3)">—</span>')+'</td>'
+              +'</tr>';
+            }).join('')
+          +'</tbody></table></div>')
+    +'</div>'
+
+    // ── Totales ──
+    +'<div class="fx-card">'
+      +'<div class="fx-h">Totales</div>'
+      +'<div style="max-width:320px;margin-left:auto">'
+        +'<div class="fx-tot"><span style="color:var(--text3)">Subtotal</span><b>'
+          +_mon(d.subtotal, d.moneda)+'</b></div>'
+        +(_n(d.descuento_total)>0
+          ? '<div class="fx-tot"><span style="color:var(--text3)">Descuentos</span><b>− '
+            +_mon(d.descuento_total, d.moneda).replace('− ','')+'</b></div>' : '')
+        +'<div class="fx-tot"><span style="color:var(--text3)">IVA</span><b>'
+          +_mon(d.impuesto_total, d.moneda)+'</b></div>'
+        +'<div class="fx-tot gr"><span>Total</span><span style="color:var(--red)">'
+          +_mon(d.total, d.moneda)+'</span></div>'
+      +'</div>'
+    +'</div>';
+}
+
+// Un dato de solo lectura
+function _dato(lbl, val, mono){
+  return '<div class="fx-f"><label>'+_esc(lbl)+'</label>'
+    +'<div style="font-size:12.5px;font-weight:700;padding:7px 0;word-break:break-all'
+    +(mono?';letter-spacing:.3px;font-size:11px':'')+'">'+_esc(val)+'</div></div>';
+}
+
 // ── Cambio de empresa / subpestaña ──────────────────────────────────────────
 function setEmpresa(id){
   var e=S.empresas.find(function(x){ return x.id===id; });
@@ -31146,6 +31689,7 @@ function setEmpresa(id){
 function setSub(s){
   if(S.edit && S.dirty && !confirm('Hay cambios sin guardar en la proforma. ¿Salir?')) return;
   if(s!=='proformas'){ S.edit=null; S.lineas=[]; S.adjuntos=[]; S.dirty=false; }
+  S.ver=null;
   if(s!=='catalogo') S.fCat='';
   if(s!=='clientes'){ S.fCli=''; S.fCliRevisar=false; S.pagCli=1; }
   if(s!=='proformas'){ S.fBusca=''; S.fDesde=''; S.fHasta=''; }
@@ -31153,6 +31697,7 @@ function setSub(s){
   render();
 }
 function setEstadoFiltro(k){ S.fEstado=k; renderBody(); }
+function togFacturadas(){ S.fFacturadas=!S.fFacturadas; renderBody(); }
 function setBusca(v){
   S.fBusca=v; renderBody();
   var el=document.querySelector('#fact-body input[placeholder^="Buscar por n"]');
@@ -31215,7 +31760,12 @@ window.FACT={
   emitir:emitirDesdeProforma, reconsultar:reconsultar, reintentar:reintentar,
   bajarArchivos:bajarArchivos,
   verArchivo:verArchivo, verBitacora:verBitacora, refrescarFacturas:refrescarFacturas,
-  probarPuente:probarPuente, irARevisar:irARevisar
+  probarPuente:probarPuente, irARevisar:irARevisar,
+  // Completar los datos del cliente sin salir del documento
+  completarCliente:completarCliente, setCliFix:setCliFix, guardarCliFix:guardarCliFix,
+  guardarDatosAlCliente:guardarDatosAlCliente,
+  // Ver un documento ya emitido, en solo lectura
+  verFactura:verFactura, cerrarVista:cerrarVista, togFacturadas:togFacturadas
 };
 
 // ── Punto de entrada (lo llama buildAdminTabs) ──────────────────────────────
