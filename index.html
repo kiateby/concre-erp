@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260922100650';
+var APP_BUILD='20260922105747';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -27837,11 +27837,26 @@ function _root(){ return document.getElementById('fact-root-admin'); }
 function _toast(m){ try{ toast(m); }catch(e){ console.log(m); } }
 
 // Errores de tabla ausente: mensaje claro en vez de fallo silencioso
+// Traduce el error de Supabase a algo que diga qué hacer. Distingue entre
+// «falta la tabla» y «falta una columna», que son problemas distintos y antes
+// se reportaban los dos como tabla faltante — eso manda a buscar lo que no es.
 function _errTabla(e, tabla){
   var msg=String((e&&e.message)||e||'');
-  if(/does not exist|relation|schema cache/i.test(msg)){
-    return '⚠ Falta ejecutar el SQL del módulo (tabla '+tabla+' no existe)';
+  var cod=String((e&&e.code)||'');
+
+  // PGRST204: la tabla está, la columna no. El mensaje de PostgREST viene como
+  // "Could not find the 'X' column of 'fact_docs' in the schema cache".
+  var col=msg.match(/could not find the '([^']+)' column/i);
+  if(col || cod==='PGRST204'){
+    return '⚠ Falta una columna en '+tabla+(col?': «'+col[1]+'»':'')
+      +'. Hay un SQL pendiente de ejecutar en Supabase.';
   }
+
+  // 42P01 / "relation does not exist": esta sí es la tabla.
+  if(cod==='42P01' || /relation .* does not exist/i.test(msg)){
+    return '⚠ Falta ejecutar el SQL del módulo (la tabla '+tabla+' no existe)';
+  }
+
   return 'Error en '+tabla+': '+msg;
 }
 
