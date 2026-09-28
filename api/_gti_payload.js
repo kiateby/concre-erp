@@ -36,6 +36,55 @@ const TIPO_DOC = {
   FEC: '08',   // factura electrónica de compra
 };
 
+// ── Códigos de referencia de las notas ──────────────────────────────────────
+// Lo que va en «codigo» dentro de informacionReferencia: por qué esta nota se
+// refiere a aquel comprobante.
+//
+// ⚠ manual: de esta lista solo son seguros el 01 y el 02, que no han cambiado
+// entre versiones del esquema. Los demás sí se movieron, y una nota con el
+// código equivocado la rechaza Hacienda o —peor— anula algo que no debía.
+// El manual fija la lista definitiva; la pantalla ya habla en palabras del
+// usuario y solo hay que corregir los números de acá.
+const COD_REFERENCIA = {
+  anula:          '01',   // anula por completo el documento de referencia
+  corrige_texto:  '02',   // corrige un dato que no es plata (nombre, detalle)
+  corrige_monto:  '03',   // ⚠ manual — corrige el monto
+  otro:           '04',   // ⚠ manual — referencia a otro documento
+};
+
+// Los motivos como los ve el usuario. Cada uno dice qué código lleva y si
+// obliga a tomar la factura completa.
+const MOTIVOS_NOTA = {
+  NC: [
+    {v:'anula',         lbl:'Anular la factura completa',
+     cod:'anula',       todo:true,
+     ayuda:'La factura queda sin efecto. Se usa cuando se facturó por error o el trabajo no se hizo.'},
+    {v:'devolucion',    lbl:'Devolución parcial',
+     cod:'corrige_monto', todo:false,
+     ayuda:'El cliente devolvió parte de lo facturado. Se escogen las líneas y las cantidades devueltas.'},
+    {v:'descuento',     lbl:'Descuento acordado después',
+     cod:'corrige_monto', todo:false,
+     ayuda:'Se rebaja el monto de una o varias líneas por un acuerdo posterior a la factura.'},
+    {v:'error_monto',   lbl:'Error en el monto facturado',
+     cod:'corrige_monto', todo:false,
+     ayuda:'Se cobró de más. La nota rebaja la diferencia.'},
+    {v:'error_datos',   lbl:'Error en los datos, no en el monto',
+     cod:'corrige_texto', todo:false,
+     ayuda:'Un dato mal escrito que no cambia lo que se cobró.'},
+  ],
+  ND: [
+    {v:'cobro_mas',     lbl:'Cobrar de más sobre la factura',
+     cod:'corrige_monto', todo:false,
+     ayuda:'Se facturó de menos y hay que cobrar la diferencia.'},
+    {v:'cargo_extra',   lbl:'Cargo adicional',
+     cod:'corrige_monto', todo:false,
+     ayuda:'Algo que se suma después: trabajo extra, materiales, intereses.'},
+    {v:'error_datos',   lbl:'Error en los datos, no en el monto',
+     cod:'corrige_texto', todo:false,
+     ayuda:'Un dato mal escrito que no cambia lo que se cobró.'},
+  ],
+};
+
 // ── Unidades de medida de Hacienda ──────────────────────────────────────────
 // A la izquierda lo que se imprime en la proforma; a la derecha el código que
 // acepta Hacienda. Lo que no esté en la tabla sale como 'Unid'.
@@ -171,6 +220,22 @@ function tarifaIVA(pct) {
   return '08';
 }
 
+// La pestaña guarda el motivo tal como lo escogió el usuario ('devolucion',
+// 'descuento'…). Acá se resuelve a la llave de COD_REFERENCIA y de ahí al
+// número de Hacienda, para que ese número viva en un solo archivo.
+function codigoReferencia(motivo) {
+  const m = String(motivo || '').trim();
+  if (/^\d{2}$/.test(m)) return m;                 // ya venía como código
+
+  if (COD_REFERENCIA[m]) return COD_REFERENCIA[m];  // llave directa
+
+  for (const tipo of Object.keys(MOTIVOS_NOTA)) {   // motivo de negocio
+    const hit = MOTIVOS_NOTA[tipo].find(x => x.v === m);
+    if (hit) return COD_REFERENCIA[hit.cod] || COD_REFERENCIA.anula;
+  }
+  return COD_REFERENCIA.anula;
+}
+
 // ── El documento completo ───────────────────────────────────────────────────
 function armar(doc, lineas, cliente, empresa, cred) {
   if (!lineas || !lineas.length) throw new Error('El documento no tiene líneas.');
@@ -241,15 +306,26 @@ function armar(doc, lineas, cliente, empresa, cred) {
   }
   if (doc.notas) cuerpo.otros = String(doc.notas).slice(0, 500);
 
-  // Referencia, para notas de crédito y débito.
+  // Referencia, para notas de crédito y débito. Sin esto la nota no se puede
+  // ligar a nada y Hacienda la rechaza.
   if (doc.ref_clave) {
+    if (!doc.ref_razon || !String(doc.ref_razon).trim()) {
+      throw new Error('La nota no tiene el motivo escrito, y Hacienda lo exige.');
+    }
     cuerpo.informacionReferencia = [{
-      tipoDoc: String(doc.ref_tipo_doc || '01'),
+      // ⚠ manual: tipoDoc es el tipo del comprobante REFERIDO (una FE es 01).
+      tipoDoc: String(doc.ref_tipo_doc || TIPO_DOC.FE),
       numero: String(doc.ref_clave),
       fechaEmision: doc.ref_fecha,
-      codigo: String(doc.ref_codigo || '01'),
-      razon: String(doc.ref_razon || '').slice(0, 180),
+      // La pestaña guarda el MOTIVO ('anula', 'corrige_monto'…), no el número.
+      // Así el código de Hacienda vive en un solo lugar —acá— y el día que el
+      // manual corrija la lista no hay que tocar el index.html ni migrar datos
+      // ya guardados. Si viniera un número de dos dígitos, se respeta.
+      codigo: codigoReferencia(doc.ref_codigo),
+      razon: String(doc.ref_razon).slice(0, 180),
     }];
+  } else if (doc.tipo_doc === 'NC' || doc.tipo_doc === 'ND') {
+    throw new Error('Una nota de crédito o débito tiene que referirse a una factura emitida.');
   }
 
   // El total que arma el puente tiene que coincidir con el que muestra la
@@ -348,7 +424,8 @@ function simularEstado(doc) {
 }
 
 module.exports = {
-  RUTAS, TIPO_DOC, unidadCod, tarifaIVA,
+  RUTAS, TIPO_DOC, COD_REFERENCIA, MOTIVOS_NOTA, codigoReferencia,
+  unidadCod, tarifaIVA,
   armar, leerEmision, leerEstado, normalizarEstado,
   simularEmision, simularEstado,
 };
