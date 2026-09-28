@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260922113840';
+var APP_BUILD='20260928114227';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -27757,6 +27757,7 @@ var S = {
   cliOpc: false,       // ¿campos opcionales desplegados?
   cliFix: null,        // borrador al completar los datos del cliente para facturar
   ver: null,           // id del documento abierto en solo lectura (factura emitida)
+  nota: null,          // borrador de la nota de crédito o débito
   fFacturadas: false,  // filtro "solo las proformas ya facturadas"
   // exportación a ventas
   expSel: {},          // lineaId -> true
@@ -30751,6 +30752,15 @@ function facturasEmpresa(){
   });
 }
 
+// Etiqueta corta del tipo de documento, para la lista
+function _tipoLbl(t){
+  return t==='NC' ? 'Nota de crédito'
+       : t==='ND' ? 'Nota de débito'
+       : t==='FEC'? 'Factura de compra'
+       : t==='TE' ? 'Tiquete'
+       : 'Factura';
+}
+
 function badgeHac(d){
   var k=d.estado_hacienda||'sin_enviar';
   var e=ESTADO_HAC[k]||ESTADO_HAC.sin_enviar;
@@ -31066,10 +31076,29 @@ function filaFactura(d){
   var hay=function(p){ return !!p; };
   return '<tr>'
     +'<td><b style="font-size:13px;color:var(--red)">'+_esc(d.consecutivo||'—')+'</b>'
+      +'<div style="font-size:9px;color:var(--text3);font-weight:800;margin-top:2px">'
+        +_esc(_tipoLbl(d.tipo_doc))+'</div>'
       +(d.consecutivo_fiscal
         ?'<div style="font-size:9px;color:var(--text3);margin-top:2px">'+_esc(d.consecutivo_fiscal)+'</div>':'')
-      +(d.proforma_origen_id
-        ?'<div style="font-size:9px;color:var(--text3)">de proforma</div>':'')+'</td>'
+      +(function(){
+          // Una nota dice sobre qué factura va; una factura anulada lo dice.
+          if(d.ref_doc_id){
+            var f=S.docs.find(function(x){ return x.id===d.ref_doc_id; });
+            return '<div style="font-size:9px;color:var(--amber);font-weight:800;margin-top:2px">'
+              +'sobre '+_esc((f&&f.consecutivo)||'la factura')+'</div>';
+          }
+          if(d.tipo_doc==='FE' && estaAnulada(d)){
+            return '<div style="font-size:9px;color:var(--red);font-weight:800;margin-top:2px">'
+              +'✕ ANULADA</div>';
+          }
+          var ns=(d.tipo_doc==='FE')?notasDe(d.id):[];
+          if(ns.length){
+            return '<div style="font-size:9px;color:var(--amber);font-weight:800;margin-top:2px">'
+              +ns.length+' nota'+(ns.length===1?'':'s')+'</div>';
+          }
+          return d.proforma_origen_id
+            ? '<div style="font-size:9px;color:var(--text3)">de proforma</div>' : '';
+        })()+'</td>'
     +'<td style="white-space:nowrap">'+_fechaCorta(d.fecha)+'</td>'
     +'<td><b>'+_esc(d.cliente_nombre)+'</b></td>'
     +'<td class="fx-r"><b>'+_mon(d.total, d.moneda)+'</b></td>'
@@ -31093,6 +31122,12 @@ function filaFactura(d){
       +(!d.clave && (d.estado_hacienda==='error' || d.estado_hacienda==='en_cola')
         ?'<button class="fx-b sm gh" onclick="FACT.reintentar(\''+d.id+'\')"'
           +' title="Volver a intentar la emisión">↻ Reintentar</button> ':'')
+      +(d.tipo_doc==='FE' && d.estado_hacienda==='aceptado' && !estaAnulada(d)
+        ? '<button class="fx-b sm gh" onclick="FACT.nuevaNota(\''+d.id+'\',\'NC\')"'
+          +' title="Nota de crédito: rebajar o anular esta factura">NC</button> '
+          +'<button class="fx-b sm gh" onclick="FACT.nuevaNota(\''+d.id+'\',\'ND\')"'
+          +' title="Nota de débito: cobrar de más sobre esta factura">ND</button> '
+        : '')
       +'<button class="fx-b sm gh" onclick="FACT.verBitacora(\''+d.id+'\')" title="Bitácora de la emisión">🕑</button> '
       +'<button class="fx-b sm gh" onclick="FACT.imprimir(\''+d.id+'\')" title="Imprimir">🖨</button>'
     +'</td></tr>';
@@ -31550,7 +31585,7 @@ function renderVista(b){
     '<div class="fx-card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
       +'<button class="fx-b gh" onclick="FACT.cerrarVista()">← Volver</button>'
       +'<div><div style="font-size:9.5px;font-weight:900;color:var(--text3);text-transform:uppercase;letter-spacing:.1em">'
-        +'Factura electrónica</div>'
+        +_esc(_tipoLbl(d.tipo_doc))+'</div>'
         +'<div style="font-size:22px;font-weight:900;color:var(--red);line-height:1.1">'
         +_esc(d.consecutivo||'—')+'</div></div>'
       +'<span class="fx-badge" style="color:'+eh.color+';background:'+eh.bg+'">'+eh.lbl+'</span>'
@@ -31560,18 +31595,70 @@ function renderVista(b){
         +(d.xml_path?'<button class="fx-b sec" onclick="FACT.verArchivo(\''+d.id+'\',\'xml\')">XML</button>':'')
         +(d.pdf_path?'<button class="fx-b sec" onclick="FACT.verArchivo(\''+d.id+'\',\'pdf\')">PDF de GTI</button>':'')
         +'<button class="fx-b sec" onclick="FACT.verBitacora(\''+d.id+'\')">🕑 Bitácora</button>'
+        +(d.tipo_doc==='FE' && d.estado_hacienda==='aceptado' && !estaAnulada(d)
+          ? '<button class="fx-b sec" onclick="FACT.nuevaNota(\''+d.id+'\',\'NC\')">'
+            +'Nota de crédito</button>'
+            +'<button class="fx-b sec" onclick="FACT.nuevaNota(\''+d.id+'\',\'ND\')">'
+            +'Nota de débito</button>'
+          : '')
       +'</div>'
     +'</div>'
 
-    // ── Solo lectura, dicho de frente ──
-    +'<div class="fx-card" style="background:rgba(59,130,246,.06);border-color:rgba(59,130,246,.25)">'
-      +'<div style="font-size:12px;line-height:1.7;color:var(--text2)">'
-        +'<b>Este documento no se puede modificar.</b> Una factura electrónica es un documento '
-        +'fiscal: si hay que corregir algo se emite una <b>nota de crédito</b>, no se cambia la '
-        +'factura. Lo que sí puede hacer acá es imprimirla, mandarla al cliente y pasar sus '
-        +'líneas al reporte de Ventas.'
-      +'</div>'
-    +'</div>'
+    // ── Solo lectura, y si quedó anulada ──
+    +(estaAnulada(d)
+      ? '<div class="fx-card" style="background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3)">'
+        +'<div style="font-size:13px;font-weight:800;color:var(--red);margin-bottom:5px">'
+          +'✕ Esta factura está anulada</div>'
+        +'<div style="font-size:12px;line-height:1.7;color:var(--text2)">'
+          +'Una nota de crédito de anulación la dejó sin efecto ante Hacienda. El documento '
+          +'sigue existiendo porque un comprobante fiscal no se borra, pero ya no cobra nada.'
+        +'</div></div>'
+      : '<div class="fx-card" style="background:rgba(59,130,246,.06);border-color:rgba(59,130,246,.25)">'
+        +'<div style="font-size:12px;line-height:1.7;color:var(--text2)">'
+          +'<b>Este documento no se puede modificar.</b> Una factura electrónica es un documento '
+          +'fiscal: si hay que corregir algo se emite una <b>nota de crédito</b>, no se cambia la '
+          +'factura. Lo que sí puede hacer acá es imprimirla, mandarla al cliente y pasar sus '
+          +'líneas al reporte de Ventas.'
+        +'</div></div>')
+
+    // ── Las notas que se le han hecho ──
+    +(function(){
+        var ns=notasDe(d.id);
+        if(!ns.length) return '';
+        var cred=ns.filter(function(x){ return x.tipo_doc==='NC'
+          && x.estado_hacienda!=='rechazado' && x.estado_hacienda!=='error'; })
+          .reduce(function(a,x){ return a+_n(x.total); }, 0);
+        var deb=ns.filter(function(x){ return x.tipo_doc==='ND'
+          && x.estado_hacienda!=='rechazado' && x.estado_hacienda!=='error'; })
+          .reduce(function(a,x){ return a+_n(x.total); }, 0);
+        return '<div class="fx-card">'
+          +'<div class="fx-h">Notas sobre esta factura</div>'
+          +'<div class="fx-tbl-scroll"><table class="fx-t">'
+          +'<thead><tr><th>Número</th><th>Tipo</th><th>Motivo</th>'
+          +'<th class="fx-r">Monto</th><th class="fx-c">Hacienda</th>'
+          +'<th class="fx-c">Acciones</th></tr></thead><tbody>'
+          +ns.map(function(x){
+              return '<tr>'
+                +'<td><b style="color:var(--red)">'+_esc(x.consecutivo||'—')+'</b></td>'
+                +'<td>'+_esc(_tipoLbl(x.tipo_doc))+'</td>'
+                +'<td style="font-size:11.5px">'+_esc(x.ref_razon||'—')+'</td>'
+                +'<td class="fx-r"><b>'+(x.tipo_doc==='NC'?'− ':'+ ')
+                  +_mon(x.total, d.moneda).replace('− ','')+'</b></td>'
+                +'<td class="fx-c">'+badgeHac(x)+'</td>'
+                +'<td class="fx-c" style="white-space:nowrap">'
+                  +'<button class="fx-b sm gh" onclick="FACT.verFactura(\''+x.id+'\')" title="Ver">👁</button> '
+                  +'<button class="fx-b sm gh" onclick="FACT.verBitacora(\''+x.id+'\')" title="Bitácora">🕑</button>'
+                +'</td></tr>';
+            }).join('')
+          +'</tbody></table></div>'
+          +'<div style="margin-top:11px;font-size:12px;color:var(--text2);text-align:right">'
+            +'Facturado <b>'+_mon(d.total, d.moneda)+'</b>'
+            +(cred?' · acreditado <b style="color:var(--red)">− '+_mon(cred,d.moneda).replace('− ','')+'</b>':'')
+            +(deb?' · cargado <b>+ '+_mon(deb,d.moneda)+'</b>':'')
+            +' · <b>queda '+_mon(_n(d.total)-cred+deb, d.moneda)+'</b>'
+          +'</div>'
+        +'</div>';
+      })()
 
     // ── Lo que dice Hacienda ──
     +'<div class="fx-card">'
@@ -31595,6 +31682,16 @@ function renderVista(b){
           +'<button class="fx-b sm gh" onclick="FACT.abrir(\''+prof.id+'\')">Ver la proforma</button>'
           +'</div>'
         : '')
+      +(function(){
+          if(!d.ref_doc_id) return '';
+          var f=S.docs.find(function(x){ return x.id===d.ref_doc_id; });
+          return '<div style="margin-top:11px;font-size:11.5px">'
+            +'Se refiere a la factura <b>'+_esc((f&&f.consecutivo)||'—')+'</b>'
+            +(d.ref_razon?' · <i>'+_esc(d.ref_razon)+'</i>':'')
+            +(f?' <button class="fx-b sm gh" onclick="FACT.verFactura(\''+f.id+'\')">'
+              +'Ver la factura</button>':'')
+            +'</div>';
+        })()
     +'</div>'
 
     // ── Receptor ──
@@ -31675,6 +31772,462 @@ function _dato(lbl, val, mono){
   return '<div class="fx-f"><label>'+_esc(lbl)+'</label>'
     +'<div style="font-size:12.5px;font-weight:700;padding:7px 0;word-break:break-all'
     +(mono?';letter-spacing:.3px;font-size:11px':'')+'">'+_esc(val)+'</div></div>';
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NOTAS DE CRÉDITO Y DE DÉBITO
+//
+// Una factura aceptada por Hacienda no se toca. Si hay que corregir algo se
+// emite una nota que se REFIERE a ella:
+//   · nota de crédito — rebaja o anula lo facturado;
+//   · nota de débito  — cobra de más sobre lo facturado.
+//
+// La nota es un documento fiscal aparte, con su propia clave y su propio
+// consecutivo, y sale por el mismo puente que la factura.
+//
+// Acá el usuario escoge el motivo en palabras («anular la factura completa»,
+// «devolución parcial»). El código que exige Hacienda lo pone el puente, en
+// _gti_payload.js, que es el único lugar donde viven esos números.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Los mismos motivos que conoce el puente, en palabras. Acá solo están las
+// etiquetas: el código de Hacienda NO se repite, se guarda la llave del motivo.
+var MOTIVOS = {
+  NC: [
+    {v:'anula',       lbl:'Anular la factura completa', todo:true,
+     ayuda:'La factura queda sin efecto. Se usa cuando se facturó por error o el trabajo no se hizo.'},
+    {v:'devolucion',  lbl:'Devolución parcial', todo:false,
+     ayuda:'El cliente devolvió parte de lo facturado. Escoja las líneas y las cantidades devueltas.'},
+    {v:'descuento',   lbl:'Descuento acordado después', todo:false,
+     ayuda:'Se rebaja el monto por un acuerdo posterior a la factura.'},
+    {v:'error_monto', lbl:'Error en el monto facturado', todo:false,
+     ayuda:'Se cobró de más. La nota rebaja la diferencia.'},
+  ],
+  ND: [
+    {v:'cobro_mas',   lbl:'Se facturó de menos', todo:false,
+     ayuda:'Hay que cobrar la diferencia sobre lo que ya se facturó.'},
+    {v:'cargo_extra', lbl:'Cargo adicional', todo:false,
+     ayuda:'Algo que se suma después: trabajo extra, materiales, intereses.'},
+  ],
+};
+
+// El motivo manda: 'anula' obliga a tomar la factura entera y no deja tocar
+// cantidades, porque una anulación parcial no es una anulación.
+function _motivo(tipo, v){
+  var lista=MOTIVOS[tipo]||[];
+  return lista.find(function(m){ return m.v===v; }) || lista[0];
+}
+
+var TIPO_NOTA = {
+  NC: {lbl:'Nota de crédito', corto:'NC', verbo:'rebajar o anular', pref:'NC-'},
+  ND: {lbl:'Nota de débito',  corto:'ND', verbo:'cobrar de más',    pref:'ND-'},
+};
+
+// ── Las notas que ya tiene una factura ──────────────────────────────────────
+function notasDe(facId){
+  return S.docs.filter(function(x){
+    return (x.tipo_doc==='NC'||x.tipo_doc==='ND') && x.ref_doc_id===facId;
+  });
+}
+
+// ¿Está anulada? Solo cuenta una nota de crédito de anulación que Hacienda
+// haya aceptado. Una encolada o rechazada no anula nada.
+function estaAnulada(fac){
+  return notasDe(fac.id).some(function(n){
+    return n.tipo_doc==='NC' && n.ref_codigo==='anula' && n.estado_hacienda==='aceptado';
+  });
+}
+
+// Cuánto se le ha acreditado ya, para no pasarse del total de la factura.
+function acreditado(facId){
+  return notasDe(facId).reduce(function(s,n){
+    if(n.tipo_doc!=='NC') return s;
+    if(n.estado_hacienda==='rechazado' || n.estado_hacienda==='error') return s;
+    return s+_n(n.total);
+  }, 0);
+}
+
+// ── Abrir el formulario ─────────────────────────────────────────────────────
+async function nuevaNota(facId, tipo){
+  var fac=S.docs.find(function(x){ return x.id===facId; });
+  if(!fac){ _toast('No se encontró la factura'); return; }
+
+  // Solo sobre algo que Hacienda ya aceptó: antes de eso no hay nada que
+  // corregir, y si fue rechazada simplemente se emite de nuevo.
+  if(fac.estado_hacienda!=='aceptado'){
+    _toast('⚠ Solo se le puede hacer una nota a una factura aceptada por Hacienda');
+    return;
+  }
+  if(tipo==='NC' && estaAnulada(fac)){
+    _toast('Esa factura ya está anulada por una nota de crédito');
+    return;
+  }
+
+  var lineas=[];
+  try{
+    var r=await loadAllRowsEq('fact_lineas','doc_id',facId,'orden');
+    lineas=(r.error?[]:(r.data||[]));
+  }catch(e){ console.warn('nuevaNota:',e); }
+  if(!lineas.length){ _toast('⚠ Esa factura no tiene líneas'); return; }
+
+  var mot=(MOTIVOS[tipo]||[])[0];
+  S.nota={
+    tipo:tipo, facId:facId,
+    motivo:mot.v,
+    razon:'',
+    // Una línea del borrador por cada línea de la factura, apagadas salvo que
+    // el motivo sea anular.
+    lineas:lineas.map(function(l){
+      return {
+        ref:l.id, descripcion:l.descripcion, detalle:l.detalle||'',
+        unidad:l.unidad||'Unid', cabys:l.cabys||'', codigo:l.codigo||'',
+        iva_pct:_n(l.iva_pct), precio_unitario:_n(l.precio_unitario),
+        cantMax:_n(l.cantidad), cantidad:_n(l.cantidad),
+        on:!!mot.todo, libre:false,
+      };
+    }),
+  };
+  S.nota._motivoPrev=mot.v;
+  aplicarMotivo();
+
+  var ov=document.createElement('div');
+  ov.className='fx-ov'; ov.id='fact-nota-modal';
+  ov.innerHTML='<div class="fx-md" style="max-width:860px" onclick="event.stopPropagation()">'
+    +'<div id="fact-nota-cuerpo"></div></div>';
+  ov.onclick=function(){ cerrarNota(); };
+  _root().appendChild(ov);
+  pintarNota();
+}
+
+function cerrarNota(){
+  S.nota=null;
+  cerrarModal('fact-nota-modal');
+}
+
+// Al cambiar el motivo se ajusta lo que se puede tocar.
+//
+// De «anular» a un motivo parcial se APAGAN todas las líneas a propósito: si
+// quedaran marcadas y en su cantidad completa, escribir el motivo y darle a
+// emitir acreditaría la factura entera con la etiqueta de devolución parcial.
+function aplicarMotivo(){
+  var b=S.nota; if(!b) return;
+  var m=_motivo(b.tipo, b.motivo);
+  var antes=b._motivoPrev ? _motivo(b.tipo, b._motivoPrev) : null;
+
+  if(m.todo){
+    b.lineas=b.lineas.filter(function(l){ return !l.libre; });
+    b.lineas.forEach(function(l){ l.on=true; l.cantidad=l.cantMax; });
+  } else if(antes && antes.todo){
+    b.lineas.forEach(function(l){ l.on=false; });
+  }
+  b._motivoPrev=b.motivo;
+}
+
+function setNota(campo, val){
+  var b=S.nota; if(!b) return;
+  b[campo]=val;
+  if(campo==='motivo') aplicarMotivo();
+  pintarNota();
+}
+
+function setNotaLinea(i, campo, val){
+  var b=S.nota; if(!b || !b.lineas[i]) return;
+  var l=b.lineas[i];
+  if(campo==='on') l.on=!!val;
+  else if(campo==='cantidad'||campo==='precio_unitario'||campo==='iva_pct') l[campo]=val;
+  else l[campo]=val;
+  pintarNota();
+}
+
+// Línea que no estaba en la factura: para una nota de débito de algo nuevo
+function agregarLineaNota(){
+  var b=S.nota; if(!b) return;
+  b.lineas.push({
+    ref:null, descripcion:'', detalle:'', unidad:'Unid', cabys:'', codigo:'',
+    iva_pct:_n((_emp().iva_default!=null?_emp().iva_default:13)),
+    precio_unitario:0, cantMax:0, cantidad:1, on:true, libre:true,
+  });
+  pintarNota();
+}
+function quitarLineaNota(i){
+  var b=S.nota; if(!b) return;
+  b.lineas.splice(i,1);
+  pintarNota();
+}
+
+// ── Totales del borrador ────────────────────────────────────────────────────
+function totalesNota(){
+  var b=S.nota;
+  var sub=0, imp=0;
+  (b?b.lineas:[]).forEach(function(l){
+    if(!l.on) return;
+    var s=_n(l.cantidad)*_n(l.precio_unitario);
+    sub+=s; imp+=s*(_n(l.iva_pct)/100);
+  });
+  return {subtotal:sub, impuesto:imp, total:sub+imp};
+}
+
+// Qué le falta al borrador para poder emitirse
+function faltasNota(){
+  var b=S.nota; if(!b) return ['no hay nada'];
+  var f=[];
+  var t=totalesNota();
+  var sel=b.lineas.filter(function(l){ return l.on; });
+
+  if(!String(b.razon||'').trim()) f.push('escribir el motivo: Hacienda lo exige en la nota');
+  if(!sel.length) f.push('escoger al menos una línea');
+
+  sel.forEach(function(l){
+    if(!String(l.descripcion||'').trim()) f.push('una línea sin descripción');
+    if(!/^\d{13}$/.test(String(l.cabys||''))) f.push('la línea «'+(l.descripcion||'?')+'» no tiene CABYS de 13 dígitos');
+    if(_n(l.cantidad)<=0) f.push('la línea «'+(l.descripcion||'?')+'» tiene cantidad en 0');
+    if(_n(l.precio_unitario)<=0) f.push('la línea «'+(l.descripcion||'?')+'» tiene precio en 0');
+    if(!l.libre && _n(l.cantidad)>_n(l.cantMax)+0.00001){
+      f.push('la línea «'+(l.descripcion||'?')+'» pide más cantidad de la que se facturó ('
+        +_num(l.cantMax,2)+')');
+    }
+  });
+
+  if(t.total<=0) f.push('el total es 0');
+
+  // Una nota de crédito no puede devolver más de lo que se cobró, sumando las
+  // notas anteriores. Es la validación que evita un crédito fiscal inventado.
+  if(b.tipo==='NC'){
+    var fac=S.docs.find(function(x){ return x.id===b.facId; })||{};
+    var yaCred=acreditado(b.facId);
+    var tope=_n(fac.total)-yaCred;
+    if(t.total>tope+0.01){
+      f.push('el total de la nota ('+_mon(t.total,fac.moneda)+') pasa de lo que queda por acreditar '
+        +'de esa factura ('+_mon(tope,fac.moneda)+(yaCred?', ya se acreditaron '+_mon(yaCred,fac.moneda):'')+')');
+    }
+  }
+  return f;
+}
+
+// ── El formulario ───────────────────────────────────────────────────────────
+function pintarNota(){
+  var el=document.getElementById('fact-nota-cuerpo'); if(!el) return;
+  var b=S.nota; if(!b) return;
+  var fac=S.docs.find(function(x){ return x.id===b.facId; })||{};
+  var tn=TIPO_NOTA[b.tipo];
+  var m=_motivo(b.tipo, b.motivo);
+  var t=totalesNota();
+  var f=faltasNota();
+  var yaCred=acreditado(b.facId);
+
+  el.innerHTML=
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+      +'<div class="fx-h" style="margin:0">'+tn.lbl+' sobre '+_esc(fac.consecutivo||'')+'</div>'
+      +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.cerrarNota()">✕</button>'
+    +'</div>'
+
+    +'<div style="font-size:11.5px;color:var(--text3);line-height:1.65;margin-bottom:13px">'
+      +'Se emite un documento nuevo, con su propia clave, que se refiere a esa factura para '
+      +_esc(tn.verbo)+'. La factura original no se modifica: así lo exige Hacienda.'
+      +(yaCred>0
+        ? '<br><b style="color:var(--amber)">Esa factura ya tiene '+_mon(yaCred,fac.moneda)
+          +' acreditados</b> en notas anteriores.'
+        : '')
+    +'</div>'
+
+    // ── Motivo ──
+    +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">'
+      +campo('Motivo *','<select class="fx-i" onchange="FACT.setNota(\'motivo\',this.value)">'
+        +(MOTIVOS[b.tipo]||[]).map(function(x){
+            return '<option value="'+x.v+'"'+(b.motivo===x.v?' selected':'')+'>'+_esc(x.lbl)+'</option>';
+          }).join('')
+        +'</select>')
+      +campo('Detalle del motivo * <span style="font-weight:400;color:var(--text3)">(sale en el documento)</span>',
+        '<input class="fx-i" value="'+_esc(b.razon)+'" maxlength="180"'
+        +' placeholder="Ej.: se devolvieron 40 m² por defecto de acabado"'
+        +' oninput="FACT.setNota(\'razon\',this.value)">')
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-top:7px;line-height:1.6">'+_esc(m.ayuda)+'</div>'
+
+    // ── Líneas ──
+    +'<div style="margin-top:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+      +'<div class="fx-h" style="margin:0">Qué entra en la nota</div>'
+      +(m.todo
+        ? '<span style="font-size:11px;color:var(--text3)">'
+          +'Al anular entra la factura completa: no se pueden escoger líneas.</span>'
+        : '<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.agregarLineaNota()">'
+          +'+ Línea que no estaba en la factura</button>')
+    +'</div>'
+
+    +'<div class="fx-tbl-scroll" style="max-height:34vh;margin-top:9px"><table class="fx-t">'
+      +'<thead><tr><th style="width:30px"></th><th>Descripción</th>'
+      +'<th class="fx-r" style="width:96px">Cantidad</th>'
+      +'<th class="fx-r" style="width:112px">Precio unit.</th>'
+      +'<th class="fx-r" style="width:64px">IVA %</th>'
+      +'<th class="fx-r" style="width:112px">Total</th>'
+      +'<th style="width:30px"></th></tr></thead><tbody>'
+      +b.lineas.map(function(l,i){
+          var st=_n(l.cantidad)*_n(l.precio_unitario);
+          var tot=st+st*(_n(l.iva_pct)/100);
+          var bloq=m.todo;
+          return '<tr'+(l.on?'':' style="opacity:.45"')+'>'
+            +'<td class="fx-c"><input type="checkbox"'+(l.on?' checked':'')
+              +(bloq?' disabled':'')
+              +' onchange="FACT.setNotaLinea('+i+',\'on\',this.checked)"></td>'
+            +'<td>'
+              +(l.libre
+                ? '<input class="fx-i" value="'+_esc(l.descripcion)+'" placeholder="Descripción"'
+                  +' oninput="FACT.setNotaLinea('+i+',\'descripcion\',this.value)">'
+                  +'<input class="fx-i" style="margin-top:4px;font-size:11px" value="'+_esc(l.cabys)+'"'
+                  +' placeholder="CABYS (13 dígitos)" oninput="FACT.setNotaLinea('+i+',\'cabys\',this.value)">'
+                : '<b style="font-size:12px">'+_esc(l.descripcion)+'</b>'
+                  +'<div style="font-size:9px;color:var(--text3);font-weight:800;margin-top:2px">'
+                  +(l.cabys?'CABYS '+_esc(l.cabys):'<span style="color:var(--red)">sin CABYS</span>')
+                  +' · se facturaron '+_num(l.cantMax,2)+' '+_esc(l.unidad)+'</div>')
+            +'</td>'
+            +'<td><input type="text" inputmode="decimal" class="fx-i fx-r" value="'+_esc(String(l.cantidad))+'"'
+              +((bloq||!l.on)?' disabled':'')
+              +' oninput="FACT.setNotaLinea('+i+',\'cantidad\',this.value)"></td>'
+            +'<td><input type="text" inputmode="decimal" class="fx-i fx-r" value="'+_esc(String(l.precio_unitario))+'"'
+              +((bloq||!l.on)?' disabled':'')
+              +' oninput="FACT.setNotaLinea('+i+',\'precio_unitario\',this.value)"></td>'
+            +'<td class="fx-r">'+_num(l.iva_pct,0)+'%</td>'
+            +'<td class="fx-r"><b>'+(l.on?_mon(tot, fac.moneda):'—')+'</b></td>'
+            +'<td class="fx-c">'+(l.libre
+              ? '<button class="fx-b sm gh" style="color:var(--red)" onclick="FACT.quitarLineaNota('+i+')">✕</button>'
+              : '')+'</td>'
+          +'</tr>';
+        }).join('')
+      +'</tbody></table></div>'
+
+    // ── Total y qué falta ──
+    +'<div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:14px">'
+      +'<div style="flex:1;min-width:240px">'
+        +(f.length
+          ? '<div style="padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.7;'
+            +'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:var(--red)">'
+            +'Falta:<ul style="margin:5px 0 0;padding-left:17px">'
+            +f.slice(0,5).map(function(x){ return '<li>'+_esc(x)+'</li>'; }).join('')
+            +'</ul></div>'
+          : '<div style="padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.6;'
+            +'background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);color:var(--green)">'
+            +'✓ La nota está lista para emitirse.</div>')
+      +'</div>'
+      +'<div style="min-width:220px">'
+        +'<div class="fx-tot"><span style="color:var(--text3)">Subtotal</span><b>'
+          +_mon(t.subtotal, fac.moneda)+'</b></div>'
+        +'<div class="fx-tot"><span style="color:var(--text3)">IVA</span><b>'
+          +_mon(t.impuesto, fac.moneda)+'</b></div>'
+        +'<div class="fx-tot gr"><span>Total de la nota</span>'
+          +'<span style="color:var(--red)">'+_mon(t.total, fac.moneda)+'</span></div>'
+        +'<div style="font-size:10.5px;color:var(--text3);text-align:right;margin-top:5px">'
+          +'Factura: '+_mon(fac.total, fac.moneda)+'</div>'
+      +'</div>'
+    +'</div>'
+
+    +'<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">'
+      +'<button class="fx-b sec" onclick="FACT.cerrarNota()">Cancelar</button>'
+      +'<button class="fx-b" onclick="FACT.emitirNota()"'
+        +(f.length?' disabled style="opacity:.45;cursor:not-allowed"':'')+'>'
+        +'Emitir '+_esc(tn.lbl.toLowerCase())+'</button>'
+    +'</div>';
+}
+
+// ── Emitir ──────────────────────────────────────────────────────────────────
+async function emitirNota(){
+  var b=S.nota; if(!b) return;
+  var f=faltasNota();
+  if(f.length){ _toast('⚠ '+f[0]); return; }
+
+  var fac=S.docs.find(function(x){ return x.id===b.facId; });
+  if(!fac){ _toast('No se encontró la factura'); return; }
+  var tn=TIPO_NOTA[b.tipo];
+  var t=totalesNota();
+  var m=_motivo(b.tipo, b.motivo);
+
+  if(!confirm('Se va a emitir una '+tn.lbl.toLowerCase()+' por '+_mon(t.total, fac.moneda)
+      +' sobre la factura '+(fac.consecutivo||'')+'.\n\n'
+      +(m.todo?'La factura va a quedar ANULADA.\n\n':'')
+      +'Es un documento fiscal: una vez aceptado por Hacienda no se puede borrar.\n\n¿Continuar?')) return;
+
+  var nid=_id('not');
+  var ahora=new Date().toISOString();
+
+  var cons='';
+  try{
+    var rc=await DB.rpc('fact_next_consecutivo', {p_empresa:fac.empresa_id, p_tipo:b.tipo});
+    if(!rc.error && rc.data) cons=tn.pref+String(rc.data);
+  }catch(e){ console.warn('consecutivo '+b.tipo+':',e); }
+  if(!cons) cons=tn.pref+String(Date.now()).slice(-6);
+
+  // El documento de la nota: hereda el receptor de la factura, porque tiene
+  // que ir a nombre de la misma persona.
+  var nota={
+    id:nid, empresa_id:fac.empresa_id, tipo_doc:b.tipo, consecutivo:cons,
+    estado:'aceptada', fecha:_hoy(), fecha_vence:null,
+    cliente_id:fac.cliente_id||null, fact_cliente_id:fac.fact_cliente_id||null,
+    cliente_nombre:fac.cliente_nombre, cliente_telefono:fac.cliente_telefono||'',
+    cliente_correo:fac.cliente_correo||'', cliente_identificacion:fac.cliente_identificacion||'',
+    cliente_tipo_ident:fac.cliente_tipo_ident||null, cliente_direccion:fac.cliente_direccion||'',
+    cliente_actividad:fac.cliente_actividad||'', cliente_cod_pais:fac.cliente_cod_pais||'506',
+    cliente_provincia:fac.cliente_provincia||'', cliente_provincia_nombre:fac.cliente_provincia_nombre||'',
+    cliente_canton:fac.cliente_canton||'', cliente_distrito:fac.cliente_distrito||'',
+    cliente_barrio:fac.cliente_barrio||'', cliente_otras_senales:fac.cliente_otras_senales||'',
+    cliente_correos_copia:fac.cliente_correos_copia||[],
+    proyecto:fac.proyecto||'', tipo_proyecto:[],
+    moneda:fac.moneda, tipo_cambio:_n(fac.tipo_cambio), iva_pct:_n(fac.iva_pct),
+    cond_venta:fac.cond_venta||'01', medio_pago:fac.medio_pago||'01',
+    notas:b.razon, texto_legal:fac.texto_legal||'',
+    subtotal:t.subtotal, descuento_total:0, impuesto_total:t.impuesto, total:t.total,
+    usuario_id:(SESSION&&SESSION.id)||null, usuario_nombre:(SESSION&&SESSION.nombre)||null,
+    exportada_ventas:true,          // una nota no va al reporte de ventas
+    en_papelera:false,
+
+    // La referencia: lo que liga la nota con la factura
+    ref_doc_id:fac.id,
+    ref_clave:fac.clave,
+    ref_tipo_doc:'FE',
+    ref_fecha:fac.enviado_en||fac.creado_en||ahora,
+    ref_codigo:b.motivo,            // el motivo; el puente lo traduce al código de Hacienda
+    ref_razon:b.razon,
+
+    estado_hacienda:'en_cola', estado_hacienda_msg:null,
+    clave:null, consecutivo_fiscal:null, gti_id:null,
+    creado_en:ahora, actualizado_en:ahora,
+  };
+
+  var ins=await DB.from('fact_docs').insert(nota);
+  if(ins.error){ _toast('⚠ No se pudo crear la nota: '+ins.error.message); return; }
+
+  var filas=b.lineas.filter(function(l){ return l.on; }).map(function(l,i){
+    var st=_n(l.cantidad)*_n(l.precio_unitario);
+    var iva=st*(_n(l.iva_pct)/100);
+    return {
+      id:_id('fl'), doc_id:nid, orden:i,
+      catalogo_id:null, codigo:l.codigo||'', descripcion:l.descripcion,
+      detalle:l.detalle||'', unidad:l.unidad||'Unid', cabys:l.cabys||'',
+      cantidad:_n(l.cantidad), precio_unitario:_n(l.precio_unitario),
+      descuento_pct:0, descuento_monto:0, iva_pct:_n(l.iva_pct),
+      subtotal:st, impuesto:iva, total:st+iva,
+      venta_categoria:null, venta_grupo:null, venta_id:null, exportada:true,
+      creado_en:ahora,
+    };
+  });
+  if(filas.length){
+    var il=await DB.from('fact_lineas').insert(filas);
+    if(il.error){ _toast('⚠ No se pudieron crear las líneas: '+il.error.message); return; }
+  }
+
+  var enc=await DB.from('fact_emisiones').insert({
+    empresa_id:fac.empresa_id, doc_id:nid, accion:'emitir', estado:'pendiente',
+    correr_en:ahora,
+    usuario_id:(SESSION&&SESSION.id)||null, usuario_nombre:(SESSION&&SESSION.nombre)||null,
+  });
+  if(enc.error){ _toast('⚠ No se pudo encolar: '+enc.error.message); return; }
+
+  S.docs.unshift(nota);
+  cerrarNota();
+  _toast(tn.lbl+' '+cons+' en cola');
+  S.ver=null; S.sub='facturas'; render();
+
+  await _tocarPuente();
+  _sondear(nid, 0);
 }
 
 // ── Cambio de empresa / subpestaña ──────────────────────────────────────────
@@ -31765,7 +32318,11 @@ window.FACT={
   completarCliente:completarCliente, setCliFix:setCliFix, guardarCliFix:guardarCliFix,
   guardarDatosAlCliente:guardarDatosAlCliente,
   // Ver un documento ya emitido, en solo lectura
-  verFactura:verFactura, cerrarVista:cerrarVista, togFacturadas:togFacturadas
+  verFactura:verFactura, cerrarVista:cerrarVista, togFacturadas:togFacturadas,
+  // Notas de crédito y de débito
+  nuevaNota:nuevaNota, cerrarNota:cerrarNota, setNota:setNota,
+  setNotaLinea:setNotaLinea, agregarLineaNota:agregarLineaNota,
+  quitarLineaNota:quitarLineaNota, emitirNota:emitirNota
 };
 
 // ── Punto de entrada (lo llama buildAdminTabs) ──────────────────────────────
