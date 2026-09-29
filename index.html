@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260929111545';
+var APP_BUILD='20260929115449';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -32510,8 +32510,11 @@ function nuevaCompra(){
   if(!e.activa){ _toast('Esa empresa se activa en la Etapa 5'); return; }
 
   S.compra={
-    // El vendedor, digitado
-    nombre:'', tipo_identificacion:1, identificacion:'', correo:'', telefono:'',
+    // El vendedor, digitado. La actividad económica es obligatoria en una
+    // factura de compra: Hacienda exige que el vendedor esté inscrito y la
+    // pide en este tipo de comprobante (no en una factura normal).
+    nombre:'', tipo_identificacion:1, identificacion:'', actividad:'',
+    correo:'', telefono:'',
     // Cómo se le pagó
     cond_venta:'01', medio_pago:'01', plazo_credito:30,
     fecha:_hoy(), moneda:e.moneda_default||'CRC', tipo_cambio:0,
@@ -32545,7 +32548,8 @@ function cerrarCompra(){
 
 function _compraTieneAlgo(){
   var b=S.compra; if(!b) return false;
-  if(String(b.nombre||'').trim() || String(b.identificacion||'').trim()) return true;
+  if(String(b.nombre||'').trim() || String(b.identificacion||'').trim()
+     || String(b.actividad||'').trim()) return true;
   return b.lineas.some(function(l){
     return String(l.descripcion||'').trim() || _n(l.precio_unitario)>0;
   });
@@ -32566,6 +32570,13 @@ function faltasCompra(){
   else if(dig.length<t.dig[0] || dig.length>t.dig[1]){
     f.push('la cédula no cuadra con '+t.lbl+' ('+dig.length+' dígitos)');
   }
+  // La actividad económica del vendedor: Hacienda la exige en la FEC. Se pide
+  // acá y no al emitir, para que no reviente el envío por un dato que se pudo
+  // haber preguntado mientras el vendedor estaba ahí.
+  var act=String(b.actividad||'').replace(/\D/g,'');
+  if(!act) f.push('la actividad económica del vendedor (Hacienda la exige en la factura de compra)');
+  else if(act.length<4 || act.length>6) f.push('la actividad económica («'+act+'» no es un código de 4 a 6 dígitos)');
+
   var cor=String(b.correo||'').trim();
   if(cor && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(cor)){
     f.push('el correo «'+cor+'» no tiene forma de dirección válida');
@@ -32641,6 +32652,12 @@ function pintarCompra(){
       +campo('Cédula *','<input class="fx-i" id="fc-cedula" value="'+_esc(b.identificacion)+'"'
         +' placeholder="'+t.dig[0]+(t.dig[1]!==t.dig[0]?' a '+t.dig[1]:'')+' dígitos"'
         +' oninput="FACT.setCompra(\'identificacion\',this.value)">')
+      +campo('Actividad económica *','<input class="fx-i" id="fc-actividad"'
+        +' value="'+_esc(b.actividad||'')+'" placeholder="Código, p. ej. 4390"'
+        +' inputmode="numeric" oninput="FACT.setCompra(\'actividad\',this.value)">'
+        +'<div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.5">'
+          +'La que el vendedor tiene inscrita ante Hacienda. En una factura de compra '
+          +'es obligatoria.</div>')
       +campo('Correo <span style="font-weight:400;color:var(--text3)">(si tiene)</span>',
         '<input class="fx-i" type="email" id="fc-correo" value="'+_esc(b.correo)+'"'
         +' oninput="FACT.setCompra(\'correo\',this.value)">')
@@ -32870,6 +32887,7 @@ async function emitirCompra(){
     cliente_nombre:String(b.nombre).trim(),
     cliente_tipo_ident:parseInt(b.tipo_identificacion,10)||1,
     cliente_identificacion:String(b.identificacion||'').replace(/\D/g,''),
+    cliente_actividad:String(b.actividad||'').replace(/\D/g,''),
     cliente_correo:String(b.correo||'').trim(),
     cliente_telefono:String(b.telefono||'').trim(),
     cliente_direccion:'', contacto_nombre:'',
