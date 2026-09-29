@@ -106,10 +106,55 @@ function d5(n) { return Number(Number(n || 0).toFixed(5)); }
 function d2(n) { return Number(Number(n || 0).toFixed(2)); }
 
 // ── El receptor ─────────────────────────────────────────────────────────────
+//
+// En una factura de compra (FEC) el receptor es el VENDEDOR no inscrito ante
+// Hacienda, y se digita en el momento: no está en fact_clientes y no debe
+// estarlo, porque no es un cliente. Sus datos viven en el documento.
+//
+// Por eso, para una FEC el receptor se arma con los campos cliente_* del
+// propio documento; para todo lo demás sigue saliendo de la ficha del cliente.
+function receptorDeDoc(doc) {
+  return {
+    nombre: doc.cliente_nombre,
+    tipo_identificacion: doc.cliente_tipo_ident,
+    identificacion: doc.cliente_identificacion,
+    correo: doc.cliente_correo,
+    telefono: doc.cliente_telefono,
+    cod_pais: doc.cliente_cod_pais,
+    provincia: doc.cliente_provincia,
+    canton: doc.cliente_canton,
+    distrito: doc.cliente_distrito,
+    barrio: doc.cliente_barrio,
+    otras_senales: doc.cliente_otras_senales,
+    direccion: doc.cliente_direccion,
+    correos_copia: doc.cliente_correos_copia,
+  };
+}
+
 function receptor(cli, doc) {
   // Sin cliente en fact_clientes no se factura: lo bloquea la revisión previa
   // antes de llegar acá, pero se vuelve a verificar por si acaso.
   if (!cli) throw new Error('El documento no tiene cliente de facturación ligado.');
+
+  // Al vendedor de una compra no se le puede exigir correo: muchas veces no
+  // tiene. El comprobante no se le manda por correo a él — el que declara la
+  // operación es CONCRE.
+  const esCompra = doc && doc.tipo_doc === 'FEC';
+  if (esCompra) {
+    const dig = String(cli.identificacion || '').replace(/\D/g, '');
+    if (!dig) throw new Error('El vendedor no tiene cédula.');
+    const r = {
+      // ⚠ manual
+      nombre: String(cli.nombre || '').slice(0, 100),
+      identificacion: { tipo: String(cli.tipo_identificacion || 1).padStart(2, '0'), numero: dig },
+    };
+    if (cli.correo) r.correoElectronico = String(cli.correo).trim();
+    if (cli.telefono) {
+      r.telefono = { codigoPais: String(cli.cod_pais || '506'),
+                     numTelefono: String(cli.telefono).replace(/\D/g, '') };
+    }
+    return r;
+  }
 
   const ident = String(cli.identificacion || '').replace(/\D/g, '');
   if (!ident) throw new Error('El cliente no tiene cédula.');
@@ -282,7 +327,16 @@ function armar(doc, lineas, cliente, empresa, cred) {
       },
     },
 
-    receptor: receptor(cliente, doc),
+    // Una factura de compra lleva al vendedor digitado en el propio documento.
+    //
+    // ⚠ manual: confirmar dos cosas de la FEC contra el manual de GTI.
+    //   1. Si el emisor y el receptor se invierten respecto de una factura
+    //      normal. Acá va CONCRE como emisor y el vendedor como receptor, que
+    //      es lo que dice el esquema 4.4, pero GTI puede pedirlo al revés.
+    //   2. Si el IVA se declara distinto por ser autodeterminado: en una FEC
+    //      el impuesto lo asume y lo paga el comprador, no el vendedor.
+    receptor: (doc.tipo_doc === 'FEC') ? receptor(receptorDeDoc(doc), doc)
+                                       : receptor(cliente, doc),
     detalleServicio: det,
 
     resumenFactura: {
@@ -425,7 +479,7 @@ function simularEstado(doc) {
 
 module.exports = {
   RUTAS, TIPO_DOC, COD_REFERENCIA, MOTIVOS_NOTA, codigoReferencia,
-  unidadCod, tarifaIVA,
+  receptorDeDoc, unidadCod, tarifaIVA,
   armar, leerEmision, leerEstado, normalizarEstado,
   simularEmision, simularEstado,
 };
