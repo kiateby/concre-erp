@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260928121939';
+var APP_BUILD='20260929090758';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -27758,6 +27758,7 @@ var S = {
   cliFix: null,        // borrador al completar los datos del cliente para facturar
   ver: null,           // id del documento abierto en solo lectura (factura emitida)
   nota: null,          // borrador de la nota de crédito o débito
+  compra: null,        // borrador de la factura de compra
   fFacturadas: false,  // filtro "solo las proformas ya facturadas"
   // exportación a ventas
   expSel: {},          // lineaId -> true
@@ -27774,6 +27775,18 @@ var ESTADOS = {
 };
 
 var UNIDADES = ['Unid','m²','ml','m³','Sp','Global','Día','Hora','kg','Saco','Galón','Estañón','Juego'];
+
+// Medios de pago según Hacienda. Van por código, no por texto libre.
+// Están los que usa una constructora; la lista se puede recortar cuando Kia
+// confirme cuáles usa de verdad — es un dato que quedó pendiente.
+var MEDIOS_PAGO = [
+  {v:'01', lbl:'Efectivo'},
+  {v:'02', lbl:'Tarjeta'},
+  {v:'03', lbl:'Cheque'},
+  {v:'04', lbl:'Transferencia o depósito'},
+  {v:'06', lbl:'SINPE móvil'},
+  {v:'99', lbl:'Otro'},
+];
 
 // ── Helpers locales ─────────────────────────────────────────────────────────
 function _id(p){ return p+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,8); }
@@ -31058,11 +31071,18 @@ function renderFacturas(b){
       +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'
         +'<div class="fx-h" style="margin:0">Facturas electrónicas</div>'
         +'<span style="font-size:11px;color:var(--text3)">'+docs.length+'</span>'
-        +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.refrescarFacturas()">↻ Actualizar</button>'
+        +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap">'
+          +'<button class="fx-b sm" onclick="FACT.nuevaCompra()"'
+            +' title="Cuando la empresa le compra a alguien no inscrito ante Hacienda">'
+            +'+ Factura de compra</button>'
+          +'<button class="fx-b sm gh" onclick="FACT.refrescarFacturas()">↻ Actualizar</button>'
+        +'</div>'
       +'</div>'
       +(docs.length===0
-        ? '<div class="fx-empty">Todavía no se ha emitido ninguna factura.<br>'
-          +'Se emiten desde una proforma, con el botón 🧾 de su fila.</div>'
+        ? '<div class="fx-empty">Todavía no se ha emitido ningún comprobante.<br>'
+          +'Las facturas se emiten desde una proforma, con el botón 🧾 de su fila.<br>'
+          +'La <b>factura de compra</b> se hace acá arriba, cuando la empresa le compra '
+          +'a alguien no inscrito ante Hacienda.</div>'
         : '<div class="fx-tbl-scroll"><table class="fx-t">'
           +'<thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th>'
           +'<th class="fx-r">Total</th><th class="fx-c">Hacienda</th><th>Clave</th>'
@@ -32295,6 +32315,458 @@ async function emitirNota(){
   _sondear(nid, 0);
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FACTURA DE COMPRA (FEC)
+//
+// Se emite cuando CONCRE le COMPRA a alguien que no está inscrito ante
+// Hacienda: el peón, el subcontratista, el que vende material sin factura.
+// CONCRE emite el comprobante en nombre de ese vendedor y autodetermina el IVA.
+//
+// Es distinta de todo lo demás del módulo porque la plata va al revés: acá
+// CONCRE no cobra, paga. De eso salen cuatro reglas:
+//
+//   1. No nace de una proforma: se escribe desde cero.
+//   2. El receptor es el VENDEDOR y va digitado en el momento. No se guarda en
+//      fact_clientes, porque no es un cliente y llenaría esa lista de gente a
+//      la que nunca se le va a vender.
+//   3. NUNCA va al reporte de Ventas: es un gasto, no un ingreso. Se marca
+//      exportada_ventas=true desde el nacimiento para que no pueda colarse.
+//   4. Las líneas son libres, sin catálogo: lo que se compra no está en el
+//      catálogo de servicios de CONCRE.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Abrir el formulario ─────────────────────────────────────────────────────
+function nuevaCompra(){
+  var e=_emp();
+  if(!e.activa){ _toast('Esa empresa se activa en la Etapa 5'); return; }
+
+  S.compra={
+    // El vendedor, digitado
+    nombre:'', tipo_identificacion:1, identificacion:'', correo:'', telefono:'',
+    // Cómo se le pagó
+    cond_venta:'01', medio_pago:'01', plazo_credito:30,
+    fecha:_hoy(), moneda:e.moneda_default||'CRC', tipo_cambio:0,
+    notas:'',
+    lineas:[nuevaLineaCompra(e)],
+  };
+
+  var ov=document.createElement('div');
+  ov.className='fx-ov'; ov.id='fact-compra-modal';
+  ov.innerHTML='<div class="fx-md" style="max-width:900px" onclick="event.stopPropagation()">'
+    +'<div id="fact-compra-cuerpo"></div></div>';
+  ov.onclick=function(){ cerrarCompra(); };
+  _root().appendChild(ov);
+  pintarCompra();
+}
+
+function nuevaLineaCompra(e){
+  return {
+    descripcion:'', detalle:'', unidad:'Unid', cabys:'',
+    cantidad:1, precio_unitario:0,
+    iva_pct:_n((e||_emp()).iva_default!=null?(e||_emp()).iva_default:13),
+  };
+}
+
+function cerrarCompra(){
+  if(S.compra && _compraTieneAlgo() &&
+     !confirm('Hay datos sin guardar en la factura de compra. ¿Salir?')) return;
+  S.compra=null;
+  cerrarModal('fact-compra-modal');
+}
+
+function _compraTieneAlgo(){
+  var b=S.compra; if(!b) return false;
+  if(String(b.nombre||'').trim() || String(b.identificacion||'').trim()) return true;
+  return b.lineas.some(function(l){
+    return String(l.descripcion||'').trim() || _n(l.precio_unitario)>0;
+  });
+}
+
+// ── Qué le falta ────────────────────────────────────────────────────────────
+// El vendedor se valida con la misma regla que un cliente, MENOS el correo:
+// a un peón no se le puede exigir uno, y el comprobante no se le manda a él
+// sino que lo declara CONCRE.
+function faltasCompra(){
+  var b=S.compra; if(!b) return ['no hay nada'];
+  var f=[];
+
+  if(!String(b.nombre||'').trim()) f.push('el nombre del vendedor');
+  var dig=String(b.identificacion||'').replace(/\D/g,'');
+  var t=_tipoIdent(b.tipo_identificacion);
+  if(!dig) f.push('la cédula del vendedor');
+  else if(dig.length<t.dig[0] || dig.length>t.dig[1]){
+    f.push('la cédula no cuadra con '+t.lbl+' ('+dig.length+' dígitos)');
+  }
+  var cor=String(b.correo||'').trim();
+  if(cor && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(cor)){
+    f.push('el correo «'+cor+'» no tiene forma de dirección válida');
+  }
+
+  var vivas=b.lineas.filter(function(l){
+    return String(l.descripcion||'').trim() || _n(l.precio_unitario)>0;
+  });
+  if(!vivas.length) f.push('al menos una línea con descripción y precio');
+  vivas.forEach(function(l){
+    if(!String(l.descripcion||'').trim()) f.push('una línea sin descripción');
+    if(!/^\d{13}$/.test(String(l.cabys||''))){
+      f.push('la línea «'+(l.descripcion||'?')+'» no tiene CABYS de 13 dígitos');
+    }
+    if(_n(l.cantidad)<=0) f.push('la línea «'+(l.descripcion||'?')+'» tiene cantidad en 0');
+    if(_n(l.precio_unitario)<=0) f.push('la línea «'+(l.descripcion||'?')+'» tiene precio en 0');
+  });
+
+  if(b.moneda==='USD' && _n(b.tipo_cambio)<=0) f.push('el tipo de cambio');
+  if(String(b.cond_venta)==='02' && _n(b.plazo_credito)<=0) f.push('el plazo del crédito');
+
+  return f;
+}
+
+function totalesCompra(){
+  var b=S.compra;
+  var sub=0, imp=0;
+  (b?b.lineas:[]).forEach(function(l){
+    var s=_n(l.cantidad)*_n(l.precio_unitario);
+    sub+=s; imp+=s*(_n(l.iva_pct)/100);
+  });
+  return {subtotal:sub, impuesto:imp, total:sub+imp};
+}
+
+// ── El formulario ───────────────────────────────────────────────────────────
+function pintarCompra(){
+  var el=document.getElementById('fact-compra-cuerpo'); if(!el) return;
+  var b=S.compra; if(!b) return;
+  var e=_emp();
+  var t=_tipoIdent(b.tipo_identificacion);
+  var f=faltasCompra();
+
+  el.innerHTML=
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
+      +'<div class="fx-h" style="margin:0">Factura de compra</div>'
+      +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.cerrarCompra()">✕</button>'
+    +'</div>'
+
+    +'<div style="padding:10px 12px;border-radius:8px;margin-bottom:14px;font-size:11.5px;'
+      +'line-height:1.65;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3)">'
+      +'Esto es para cuando <b>'+_esc(e.nombre_comercial)+' le compra</b> a alguien que no está '
+      +'inscrito ante Hacienda. Se emite el comprobante a nombre de ese vendedor y '
+      +_esc(e.nombre_comercial)+' asume y paga el IVA de la compra.'
+      +'<br><b>No es una venta:</b> no entra al reporte de Ventas ni suma a los ingresos.'
+    +'</div>'
+
+    // ── El vendedor ──
+    +'<div class="fx-h">A quién se le compró</div>'
+    +'<div style="font-size:11px;color:var(--text3);line-height:1.6;margin-bottom:10px">'
+      +'Se escribe acá y queda en este documento. No se agrega a la lista de Clientes, '
+      +'porque no es un cliente.'
+    +'</div>'
+    +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">'
+      +campo('Nombre completo *','<input class="fx-i" id="fc-nombre" value="'+_esc(b.nombre)+'"'
+        +' oninput="FACT.setCompra(\'nombre\',this.value)">')
+      +campo('Tipo de identificación *','<select class="fx-i" onchange="FACT.setCompra(\'tipo_identificacion\',this.value)">'
+        +[1,2,3,4].map(function(v){
+            var ti=_tipoIdent(v);
+            return '<option value="'+v+'"'+(String(b.tipo_identificacion)===String(v)?' selected':'')
+              +'>'+ti.lbl+'</option>';
+          }).join('')
+        +'</select>')
+      +campo('Cédula *','<input class="fx-i" id="fc-cedula" value="'+_esc(b.identificacion)+'"'
+        +' placeholder="'+t.dig[0]+(t.dig[1]!==t.dig[0]?' a '+t.dig[1]:'')+' dígitos"'
+        +' oninput="FACT.setCompra(\'identificacion\',this.value)">')
+      +campo('Correo <span style="font-weight:400;color:var(--text3)">(si tiene)</span>',
+        '<input class="fx-i" type="email" id="fc-correo" value="'+_esc(b.correo)+'"'
+        +' oninput="FACT.setCompra(\'correo\',this.value)">')
+      +campo('Teléfono <span style="font-weight:400;color:var(--text3)">(opcional)</span>',
+        '<input class="fx-i" id="fc-telefono" value="'+_esc(b.telefono)+'"'
+        +' oninput="FACT.setCompra(\'telefono\',this.value)">')
+    +'</div>'
+
+    // ── Cómo se pagó ──
+    +'<div style="margin-top:16px" class="fx-h">La compra</div>'
+    +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">'
+      +campo('Fecha','<input type="date" class="fx-i" value="'+_esc(b.fecha)+'"'
+        +' onchange="FACT.setCompra(\'fecha\',this.value)">')
+      +campo('Moneda','<select class="fx-i" onchange="FACT.setCompra(\'moneda\',this.value)">'
+        +'<option value="CRC"'+(b.moneda==='CRC'?' selected':'')+'>Colones (CRC)</option>'
+        +'<option value="USD"'+(b.moneda==='USD'?' selected':'')+'>Dólares (USD)</option></select>')
+      +(b.moneda==='USD'
+        ? campo('Tipo de cambio *','<input type="text" inputmode="decimal" class="fx-i" id="fc-tc"'
+          +' value="'+_esc(String(b.tipo_cambio))+'"'
+          +' oninput="FACT.setCompra(\'tipo_cambio\',this.value)">')
+        : '')
+      +campo('Condición','<select class="fx-i" onchange="FACT.setCompra(\'cond_venta\',this.value)">'
+        +'<option value="01"'+(String(b.cond_venta)==='01'?' selected':'')+'>Contado</option>'
+        +'<option value="02"'+(String(b.cond_venta)==='02'?' selected':'')+'>Crédito</option></select>')
+      +(String(b.cond_venta)==='02'
+        ? campo('Plazo (días) *','<input type="text" inputmode="numeric" class="fx-i" id="fc-plazo"'
+          +' value="'+_esc(String(b.plazo_credito))+'"'
+          +' oninput="FACT.setCompra(\'plazo_credito\',this.value)">')
+        : '')
+      +campo('Medio de pago','<select class="fx-i" onchange="FACT.setCompra(\'medio_pago\',this.value)">'
+        +MEDIOS_PAGO.map(function(m){
+            return '<option value="'+m.v+'"'+(String(b.medio_pago)===m.v?' selected':'')
+              +'>'+_esc(m.lbl)+'</option>';
+          }).join('')
+        +'</select>')
+    +'</div>'
+
+    // ── Qué se compró ──
+    +'<div style="margin-top:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+      +'<div class="fx-h" style="margin:0">Qué se compró</div>'
+      +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.agregarLineaCompra()">'
+        +'+ Otra línea</button>'
+    +'</div>'
+    +'<div style="font-size:11px;color:var(--text3);line-height:1.6;margin:7px 0 9px">'
+      +'El CABYS se escribe a mano: lo que se compra no está en el catálogo de servicios.'
+    +'</div>'
+    +'<div class="fx-tbl-scroll" style="max-height:32vh"><table class="fx-t">'
+      +'<thead><tr><th style="width:26px"></th><th>Descripción y CABYS</th>'
+      +'<th style="width:88px">Unidad</th>'
+      +'<th class="fx-r" style="width:92px">Cantidad</th>'
+      +'<th class="fx-r" style="width:110px">Precio unit.</th>'
+      +'<th class="fx-r" style="width:64px">IVA %</th>'
+      +'<th class="fx-r" style="width:112px">Total</th>'
+      +'<th style="width:30px"></th></tr></thead><tbody>'
+      +b.lineas.map(function(l,i){
+          var st=_n(l.cantidad)*_n(l.precio_unitario);
+          return '<tr>'
+            +'<td class="fx-c" style="color:var(--text3);font-size:11px;padding-top:12px">'+(i+1)+'</td>'
+            +'<td>'
+              +'<input class="fx-i" data-fc="desc'+i+'" value="'+_esc(l.descripcion)+'"'
+              +' placeholder="Qué se compró" oninput="FACT.setCompraLinea('+i+',\'descripcion\',this.value)">'
+              +'<input class="fx-i" data-fc="cabys'+i+'" style="margin-top:4px;font-size:11px"'
+              +' value="'+_esc(l.cabys)+'" placeholder="CABYS (13 dígitos)"'
+              +' oninput="FACT.setCompraLinea('+i+',\'cabys\',this.value)">'
+            +'</td>'
+            +'<td><select class="fx-i" onchange="FACT.setCompraLinea('+i+',\'unidad\',this.value)">'
+              +UNIDADES.map(function(u){
+                  return '<option'+(l.unidad===u?' selected':'')+'>'+u+'</option>'; }).join('')
+              +'</select></td>'
+            +'<td><input type="text" inputmode="decimal" class="fx-i fx-r" data-fc="cant'+i+'"'
+              +' value="'+_esc(String(l.cantidad))+'"'
+              +' oninput="FACT.setCompraLinea('+i+',\'cantidad\',this.value)"></td>'
+            +'<td><input type="text" inputmode="decimal" class="fx-i fx-r" data-fc="precio'+i+'"'
+              +' value="'+_esc(String(l.precio_unitario))+'"'
+              +' oninput="FACT.setCompraLinea('+i+',\'precio_unitario\',this.value)"></td>'
+            +'<td><input type="text" inputmode="decimal" class="fx-i fx-r" data-fc="iva'+i+'"'
+              +' value="'+_esc(String(l.iva_pct))+'"'
+              +' oninput="FACT.setCompraLinea('+i+',\'iva_pct\',this.value)"></td>'
+            +'<td class="fx-r" style="padding-top:12px"><b data-fct="'+i+'">'
+              +_mon(st+st*(_n(l.iva_pct)/100), b.moneda)+'</b></td>'
+            +'<td class="fx-c" style="padding-top:10px">'
+              +(b.lineas.length>1
+                ? '<button class="fx-b sm gh" style="color:var(--red)" onclick="FACT.quitarLineaCompra('+i+')">✕</button>'
+                : '')+'</td>'
+          +'</tr>';
+        }).join('')
+      +'</tbody></table></div>'
+
+    +'<div style="height:11px"></div>'
+    +campo('Notas <span style="font-weight:400;color:var(--text3)">(internas)</span>',
+      '<input class="fx-i" data-fc="notas" value="'+_esc(b.notas)+'"'
+      +' oninput="FACT.setCompra(\'notas\',this.value)">')
+
+    // ── Estado y totales, cada uno en su recuadro para repintarlos solos ──
+    +'<div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:14px">'
+      +'<div style="flex:1;min-width:240px" id="fact-compra-estado">'+estadoCompra()+'</div>'
+      +'<div style="min-width:210px" id="fact-compra-totales">'+totalesCompraHTML()+'</div>'
+    +'</div>'
+
+    +'<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">'
+      +'<button class="fx-b sec" onclick="FACT.cerrarCompra()">Cancelar</button>'
+      +'<button class="fx-b" id="fact-compra-emitir" onclick="FACT.emitirCompra()"'
+        +(f.length?' disabled style="opacity:.45;cursor:not-allowed"':'')+'>'
+        +'Emitir factura de compra</button>'
+    +'</div>';
+}
+
+function estadoCompra(){
+  var f=faltasCompra();
+  if(f.length){
+    return '<div style="padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.7;'
+      +'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:var(--red)">'
+      +'Falta:<ul style="margin:5px 0 0;padding-left:17px">'
+      +f.slice(0,5).map(function(x){ return '<li>'+_esc(x)+'</li>'; }).join('')
+      +'</ul></div>';
+  }
+  return '<div style="padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.6;'
+    +'background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);color:var(--green)">'
+    +'✓ La factura de compra está lista para emitirse.</div>';
+}
+
+function totalesCompraHTML(){
+  var b=S.compra; if(!b) return '';
+  var t=totalesCompra();
+  return '<div class="fx-tot"><span style="color:var(--text3)">Subtotal</span><b>'
+      +_mon(t.subtotal, b.moneda)+'</b></div>'
+    +'<div class="fx-tot"><span style="color:var(--text3)">IVA que asume la empresa</span><b>'
+      +_mon(t.impuesto, b.moneda)+'</b></div>'
+    +'<div class="fx-tot gr"><span>Total de la compra</span>'
+      +'<span style="color:var(--red)">'+_mon(t.total, b.moneda)+'</span></div>';
+}
+
+// Lo que cambia al escribir. Los campos NO se redibujan: si se redibujaran, el
+// navegador los destruye y el cursor se pierde en cada tecla.
+function refrescarCompra(){
+  var b=S.compra; if(!b) return;
+
+  b.lineas.forEach(function(l,i){
+    var el=document.querySelector('[data-fct="'+i+'"]');
+    if(!el) return;
+    var st=_n(l.cantidad)*_n(l.precio_unitario);
+    el.textContent=_mon(st+st*(_n(l.iva_pct)/100), b.moneda);
+  });
+
+  var e=document.getElementById('fact-compra-estado');
+  if(e) e.innerHTML=estadoCompra();
+  var t=document.getElementById('fact-compra-totales');
+  if(t) t.innerHTML=totalesCompraHTML();
+
+  var g=document.getElementById('fact-compra-emitir');
+  if(g){
+    var listo=faltasCompra().length===0;
+    g.disabled=!listo;
+    g.style.opacity=listo?'':'.45';
+    g.style.cursor=listo?'':'not-allowed';
+  }
+}
+
+function setCompra(campo, val){
+  var b=S.compra; if(!b) return;
+  b[campo]=val;
+  // Estos cambian qué campos se muestran, así que sí redibujan; ninguno es de
+  // escribir (son desplegables o una fecha).
+  if(campo==='tipo_identificacion' || campo==='moneda' || campo==='cond_venta') pintarCompra();
+  else refrescarCompra();
+}
+
+function setCompraLinea(i, campo, val){
+  var b=S.compra; if(!b || !b.lineas[i]) return;
+  b.lineas[i][campo]=val;
+  refrescarCompra();
+}
+
+function agregarLineaCompra(){
+  var b=S.compra; if(!b) return;
+  b.lineas.push(nuevaLineaCompra());
+  pintarCompra();
+  var i=b.lineas.length-1;
+  setTimeout(function(){
+    var inp=document.querySelector('[data-fc="desc'+i+'"]');
+    if(inp){ try{ inp.focus(); }catch(e){} }
+  }, 60);
+}
+
+function quitarLineaCompra(i){
+  var b=S.compra; if(!b || b.lineas.length<=1) return;
+  b.lineas.splice(i,1);
+  pintarCompra();
+}
+
+// ── Emitir ──────────────────────────────────────────────────────────────────
+async function emitirCompra(){
+  var b=S.compra; if(!b) return;
+  var f=faltasCompra();
+  if(f.length){ _toast('⚠ Falta '+f[0]); return; }
+
+  var t=totalesCompra();
+  var e=_emp();
+
+  if(!confirm('Se va a emitir una factura de compra a nombre de '+b.nombre+' por '
+      +_mon(t.total, b.moneda)+'.\n\n'
+      +e.nombre_comercial+' asume el IVA de '+_mon(t.impuesto, b.moneda)+'.\n\n'
+      +'Es un documento fiscal: una vez aceptado por Hacienda no se puede borrar, '
+      +'se corrige con una nota de crédito.\n\n¿Continuar?')) return;
+
+  var id=_id('fec');
+  var ahora=new Date().toISOString();
+
+  var cons='';
+  try{
+    var rc=await DB.rpc('fact_next_consecutivo', {p_empresa:S.empresaId, p_tipo:'FEC'});
+    if(!rc.error && rc.data) cons='FEC-'+String(rc.data);
+  }catch(err){ console.warn('consecutivo FEC:',err); }
+  if(!cons) cons='FEC-'+String(Date.now()).slice(-6);
+
+  var vivas=b.lineas.filter(function(l){
+    return String(l.descripcion||'').trim() || _n(l.precio_unitario)>0;
+  });
+
+  var doc={
+    id:id, empresa_id:S.empresaId, tipo_doc:'FEC', consecutivo:cons,
+    estado:'aceptada', fecha:b.fecha, fecha_vence:null,
+
+    // El vendedor va en los campos del receptor, digitado. fact_cliente_id
+    // queda NULO a propósito: no es un cliente y no se guarda como tal.
+    cliente_id:null, fact_cliente_id:null,
+    cliente_nombre:String(b.nombre).trim(),
+    cliente_tipo_ident:parseInt(b.tipo_identificacion,10)||1,
+    cliente_identificacion:String(b.identificacion||'').replace(/\D/g,''),
+    cliente_correo:String(b.correo||'').trim(),
+    cliente_telefono:String(b.telefono||'').trim(),
+    cliente_direccion:'', contacto_nombre:'',
+    cliente_cod_pais:'506', cliente_correos_copia:[],
+
+    proyecto:'', tipo_proyecto:[],
+    moneda:b.moneda, tipo_cambio:_n(b.tipo_cambio), iva_pct:_n(e.iva_default||13),
+    cond_venta:String(b.cond_venta),
+    plazo_credito:(String(b.cond_venta)==='02')?_n(b.plazo_credito):null,
+    medio_pago:String(b.medio_pago),
+    condiciones:'', notas:b.notas||'', texto_legal:'',
+
+    subtotal:t.subtotal, descuento_total:0, impuesto_total:t.impuesto, total:t.total,
+    usuario_id:(SESSION&&SESSION.id)||null, usuario_nombre:(SESSION&&SESSION.nombre)||null,
+
+    // Una compra es un GASTO: no entra al reporte de Ventas. Se marca desde el
+    // nacimiento para que el flujo de exportación no la ofrezca nunca.
+    exportada_ventas:true,
+    en_papelera:false,
+
+    estado_hacienda:'en_cola', estado_hacienda_msg:null,
+    clave:null, consecutivo_fiscal:null, gti_id:null,
+    creado_en:ahora, actualizado_en:ahora,
+  };
+
+  var ins=await DB.from('fact_docs').insert(doc);
+  if(ins.error){ _toast('⚠ No se pudo crear: '+ins.error.message); return; }
+
+  var filas=vivas.map(function(l,i){
+    var st=_n(l.cantidad)*_n(l.precio_unitario);
+    var iva=st*(_n(l.iva_pct)/100);
+    return {
+      id:_id('fl'), doc_id:id, orden:i, catalogo_id:null, codigo:'',
+      descripcion:String(l.descripcion).trim(), detalle:l.detalle||'',
+      unidad:l.unidad||'Unid', cabys:String(l.cabys||'').replace(/\D/g,''),
+      cantidad:_n(l.cantidad), precio_unitario:_n(l.precio_unitario),
+      descuento_pct:0, descuento_monto:0, iva_pct:_n(l.iva_pct),
+      subtotal:st, impuesto:iva, total:st+iva,
+      venta_categoria:null, venta_grupo:null, venta_id:null,
+      exportada:true,          // tampoco línea por línea
+      creado_en:ahora,
+    };
+  });
+  if(filas.length){
+    var il=await DB.from('fact_lineas').insert(filas);
+    if(il.error){ _toast('⚠ No se pudieron crear las líneas: '+il.error.message); return; }
+  }
+
+  var enc=await DB.from('fact_emisiones').insert({
+    empresa_id:S.empresaId, doc_id:id, accion:'emitir', estado:'pendiente',
+    correr_en:ahora,
+    usuario_id:(SESSION&&SESSION.id)||null, usuario_nombre:(SESSION&&SESSION.nombre)||null,
+  });
+  if(enc.error){ _toast('⚠ No se pudo encolar: '+enc.error.message); return; }
+
+  S.docs.unshift(doc);
+  S.compra=null;
+  cerrarModal('fact-compra-modal');
+  _toast('Factura de compra '+cons+' en cola');
+  S.ver=null; S.sub='facturas'; render();
+
+  await _tocarPuente();
+  _sondear(id, 0);
+}
+
 // ── Cambio de empresa / subpestaña ──────────────────────────────────────────
 function setEmpresa(id){
   var e=S.empresas.find(function(x){ return x.id===id; });
@@ -32387,7 +32859,11 @@ window.FACT={
   // Notas de crédito y de débito
   nuevaNota:nuevaNota, cerrarNota:cerrarNota, setNota:setNota,
   setNotaLinea:setNotaLinea, agregarLineaNota:agregarLineaNota,
-  quitarLineaNota:quitarLineaNota, emitirNota:emitirNota
+  quitarLineaNota:quitarLineaNota, emitirNota:emitirNota,
+  // Factura de compra
+  nuevaCompra:nuevaCompra, cerrarCompra:cerrarCompra, setCompra:setCompra,
+  setCompraLinea:setCompraLinea, agregarLineaCompra:agregarLineaCompra,
+  quitarLineaCompra:quitarLineaCompra, emitirCompra:emitirCompra
 };
 
 // ── Punto de entrada (lo llama buildAdminTabs) ──────────────────────────────
