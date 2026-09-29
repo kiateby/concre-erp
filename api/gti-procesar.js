@@ -13,6 +13,10 @@
 // y tocar este endpoint sin trabajos en cola no hace absolutamente nada.
 //
 // Las credenciales de GTI solo existen acá, en variables de entorno.
+//
+// Dato clave del manual: después de emitir, TODO se consulta con el
+// CONSECUTIVO de 20 dígitos que devolvió GTI, no con la clave de 50. Por eso
+// consecutivo_fiscal se guarda antes que nada y es lo que amarra el resto.
 // ══════════════════════════════════════════════════════════════════════════════
 
 const G = require('./_gti');
@@ -75,8 +79,12 @@ async function procesar(t) {
 }
 
 // Un fallo se guarda con su motivo. Se reintenta hasta MAX_INTENTOS, cada vez
-// más tarde; después queda fallido y el documento en 'error', para que el
-// usuario lo vea en la pestaña y no se quede esperando en silencio.
+// más tarde; después queda fallido.
+//
+// Solo la EMISIÓN puede dejar el documento en 'error'. Si lo que falló fue
+// bajar el XML o preguntar el estado de un comprobante que Hacienda ya aceptó,
+// el documento sigue aceptado: marcarlo como error sería mentir sobre un
+// documento fiscal que existe. Se anota el problema y se deja el estado.
 async function fallar(t, e) {
   const msg = String(e.message || e).slice(0, 900);
   const reintentar = (t.intentos || 0) + 1 < MAX_INTENTOS && !e.configuracion;
@@ -87,10 +95,15 @@ async function fallar(t, e) {
     : { estado: 'fallido', error: msg, terminado_en: new Date().toISOString() });
 
   if (!reintentar) {
-    await G.sbPatch('fact_docs', 'id=eq.' + t.doc_id, {
-      estado_hacienda: 'error', estado_hacienda_msg: msg,
-      actualizado_en: new Date().toISOString(),
-    }).catch(() => {});
+    const cambios = { actualizado_en: new Date().toISOString() };
+    if (t.accion === 'emitir') {
+      cambios.estado_hacienda = 'error';
+      cambios.estado_hacienda_msg = msg;
+    } else {
+      cambios.estado_hacienda_msg = 'Aviso al ' + (t.accion === 'estado'
+        ? 'consultar el estado' : 'bajar los archivos') + ': ' + msg;
+    }
+    await G.sbPatch('fact_docs', 'id=eq.' + t.doc_id, cambios).catch(() => {});
   }
   return { id: t.id, ok: false, error: msg, reintenta: reintentar };
 }
@@ -126,23 +139,33 @@ async function emitir(t) {
     estado_hacienda: 'enviando', enviado_en: new Date().toISOString(),
   });
 
-  const r = await G.llamarGTI(cred, P.RUTAS.emitir, cuerpo, () => P.simularEmision(doc));
+  const r = await G.llamarGTI(cred, P.METODOS.emitir, {
+    cuerpo: cuerpo,
+    simular: () => P.simularEmision(doc),
+  });
 
   await G.sbPatch('fact_emisiones', 'id=eq.' + t.id, {
     enviado: G.sinSecretos(cuerpo), respuesta: G.sinSecretos(r.datos),
     http_status: r.status,
   });
 
+  // GTI contesta 202 (Accepted), no 200: fetch lo da como ok, pero se deja
+  // dicho acá para que no se «arregle» a 200 en el futuro.
   if (!r.ok) throw new Error(r.error || ('GTI respondió ' + r.status + ': ' +
     JSON.stringify(r.datos || {}).slice(0, 400)));
 
   const e = P.leerEmision(r.datos);
-  if (!e.clave) throw new Error('GTI no devolvió la clave. Respuesta: ' +
-    JSON.stringify(r.datos || {}).slice(0, 400));
+  if (!e.clave || !e.consecutivo) {
+    throw new Error('GTI no devolvió '
+      + (!e.clave && !e.consecutivo ? 'la clave ni el consecutivo'
+         : !e.clave ? 'la clave' : 'el consecutivo')
+      + (e.mensaje ? ' — ' + e.mensaje : '')
+      + '. Respuesta: ' + JSON.stringify(G.sinSecretos(r.datos) || {}).slice(0, 400));
+  }
 
   await G.sbPatch('fact_docs', 'id=eq.' + t.doc_id, {
     clave: e.clave,
-    consecutivo_fiscal: e.consecutivo || null,
+    consecutivo_fiscal: e.consecutivo,
     gti_id: e.gtiId || null,
     estado_hacienda: e.estado || 'recibido',
     estado_hacienda_msg: e.mensaje || null,
@@ -162,7 +185,7 @@ async function emitir(t) {
     usuario_id: t.usuario_id, usuario_nombre: t.usuario_nombre,
   })));
 
-  return { id: t.id, ok: true, clave: e.clave, estado: e.estado };
+  return { id: t.id, ok: true, clave: e.clave, consecutivo: e.consecutivo, estado: e.estado };
 }
 
 // ── Consultar el estado ─────────────────────────────────────────────────────
@@ -178,19 +201,21 @@ async function consultarEstado(t) {
     });
     return { id: t.id, ok: true, nota: 'ya resuelto: ' + doc.estado_hacienda };
   }
-  if (!doc.clave) throw new Error('el documento no tiene clave: todavía no se emitió');
+  if (!doc.consecutivo_fiscal) {
+    throw new Error('el documento no tiene consecutivo de GTI: todavía no se emitió');
+  }
 
   const emp = (await G.sbGet('fact_empresas', 'id=eq.' + doc.empresa_id + '&limit=1'))[0];
   const cred = G.credenciales(doc.empresa_id, emp && emp.gti_ambiente);
 
-  const cuerpo = { usuario: cred.usuario, clave: cred.clave, numCuenta: cred.cuenta,
-                   claveComprobante: doc.clave, id: doc.gti_id || undefined };  // ⚠ manual
-
-  const r = await G.llamarGTI(cred, P.RUTAS.estado, cuerpo,
-    () => P.simularEstado(doc));
+  const r = await G.llamarGTI(cred, P.METODOS.estado, {
+    consecutivo: doc.consecutivo_fiscal,
+    simular: () => P.simularEstado(doc),
+  });
 
   await G.sbPatch('fact_emisiones', 'id=eq.' + t.id, {
-    enviado: G.sinSecretos(cuerpo), respuesta: G.sinSecretos(r.datos), http_status: r.status,
+    enviado: { metodo: r.metodo, consecutivo: doc.consecutivo_fiscal },
+    respuesta: G.sinSecretos(r.datos), http_status: r.status,
   });
 
   if (!r.ok) throw new Error(r.error || ('GTI respondió ' + r.status));
@@ -208,72 +233,114 @@ async function consultarEstado(t) {
     estado: 'hecho', terminado_en: new Date().toISOString(),
   });
 
-  // Aceptado: hay que bajar el XML y el PDF ya. GTI los entrega una sola vez
-  // y dentro de los 3 días; si se pierde la ventana, no se recuperan.
+  // Aceptado: hay que bajar el XML y el PDF. GTI los entrega dentro de los
+  // tres días; si se pierde la ventana, no se recuperan. Se espera 45 segundos
+  // porque el PDF no está listo en el mismo instante en que Hacienda acepta.
   if (e.estado === 'aceptado' && !doc.xml_path) {
     await G.sbInsert('fact_emisiones', [{
       empresa_id: doc.empresa_id, doc_id: t.doc_id, accion: 'descargar',
-      estado: 'pendiente', correr_en: new Date().toISOString(),
+      estado: 'pendiente', correr_en: new Date(Date.now() + 45000).toISOString(),
       usuario_id: t.usuario_id, usuario_nombre: t.usuario_nombre,
     }]);
   }
 
-  return { id: t.id, ok: true, estado: e.estado };
+  return { id: t.id, ok: true, estado: e.estado, codigo: e.codigo };
 }
 
 // ── Bajar el XML y el PDF ───────────────────────────────────────────────────
+// Son tres llamadas distintas: el XML enviado, el XML de respuesta de Hacienda
+// y el PDF. Cada una se salta si ya está guardada, para que un reintento por
+// el PDF no vuelva a pedir los XML — el PDF tiene límite de frecuencia y de
+// una sola petición por documento.
 async function descargar(t) {
   const doc = (await G.sbGet('fact_docs', 'id=eq.' + t.doc_id + '&limit=1'))[0];
   if (!doc) throw new Error('el documento ya no existe');
-  if (!doc.clave) throw new Error('el documento no tiene clave');
+  if (!doc.consecutivo_fiscal) throw new Error('el documento no tiene consecutivo de GTI');
 
   const emp = (await G.sbGet('fact_empresas', 'id=eq.' + doc.empresa_id + '&limit=1'))[0];
   const cred = G.credenciales(doc.empresa_id, emp && emp.gti_ambiente);
 
-  const cuerpo = { usuario: cred.usuario, clave: cred.clave, numCuenta: cred.cuenta,
-                   claveComprobante: doc.clave, incluirPdf: true };   // ⚠ manual
+  const cons = doc.consecutivo_fiscal;
+  const base = doc.empresa_id + '/' + String(doc.fecha || '').slice(0, 4) + '/' +
+               (doc.clave || cons);
+  const cambios = {};
+  const bajados = [];
 
-  const r = await G.llamarGTI(cred, P.RUTAS.descargar, cuerpo, () => ({
-    xml: '<?xml version="1.0"?><FacturaElectronica><!-- simulado --></FacturaElectronica>',
-    respuestaXml: '<?xml version="1.0"?><MensajeHacienda><Mensaje>1</Mensaje></MensajeHacienda>',
-    pdf: null,
-  }));
+  if (!doc.xml_path) {
+    const r = await G.llamarGTI(cred, P.METODOS.xmlEnviado, {
+      consecutivo: cons, simular: () => ({ xml: P.simularXml('enviado') }),
+    });
+    if (!r.ok) throw new Error('XML enviado: ' + (r.error || 'GTI respondió ' + r.status));
+    const x = xmlDe(r.datos);
+    if (x) {
+      cambios.xml_path = await G.sbSubir(BUCKET, base + '.xml', x, 'application/xml');
+      bajados.push('xml');
+    }
+  }
+
+  if (!doc.xml_resp_path) {
+    const r = await G.llamarGTI(cred, P.METODOS.xmlRespuesta, {
+      consecutivo: cons, simular: () => ({ xml: P.simularXml('respuesta') }),
+    });
+    if (!r.ok) throw new Error('XML de respuesta: ' + (r.error || 'GTI respondió ' + r.status));
+    const x = xmlDe(r.datos);
+    if (x) {
+      cambios.xml_resp_path = await G.sbSubir(BUCKET, base + '-respuesta.xml', x, 'application/xml');
+      bajados.push('respuesta');
+    }
+  }
+
+  // Se guarda lo que ya se bajó antes de pedir el PDF: si el PDF falla y el
+  // trabajo se reintenta, los XML no se vuelven a pedir.
+  if (Object.keys(cambios).length) {
+    await G.sbPatch('fact_docs', 'id=eq.' + t.doc_id, cambios);
+  }
+
+  let avisoPdf = null;
+  if (!doc.pdf_path) {
+    const r = await G.llamarGTI(cred, P.METODOS.pdf, {
+      consecutivo: cons, simular: () => P.simularPdf(),
+    });
+    if (!r.ok) throw new Error('PDF: ' + (r.error || 'GTI respondió ' + r.status));
+
+    const p = P.leerPdf(r.datos);
+    if (p.ok) {
+      const ruta = await G.sbSubir(BUCKET, base + '.pdf',
+        Buffer.from(p.base64.replace(/^data:.*;base64,/, ''), 'base64'), 'application/pdf');
+      await G.sbPatch('fact_docs', 'id=eq.' + t.doc_id, { pdf_path: ruta });
+      bajados.push('pdf');
+    } else if (p.reintentar) {
+      // Códigos 3, 6 y 7 del manual: volver a intentar más tarde. Se levanta
+      // el error para que la cola lo reprograme; los XML ya quedaron guardados.
+      throw new Error('PDF: ' + (p.mensaje || 'GTI pidió reintentar') +
+        ' (código ' + p.codigo + ')');
+    } else {
+      // El PDF no es indispensable: se puede volver a armar desde el XML, que
+      // es el documento fiscal. Se anota y no se marca el documento en error.
+      avisoPdf = 'No se pudo bajar el PDF de GTI' +
+        (p.mensaje ? ': ' + p.mensaje : '') + (p.codigo != null ? ' (código ' + p.codigo + ')' : '');
+    }
+  }
+
+  await G.sbPatch('fact_docs', 'id=eq.' + t.doc_id, Object.assign(
+    { archivos_en: new Date().toISOString() },
+    avisoPdf ? { estado_hacienda_msg: avisoPdf } : {}));
 
   await G.sbPatch('fact_emisiones', 'id=eq.' + t.id, {
-    enviado: G.sinSecretos(cuerpo), respuesta: { archivos: 'no se guardan acá por tamaño' },
-    http_status: r.status,
+    estado: 'hecho', error: avisoPdf || null, terminado_en: new Date().toISOString(),
   });
 
-  if (!r.ok) throw new Error(r.error || ('GTI respondió ' + r.status));
-
-  const d = r.datos || {};
-  const base = doc.empresa_id + '/' + String(doc.fecha || '').slice(0, 4) + '/' + doc.clave;
-  const cambios = { archivos_en: new Date().toISOString() };
-
-  if (d.xml) {
-    cambios.xml_path = await G.sbSubir(BUCKET, base + '.xml', texto(d.xml), 'application/xml');
-  }
-  const resp = d.respuestaXml || d.xmlRespuesta || d.respuesta;
-  if (resp) {
-    cambios.xml_resp_path = await G.sbSubir(BUCKET, base + '-respuesta.xml',
-      texto(resp), 'application/xml');
-  }
-  if (d.pdf) {
-    cambios.pdf_path = await G.sbSubir(BUCKET, base + '.pdf',
-      Buffer.from(String(d.pdf).replace(/^data:.*;base64,/, ''), 'base64'), 'application/pdf');
-  }
-
-  await G.sbPatch('fact_docs', 'id=eq.' + t.doc_id, cambios);
-  await G.sbPatch('fact_emisiones', 'id=eq.' + t.id, {
-    estado: 'hecho', terminado_en: new Date().toISOString(),
-  });
-
-  return { id: t.id, ok: true, archivos: Object.keys(cambios).filter(k => k.endsWith('_path')) };
+  return { id: t.id, ok: true, archivos: bajados, aviso: avisoPdf };
 }
 
-// GTI puede mandar el XML como texto plano o en base64; se acepta cualquiera.
-function texto(v) {
-  const s = String(v || '');
+// GTI devuelve el XML como cuerpo de la respuesta. Se acepta también en base64
+// por si algún método lo entrega así.
+function xmlDe(datos) {
+  const s = String((datos && (datos.xml || datos.Datos || datos.datos)) || '');
+  if (!s.trim()) return null;
   if (/^\s*</.test(s)) return s;
-  try { return Buffer.from(s, 'base64').toString('utf8'); } catch (e) { return s; }
+  try {
+    const t = Buffer.from(s, 'base64').toString('utf8');
+    return /^\s*</.test(t) ? t : s;
+  } catch (e) { return s; }
 }

@@ -12,12 +12,15 @@
 // Variables de entorno que hay que crear en Vercel (Settings → Environment
 // Variables). Una terna por empresa, porque cada una tiene su cuenta de GTI:
 //
-//   GTI_URL_PRUEBAS         https://... (del manual de GTI)
-//   GTI_URL_PRODUCCION      https://...
+//   GTI_URL_PRUEBAS
+//     https://pruebas.gticr.com/AplicacionFEPruebas/ApiCargaFactura/api/Documentos
+//   GTI_URL_PRODUCCION
+//     https://www.facturaelectronica.cr/ApiCargaFactura/api/Documentos
 //
-//   GTI_USUARIO_CONCRE      113750786          (cuenta de pruebas 5662)
-//   GTI_CLAVE_CONCRE        ••••••             ← Kia la saca del portal de GTI
-//   GTI_CUENTA_CONCRE       5662
+//   GTI_USUARIO_CONCRE      el CORREO (o la cédula) del usuario ligado a la
+//                           empresa en GTI — no el número de cuenta
+//   GTI_CLAVE_CONCRE        ••••••   ← Kia la saca del portal de GTI
+//   GTI_CUENTA_CONCRE       5662     (el «Nº de Cuenta» de la cuenta en GTI)
 //
 //   GTI_USUARIO_CONCREEQUIPOS / GTI_CLAVE_... / GTI_CUENTA_...   (Etapa 5)
 //   GTI_USUARIO_FIBRA        / GTI_CLAVE_... / GTI_CUENTA_...    (Etapa 5)
@@ -27,8 +30,13 @@
 //
 //   GTI_SIMULADOR           1  → no llama a GTI; responde como si lo hubiera
 //                                hecho. Sirve para probar todo el camino
-//                                antes de tener el manual y la clave.
+//                                antes de tener la clave del portal.
 //                                En producción esta variable NO debe existir.
+//
+// Las credenciales de GTI van en la QUERY STRING de cada llamada, así lo pide
+// el manual. Por eso acá nunca se registra la URL armada: llevaría la clave
+// escrita. Lo que se registra es el nombre del método y los parámetros que no
+// son secretos.
 // ══════════════════════════════════════════════════════════════════════════════
 
 const SB_URL = process.env.SUPABASE_URL || '';
@@ -100,6 +108,8 @@ async function sbSubir(bucket, ruta, contenido, tipo) {
 // El sufijo sale del id de la empresa en fact_empresas: 'concre' →
 // GTI_USUARIO_CONCRE. Si falta alguna, se dice cuál, sin imprimir su valor.
 
+const SIMULADOR = process.env.GTI_SIMULADOR === '1';
+
 function credenciales(empresaId, ambiente) {
   const suf = String(empresaId || 'concre').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const usuario = process.env['GTI_USUARIO_' + suf];
@@ -117,11 +127,11 @@ function credenciales(empresaId, ambiente) {
   if (!url) faltan.push(ambiente === 'produccion' ? 'GTI_URL_PRODUCCION' : 'GTI_URL_PRUEBAS');
 
   // En modo simulador no se le pide nada de GTI: justamente sirve para probar
-  // todo el camino ANTES de tener la clave del portal y la URL del manual.
+  // todo el camino ANTES de tener la clave del portal.
   if (faltan.length && SIMULADOR) {
     return {
       usuario: usuario || 'SIMULADO', clave: clave || 'SIMULADO',
-      cuenta: cuenta || 'SIMULADO', url: url || 'https://simulador.local',
+      cuenta: cuenta || '5662', url: url || 'https://simulador.local',
       ambiente: ambiente || 'pruebas', incompleta: faltan,
     };
   }
@@ -137,7 +147,7 @@ function credenciales(empresaId, ambiente) {
 // Quita usuario y clave de cualquier objeto antes de guardarlo en la bitácora.
 // La bitácora la lee la aplicación, o sea el navegador.
 function sinSecretos(obj) {
-  const malas = /^(usuario|user|username|clave|password|pass|token|secret|authorization)$/i;
+  const malas = /^(usuario|user|username|clave|password|pass|token|secret|authorization|pusuario|pclave|purl|url)$/i;
   function limpiar(v) {
     if (Array.isArray(v)) return v.map(limpiar);
     if (v && typeof v === 'object') {
@@ -150,34 +160,99 @@ function sinSecretos(obj) {
   try { return limpiar(obj); } catch (e) { return null; }
 }
 
+// ── La URL base del servicio ────────────────────────────────────────────────
+// La variable de entorno se acepta de cualquiera de las tres formas en que
+// aparece escrita en el manual: con el método pegado al final, hasta
+// /api/Documentos, o solo hasta /ApiCargaFactura. Así no importa cuál se pegó.
+const METODOS_CONOCIDOS = 'CargarDocumento|EstadoHacienda|EstadoCorreo|ConsultaXMLEnviado'
+  + '|ConsultaXMLRespuesta|ConsultarBytesPDF|ObtenerBytesPdfEmision|ReenviarCorreo'
+  + '|ConsultaDocumento|PagarFactura';
+
+function baseDocumentos(url) {
+  let u = String(url || '').trim().replace(/\/+$/, '');
+  u = u.replace(new RegExp('/(' + METODOS_CONOCIDOS + ')$', 'i'), '');
+  if (!/\/ApiCargaFactura(\/|$)/i.test(u) && !/\/ServicioCargaFactura(\/|$)/i.test(u)) {
+    u += '/ApiCargaFactura';
+  }
+  if (!/\/api\/Documentos$/i.test(u)) u += '/api/Documentos';
+  return u;
+}
+
 // ── Llamada a GTI ───────────────────────────────────────────────────────────
 // Un solo lugar por donde sale todo, para que el registro, los tiempos de
-// espera y el modo simulador valgan para las tres acciones.
+// espera y el modo simulador valgan para todos los métodos.
+//
+// «met» es una entrada de P.METODOS. Las credenciales se agregan acá y en
+// ningún momento salen en el objeto que se devuelve.
 
-const SIMULADOR = process.env.GTI_SIMULADOR === '1';
+async function llamarGTI(cred, met, opciones) {
+  const o = opciones || {};
 
-async function llamarGTI(cred, ruta, cuerpo, simular) {
   if (SIMULADOR) {
-    const r = await simular();
-    return { ok: true, status: 200, datos: r, simulado: true };
+    const r = await o.simular();
+    return { ok: true, status: 200, datos: r, simulado: true, metodo: met.ruta };
   }
 
+  // Los parámetros: el método dice si lleva consecutivo. ObtenerBytesPdfEmision
+  // es el único que los nombra sin el prefijo «p» y con minúscula inicial.
+  const nombre = met.sinPrefijo
+    ? (n => n.charAt(0).toLowerCase() + n.slice(1))
+    : (n => 'p' + n);
+
+  const p = new URLSearchParams();
+  p.set(nombre('NumCuenta'), String(cred.cuenta));
+  if (met.consecutivo) {
+    if (!o.consecutivo) {
+      throw new Error('El método ' + met.ruta + ' necesita el consecutivo de 20 dígitos '
+        + 'que devolvió GTI al emitir, y el documento no lo tiene guardado.');
+    }
+    p.set(nombre('Consecutivo'), String(o.consecutivo));
+  }
+  for (const k of Object.keys(o.params || {})) p.set(nombre(k), String(o.params[k]));
+  p.set(nombre('Usuario'), String(cred.usuario));
+  p.set(nombre('Clave'), String(cred.clave));
+
+  const url = baseDocumentos(cred.url) + '/' + met.ruta + '?' + p.toString();
+
+  // El manual aconseja hasta un minuto de espera en cargas individuales;
+  // Vercel corta la función a los 30 segundos, así que se aborta a los 25 y el
+  // trabajo queda en la cola para reintentarse.
   const ctl = new AbortController();
-  const reloj = setTimeout(() => ctl.abort(), 25000);   // Vercel corta a los 30 s
+  const reloj = setTimeout(() => ctl.abort(), 25000);
   try {
-    const r = await fetch(cred.url.replace(/\/+$/, '') + ruta, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify(cuerpo),
+    const pedido = {
+      method: met.verbo,
+      headers: { 'Accept': met.respuesta === 'xml' ? 'application/xml, text/xml, */*'
+                                                   : 'application/json, */*' },
       signal: ctl.signal,
-    });
+    };
+    if (met.cuerpo) {
+      pedido.headers['Content-Type'] = 'application/json';
+      pedido.body = JSON.stringify(o.cuerpo || {});
+    }
+
+    const r = await fetch(url, pedido);
     const txt = await r.text();
-    let datos = null;
-    try { datos = txt ? JSON.parse(txt) : null; } catch (e) { datos = { crudo: txt.slice(0, 2000) }; }
-    return { ok: r.ok, status: r.status, datos };
+
+    let datos;
+    if (met.respuesta === 'xml') {
+      // El XML puede venir con un JSON de error en vez del documento.
+      if (/^\s*[{[]/.test(txt)) {
+        try { datos = JSON.parse(txt); } catch (e) { datos = { xml: txt }; }
+      } else {
+        datos = { xml: txt };
+      }
+    } else {
+      try { datos = txt ? JSON.parse(txt) : null; }
+      catch (e) { datos = { crudo: txt.slice(0, 2000) }; }
+    }
+    return { ok: r.ok, status: r.status, datos, metodo: met.ruta };
   } catch (e) {
-    return { ok: false, status: 0, datos: null, error: (e.name === 'AbortError')
-      ? 'GTI no contestó en 25 segundos' : String(e.message || e) };
+    return {
+      ok: false, status: 0, datos: null, metodo: met.ruta,
+      error: (e.name === 'AbortError')
+        ? 'GTI no contestó en 25 segundos' : String(e.message || e),
+    };
   } finally {
     clearTimeout(reloj);
   }
@@ -186,5 +261,5 @@ async function llamarGTI(cred, ruta, cuerpo, simular) {
 module.exports = {
   SIMULADOR,
   sbGet, sbPatch, sbInsert, sbSubir,
-  credenciales, sinSecretos, llamarGTI,
+  credenciales, sinSecretos, llamarGTI, baseDocumentos,
 };

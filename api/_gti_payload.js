@@ -1,123 +1,254 @@
 // ══════════════════════════════════════════════════════════════════════════════
-// EL ÚNICO ARCHIVO QUE HAY QUE AJUSTAR CON EL MANUAL DE GTI
+// LA TRADUCCIÓN A GTI — armado del JSON y lectura de las respuestas
 //
-// Todo lo demás del puente (la cola, el sondeo, el guardado del XML y el PDF,
-// la bitácora, el manejo de errores) ya está resuelto y no depende de GTI.
-// Lo que falta es la traducción: cómo se llama cada campo en el JSON de
-// «Carga Factura» y en qué ruta se manda.
+// Este archivo es el único que conoce el contrato de «API Carga Factura 4.4»
+// de GTI. Todo lo demás del puente (la cola, el sondeo, el guardado del XML y
+// del PDF, la bitácora, los reintentos) no depende de GTI y no se toca.
 //
-// Los nombres de abajo están armados con lo que sí es público: el esquema 4.4
-// de Hacienda, que es el que GTI convierte a XML. La estructura de datos es
-// la correcta; los NOMBRES de las llaves y las RUTAS hay que confirmarlos
-// contra el manual de 68 páginas. Cada uno está marcado con « ⚠ manual ».
+// Está armado contra el «Instructivo técnico para el uso del API Carga Factura
+// 4.4» (v1.0, 1/9/2026), que reemplazó las suposiciones que había antes. Cada
+// número de código lleva al lado la tabla del manual de donde salió, para que
+// el día que Hacienda cambie una tabla se sepa exactamente qué corregir.
 //
-// No se inventa nada más allá de eso a propósito: una factura electrónica es
-// un documento fiscal, y un campo mal armado lo rechaza Hacienda con un
-// código que después hay que ir a descifrar.
+// Tres cosas del manual cambian el diseño respecto de lo que se había supuesto:
 //
-// Mientras GTI_SIMULADOR=1, este archivo igual se ejecuta completo: así se
-// prueba que el documento arme bien, aunque no salga a ningún lado.
+//   1. Las credenciales van en la QUERY STRING (pNumCuenta, pUsuario, pClave),
+//      no en el cuerpo. El cuerpo es solo el comprobante.
+//   2. GTI asigna la clave de 50 dígitos y el consecutivo de 20. No se mandan.
+//      Y a partir de ahí, TODO se consulta por el consecutivo que devolvió GTI,
+//      no por la clave: por eso consecutivo_fiscal es un dato crítico.
+//   3. Los datos del emisor NO se envían: GTI los toma de la cuenta. Del nodo
+//      Emisor solo existe Registrofiscal8707, que es de bebidas alcohólicas.
+//
+// Mientras GTI_SIMULADOR=1 este archivo se ejecuta completo igual: así se
+// prueba que el documento arme bien aunque no salga a ningún lado.
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ── Rutas del servicio ──────────────────────────────────────────────────────
-// ⚠ manual: confirmar las tres rutas y si van sobre la misma URL base.
-const RUTAS = {
-  emitir:    '/api/v1/comprobantes',
-  estado:    '/api/v1/comprobantes/estado',
-  descargar: '/api/v1/comprobantes/archivos',
-};
-
-// ── Tipos de comprobante (esto sí es de Hacienda, no de GTI) ────────────────
-const TIPO_DOC = {
-  FE:  '01',   // factura electrónica
-  ND:  '02',   // nota de débito
-  NC:  '03',   // nota de crédito
-  TE:  '04',   // tiquete electrónico
-  FEC: '08',   // factura electrónica de compra
-};
-
-// ── Códigos de referencia de las notas ──────────────────────────────────────
-// Lo que va en «codigo» dentro de informacionReferencia: por qué esta nota se
-// refiere a aquel comprobante.
+// ── Métodos del servicio ────────────────────────────────────────────────────
+// Todos cuelgan de la misma base: .../ApiCargaFactura/api/Documentos/<método>
 //
-// ⚠ manual: de esta lista solo son seguros el 01 y el 02, que no han cambiado
-// entre versiones del esquema. Los demás sí se movieron, y una nota con el
-// código equivocado la rechaza Hacienda o —peor— anula algo que no debía.
-// El manual fija la lista definitiva; la pantalla ya habla en palabras del
-// usuario y solo hay que corregir los números de acá.
-const COD_REFERENCIA = {
-  anula:          '01',   // anula por completo el documento de referencia
-  corrige_texto:  '02',   // corrige un dato que no es plata (nombre, detalle)
-  corrige_monto:  '03',   // ⚠ manual — corrige el monto
-  otro:           '04',   // ⚠ manual — referencia a otro documento
+//   pruebas     https://pruebas.gticr.com/AplicacionFEPruebas/ApiCargaFactura/api/Documentos
+//   producción  https://www.facturaelectronica.cr/ApiCargaFactura/api/Documentos
+//
+// «params» dice qué lleva la query aparte de la cuenta, el usuario y la clave.
+// «pdf» es el único GET, y el único que nombra los parámetros SIN el prefijo p.
+const METODOS = {
+  emitir:      { ruta: 'CargarDocumento',        verbo: 'POST', cuerpo: true,  respuesta: 'json' },
+  estado:      { ruta: 'EstadoHacienda',         verbo: 'POST', consecutivo: true, respuesta: 'json' },
+  estadoCorreo:{ ruta: 'EstadoCorreo',           verbo: 'POST', consecutivo: true, respuesta: 'json' },
+  xmlEnviado:  { ruta: 'ConsultaXMLEnviado',     verbo: 'POST', consecutivo: true, respuesta: 'xml'  },
+  xmlRespuesta:{ ruta: 'ConsultaXMLRespuesta',   verbo: 'POST', consecutivo: true, respuesta: 'xml'  },
+  pdf:         { ruta: 'ObtenerBytesPdfEmision', verbo: 'GET',  consecutivo: true, respuesta: 'json',
+                 sinPrefijo: true },
+  reenviar:    { ruta: 'ReenviarCorreo',         verbo: 'POST', consecutivo: true, respuesta: 'json' },
 };
 
-// Los motivos como los ve el usuario. Cada uno dice qué código lleva y si
-// obliga a tomar la factura completa.
+// ── Tabla 1 · TipoDoc ───────────────────────────────────────────────────────
+// Entero, no cadena de dos dígitos: el manual da el código pelado.
+const TIPO_DOC = {
+  FE:  1,   // factura electrónica
+  ND:  2,   // nota de débito
+  NC:  3,   // nota de crédito
+  TE:  4,   // tiquete electrónico
+  FEC: 8,   // factura electrónica de compra
+  FEE: 9,   // factura de exportación
+  REP: 10,  // recibo electrónico de pago
+};
+
+// ── Tabla 8 · TipoDocRef ────────────────────────────────────────────────────
+// El tipo del documento AL QUE la nota se refiere.
+const TIPO_DOC_REF = {
+  FE: 1, ND: 2, NC: 3, TE: 4,
+  FEC_NC: 17,   // nota de crédito a factura electrónica de compra
+  FEC_ND: 18,   // nota de débito a factura electrónica de compra
+  OTRO: 99,
+};
+
+// ── Tabla 7 · AccionRef ─────────────────────────────────────────────────────
+// Por qué esta nota se refiere a aquel comprobante. La versión 4.4 no tiene
+// «corrige texto»: un dato mal escrito se arregla anulando y volviendo a
+// facturar, no con una nota parcial.
+const ACCION_REF = {
+  anula:              1,
+  corrige_monto:      2,
+  otro_documento:     4,
+  devolucion:         6,
+  sustituye:          7,
+  nc_financiera:      9,
+  nd_financiera:      10,
+  anula_error_mat:    13,
+  corrige_error_mat:  14,
+  otros:              99,
+};
+
+// Los motivos como los ve el usuario en la pestaña. La pestaña guarda la LLAVE
+// ('anula', 'devolucion'…) y acá se resuelve al número, para que el número de
+// Hacienda viva en un solo archivo y corregirlo no obligue a tocar el
+// index.html ni a migrar notas ya guardadas.
 const MOTIVOS_NOTA = {
   NC: [
-    {v:'anula',         lbl:'Anular la factura completa',
-     cod:'anula',       todo:true,
+    {v:'anula',       lbl:'Anular la factura completa', cod:'anula',         todo:true,
      ayuda:'La factura queda sin efecto. Se usa cuando se facturó por error o el trabajo no se hizo.'},
-    {v:'devolucion',    lbl:'Devolución parcial',
-     cod:'corrige_monto', todo:false,
+    {v:'devolucion',  lbl:'Devolución parcial',         cod:'devolucion',    todo:false,
      ayuda:'El cliente devolvió parte de lo facturado. Se escogen las líneas y las cantidades devueltas.'},
-    {v:'descuento',     lbl:'Descuento acordado después',
-     cod:'corrige_monto', todo:false,
+    {v:'descuento',   lbl:'Descuento acordado después', cod:'corrige_monto', todo:false,
      ayuda:'Se rebaja el monto de una o varias líneas por un acuerdo posterior a la factura.'},
-    {v:'error_monto',   lbl:'Error en el monto facturado',
-     cod:'corrige_monto', todo:false,
+    {v:'error_monto', lbl:'Error en el monto facturado',cod:'corrige_monto', todo:false,
      ayuda:'Se cobró de más. La nota rebaja la diferencia.'},
-    {v:'error_datos',   lbl:'Error en los datos, no en el monto',
-     cod:'corrige_texto', todo:false,
-     ayuda:'Un dato mal escrito que no cambia lo que se cobró.'},
   ],
   ND: [
-    {v:'cobro_mas',     lbl:'Cobrar de más sobre la factura',
-     cod:'corrige_monto', todo:false,
-     ayuda:'Se facturó de menos y hay que cobrar la diferencia.'},
-    {v:'cargo_extra',   lbl:'Cargo adicional',
-     cod:'corrige_monto', todo:false,
+    {v:'cobro_mas',   lbl:'Se facturó de menos',        cod:'corrige_monto', todo:false,
+     ayuda:'Hay que cobrar la diferencia sobre lo que ya se facturó.'},
+    {v:'cargo_extra', lbl:'Cargo adicional',            cod:'corrige_monto', todo:false,
      ayuda:'Algo que se suma después: trabajo extra, materiales, intereses.'},
-    {v:'error_datos',   lbl:'Error en los datos, no en el monto',
-     cod:'corrige_texto', todo:false,
-     ayuda:'Un dato mal escrito que no cambia lo que se cobró.'},
   ],
 };
 
-// ── Unidades de medida de Hacienda ──────────────────────────────────────────
-// A la izquierda lo que se imprime en la proforma; a la derecha el código que
-// acepta Hacienda. Lo que no esté en la tabla sale como 'Unid'.
-const UNIDAD_COD = {
-  'Unid': 'Unid', 'Unidad': 'Unid',
-  'm²': 'm2', 'm2': 'm2',
-  'm³': 'm3', 'm3': 'm3',
-  'ml': 'm', 'm': 'm',
-  'kg': 'kg', 'Saco': 'Unid', 'Galón': 'Gal', 'Estañón': 'Unid',
-  'Día': 'Sp', 'Hora': 'h', 'Sp': 'Sp', 'Global': 'Sp', 'Juego': 'Unid',
+// ── Tabla 3 · CondicionVenta ────────────────────────────────────────────────
+const COND_VENTA = { contado: 1, credito: 2, otros: 99 };
+
+// ── Tabla 4 · MedioPagos ────────────────────────────────────────────────────
+const MEDIO_PAGO = {
+  efectivo: 1, tarjeta: 2, cheque: 3, transferencia: 4,
+  terceros: 5, sinpe: 6, plataforma: 7, otros: 99,
 };
 
-function unidadCod(u) {
-  return UNIDAD_COD[String(u || '').trim()] || 'Unid';
+// ── Tabla 11 · Moneda ───────────────────────────────────────────────────────
+const MONEDA = { CRC: 1, USD: 2, EUR: 3 };
+
+// ── Tabla 5 · CodigoImp · y Tabla 6 · CodigoTarifa ──────────────────────────
+const IMP_IVA = 1;                     // impuesto al valor agregado
+
+// De porcentaje de IVA al código de tarifa. Los que usa CONCRE son el general
+// y el exento; el resto queda por si aparece.
+const TARIFA = {
+  0:    1,   // tarifa 0% (art. 32, num 1, RLIVA)
+  1:    2,
+  2:    3,
+  4:    4,
+  8:    7,   // transitorio 8%
+  13:   8,   // tarifa general
+  0.5:  9,
+};
+const TARIFA_EXENTA = 10;
+
+// ── Tabla 14 · SituacionEnvio ───────────────────────────────────────────────
+const SITUACION_NORMAL = 1;
+
+// ── Tabla 13 · UnidadMedida ─────────────────────────────────────────────────
+// El código es un ENTERO, no la abreviatura. La tabla del manual además marca
+// cada unidad como servicio o mercancía, y de esa marca depende en qué columna
+// de Totales cae la línea — por eso va acá y no en la pestaña.
+//
+// A la izquierda están tanto los nombres que usa el catálogo de CONCRE como
+// las abreviaturas de Hacienda, porque las líneas viejas guardaron en
+// unidad_cod la abreviatura ('Unid', 'm2', 'Sp') de cuando así se creía.
+const UNIDADES = {
+  // mercancías
+  'unidad': {c:1,  s:false}, 'unid': {c:1,  s:false}, 'und': {c:1, s:false},
+  'saco':   {c:1,  s:false}, 'estañón': {c:1, s:false}, 'estanon': {c:1, s:false},
+  'juego':  {c:1,  s:false}, 'tarima': {c:1, s:false},
+  'kg':     {c:2,  s:false}, 'kilogramo': {c:2, s:false},
+  'oz':     {c:4,  s:false},
+  'l':      {c:5,  s:false}, 'litro': {c:5, s:false},
+  'gal':    {c:7,  s:false}, 'galón': {c:7, s:false}, 'galon': {c:7, s:false},
+  'm':      {c:10, s:false}, 'metro': {c:10, s:false}, 'ml': {c:10, s:false},
+  'ml lineal': {c:10, s:false},
+  'mlt':    {c:19, s:false},
+  'g':      {c:20, s:false}, 'gramo': {c:20, s:false},
+  't':      {c:23, s:false}, 'tonelada': {c:23, s:false},
+  'm²':     {c:30, s:false}, 'm2': {c:30, s:false},
+  'm³':     {c:31, s:false}, 'm3': {c:31, s:false},
+  'cm':     {c:93, s:false},
+  'mm':     {c:94, s:false},
+  'qq':     {c:114, s:false}, 'quintal': {c:114, s:false},
+  // servicios
+  'min':    {c:12,  s:true}, 'minuto': {c:12, s:true},
+  'h':      {c:13,  s:true}, 'hora': {c:13, s:true},
+  'd':      {c:14,  s:true}, 'día': {c:14, s:true}, 'dia': {c:14, s:true},
+  'sp':     {c:24,  s:true}, 'servicios profesionales': {c:24, s:true},
+  'km':     {c:91,  s:true},
+  'alc':    {c:97,  s:true},
+  'cm2':    {c:98,  s:true}, 'comisiones': {c:98, s:true},
+  'os':     {c:100, s:true}, 'global': {c:100, s:true}, 'otro servicio': {c:100, s:true},
+  'st':     {c:102, s:true}, 'servicios técnicos': {c:102, s:true},
+  'kwh':    {c:112, s:true},
+};
+const UNIDAD_POR_DEFECTO = { c: 1, s: false };
+
+function _unidadInfo(u) {
+  const t = String(u == null ? '' : u).trim();
+  if (!t) return UNIDAD_POR_DEFECTO;
+
+  // Ya viene como código de Hacienda
+  if (/^\d{1,3}$/.test(t)) {
+    const n = Number(t);
+    for (const k of Object.keys(UNIDADES)) if (UNIDADES[k].c === n) return UNIDADES[k];
+    return { c: n, s: false };
+  }
+  return UNIDADES[t.toLowerCase()] || UNIDAD_POR_DEFECTO;
 }
 
-// Hacienda trabaja con 5 decimales en cantidades y precios, y 2 en totales.
-function d5(n) { return Number(Number(n || 0).toFixed(5)); }
-function d2(n) { return Number(Number(n || 0).toFixed(2)); }
+// Código de Hacienda de una unidad, como entero.
+function unidadCod(u) { return _unidadInfo(u).c; }
+
+// ¿Esta unidad es de servicio? Decide en qué columna de Totales cae la línea.
+// Ojo: para Hacienda el m² es MERCANCÍA aunque lo que CONCRE venda por m² sea
+// mano de obra. La clasificación es de la tabla, no del criterio comercial, y
+// así es como la pide GTI.
+function esServicio(u) { return !!_unidadInfo(u).s; }
+
+// ── Redondeo, como lo pide el manual ────────────────────────────────────────
+// Media unidad SUBE, y se redondea sobre la representación DECIMAL, no sobre
+// el binario: (2.675).toFixed(2) da 2.67 porque en binario 2.675 es
+// 2.67499999…, y el manual dice explícitamente que ese 5 sube a 2.68.
+// Dos decimales en totales, cinco en montos unitarios.
+function red(n, dec) {
+  const x = Number(n || 0);
+  if (!isFinite(x)) return 0;
+  const f = Math.pow(10, dec);
+  const y = Number(x.toPrecision(15)) * f;
+  const ent = Math.floor(Math.abs(y));
+  const frac = Number((Math.abs(y) - ent).toPrecision(12));
+  const r = (frac >= 0.5 ? ent + 1 : ent) * (x < 0 ? -1 : 1);
+  return r / f;
+}
+function d2(n) { return red(n, 2); }
+function d5(n) { return red(n, 5); }
+function d3(n) { return red(n, 3); }
+
+// ── Fechas ──────────────────────────────────────────────────────────────────
+// El manual pide YYYY-MM-DDTHH:mm:ss, sin zona. Un ISO con «Z» se lo manda a
+// GTI en UTC y la factura sale con la hora corrida seis horas.
+function fechaGTI(v) {
+  const f = v ? new Date(v) : new Date();
+  if (isNaN(f.getTime())) return null;
+  const off = 6 * 60;   // Costa Rica, sin horario de verano
+  const l = new Date(f.getTime() - off * 60000);
+  return l.toISOString().replace(/\.\d+Z$/, '');
+}
+
+// ── Texto ───────────────────────────────────────────────────────────────────
+function txt(v, max) {
+  const s = String(v == null ? '' : v).trim();
+  return max ? s.slice(0, max) : s;
+}
+function ent(v) {
+  const n = parseInt(String(v == null ? '' : v).replace(/\D/g, ''), 10);
+  return isFinite(n) ? n : null;
+}
 
 // ── El receptor ─────────────────────────────────────────────────────────────
 //
-// En una factura de compra (FEC) el receptor es el VENDEDOR no inscrito ante
-// Hacienda, y se digita en el momento: no está en fact_clientes y no debe
-// estarlo, porque no es un cliente. Sus datos viven en el documento.
-//
-// Por eso, para una FEC el receptor se arma con los campos cliente_* del
-// propio documento; para todo lo demás sigue saliendo de la ficha del cliente.
+// En una factura de compra (FEC) el receptor es el VENDEDOR, que se digita en
+// el momento: no está en fact_clientes y no debe estarlo, porque no es un
+// cliente. Sus datos viven en el propio documento.
 function receptorDeDoc(doc) {
   return {
     nombre: doc.cliente_nombre,
     tipo_identificacion: doc.cliente_tipo_ident,
     identificacion: doc.cliente_identificacion,
+    actividad_economica: doc.cliente_actividad,
     correo: doc.cliente_correo,
     telefono: doc.cliente_telefono,
     cod_pais: doc.cliente_cod_pais,
@@ -132,310 +263,462 @@ function receptorDeDoc(doc) {
 }
 
 function receptor(cli, doc) {
-  // Sin cliente en fact_clientes no se factura: lo bloquea la revisión previa
-  // antes de llegar acá, pero se vuelve a verificar por si acaso.
   if (!cli) throw new Error('El documento no tiene cliente de facturación ligado.');
-
-  // Al vendedor de una compra no se le puede exigir correo: muchas veces no
-  // tiene. El comprobante no se le manda por correo a él — el que declara la
-  // operación es CONCRE.
   const esCompra = doc && doc.tipo_doc === 'FEC';
-  if (esCompra) {
-    const dig = String(cli.identificacion || '').replace(/\D/g, '');
-    if (!dig) throw new Error('El vendedor no tiene cédula.');
-    const r = {
-      // ⚠ manual
-      nombre: String(cli.nombre || '').slice(0, 100),
-      identificacion: { tipo: String(cli.tipo_identificacion || 1).padStart(2, '0'), numero: dig },
-    };
-    if (cli.correo) r.correoElectronico = String(cli.correo).trim();
-    if (cli.telefono) {
-      r.telefono = { codigoPais: String(cli.cod_pais || '506'),
-                     numTelefono: String(cli.telefono).replace(/\D/g, '') };
-    }
-    return r;
-  }
 
-  const ident = String(cli.identificacion || '').replace(/\D/g, '');
-  if (!ident) throw new Error('El cliente no tiene cédula.');
-  if (!cli.correo) throw new Error('El cliente no tiene correo y Hacienda lo exige.');
+  const ident = txt(cli.identificacion).replace(/[^0-9A-Za-z]/g, '');
+  if (!ident) {
+    throw new Error(esCompra ? 'El vendedor no tiene cédula.' : 'El cliente no tiene cédula.');
+  }
 
   const r = {
-    // ⚠ manual
-    nombre: String(cli.nombre || doc.cliente_nombre || '').slice(0, 100),
-    identificacion: { tipo: String(cli.tipo_identificacion || 2).padStart(2, '0'), numero: ident },
-    correoElectronico: String(cli.correo).trim(),
+    Nombre: txt(cli.nombre || (doc && doc.cliente_nombre), 100),
+    TipoIdent: Number(cli.tipo_identificacion || (esCompra ? 1 : 2)),
+    Identificacion: ident.slice(0, 20),
   };
 
-  if (cli.nombre_comercial) r.nombreComercial = String(cli.nombre_comercial).slice(0, 80);
-  if (cli.telefono) {
-    r.telefono = { codigoPais: String(cli.cod_pais || '506'),
-                   numTelefono: String(cli.telefono).replace(/\D/g, '') };
+  // En una FEC el receptor tiene que estar inscrito ante Hacienda y su
+  // actividad económica es obligatoria (el manual la marca solo para FEC).
+  if (esCompra) {
+    const act = txt(cli.actividad_economica || (doc && doc.cliente_actividad), 6);
+    if (!act) {
+      throw new Error('La factura de compra necesita la actividad económica del vendedor '
+        + '(Hacienda la exige en este tipo de comprobante).');
+    }
+    r.ActividadEconomica = act;
+  } else if (cli.actividad_economica) {
+    r.ActividadEconomica = txt(cli.actividad_economica, 6);
   }
 
-  // La ubicación es opcional para una persona física, pero si va, va completa:
-  // Hacienda rechaza una provincia sin cantón.
-  if (cli.provincia && cli.canton && cli.distrito) {
-    r.ubicacion = {
-      provincia: String(cli.provincia),
-      canton: String(cli.canton),
-      distrito: String(cli.distrito),
-      barrio: cli.barrio ? String(cli.barrio) : undefined,
-      otrasSenas: String(cli.otras_senales || cli.direccion || 'Sin otras señas').slice(0, 250),
-    };
+  if (cli.nombre_comercial) r.NombComercial = txt(cli.nombre_comercial, 80);
+
+  // Al vendedor de una compra no se le puede exigir correo: muchas veces no
+  // tiene, y el comprobante no se le manda a él — quien declara es CONCRE.
+  const correo = txt(cli.correo);
+  if (correo) r.Correo = correo;
+  else if (!esCompra) {
+    throw new Error('El cliente no tiene correo, y sin correo el comprobante no se le puede enviar.');
   }
 
-  // Los correos en copia son de GTI, no de Hacienda: GTI los usa para enviar
-  // el comprobante a más de una dirección.
-  const copia = Array.isArray(cli.correos_copia) ? cli.correos_copia.filter(Boolean) : [];
-  if (copia.length) r.correosCopia = copia;   // ⚠ manual
+  // Copia es una CADENA con los correos separados por «;», no un arreglo.
+  const copia = (Array.isArray(cli.correos_copia) ? cli.correos_copia : [])
+    .map(x => txt(x)).filter(Boolean);
+  if (copia.length) r.Copia = copia.join(';').slice(0, 200);
+
+  const tel = ent(cli.telefono);
+  if (tel) {
+    r.AreaTelefono = ent(cli.cod_pais) || 506;
+    r.NumTelefono = tel;
+  }
+
+  // La dirección es opcional, pero si va, va completa: Hacienda rechaza una
+  // provincia sin cantón, y exige las señas exactas si hay cualquier campo.
+  const pr = ent(cli.provincia), ca = ent(cli.canton), di = ent(cli.distrito);
+  const senas = txt(cli.otras_senales || cli.direccion, 160);
+  if (pr && ca && di && senas.length >= 5) {
+    r.Provincia = pr;
+    r.Canton = ca;
+    r.Distrito = di;
+    r.Direccion = senas;
+    // NombreBarrio es texto de 5 a 50 caracteres. Si lo que hay guardado es un
+    // código numérico o una palabra de menos de 5 letras, no se manda: un
+    // barrio mal armado tumba el comprobante entero.
+    const ba = txt(cli.barrio, 50);
+    if (ba.length >= 5 && !/^\d+$/.test(ba)) r.NombreBarrio = ba;
+  }
 
   return r;
 }
 
-// ── Una línea ───────────────────────────────────────────────────────────────
+// ── Una línea de detalle ────────────────────────────────────────────────────
 function linea(l, i, doc) {
-  const cabys = String(l.cabys || '').replace(/\D/g, '');
+  const cabys = txt(l.cabys).replace(/\D/g, '');
   if (cabys.length !== 13) {
-    throw new Error('La línea «' + (l.descripcion || i + 1) + '» no tiene CABYS de 13 dígitos.');
+    throw new Error('La línea «' + (l.descripcion || (i + 1)) + '» no tiene CABYS de 13 dígitos.');
   }
-  const cant = d5(l.cantidad);
+
+  const cant = d3(l.cantidad);
+  if (!(cant > 0)) {
+    throw new Error('La línea «' + (l.descripcion || (i + 1)) + '» tiene cantidad en 0.');
+  }
   const precio = d5(l.precio_unitario);
-  if (precio <= 0) {
-    throw new Error('La línea «' + (l.descripcion || i + 1) + '» tiene precio en 0.');
+  if (!(precio > 0)) {
+    throw new Error('La línea «' + (l.descripcion || (i + 1)) + '» tiene precio en 0.');
   }
+  const desc = txt(l.descripcion);
+  if (!desc) throw new Error('La línea ' + (i + 1) + ' no tiene descripción.');
+
+  const unid = l.unidad_cod != null && String(l.unidad_cod).trim() !== ''
+    ? l.unidad_cod : l.unidad;
 
   const montoTotal = d2(cant * precio);
-  const desc = d2(l.descuento_monto);
-  const subtotal = d2(montoTotal - desc);
-  const ivaPct = Number(l.iva_pct != null ? l.iva_pct : doc.iva_pct || 13);
-  const ivaMonto = d2(subtotal * ivaPct / 100);
+  const descuento = d2(l.descuento_monto);
+  const neto = d2(montoTotal - descuento);
 
   const o = {
-    // ⚠ manual
-    numeroLinea: i + 1,
-    codigoCabys: cabys,
-    cantidad: cant,
-    unidadMedida: l.unidad_cod || unidadCod(l.unidad),
-    detalle: String(l.descripcion || '').slice(0, 200),
-    precioUnitario: precio,
-    montoTotal: montoTotal,
-    subTotal: subtotal,
-    montoTotalLinea: d2(subtotal + ivaMonto),
-    impuesto: [{
-      codigo: '01',              // IVA
-      codigoTarifa: tarifaIVA(ivaPct),
-      tarifa: ivaPct,
-      monto: ivaMonto,
-    }],
-    impuestoNeto: ivaMonto,
+    Cantidad: cant,
+    UnidadMedida: unidadCod(unid),
+    PrecioUnitario: precio,
+    Codigo: cabys,                       // Tabla 24 · CAByS
   };
 
-  if (l.codigo) o.codigoComercial = [{ tipo: '04', codigo: String(l.codigo).slice(0, 20) }];
-  if (desc > 0) {
-    o.descuento = [{ montoDescuento: desc,
-                     naturalezaDescuento: String(l.descuento_motivo || 'Descuento comercial').slice(0, 80) }];
+  // El manual escribe este campo con tilde en la tabla de Detalle y sin tilde
+  // en otras. Van los dos nombres con el mismo valor: el deserializador de GTI
+  // toma el que conozca e ignora el otro, y así una tilde no tumba la emisión.
+  o.Descripcion = txt(desc, 200);
+  o['Descripción'] = o.Descripcion;
+
+  if (l.unidad && !/^\d+$/.test(String(l.unidad)) && unidadCod(unid) === 1
+      && String(l.unidad).trim().toLowerCase() !== 'unidad'
+      && String(l.unidad).trim().toLowerCase() !== 'unid') {
+    // Una unidad propia del giro («1 tarima», «1 saco») que Hacienda no tiene:
+    // se declara como unidad 1 y el nombre real se manda en UnidadComercial.
+    o.UnidadComercial = txt(l.unidad, 20);
   }
 
-  // Exoneración, si el cliente la tiene en esta línea.
-  if (l.exo_numero && Number(l.exo_pct) > 0) {
-    o.impuesto[0].exoneracion = {
-      tipoDocumento: String(l.exo_tipo_doc || '01'),
-      numeroDocumento: String(l.exo_numero),
-      nombreInstitucion: String(l.exo_institucion || ''),
-      fechaEmision: l.exo_fecha,
-      porcentajeExoneracion: Number(l.exo_pct),
-      montoExoneracion: d2(ivaMonto * Number(l.exo_pct) / 100),
+  if (descuento > 0) {
+    o.MontoDescuento = descuento;
+    o.CodigoDescuento = '07';            // Tabla 16 · descuento comercial
+    if (l.descuento_motivo) o.DetalleDescuento = txt(l.descuento_motivo, 80);
+  }
+
+  if (l.codigo) {
+    o.CodigoComercial = [{ Tipo: '01', Codigo: txt(l.codigo, 20) }];  // Tabla 10 · del vendedor
+  }
+
+  // ── Impuesto ──
+  // Sin IVA la línea es EXENTA y no lleva nodo de impuestos: el manual define
+  // «exento» justamente como la línea que no tiene código de impuesto.
+  const pct = Number(l.iva_pct != null ? l.iva_pct : (doc.iva_pct != null ? doc.iva_pct : 13));
+  const pctExo = Number(l.exo_pct || 0);
+  let montoImp = 0, montoExo = 0;
+
+  if (pct > 0) {
+    montoImp = d2(neto * pct / 100);
+    const imp = {
+      CodigoImp: IMP_IVA,
+      PorcentajeImp: red(pct, 2),
+      MontoImpuesto: montoImp,
+      CodigoTarifa: TARIFA[pct] != null ? TARIFA[pct] : TARIFA[13],
     };
+
+    if (l.exo_numero && pctExo > 0) {
+      montoExo = d2(neto * pctExo / 100);
+      imp.Exoneracion = {
+        TipoDocExo: Number(ent(l.exo_tipo_doc) || 1),          // Tabla 9
+        NumeroExo: txt(l.exo_numero, 40),
+        NombreInstitucion: txt(l.exo_institucion || '1', 160), // Tabla 19
+        FechaExoneracion: fechaGTI(l.exo_fecha),
+        MontoExonerado: montoExo,
+        PorcentajeExonerado: Math.round(pctExo),
+      };
+    }
+    o.Impuestos = [imp];
   }
 
+  // Lo que sigue no viaja: son las cifras con que se arma Totales.
+  o.__calc = {
+    servicio: esServicio(unid),
+    montoTotal: montoTotal,
+    descuento: descuento,
+    neto: neto,
+    pct: pct,
+    pctExo: pctExo,
+    montoImp: montoImp,
+    montoExo: montoExo,
+    exento: !(pct > 0),
+  };
   return o;
 }
 
-// Códigos de tarifa del IVA en Hacienda. Los tres regímenes que usa CONCRE
-// son el general y las reducidas; el resto queda por si aparece.
-function tarifaIVA(pct) {
-  const p = Number(pct);
-  if (p === 0) return '01';
-  if (p === 1) return '02';
-  if (p === 2) return '03';
-  if (p === 4) return '04';
-  if (p === 8) return '06';
-  if (p === 13) return '08';
-  return '08';
+// La pestaña guarda el motivo tal como lo escogió el usuario ('devolucion',
+// 'descuento'…). Acá se resuelve al número de la Tabla 7.
+function codigoReferencia(motivo) {
+  const m = txt(motivo);
+  if (/^\d{1,2}$/.test(m)) return Number(m);        // ya venía como código
+  if (ACCION_REF[m] != null) return ACCION_REF[m];  // llave directa
+
+  for (const tipo of Object.keys(MOTIVOS_NOTA)) {
+    const hit = MOTIVOS_NOTA[tipo].find(x => x.v === m);
+    if (hit) return ACCION_REF[hit.cod] != null ? ACCION_REF[hit.cod] : ACCION_REF.anula;
+  }
+  return ACCION_REF.anula;
 }
 
-// La pestaña guarda el motivo tal como lo escogió el usuario ('devolucion',
-// 'descuento'…). Acá se resuelve a la llave de COD_REFERENCIA y de ahí al
-// número de Hacienda, para que ese número viva en un solo archivo.
-function codigoReferencia(motivo) {
-  const m = String(motivo || '').trim();
-  if (/^\d{2}$/.test(m)) return m;                 // ya venía como código
-
-  if (COD_REFERENCIA[m]) return COD_REFERENCIA[m];  // llave directa
-
-  for (const tipo of Object.keys(MOTIVOS_NOTA)) {   // motivo de negocio
-    const hit = MOTIVOS_NOTA[tipo].find(x => x.v === m);
-    if (hit) return COD_REFERENCIA[hit.cod] || COD_REFERENCIA.anula;
-  }
-  return COD_REFERENCIA.anula;
+// El tipo del documento referido, según de qué documento salió la nota.
+function tipoDocReferido(refTipo, tipoNota) {
+  const t = txt(refTipo).toUpperCase();
+  if (t === 'FEC') return tipoNota === 'ND' ? TIPO_DOC_REF.FEC_ND : TIPO_DOC_REF.FEC_NC;
+  if (TIPO_DOC_REF[t] != null) return TIPO_DOC_REF[t];
+  if (/^\d{1,2}$/.test(t)) return Number(t);
+  return TIPO_DOC_REF.FE;
 }
 
 // ── El documento completo ───────────────────────────────────────────────────
 function armar(doc, lineas, cliente, empresa, cred) {
   if (!lineas || !lineas.length) throw new Error('El documento no tiene líneas.');
 
-  const det = lineas
-    .slice()
+  const det = lineas.slice()
     .sort((a, b) => (a.orden || 0) - (b.orden || 0))
     .map((l, i) => linea(l, i, doc));
 
-  const gravado = d2(det.reduce((s, l) => s + l.subTotal, 0));
-  const descuento = d2(det.reduce((s, l) => s + ((l.descuento || [{}])[0].montoDescuento || 0), 0));
-  const impuesto = d2(det.reduce((s, l) => s + l.impuestoNeto, 0));
-
-  const cuerpo = {
-    // ── Lo que identifica la cuenta en GTI ──
-    // ⚠ manual: puede ir en el cuerpo o en un encabezado de autenticación.
-    usuario: cred.usuario,
-    clave: cred.clave,
-    numCuenta: cred.cuenta,
-
-    // ── El comprobante ──
-    // ⚠ manual: la clave de 50 dígitos y el consecutivo de 20 los asigna GTI.
-    // Si el manual dice que los tiene que mandar el cliente, hay que agregar
-    // acá el generador y usar fact_consecutivos, que ya quedó preparada.
-    tipoDocumento: TIPO_DOC[doc.tipo_doc] || TIPO_DOC.FE,
-    fechaEmision: new Date().toISOString(),
-    condicionVenta: String(doc.cond_venta || '01'),
-    medioPago: [String(doc.medio_pago || '01')],
-    codigoMoneda: String(doc.moneda || 'CRC'),
-
-    emisor: {
-      // Todo esto sale de fact_empresas, editable desde la pestaña.
-      nombre: String(empresa.razon_social || empresa.nombre_comercial || ''),
-      identificacion: { tipo: String(empresa.tipo_identificacion || 2).padStart(2, '0'),
-                        numero: String(empresa.identificacion || '').replace(/\D/g, '') },
-      nombreComercial: String(empresa.nombre_comercial || ''),
-      actividadEconomica: String(empresa.actividad_economica || ''),
-      correoElectronico: String(empresa.correo || ''),
-      ubicacion: {
-        provincia: String(empresa.provincia || ''),
-        canton: String(empresa.canton || ''),
-        distrito: String(empresa.distrito || ''),
-        otrasSenas: String(empresa.direccion || '').slice(0, 250),
-      },
-    },
-
-    // Una factura de compra lleva al vendedor digitado en el propio documento.
-    //
-    // ⚠ manual: confirmar dos cosas de la FEC contra el manual de GTI.
-    //   1. Si el emisor y el receptor se invierten respecto de una factura
-    //      normal. Acá va CONCRE como emisor y el vendedor como receptor, que
-    //      es lo que dice el esquema 4.4, pero GTI puede pedirlo al revés.
-    //   2. Si el IVA se declara distinto por ser autodeterminado: en una FEC
-    //      el impuesto lo asume y lo paga el comprador, no el vendedor.
-    receptor: (doc.tipo_doc === 'FEC') ? receptor(receptorDeDoc(doc), doc)
-                                       : receptor(cliente, doc),
-    detalleServicio: det,
-
-    resumenFactura: {
-      totalGravado: gravado,
-      totalExento: 0,
-      totalVenta: d2(gravado + descuento),
-      totalDescuentos: descuento,
-      totalVentaNeta: gravado,
-      totalImpuesto: impuesto,
-      totalComprobante: d2(gravado + impuesto),
-    },
+  // ── Totales, con la separación servicios / mercancías que pide el manual ──
+  const T = {
+    servGravado: 0, servExento: 0, servExonerado: 0,
+    mercaGravada: 0, mercaExenta: 0, mercaExonerada: 0,
+    descuento: 0, impuesto: 0, exonerado: 0,
   };
 
-  if (String(doc.cond_venta) === '02') {
-    cuerpo.plazoCredito = String(doc.plazo_credito || 30);
-  }
-  if (String(doc.moneda) === 'USD') {
-    const tc = Number(doc.tipo_cambio);
-    if (!(tc > 0)) throw new Error('El documento está en dólares y no tiene tipo de cambio.');
-    cuerpo.tipoCambio = d5(tc);
-  }
-  if (doc.notas) cuerpo.otros = String(doc.notas).slice(0, 500);
+  for (const l of det) {
+    const c = l.__calc;
+    T.descuento += c.descuento;
+    T.impuesto += c.montoImp;
+    T.exonerado += c.montoExo;
 
-  // Referencia, para notas de crédito y débito. Sin esto la nota no se puede
-  // ligar a nada y Hacienda la rechaza.
-  if (doc.ref_clave) {
-    if (!doc.ref_razon || !String(doc.ref_razon).trim()) {
-      throw new Error('La nota no tiene el motivo escrito, y Hacienda lo exige.');
+    // Los baldes de Totales se arman con MontoTotal (antes del descuento):
+    // el descuento se resta aparte, en TotalVentaNeta.
+    if (c.exento) {
+      if (c.servicio) T.servExento += c.montoTotal; else T.mercaExenta += c.montoTotal;
+    } else if (c.pctExo > 0 && c.pct > 0) {
+      const parte = Math.min(1, c.pctExo / c.pct);
+      const exo = c.montoTotal * parte;
+      if (c.servicio) { T.servExonerado += exo; T.servGravado += c.montoTotal - exo; }
+      else            { T.mercaExonerada += exo; T.mercaGravada += c.montoTotal - exo; }
+    } else {
+      if (c.servicio) T.servGravado += c.montoTotal; else T.mercaGravada += c.montoTotal;
     }
-    cuerpo.informacionReferencia = [{
-      // ⚠ manual: tipoDoc es el tipo del comprobante REFERIDO (una FE es 01).
-      tipoDoc: String(doc.ref_tipo_doc || TIPO_DOC.FE),
-      numero: String(doc.ref_clave),
-      fechaEmision: doc.ref_fecha,
-      // La pestaña guarda el MOTIVO ('anula', 'corrige_monto'…), no el número.
-      // Así el código de Hacienda vive en un solo lugar —acá— y el día que el
-      // manual corrija la lista no hay que tocar el index.html ni migrar datos
-      // ya guardados. Si viniera un número de dos dígitos, se respeta.
-      codigo: codigoReferencia(doc.ref_codigo),
-      razon: String(doc.ref_razon).slice(0, 180),
+  }
+
+  const totalGravado   = d2(T.servGravado + T.mercaGravada);
+  const totalExento    = d2(T.servExento + T.mercaExenta);
+  const totalExonerado = d2(T.servExonerado + T.mercaExonerada);
+  const totalVenta     = d2(totalGravado + totalExento + totalExonerado);
+  const totalDescuento = d2(T.descuento);
+  const totalVentaNeta = d2(totalVenta - totalDescuento);
+  const totalImpuesto  = d2(T.impuesto - T.exonerado);
+  const totalComprobante = d2(totalVentaNeta + totalImpuesto);
+
+  const Totales = {
+    TotalServGravado:   d2(T.servGravado),
+    TotalServExento:    d2(T.servExento),
+    TotalServExonerado: d2(T.servExonerado),
+    TotalMercaGravada:  d2(T.mercaGravada),
+    TotalMercaExenta:   d2(T.mercaExenta),
+    TotalMercaExonerada:d2(T.mercaExonerada),
+    TotalGravado:       totalGravado,
+    TotalExento:        totalExento,
+    TotalExonerado:     totalExonerado,
+    TotalOtrosCargos:   0,
+    TotalIVADevuelto:   0,
+    TotalVenta:         totalVenta,
+    TotalDescuento:     totalDescuento,
+    TotalVentaNeta:     totalVentaNeta,
+    TotalImpuesto:      totalImpuesto,
+    TotalComprobante:   totalComprobante,
+    TotalNoSujeto:      0,
+    TotalServNoSujeto:  0,
+    TotalMercaNoSujeta: 0,
+    TotalImpuestoAsumidoFabrica: 0,
+  };
+
+  // ── Encabezado ──
+  const numCuenta = ent(cred && cred.cuenta) || ent(empresa && empresa.gti_num_cuenta);
+  if (!numCuenta) {
+    const e = new Error('No se sabe el número de cuenta de GTI de la empresa.');
+    e.configuracion = true;
+    throw e;
+  }
+  const actividad = txt(empresa && empresa.actividad_economica, 6);
+  if (!actividad) {
+    const e = new Error('La empresa no tiene código de actividad económica, '
+      + 'y Hacienda lo exige en todos los comprobantes.');
+    e.configuracion = true;
+    throw e;
+  }
+
+  const cond = ent(doc.cond_venta) || COND_VENTA.contado;
+  const moneda = MONEDA[txt(doc.moneda).toUpperCase()] || MONEDA.CRC;
+
+  const Encabezado = {
+    NumCuenta: numCuenta,
+    TipoDoc: TIPO_DOC[doc.tipo_doc] != null ? TIPO_DOC[doc.tipo_doc] : TIPO_DOC.FE,
+    CondicionVenta: cond,
+    Sucursal: ent(empresa && empresa.casa_matriz) || 1,
+    Terminal: ent(empresa && empresa.punto_venta) || 1,
+    Moneda: moneda,
+    SituacionEnvio: SITUACION_NORMAL,
+    CodigoActividad: actividad,
+    // La clave de 50 dígitos y el consecutivo de 20 los asigna GTI: el manual
+    // los marca opcionales y mutuamente dependientes. No se mandan.
+    // NumeroFactura es NUESTRO consecutivo ('FA-12'), el que GTI devuelve como
+    // NumInterno y el que usa ConsultaDocumento — así el documento se puede
+    // rastrear de los dos lados.
+    NumeroFactura: txt(doc.consecutivo, 50) || undefined,
+  };
+  if (empresa && empresa.nombre_comercial) {
+    Encabezado.NombComercial = txt(empresa.nombre_comercial, 80);
+  }
+  if (cond === COND_VENTA.credito) {
+    Encabezado.PlazoCredito = ent(doc.plazo_credito) || 30;
+  }
+  if (cond === COND_VENTA.otros) {
+    Encabezado.CondicionVentaOtros = txt(doc.condiciones, 100) || 'Según acuerdo con el cliente';
+  }
+  if (moneda !== MONEDA.CRC) {
+    const tc = Number(doc.tipo_cambio);
+    if (!(tc > 0)) {
+      throw new Error('El documento no está en colones y no tiene tipo de cambio.');
+    }
+    Encabezado.TipoCambio = d5(tc);
+  }
+  const fe = fechaGTI(doc.fecha);
+  if (fe) Encabezado.FechaFactura = fe;
+
+  // Medios de pago: obligatorio salvo en las condiciones de crédito.
+  if (cond !== COND_VENTA.credito) {
+    const mp = ent(doc.medio_pago) || MEDIO_PAGO.efectivo;
+    Encabezado.MediosPagos = [{
+      TipoMedioPago: mp,
+      TotalMedioPago: totalComprobante,
     }];
+    if (mp === MEDIO_PAGO.otros) {
+      Encabezado.MediosPagos[0].MedioPagoOtros = txt(doc.condiciones, 100) || 'Otro medio de pago';
+    }
+  }
+
+  // Del nodo Emisor solo existe Registrofiscal8707 (bebidas alcohólicas). Los
+  // datos de CONCRE los toma GTI de la cuenta: no se envían, y mandarlos de
+  // más era justamente lo que estaba mal antes.
+
+  const cuerpo = {
+    Encabezado: Encabezado,
+    Receptor: (doc.tipo_doc === 'FEC') ? receptor(receptorDeDoc(doc), doc)
+                                       : receptor(cliente, doc),
+    Detalle: det.map(l => { const o = Object.assign({}, l); delete o.__calc; return o; }),
+    Totales: Totales,
+    Extra: { EsVersion4_4: true },       // obligatorio para facturar en 4.4
+  };
+
+  if (doc.notas) cuerpo.Otros = { Notas: txt(doc.notas, 500) };
+
+  // ── Referencia, para notas de crédito y débito ──
+  // Sin esto la nota no se liga a nada y Hacienda la rechaza.
+  if (doc.ref_clave) {
+    const razon = txt(doc.ref_razon, 200);
+    if (!razon) throw new Error('La nota no tiene el motivo escrito, y Hacienda lo exige.');
+    cuerpo.Referencia = {
+      TipoDocRef: tipoDocReferido(doc.ref_tipo_doc, doc.tipo_doc),
+      NumeroRef: txt(doc.ref_clave, 50),
+      AccionRef: codigoReferencia(doc.ref_codigo),
+      FechaRef: fechaGTI(doc.ref_fecha),
+      RazonNota: razon,
+    };
   } else if (doc.tipo_doc === 'NC' || doc.tipo_doc === 'ND') {
     throw new Error('Una nota de crédito o débito tiene que referirse a una factura emitida.');
   }
 
   // El total que arma el puente tiene que coincidir con el que muestra la
-  // pestaña. Si no coincide, algo se calculó distinto y es mejor parar acá
+  // pestaña. Si no coincide, algo se calculó distinto, y es mejor parar acá
   // que mandarle a Hacienda un documento que no cuadra con lo que el cliente
   // vio en la proforma.
   const totalDoc = d2(doc.total);
-  const totalArmado = cuerpo.resumenFactura.totalComprobante;
-  if (totalDoc > 0 && Math.abs(totalDoc - totalArmado) > 1) {
+  if (totalDoc > 0 && Math.abs(totalDoc - totalComprobante) > 1) {
     throw new Error('El total del documento (' + totalDoc + ') no coincide con el que se armó ('
-      + totalArmado + '). Revise las líneas antes de emitir.');
+      + totalComprobante + '). Revise las líneas antes de emitir.');
   }
 
   return cuerpo;
 }
 
-// ── Lectura de la respuesta de GTI ──────────────────────────────────────────
-// Se leen varios nombres posibles porque no está confirmado cuál usa: así el
-// puente funciona con cualquiera de ellos y el manual solo confirma. Lo que
-// no se reconozca queda igual en la bitácora, sin perderse.
-
+// ── Lectura de la respuesta de CargarDocumento ──────────────────────────────
+// GTI contesta 202 con { NumCarga, Estado, Error, Fecha, Respuestas:[ ... ] }.
+// Cada elemento de Respuestas trae Consecutivo y ClaveNumerica, que son los
+// dos datos que hay que guardar: sin el consecutivo no se puede consultar el
+// estado ni bajar el XML.
 function leerEmision(datos) {
   const d = datos || {};
+  const lista = d.Respuestas || d.respuestas || d.Respuesta || d.respuesta;
+  const r = (Array.isArray(lista) ? lista[0] : lista) || {};
+
+  const cod = r.Codigo != null ? Number(r.Codigo) : null;
+  const err = txt(r.Error) || txt(d.Error);
+  const det = txt(r.Detalle);
+
   return {
-    clave: d.clave || d.Clave || d.claveNumerica || null,
-    consecutivo: d.consecutivo || d.numeroConsecutivo || d.NumeroConsecutivo || null,
-    gtiId: d.id || d.idComprobante || d.token || null,
-    estado: normalizarEstado(d.estado || d.Estado || d.status),
-    mensaje: d.mensaje || d.Mensaje || d.detalle || d.descripcion || null,
+    clave: txt(r.ClaveNumerica || r.claveNumerica || d.ClaveNumerica) || null,
+    consecutivo: txt(r.Consecutivo || r.consecutivo || d.Consecutivo) || null,
+    gtiId: txt(r.IdDocumento != null ? r.IdDocumento : (d.NumCarga != null ? d.NumCarga : '')) || null,
+    numInterno: txt(r.NumInterno) || null,
+    codigo: cod,
+    // Para CargarDocumento el 0 es «Exitoso»: es otra tabla de códigos, no la
+    // de EstadoHacienda. Si no vino código, manda que haya clave.
+    estado: (cod === 0 || cod === null) ? 'recibido' : 'error',
+    mensaje: [det, err].filter(Boolean).join(' — ').slice(0, 900) || null,
   };
 }
+
+// ── Lectura de EstadoHacienda ───────────────────────────────────────────────
+// Contesta { Codigo: "100", Respuesta, Detalle }. Los códigos son de la página
+// 56 del manual, y cada uno dice qué hacer: los 101, 105, 106 y 108 son
+// «todavía no», así que el documento sigue en camino y hay que volver a
+// preguntar; el 104 es «GTI no lo tiene», que es un error de verdad.
+const ESTADO_HACIENDA = {
+  100: { estado: 'aceptado',  txt: 'Aceptado por Hacienda' },
+  101: { estado: 'recibido',  txt: 'En proceso en Hacienda' },
+  102: { estado: 'rechazado', txt: 'Rechazado por Hacienda' },
+  103: { estado: 'error',     txt: 'Hacienda reportó un error en el comprobante' },
+  104: { estado: 'error',     txt: 'GTI no encontró el documento' },
+  105: { estado: 'recibido',  txt: 'Pendiente de enviar a Hacienda' },
+  106: { estado: 'recibido',  txt: 'Hacienda todavía no ha respondido' },
+  107: { estado: 'recibido',  txt: 'Hacienda reporta un estado desconocido' },
+  108: { estado: 'recibido',  txt: 'Hay que volver a consultar más tarde' },
+};
 
 function leerEstado(datos) {
   const d = datos || {};
+  const cod = d.Codigo != null ? Number(d.Codigo) : (d.codigo != null ? Number(d.codigo) : null);
+  const m = ESTADO_HACIENDA[cod];
+
+  const dicho = [txt(d.Detalle || d.detalle), txt(d.Respuesta || d.respuesta)]
+    .filter(Boolean).join(' — ');
+
   return {
-    estado: normalizarEstado(d.estado || d.Estado || d.status || d.indEstado),
-    mensaje: d.mensaje || d.Mensaje || d.detalleMensaje || d.descripcion || null,
-    xml: d.xml || d.xmlFirmado || null,
-    xmlRespuesta: d.respuestaXml || d.xmlRespuesta || d.respuesta || null,
+    codigo: cod,
+    estado: m ? m.estado : normalizarEstado(d.Respuesta || d.Estado || d.estado),
+    mensaje: (dicho || (m ? m.txt : null) || null) && (dicho || m.txt).slice(0, 900),
   };
 }
 
-// Lo que diga GTI se traduce a los estados de fact_docs.
+// Respaldo por si GTI contesta con palabras y no con código.
 function normalizarEstado(e) {
-  const s = String(e || '').toLowerCase();
+  const s = txt(e).toLowerCase();
   if (!s) return null;
-  if (/acept/.test(s)) return 'aceptado';
   if (/rechaz/.test(s)) return 'rechazado';
-  if (/recib|proces|pendien|enviad/.test(s)) return 'recibido';
-  if (/error|fall/.test(s)) return 'error';
+  if (/acept/.test(s)) return 'aceptado';
+  if (/recib|proces|pendien|enviad|espere/.test(s)) return 'recibido';
+  if (/error|fall|no se encontr/.test(s)) return 'error';
   return 'recibido';
 }
 
+// ── Lectura de ObtenerBytesPdfEmision ───────────────────────────────────────
+// Contesta { Codigo, Mensaje, Datos } con el PDF en base64 en «Datos».
+// Códigos: 1 éxito · 2 autenticación · 3 procesamiento · 4 validación ·
+// 5 no encontrado · 6 interno · 7 frecuencia excedida (esperar 30 s).
+function leerPdf(datos) {
+  const d = datos || {};
+  const cod = d.Codigo != null ? Number(d.Codigo) : null;
+  return {
+    codigo: cod,
+    ok: cod === 1 && !!(d.Datos || d.datos),
+    reintentar: cod === 3 || cod === 6 || cod === 7,
+    base64: txt(d.Datos || d.datos) || null,
+    mensaje: txt(d.Mensaje || d.mensaje) || null,
+  };
+}
+
 // ── Respuestas del simulador ────────────────────────────────────────────────
-// Imitan el camino real: primero «recibido», y a partir del segundo sondeo
-// «aceptado». Así se puede ver la pestaña completa funcionando sin GTI.
+// Imitan el camino real con la misma forma que trae GTI, para que la lectura
+// de arriba sea la misma con simulador y sin él.
 
 function simularEmision(doc) {
   const hoy = new Date();
@@ -446,40 +729,55 @@ function simularEmision(doc) {
   const cons = '001' + '00001' + '01' + String(Date.now()).slice(-10);
   const seg = String(Math.floor(Math.random() * 1e8)).padStart(8, '0');
   return {
-    clave: '506' + dd + mm + aa + ced + cons + '1' + seg,
-    consecutivo: cons,
-    id: 'sim_' + Date.now(),
-    estado: 'recibido',
-    mensaje: 'SIMULADO — no salió a GTI ni a Hacienda',
+    NumCarga: Number(String(Date.now()).slice(-7)),
+    Estado: 202,
+    Error: 'OK',
+    Fecha: fechaGTI(),
+    Respuestas: [{
+      Codigo: 0,
+      NumDoc: 1,
+      NumInterno: txt(doc && doc.consecutivo),
+      Consecutivo: cons,
+      ClaveNumerica: '506' + dd + mm + aa + ced + cons + '1' + seg,
+      Error: 'Exitoso',
+      Detalle: 'SIMULADO — no salió a GTI ni a Hacienda',
+    }],
   };
 }
 
 // Se decide por el tiempo transcurrido desde el envío, NO por el número de
 // intento: cada consulta de estado es un trabajo distinto en la cola y todos
 // llegan con su propio contador en cero, así que contando intentos el
-// simulado nunca pasaba de «recibido» y el camino no terminaba nunca.
-//
-// Con el tiempo queda igual al camino real: la consulta de los 30 segundos
-// dice «en proceso» y la de los 2 minutos ya dice «aceptado».
+// documento simulado nunca pasaba de «recibido» y el camino no terminaba.
 const SIM_SEG_ACEPTA = 60;
 
 function simularEstado(doc) {
   const desde = doc && doc.enviado_en ? new Date(doc.enviado_en).getTime() : 0;
   const seg = desde ? (Date.now() - desde) / 1000 : 999;
-
   if (seg >= SIM_SEG_ACEPTA) {
-    return { estado: 'aceptado',
-             mensaje: 'SIMULADO — aceptado (no salió a GTI ni a Hacienda)',
-             xml: '<?xml version="1.0"?><FacturaElectronica><!-- simulado --></FacturaElectronica>',
-             respuestaXml: '<?xml version="1.0"?><MensajeHacienda><Mensaje>1</Mensaje>'
-                         + '<DetalleMensaje>SIMULADO</DetalleMensaje></MensajeHacienda>' };
+    return { Codigo: '100', Respuesta: 'Se ha aceptado el documento (SIMULADO)',
+             Detalle: 'SIMULADO — no salió a GTI ni a Hacienda' };
   }
-  return { estado: 'recibido', mensaje: 'SIMULADO — en proceso en Hacienda' };
+  return { Codigo: '101', Respuesta: 'En proceso (SIMULADO)', Detalle: 'SIMULADO' };
+}
+
+function simularXml(que) {
+  return que === 'respuesta'
+    ? '<?xml version="1.0" encoding="utf-8"?><MensajeHacienda><Mensaje>1</Mensaje>'
+      + '<DetalleMensaje>SIMULADO</DetalleMensaje></MensajeHacienda>'
+    : '<?xml version="1.0" encoding="utf-8"?><FacturaElectronica><!-- simulado --></FacturaElectronica>';
+}
+
+function simularPdf() {
+  return { Codigo: 1, Mensaje: 'Exitoso', Datos: null };
 }
 
 module.exports = {
-  RUTAS, TIPO_DOC, COD_REFERENCIA, MOTIVOS_NOTA, codigoReferencia,
-  receptorDeDoc, unidadCod, tarifaIVA,
-  armar, leerEmision, leerEstado, normalizarEstado,
-  simularEmision, simularEstado,
+  METODOS, TIPO_DOC, TIPO_DOC_REF, ACCION_REF, MOTIVOS_NOTA,
+  COND_VENTA, MEDIO_PAGO, MONEDA, TARIFA, TARIFA_EXENTA, IMP_IVA,
+  ESTADO_HACIENDA,
+  codigoReferencia, tipoDocReferido, receptorDeDoc, receptor,
+  unidadCod, esServicio, red, fechaGTI,
+  armar, leerEmision, leerEstado, leerPdf, normalizarEstado,
+  simularEmision, simularEstado, simularXml, simularPdf,
 };
