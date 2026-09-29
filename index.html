@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260929090758';
+var APP_BUILD='20260929111545';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -9505,7 +9505,12 @@ function _saveSingleVenta(uid, v, mk){
     referido: v.referido||'',
     tiene_pendiente: v.tienePendiente||false,
     pend_monto: v.pendMonto||0,
-    pend_cancelado: v.pendCancelado||'no'
+    pend_cancelado: v.pendCancelado||'no',
+    // De qué proforma o factura salió esta venta. Vacío en las que se
+    // registran a mano. Requiere 09_ventas_origen_factura.sql.
+    fact_doc_id: v.factDocId||null,
+    fact_consecutivo: v.factConsecutivo||'',
+    fact_lineas: Array.isArray(v.factLineas)?v.factLineas:[]
   };
 
   // ── BACKUP GARANTIZADO en configuracion (cross-device, sin RLS issues) ──
@@ -9530,6 +9535,11 @@ function _saveSingleVenta(uid, v, mk){
     referido:v.referido||'', notas:v.notas||'', estado:v.estado||'activa',
     tieneMinimo:v.tieneMinimo||false, minimoArea:v.minimoArea||0,
     fechaFact:v.fechaFact||'',
+    // El origen va también en el respaldo: si el upsert falla y la venta se
+    // recupera de acá, sin esto quedaría sin de dónde vino y el candado de sus
+    // líneas se trabaría sin forma de liberarlo.
+    factDocId:v.factDocId||null, factConsecutivo:v.factConsecutivo||'',
+    factLineas:Array.isArray(v.factLineas)?v.factLineas:[],
     ts: new Date().toISOString()
   };
   if(!window._ventaEditsCache) window._ventaEditsCache={};
@@ -9743,6 +9753,11 @@ async function loadVentasFromDB(uid,_rows){
       ejecutado:row.ejecutado||false,
       ejecutadoFecha:row.ejecutado_fecha||null,
       cxcPagado:row.cxc_pagado||false,
+      // De qué proforma o factura salió, para poder devolverla
+      factDocId:(row.fact_doc_id||((window._ventaEditsCache||{})[row.id]||{}).factDocId||null),
+      factConsecutivo:(row.fact_consecutivo||((window._ventaEditsCache||{})[row.id]||{}).factConsecutivo||''),
+      factLineas:(Array.isArray(row.fact_lineas)&&row.fact_lineas.length?row.fact_lineas
+        :(((window._ventaEditsCache||{})[row.id]||{}).factLineas||[])),
       created:row.created_at||''
     });
   });
@@ -10750,6 +10765,10 @@ function renderVentasUser(){
       '</td>'+
       '<td style="white-space:nowrap">'+estadoBadge+'</td>'+
       '<td style="white-space:nowrap;text-align:right">'+
+        // Las que vinieron de una proforma o factura se pueden devolver, lo que
+        // libera el candado de sus líneas para volver a pasarlas.
+        (function(){ try{ return (window.FACT&&FACT.botonDevolver)?FACT.botonDevolver(v, uid):''; }
+                     catch(e){ return ''; } })()+
         '<button onclick="editVenta(\''+v.id+'\')" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;cursor:pointer;font-size:11px;color:var(--text2)" title="Editar">✏</button> '+
         '<button class="gasto-del" onclick="delVenta(\''+v.id+'\')">✕</button>'+
       '</td>'+
@@ -27970,6 +27989,40 @@ function inyectarCSS(){
     '#fact-root-admin .fx-b:hover{opacity:.88}',
     '#fact-root-admin .fx-b:disabled{opacity:.4;cursor:not-allowed}',
     '#fact-root-admin .fx-b.sm{padding:5px 10px;font-size:11px}',
+
+    // ── Iconos de acción de las tablas ──
+    // Más grandes que un botón normal y con color según lo que hacen, para
+    // reconocerlos de un vistazo sin leer. El nombre sale al pasar el puntero.
+    '#fact-root-admin .fx-ic{width:33px;height:31px;display:inline-flex;align-items:center;'
+      +'justify-content:center;background:var(--surface2);border:1px solid var(--border);'
+      +'border-radius:8px;cursor:pointer;font-size:15px;line-height:1;padding:0;margin:0 2px 2px 0;'
+      +'font-family:inherit;transition:transform .06s,background .12s,border-color .12s}',
+    '#fact-root-admin .fx-ic:hover{transform:translateY(-1px)}',
+    '#fact-root-admin .fx-ic:active{transform:none}',
+    '#fact-root-admin .fx-ic:disabled{opacity:.35;cursor:not-allowed;transform:none}',
+    // Azul: mirar sin cambiar nada
+    '#fact-root-admin .fx-ic.k-ver{color:var(--blue);border-color:rgba(59,130,246,.4);'
+      +'background:rgba(59,130,246,.09)}',
+    '#fact-root-admin .fx-ic.k-ver:hover{background:rgba(59,130,246,.18)}',
+    // Gris: trabajar sobre el documento (modificar, duplicar, imprimir)
+    '#fact-root-admin .fx-ic.k-ed{color:var(--text2)}',
+    '#fact-root-admin .fx-ic.k-ed:hover{background:var(--surface);border-color:var(--text3)}',
+    // Verde: avanzar — facturar, bajar los archivos
+    '#fact-root-admin .fx-ic.k-ok{color:var(--green);border-color:rgba(34,197,94,.4);'
+      +'background:rgba(34,197,94,.09)}',
+    '#fact-root-admin .fx-ic.k-ok:hover{background:rgba(34,197,94,.2)}',
+    // Ámbar: cobrar de más, reintentar, esperar
+    '#fact-root-admin .fx-ic.k-av{color:var(--amber);border-color:rgba(245,158,11,.4);'
+      +'background:rgba(245,158,11,.09)}',
+    '#fact-root-admin .fx-ic.k-av:hover{background:rgba(245,158,11,.2)}',
+    // Rojo: quitar plata o botar — anular, papelera
+    '#fact-root-admin .fx-ic.k-no{color:var(--red);border-color:rgba(227,24,55,.35);'
+      +'background:rgba(227,24,55,.07)}',
+    '#fact-root-admin .fx-ic.k-no:hover{background:rgba(227,24,55,.16)}',
+    // Los que llevan letras en vez de dibujo (XML, PDF, NC, ND)
+    '#fact-root-admin .fx-ic.txt{font-size:9.5px;font-weight:900;letter-spacing:.02em;width:37px}',
+    '#fact-root-admin .fx-acc{display:inline-flex;flex-wrap:wrap;justify-content:center;'
+      +'max-width:186px}',
     '#fact-root-admin table.fx-t{width:100%;border-collapse:collapse;font-size:12px}',
     '#fact-root-admin table.fx-t th{background:var(--surface2);color:var(--text3);font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;padding:8px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}',
     '#fact-root-admin table.fx-t td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top}',
@@ -28010,6 +28063,7 @@ function render(){
   var subs=[
     ['proformas','📄 Proformas'],
     ['facturas','🧾 Facturas'],
+    ['compras','🛒 Compras'],
     ['clientes','👥 Clientes'],
     ['catalogo','📦 Catálogo'],
     ['anexos','📎 Anexos técnicos'],
@@ -28045,6 +28099,7 @@ function renderBody(){
   var b=document.getElementById('fact-body'); if(!b) return;
   if(S.sub==='proformas'){ S.edit ? renderEditor(b) : renderLista(b); }
   else if(S.sub==='facturas'){ S.ver ? renderVista(b) : renderFacturas(b); }
+  else if(S.sub==='compras'){ S.ver ? renderVista(b) : renderCompras(b); }
   else if(S.sub==='clientes') renderClientes(b);
   else if(S.sub==='catalogo') renderCatalogo(b);
   else if(S.sub==='anexos')   renderAnexos(b);
@@ -28207,16 +28262,7 @@ function filaDoc(d){
     +'<td style="max-width:230px">'+_esc(d.proyecto||'—')+(tipos?'<div style="margin-top:3px">'+tipos+'</div>':'')+'</td>'
     +'<td class="fx-r"><b>'+_mon(d.total, d.moneda)+'</b></td>'
     +'<td class="fx-c"><span class="fx-badge" style="color:'+st.color+';background:'+st.bg+'">'+st.lbl+'</span></td>'
-    +'<td class="fx-c" style="white-space:nowrap">'
-      +'<button class="fx-b sm gh" onclick="FACT.abrir(\''+d.id+'\')" title="Modificar">✏</button> '
-      +'<button class="fx-b sm gh" onclick="FACT.imprimir(\''+d.id+'\')" title="Imprimir / PDF">🖨</button> '
-      +(d.factura_id
-        ? '<button class="fx-b sm gh" onclick="FACT.verFactura(\''+d.factura_id+'\')"'
-          +' title="Ver la factura: líneas, pasar a Ventas, imprimir">👁</button> '
-        : '<button class="fx-b sm gh" onclick="FACT.facturar(\''+d.id+'\')" title="Facturar — revisar qué falta">🧾</button> ')
-      +'<button class="fx-b sm gh" onclick="FACT.duplicar(\''+d.id+'\')" title="Duplicar">⧉</button> '
-      +'<button class="fx-b sm gh" onclick="FACT.aPapelera(\''+d.id+'\')" title="Enviar a papelera" style="color:var(--red)">🗑</button>'
-    +'</td></tr>';
+    +'<td class="fx-c">'+accionesDoc(d)+'</td></tr>';
 }
 
 function resumenCard(docs){
@@ -28584,6 +28630,7 @@ function renderLineas(){
           +' oninput="FACT.setLinea(\''+l.id+'\',\'detalle\',this.value)">'+_esc(l.detalle||'')+'</textarea>'
           +(l.codigo?'<div style="font-size:9px;color:var(--text3);font-weight:800;margin-top:3px">'+_esc(l.codigo)
             +(l.cabys?' · CABYS '+_esc(l.cabys):'')+'</div>':'')
+          +candadoLinea(l, d)
         +'</td>'
         +'<td><select class="fx-i" onchange="FACT.setLinea(\''+l.id+'\',\'unidad\',this.value)">'
           +UNIDADES.map(function(u){ return '<option'+(l.unidad===u?' selected':'')+'>'+u+'</option>'; }).join('')
@@ -29690,7 +29737,13 @@ async function confirmarExport(){
       tienePendiente:false, pendMonto:0, pendCancelado:'no',
       referido:'',
       isAdminVenta:false, pagadoAdmin:false,
-      cxcPagado:false, cxcPagadoDate:null
+      cxcPagado:false, cxcPagadoDate:null,
+
+      // De dónde salió. Es lo que permite devolverla después y liberar el
+      // candado de sus líneas. Requiere 09_ventas_origen_factura.sql.
+      factDocId:d.id,
+      factConsecutivo:d.consecutivo||'',
+      factLineas:dest.miembros.map(function(l){ return l.id; })
     };
     try{ v.comision=calcComision(v, fibraCosto); }catch(e){ v.comision=0; }
 
@@ -30759,9 +30812,19 @@ var ESTADO_HAC = {
 var BUCKET_COMP = 'fact-comprobantes';
 
 // Documentos fiscales de la empresa activa (todo lo que no es proforma)
+// Las facturas de venta y sus notas. Las compras NO: van en su propia
+// subpestaña, porque son gasto y mezclarlas confunde el control.
 function facturasEmpresa(){
   return S.docs.filter(function(d){
-    return d.empresa_id===S.empresaId && d.tipo_doc && d.tipo_doc!=='proforma';
+    return d.empresa_id===S.empresaId && d.tipo_doc
+        && d.tipo_doc!=='proforma' && d.tipo_doc!=='FEC';
+  });
+}
+
+// Las facturas de compra, aparte
+function comprasEmpresa(){
+  return S.docs.filter(function(d){
+    return d.empresa_id===S.empresaId && d.tipo_doc==='FEC';
   });
 }
 
@@ -31071,18 +31134,12 @@ function renderFacturas(b){
       +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'
         +'<div class="fx-h" style="margin:0">Facturas electrónicas</div>'
         +'<span style="font-size:11px;color:var(--text3)">'+docs.length+'</span>'
-        +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap">'
-          +'<button class="fx-b sm" onclick="FACT.nuevaCompra()"'
-            +' title="Cuando la empresa le compra a alguien no inscrito ante Hacienda">'
-            +'+ Factura de compra</button>'
-          +'<button class="fx-b sm gh" onclick="FACT.refrescarFacturas()">↻ Actualizar</button>'
-        +'</div>'
+        +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.refrescarFacturas()">'
+          +'↻ Actualizar</button>'
       +'</div>'
       +(docs.length===0
-        ? '<div class="fx-empty">Todavía no se ha emitido ningún comprobante.<br>'
-          +'Las facturas se emiten desde una proforma, con el botón 🧾 de su fila.<br>'
-          +'La <b>factura de compra</b> se hace acá arriba, cuando la empresa le compra '
-          +'a alguien no inscrito ante Hacienda.</div>'
+        ? '<div class="fx-empty">Todavía no se ha emitido ninguna factura.<br>'
+          +'Se emiten desde una proforma, con el botón 🧾 de su fila.</div>'
         : '<div class="fx-tbl-scroll"><table class="fx-t">'
           +'<thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th>'
           +'<th class="fx-r">Total</th><th class="fx-c">Hacienda</th><th>Clave</th>'
@@ -31128,29 +31185,7 @@ function filaFactura(d){
           +_esc(String(d.estado_hacienda_msg).slice(0,70))+'</div>':'')+'</td>'
     +'<td style="font-size:10px;color:var(--text3);word-break:break-all;max-width:170px">'
       +_esc(d.clave||'—')+'</td>'
-    +'<td class="fx-c" style="white-space:nowrap">'
-      +'<button class="fx-b sm gh" onclick="FACT.verFactura(\''+d.id+'\')"'
-        +' title="Ver: líneas, pasar a Ventas, imprimir">👁</button> '
-      +(hay(d.xml_path)
-        ?'<button class="fx-b sm gh" onclick="FACT.verArchivo(\''+d.id+'\',\'xml\')" title="Ver el XML firmado">XML</button> ':'')
-      +(hay(d.pdf_path)
-        ?'<button class="fx-b sm gh" onclick="FACT.verArchivo(\''+d.id+'\',\'pdf\')" title="Ver el PDF">PDF</button> ':'')
-      +(d.clave && !hay(d.xml_path)
-        ?'<button class="fx-b sm gh" onclick="FACT.bajarArchivos(\''+d.id+'\')" title="Pedir el XML y el PDF a GTI">⤓</button> ':'')
-      +(d.clave && d.estado_hacienda!=='aceptado' && d.estado_hacienda!=='rechazado'
-        ?'<button class="fx-b sm gh" onclick="FACT.reconsultar(\''+d.id+'\')" title="Volver a preguntar a Hacienda">↻</button> ':'')
-      +(!d.clave && (d.estado_hacienda==='error' || d.estado_hacienda==='en_cola')
-        ?'<button class="fx-b sm gh" onclick="FACT.reintentar(\''+d.id+'\')"'
-          +' title="Volver a intentar la emisión">↻ Reintentar</button> ':'')
-      +(d.tipo_doc==='FE' && d.estado_hacienda==='aceptado' && !estaAnulada(d)
-        ? '<button class="fx-b sm gh" onclick="FACT.nuevaNota(\''+d.id+'\',\'NC\')"'
-          +' title="Nota de crédito: rebajar o anular esta factura">NC</button> '
-          +'<button class="fx-b sm gh" onclick="FACT.nuevaNota(\''+d.id+'\',\'ND\')"'
-          +' title="Nota de débito: cobrar de más sobre esta factura">ND</button> '
-        : '')
-      +'<button class="fx-b sm gh" onclick="FACT.verBitacora(\''+d.id+'\')" title="Bitácora de la emisión">🕑</button> '
-      +'<button class="fx-b sm gh" onclick="FACT.imprimir(\''+d.id+'\')" title="Imprimir">🖨</button>'
-    +'</td></tr>';
+    +'<td class="fx-c">'+accionesDoc(d)+'</td></tr>';
 }
 
 async function refrescarFacturas(){
@@ -31162,6 +31197,139 @@ async function refrescarFacturas(){
     }
   }catch(e){ _toast('⚠ '+(e.message||e)); }
   renderBody();
+}
+
+// ── SUBPESTAÑA COMPRAS ──────────────────────────────────────────────────────
+// Lo que la empresa le compró a gente no inscrita ante Hacienda. Es gasto: no
+// entra al reporte de Ventas y por eso va en su propia lista.
+function renderCompras(b){
+  var docs=comprasEmpresa();
+  var tot={};
+  docs.forEach(function(d){
+    var m=d.moneda||'CRC';
+    if(!tot[m]) tot[m]={n:0, sub:0, iva:0, total:0};
+    tot[m].n++; tot[m].sub+=_n(d.subtotal);
+    tot[m].iva+=_n(d.impuesto_total); tot[m].total+=_n(d.total);
+  });
+
+  b.innerHTML=
+    '<div class="fx-card">'
+      +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">'
+        +'<div class="fx-h" style="margin:0">Facturas de compra</div>'
+        +'<span style="font-size:11px;color:var(--text3)">'+docs.length+'</span>'
+        +'<div style="margin-left:auto;display:flex;gap:7px;flex-wrap:wrap">'
+          +'<button class="fx-b sm" onclick="FACT.nuevaCompra()">+ Nueva factura de compra</button>'
+          +'<button class="fx-b sm gh" onclick="FACT.refrescarFacturas()">↻ Actualizar</button>'
+        +'</div>'
+      +'</div>'
+      +'<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin-bottom:12px">'
+        +'Se emiten cuando <b>'+_esc(_emp().nombre_comercial)+' le compra</b> a alguien que no '
+        +'está inscrito ante Hacienda, y la empresa asume el IVA de esa compra. '
+        +'<b>Son gasto, no venta:</b> no aparecen en el reporte de Ventas.'
+      +'</div>'
+      +(docs.length===0
+        ? '<div class="fx-empty">Todavía no se ha emitido ninguna factura de compra.</div>'
+        : '<div class="fx-tbl-scroll"><table class="fx-t">'
+          +'<thead><tr><th>Número</th><th>Fecha</th><th>A quién se le compró</th>'
+          +'<th class="fx-r">Total</th><th class="fx-r">IVA asumido</th>'
+          +'<th class="fx-c">Hacienda</th><th class="fx-c">Acciones</th></tr></thead><tbody>'
+          +docs.map(filaCompra).join('')
+          +'</tbody></table></div>')
+    +'</div>'
+    +(docs.length
+      ? '<div class="fx-card">'
+        +'<div class="fx-h">Resumen de compras</div>'
+        +Object.keys(tot).map(function(m){
+            var a=tot[m];
+            return '<div style="display:flex;gap:26px;flex-wrap:wrap;font-size:12.5px;margin-bottom:6px">'
+              +'<div><span style="color:var(--text3)">Compras ('+m+'):</span> <b>'+a.n+'</b></div>'
+              +'<div><span style="color:var(--text3)">Sin IVA:</span> <b>'+_mon(a.sub,m)+'</b></div>'
+              +'<div><span style="color:var(--text3)">IVA asumido:</span> <b style="color:var(--amber)">'
+                +_mon(a.iva,m)+'</b></div>'
+              +'<div><span style="color:var(--text3)">Total pagado:</span> <b>'+_mon(a.total,m)+'</b></div>'
+            +'</div>';
+          }).join('')
+        +'</div>'
+      : '');
+}
+
+// Un botón de acción. El título es lo que se lee al pasar el puntero, y está
+// escrito en palabras, no en jerga.
+function _ic(icono, titulo, accion, clase){
+  return '<button class="fx-ic '+(clase||'k-ed')+(icono.length>2?' txt':'')+'"'
+    +' title="'+_esc(titulo)+'" onclick="'+accion+'">'+icono+'</button>';
+}
+
+// Las acciones de un documento, iguales en proformas, facturas y compras.
+// Se arman en una sola función para que el mismo botón se vea y se llame igual
+// en todas las listas.
+function accionesDoc(d){
+  var id=d.id, t=d.tipo_doc, out=[];
+  var esProf=(t==='proforma');
+  var esFact=(t==='FE');
+  var esNota=(t==='NC'||t==='ND');
+
+  if(esProf){
+    out.push(_ic('✏','Modificar la proforma','FACT.abrir(\''+id+'\')','k-ed'));
+    if(d.factura_id){
+      out.push(_ic('👁','Ver la factura que salió de esta proforma',
+        'FACT.verFactura(\''+d.factura_id+'\')','k-ver'));
+    } else {
+      out.push(_ic('🧾','Facturar: revisar qué falta y emitir','FACT.facturar(\''+id+'\')','k-ok'));
+    }
+    out.push(_ic('🖨','Imprimir o guardar en PDF','FACT.imprimir(\''+id+'\')','k-ed'));
+    out.push(_ic('⧉','Duplicar en una proforma nueva','FACT.duplicar(\''+id+'\')','k-ed'));
+    out.push(_ic('🗑','Enviar a la papelera','FACT.aPapelera(\''+id+'\')','k-no'));
+    return '<div class="fx-acc">'+out.join('')+'</div>';
+  }
+
+  // Facturas, notas y compras
+  out.push(_ic('👁','Ver el documento y sus líneas','FACT.verFactura(\''+id+'\')','k-ver'));
+
+  if(d.xml_path) out.push(_ic('XML','Ver el XML firmado',
+    'FACT.verArchivo(\''+id+'\',\'xml\')','k-ver'));
+  if(d.pdf_path) out.push(_ic('PDF','Ver el PDF que dio GTI',
+    'FACT.verArchivo(\''+id+'\',\'pdf\')','k-ver'));
+  if(d.clave && !d.xml_path) out.push(_ic('⤓','Pedirle a GTI el XML y el PDF',
+    'FACT.bajarArchivos(\''+id+'\')','k-ok'));
+  if(d.clave && d.estado_hacienda!=='aceptado' && d.estado_hacienda!=='rechazado'){
+    out.push(_ic('↻','Volver a preguntarle a Hacienda por el estado',
+      'FACT.reconsultar(\''+id+'\')','k-av'));
+  }
+  if(!d.clave && (d.estado_hacienda==='error' || d.estado_hacienda==='en_cola')){
+    out.push(_ic('↻','Volver a intentar la emisión','FACT.reintentar(\''+id+'\')','k-av'));
+  }
+  if(esFact && d.estado_hacienda==='aceptado' && !estaAnulada(d)){
+    out.push(_ic('NC','Nota de crédito: rebajar o anular esta factura',
+      'FACT.nuevaNota(\''+id+'\',\'NC\')','k-no'));
+    out.push(_ic('ND','Nota de débito: cobrar de más sobre esta factura',
+      'FACT.nuevaNota(\''+id+'\',\'ND\')','k-av'));
+  }
+  out.push(_ic('🕑','Bitácora: cada intento de emisión y quién lo pidió',
+    'FACT.verBitacora(\''+id+'\')','k-ed'));
+  out.push(_ic('🖨','Imprimir o guardar en PDF','FACT.imprimir(\''+id+'\')','k-ed'));
+  if(esNota){ /* una nota no lleva más acciones */ }
+  return '<div class="fx-acc">'+out.join('')+'</div>';
+}
+
+function filaCompra(d){
+  return '<tr>'
+    +'<td><b style="font-size:13px;color:var(--red)">'+_esc(d.consecutivo||'—')+'</b>'
+      +(d.consecutivo_fiscal
+        ?'<div style="font-size:9px;color:var(--text3);margin-top:2px">'+_esc(d.consecutivo_fiscal)+'</div>':'')+'</td>'
+    +'<td style="white-space:nowrap">'+_fechaCorta(d.fecha)+'</td>'
+    +'<td><b>'+_esc(d.cliente_nombre)+'</b>'
+      +(d.cliente_identificacion
+        ?'<div style="font-size:9.5px;color:var(--text3)">'
+          +_esc(_fmtIdent({identificacion:d.cliente_identificacion}, d.cliente_tipo_ident)
+            ||d.cliente_identificacion)+'</div>':'')+'</td>'
+    +'<td class="fx-r"><b>'+_mon(d.total, d.moneda)+'</b></td>'
+    +'<td class="fx-r" style="color:var(--amber)">'+_mon(d.impuesto_total, d.moneda)+'</td>'
+    +'<td class="fx-c">'+badgeHac(d)
+      +(d.estado_hacienda_msg
+        ?'<div style="font-size:9px;color:var(--text3);max-width:150px">'
+          +_esc(String(d.estado_hacienda_msg).slice(0,70))+'</div>':'')+'</td>'
+    +'<td class="fx-c" style="white-space:nowrap">'+accionesDoc(d)+'</td></tr>';
 }
 
 // ── Panel de preparación ────────────────────────────────────────────────────
@@ -31692,8 +31860,8 @@ function renderVista(b){
                   +_mon(x.total, d.moneda).replace('− ','')+'</b></td>'
                 +'<td class="fx-c">'+badgeHac(x)+'</td>'
                 +'<td class="fx-c" style="white-space:nowrap">'
-                  +'<button class="fx-b sm gh" onclick="FACT.verFactura(\''+x.id+'\')" title="Ver">👁</button> '
-                  +'<button class="fx-b sm gh" onclick="FACT.verBitacora(\''+x.id+'\')" title="Bitácora">🕑</button>'
+                  +_ic('👁','Ver la nota','FACT.verFactura(\''+x.id+'\')','k-ver')
+                  +_ic('🕑','Bitácora de la emisión','FACT.verBitacora(\''+x.id+'\')','k-ed')
                 +'</td></tr>';
             }).join('')
           +'</tbody></table></div>'
@@ -31789,7 +31957,7 @@ function renderVista(b){
                 +'<td class="fx-r"><b>'+_mon(l.total, d.moneda)+'</b>'
                   +'<div style="font-size:9.5px;color:var(--text3)">base '+_mon(l.subtotal, d.moneda)+'</div></td>'
                 +'<td class="fx-c">'+(l.exportada
-                    ? '<span style="font-size:9.5px;color:var(--green);font-weight:800">✓ En Ventas</span>'
+                    ? candadoLinea(l, d)
                     : '<span style="font-size:9.5px;color:var(--text3)">—</span>')+'</td>'
               +'</tr>';
             }).join('')
@@ -32767,6 +32935,204 @@ async function emitirCompra(){
   _sondear(id, 0);
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DEVOLVER UNA VENTA A SU PROFORMA O FACTURA
+//
+// Cuando una línea pasa al reporte de Ventas queda con candado: no se puede
+// volver a pasar, para que la misma plata no se cuente dos veces. El candado
+// es SOLO para eso — la línea se sigue viendo, se imprime y no cambia nada más.
+//
+// Acá está la llave. Desde el reporte de Ventas se devuelve la venta a su
+// documento: se borra del reporte, se libera el candado de sus líneas, y esas
+// líneas quedan listas para volver a pasarse, solas o con otro grupo.
+//
+// Una venta ya cobrada NO se puede devolver: devolverla dejaría el cobro
+// registrado apuntando a una venta que ya no existe, y eso descuadra CXC.
+//
+// Requiere 09_ventas_origen_factura.sql.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ¿Está cobrada? Se consulta la misma cascada que usa CXC, para no inventar
+// una segunda verdad sobre lo que está pagado.
+function _ventaCobrada(v){
+  if(!v) return false;
+  try{ if(typeof _esCxcPagado==='function' && _esCxcPagado(v)) return true; }catch(e){}
+  return !!(v.cxcPagado || v.pagadoAdmin);
+}
+
+// Por qué no se puede devolver, en palabras. Cadena vacía = sí se puede.
+function puedeDevolver(uid){
+  if(!SESSION) return false;
+  if(SESSION.rol==='superadmin') return true;
+  return SESSION.id===uid;
+}
+
+function motivoNoDevolver(v, uid){
+  if(!v) return 'No se encontró la venta.';
+  if(uid!==undefined && !puedeDevolver(uid)){
+    return 'Solo quien registró la venta, o el superadmin, puede devolverla.';
+  }
+  if(!v.factDocId) return 'Esa venta se registró a mano, no salió de una proforma ni de una factura.';
+  if(_ventaCobrada(v)){
+    return 'Esa venta ya está cobrada. Devolverla dejaría el cobro apuntando a una venta '
+      +'que ya no existe y descuadraría Cuentas por cobrar. Primero hay que quitarle la '
+      +'marca de cobrada en la pestaña de Cobro.';
+  }
+  return '';
+}
+
+// Lo llama el reporte de Ventas. uid es el dueño de la venta.
+async function devolverVenta(ventaId, uid){
+  var v=null, mk=null;
+  try{
+    var vd=getVentasData(uid)||{};
+    Object.keys(vd).forEach(function(k){
+      (vd[k].ventas||[]).forEach(function(x){ if(x.id===ventaId){ v=x; mk=k; } });
+    });
+  }catch(e){ console.error('devolverVenta/buscar:',e); }
+
+  var no=motivoNoDevolver(v, uid);
+  if(no){ _toast('⚠ '+no); return false; }
+
+  // Se busca el documento para poder nombrarlo en la confirmación
+  var doc=S.docs.find(function(x){ return x.id===v.factDocId; });
+  var nombreDoc=v.factConsecutivo || (doc&&doc.consecutivo) || 'su documento';
+  var nLin=(v.factLineas||[]).length;
+
+  if(!confirm('Se va a devolver esta venta a '+nombreDoc+'.\n\n'
+      +'· Se borra del reporte de Ventas ('+_mon(v.total, v.isUsd?'USD':'CRC')+')\n'
+      +'· Se libera'+(nLin===1?' su línea':'n sus '+nLin+' líneas')+', que quedan listas '
+      +'para volver a pasarse\n'
+      +'· La comisión de esa venta desaparece con ella\n\n¿Continuar?')) return false;
+
+  // 1. Liberar el candado de las líneas. Se hace PRIMERO: si algo falla
+  //    después, es mejor una línea libre de más que una venta borrada sin
+  //    haber liberado nada.
+  var ids=(v.factLineas||[]).slice();
+  var liberadas=0;
+  for(var i=0;i<ids.length;i++){
+    try{
+      var r=await DB.from('fact_lineas')
+        .update({exportada:false, venta_id:null, venta_grupo:null})
+        .eq('id',ids[i]);
+      if(!r.error) liberadas++;
+    }catch(e){ console.warn('liberar línea '+ids[i]+':',e); }
+  }
+  // Y en memoria, si esas líneas están abiertas en pantalla
+  S.lineas.forEach(function(l){
+    if(ids.indexOf(l.id)>=0){ l.exportada=false; l.venta_id=null; l.venta_grupo=null; }
+  });
+
+  // 2. ¿Al documento le queda alguna línea en Ventas? Si no, se le quita la
+  //    marca, para que la lista no siga diciendo «En Ventas».
+  if(v.factDocId){
+    try{
+      var rl=await loadAllRowsEq('fact_lineas','doc_id',v.factDocId,'orden');
+      var quedan=(rl.error?[]:(rl.data||[])).some(function(l){ return l.exportada; });
+      if(!quedan){
+        await DB.from('fact_docs')
+          .update({exportada_ventas:false, actualizado_en:new Date().toISOString()})
+          .eq('id',v.factDocId);
+        var dd=S.docs.find(function(x){ return x.id===v.factDocId; });
+        if(dd) dd.exportada_ventas=false;
+      }
+    }catch(e){ console.warn('devolverVenta/marca del documento:',e); }
+  }
+
+  // 3. Borrar la venta. Se usa el borrado del sistema para que se vaya también
+  //    de Supabase y del respaldo, no solo de la memoria.
+  try{
+    var vd2=getVentasData(uid)||{};
+    if(vd2[mk]){
+      vd2[mk].ventas=(vd2[mk].ventas||[]).filter(function(x){ return x.id!==ventaId; });
+      window._ventasCache[uid]=vd2;
+    }
+    // _deleteSingleVenta borra la fila de ventas Y el respaldo en configuracion,
+    // que es lo que evita que la venta reaparezca al recargar. Recibe solo el id.
+    if(typeof _deleteSingleVenta==='function') _deleteSingleVenta(ventaId);
+    else await DB.from('ventas').delete().eq('id',ventaId);
+  }catch(e){
+    console.error('devolverVenta/borrar:',e);
+    _toast('⚠ Se liberaron las líneas pero no se pudo borrar la venta: '+((e&&e.message)||e));
+    return false;
+  }
+
+  try{ if(typeof _crmInvalidarCache==='function') _crmInvalidarCache(); }catch(e){}
+
+  _toast('✓ Venta devuelta a '+nombreDoc+' — '+liberadas
+    +(liberadas===1?' línea liberada':' líneas liberadas'));
+
+  // Refrescar lo que esté a la vista, sin cambiar de pestaña
+  try{ if(typeof renderVentasUser==='function') renderVentasUser(); }catch(e){}
+  try{ if(typeof renderAdminVentasTable==='function') renderAdminVentasTable(); }catch(e){}
+  try{ if(typeof renderAdminOwnVentas==='function') renderAdminOwnVentas(); }catch(e){}
+  try{ if(_root()) renderBody(); }catch(e){}
+  return true;
+}
+
+// El botón que dibuja el reporte de Ventas en la fila de una venta.
+// Devuelve cadena vacía cuando esa venta no vino de facturación.
+function botonDevolver(v, uid){
+  if(!v || !v.factDocId) return '';
+  var no=motivoNoDevolver(v, uid);
+  var doc=v.factConsecutivo||'su documento';
+  if(no){
+    return '<button disabled title="'+_esc(no)+'"'
+      +' style="background:none;border:1px solid var(--border);border-radius:5px;'
+      +'padding:2px 7px;font-size:11px;color:var(--text3);opacity:.5;cursor:not-allowed">↩</button> ';
+  }
+  return '<button onclick="FACT.devolverVenta(\''+v.id+'\',\''+_esc(uid)+'\')"'
+    +' title="Devolver a '+_esc(doc)+': se borra de Ventas y sus líneas quedan libres para volver a pasarse"'
+    +' style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.4);border-radius:5px;'
+    +'padding:2px 7px;cursor:pointer;font-size:11px;color:var(--amber)">↩</button> ';
+}
+
+// Lo que se muestra en una línea que ya pasó a Ventas: el candado y, si la
+// persona puede, la llave. Va del lado del documento porque es donde uno
+// piensa «devolver esto a la factura».
+function candadoLinea(l, doc){
+  if(!l || !l.exportada) return '';
+  var uid=(doc&&doc.usuario_id)||'';
+  var v=_ventaDeLinea(l.venta_id, uid);
+  var puede=v && !motivoNoDevolver(v, uid);
+  var motivo=v?motivoNoDevolver(v, uid):'';
+
+  return '<div style="font-size:9px;color:var(--green);font-weight:800;margin-top:3px;'
+    +'display:flex;align-items:center;gap:5px;flex-wrap:wrap">'
+    +'<span>🔒 En Ventas</span>'
+    +(l.venta_id
+      ? (puede
+          ? '<button class="fx-ic k-av" style="width:24px;height:21px;font-size:11px;margin:0"'
+            +' title="Devolver esa venta a este documento: se borra de Ventas y esta línea '
+            +'queda libre para volver a pasarla"'
+            +' onclick="FACT.devolverVenta(\''+l.venta_id+'\',\''+_esc(uid)+'\')">↩</button>'
+          : '<span style="color:var(--text3);font-weight:600" title="'+_esc(motivo||'')+'">'
+            +(motivo?'(no se puede devolver)':'')+'</span>')
+      : '')
+    +'</div>';
+}
+
+// Busca la venta a la que fue una línea, en el cache del usuario dueño
+function _ventaDeLinea(ventaId, uid){
+  if(!ventaId || !uid) return null;
+  try{
+    var vd=getVentasData(uid)||{};
+    var hit=null;
+    Object.keys(vd).forEach(function(k){
+      (vd[k].ventas||[]).forEach(function(x){ if(x.id===ventaId) hit=x; });
+    });
+    return hit;
+  }catch(e){ return null; }
+}
+
+// De dónde vino, para mostrarlo en el reporte junto a la venta
+function origenVenta(v){
+  if(!v || !v.factDocId) return '';
+  return '<div style="font-size:9px;color:var(--text3);font-weight:700">de '
+    +_esc(v.factConsecutivo||'facturación')+'</div>';
+}
+
 // ── Cambio de empresa / subpestaña ──────────────────────────────────────────
 function setEmpresa(id){
   var e=S.empresas.find(function(x){ return x.id===id; });
@@ -32863,7 +33229,10 @@ window.FACT={
   // Factura de compra
   nuevaCompra:nuevaCompra, cerrarCompra:cerrarCompra, setCompra:setCompra,
   setCompraLinea:setCompraLinea, agregarLineaCompra:agregarLineaCompra,
-  quitarLineaCompra:quitarLineaCompra, emitirCompra:emitirCompra
+  quitarLineaCompra:quitarLineaCompra, emitirCompra:emitirCompra,
+  // Devolver una venta a su proforma o factura, liberando el candado
+  devolverVenta:devolverVenta, botonDevolver:botonDevolver, origenVenta:origenVenta,
+  motivoNoDevolver:motivoNoDevolver, candadoLinea:candadoLinea
 };
 
 // ── Punto de entrada (lo llama buildAdminTabs) ──────────────────────────────
