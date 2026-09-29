@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260928114227';
+var APP_BUILD='20260928121939';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -31368,35 +31368,61 @@ function pintarCliFix(){
         +' oninput="FACT.setCliFix(\'telefono\',this.value)">')
     +'</div>'
 
-    // Lo que todavía falta, dicho en el momento
-    +'<div style="margin-top:14px;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.6;'
-      +(listo?'background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);color:var(--green)'
-             :'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:var(--red)')+'">'
-      +(listo
-        ? '✓ Con esto ya se le puede facturar.'
-        : 'Falta: <b>'+f.map(_esc).join('</b>, <b>')+'</b>')
-      +(dig&&dig.length!==0&&!listo?'':'')
-    +'</div>'
-
-    +(_nombreEsCedula(b)
-      ? '<div style="margin-top:9px;font-size:11px;color:var(--amber);line-height:1.6">'
-        +'⚠ El nombre es solo un número. Así vinieron algunos de GTI; conviene poner '
-        +'el nombre o la razón social de verdad, porque es lo que sale en la factura.</div>'
-      : '')
+    // Lo que todavía falta. Va en su propio recuadro porque se repinta en cada
+    // tecla, y redibujar el formulario entero haría perder el cursor.
+    +'<div id="fact-fix-estado">'+estadoCliFix()+'</div>'
 
     +'<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">'
       +'<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fix-modal\')">Cancelar</button>'
       +'<button class="fx-b sec" onclick="FACT.cerrarModal(\'fact-fix-modal\');FACT.irACliente(\''
         +b.id+'\')">Abrir la ficha completa</button>'
-      +'<button class="fx-b" onclick="FACT.guardarCliFix()"'+(listo?'':' disabled style="opacity:.45;cursor:not-allowed"')+'>'
+      +'<button class="fx-b" id="fact-fix-guardar" onclick="FACT.guardarCliFix()"'
+        +(listo?'':' disabled style="opacity:.45;cursor:not-allowed"')+'>'
         +'Guardar y seguir</button>'
     +'</div>';
+}
+
+// Solo el recuadro de estado: qué falta, o que ya se puede facturar.
+function estadoCliFix(){
+  var b=S.cliFix; if(!b) return '';
+  var f=faltasCliente(b);
+  var listo=f.length===0;
+  return '<div style="margin-top:14px;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.6;'
+    +(listo?'background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);color:var(--green)'
+           :'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:var(--red)')+'">'
+    +(listo
+      ? '✓ Con esto ya se le puede facturar.'
+      : 'Falta: <b>'+f.map(_esc).join('</b>, <b>')+'</b>')
+    +'</div>'
+    +(_nombreEsCedula(b)
+      ? '<div style="margin-top:9px;font-size:11px;color:var(--amber);line-height:1.6">'
+        +'⚠ El nombre es solo un número. Así vinieron algunos de GTI; conviene poner '
+        +'el nombre o la razón social de verdad, porque es lo que sale en la factura.</div>'
+      : '');
+}
+
+// Refresca lo que cambia al escribir, SIN tocar los campos: si se redibujaran,
+// el navegador los destruye y los vuelve a crear, y el cursor se pierde después
+// de cada tecla. Era lo que pasaba al escribir el teléfono.
+function refrescarCliFix(){
+  var e=document.getElementById('fact-fix-estado');
+  if(e) e.innerHTML=estadoCliFix();
+  var g=document.getElementById('fact-fix-guardar');
+  if(g){
+    var listo=faltasCliente(S.cliFix).length===0;
+    g.disabled=!listo;
+    g.style.opacity=listo?'':'.45';
+    g.style.cursor=listo?'':'not-allowed';
+  }
 }
 
 function setCliFix(campo, val){
   if(!S.cliFix) return;
   S.cliFix[campo]=val;
-  pintarCliFix();
+  // El tipo de identificación cambia el texto de ayuda de la cédula, así que
+  // ese sí redibuja; es un desplegable y no se está escribiendo en él.
+  if(campo==='tipo_identificacion') pintarCliFix();
+  else refrescarCliFix();
 }
 
 // ── Guardar ─────────────────────────────────────────────────────────────────
@@ -31927,17 +31953,19 @@ function aplicarMotivo(){
 function setNota(campo, val){
   var b=S.nota; if(!b) return;
   b[campo]=val;
-  if(campo==='motivo') aplicarMotivo();
-  pintarNota();
+  if(campo==='motivo'){ aplicarMotivo(); pintarNota(); }
+  else refrescarNota();   // el detalle del motivo se escribe: no redibujar
 }
 
 function setNotaLinea(i, campo, val){
   var b=S.nota; if(!b || !b.lineas[i]) return;
   var l=b.lineas[i];
-  if(campo==='on') l.on=!!val;
-  else if(campo==='cantidad'||campo==='precio_unitario'||campo==='iva_pct') l[campo]=val;
-  else l[campo]=val;
-  pintarNota();
+  l[campo] = (campo==='on') ? !!val : val;
+  // Marcar o desmarcar cambia qué campos quedan habilitados: eso sí redibuja,
+  // y no se pierde nada porque no se está escribiendo. Los números y el texto
+  // solo refrescan los totales.
+  if(campo==='on') pintarNota();
+  else refrescarNota();
 }
 
 // Línea que no estaba en la factura: para una nota de débito de algo nuevo
@@ -32088,7 +32116,7 @@ function pintarNota(){
               +((bloq||!l.on)?' disabled':'')
               +' oninput="FACT.setNotaLinea('+i+',\'precio_unitario\',this.value)"></td>'
             +'<td class="fx-r">'+_num(l.iva_pct,0)+'%</td>'
-            +'<td class="fx-r"><b>'+(l.on?_mon(tot, fac.moneda):'—')+'</b></td>'
+            +'<td class="fx-r"><b data-nt="'+i+'">'+(l.on?_mon(tot, fac.moneda):'—')+'</b></td>'
             +'<td class="fx-c">'+(l.libre
               ? '<button class="fx-b sm gh" style="color:var(--red)" onclick="FACT.quitarLineaNota('+i+')">✕</button>'
               : '')+'</td>'
@@ -32097,36 +32125,73 @@ function pintarNota(){
       +'</tbody></table></div>'
 
     // ── Total y qué falta ──
+    // Los dos van en sus propios recuadros: se repintan en cada tecla y, si se
+    // redibujara el formulario entero, se perdería el cursor a cada rato.
     +'<div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:14px">'
-      +'<div style="flex:1;min-width:240px">'
-        +(f.length
-          ? '<div style="padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.7;'
-            +'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:var(--red)">'
-            +'Falta:<ul style="margin:5px 0 0;padding-left:17px">'
-            +f.slice(0,5).map(function(x){ return '<li>'+_esc(x)+'</li>'; }).join('')
-            +'</ul></div>'
-          : '<div style="padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.6;'
-            +'background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);color:var(--green)">'
-            +'✓ La nota está lista para emitirse.</div>')
-      +'</div>'
-      +'<div style="min-width:220px">'
-        +'<div class="fx-tot"><span style="color:var(--text3)">Subtotal</span><b>'
-          +_mon(t.subtotal, fac.moneda)+'</b></div>'
-        +'<div class="fx-tot"><span style="color:var(--text3)">IVA</span><b>'
-          +_mon(t.impuesto, fac.moneda)+'</b></div>'
-        +'<div class="fx-tot gr"><span>Total de la nota</span>'
-          +'<span style="color:var(--red)">'+_mon(t.total, fac.moneda)+'</span></div>'
-        +'<div style="font-size:10.5px;color:var(--text3);text-align:right;margin-top:5px">'
-          +'Factura: '+_mon(fac.total, fac.moneda)+'</div>'
-      +'</div>'
+      +'<div style="flex:1;min-width:240px" id="fact-nota-estado">'+estadoNota()+'</div>'
+      +'<div style="min-width:220px" id="fact-nota-totales">'+totalesNotaHTML()+'</div>'
     +'</div>'
 
     +'<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">'
       +'<button class="fx-b sec" onclick="FACT.cerrarNota()">Cancelar</button>'
-      +'<button class="fx-b" onclick="FACT.emitirNota()"'
+      +'<button class="fx-b" id="fact-nota-emitir" onclick="FACT.emitirNota()"'
         +(f.length?' disabled style="opacity:.45;cursor:not-allowed"':'')+'>'
         +'Emitir '+_esc(tn.lbl.toLowerCase())+'</button>'
     +'</div>';
+}
+
+function estadoNota(){
+  var f=faltasNota();
+  if(f.length){
+    return '<div style="padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.7;'
+      +'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:var(--red)">'
+      +'Falta:<ul style="margin:5px 0 0;padding-left:17px">'
+      +f.slice(0,5).map(function(x){ return '<li>'+_esc(x)+'</li>'; }).join('')
+      +'</ul></div>';
+  }
+  return '<div style="padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.6;'
+    +'background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);color:var(--green)">'
+    +'✓ La nota está lista para emitirse.</div>';
+}
+
+function totalesNotaHTML(){
+  var b=S.nota; if(!b) return '';
+  var fac=S.docs.find(function(x){ return x.id===b.facId; })||{};
+  var t=totalesNota();
+  return '<div class="fx-tot"><span style="color:var(--text3)">Subtotal</span><b>'
+      +_mon(t.subtotal, fac.moneda)+'</b></div>'
+    +'<div class="fx-tot"><span style="color:var(--text3)">IVA</span><b>'
+      +_mon(t.impuesto, fac.moneda)+'</b></div>'
+    +'<div class="fx-tot gr"><span>Total de la nota</span>'
+      +'<span style="color:var(--red)">'+_mon(t.total, fac.moneda)+'</span></div>'
+    +'<div style="font-size:10.5px;color:var(--text3);text-align:right;margin-top:5px">'
+      +'Factura: '+_mon(fac.total, fac.moneda)+'</div>';
+}
+
+// Lo que cambia al escribir, sin tocar los campos
+function refrescarNota(){
+  var b=S.nota; if(!b) return;
+  var fac=S.docs.find(function(x){ return x.id===b.facId; })||{};
+
+  b.lineas.forEach(function(l,i){
+    var el=document.querySelector('[data-nt="'+i+'"]');
+    if(!el) return;
+    var st=_n(l.cantidad)*_n(l.precio_unitario);
+    el.textContent = l.on ? _mon(st+st*(_n(l.iva_pct)/100), fac.moneda) : '—';
+  });
+
+  var e=document.getElementById('fact-nota-estado');
+  if(e) e.innerHTML=estadoNota();
+  var t=document.getElementById('fact-nota-totales');
+  if(t) t.innerHTML=totalesNotaHTML();
+
+  var g=document.getElementById('fact-nota-emitir');
+  if(g){
+    var listo=faltasNota().length===0;
+    g.disabled=!listo;
+    g.style.opacity=listo?'':'.45';
+    g.style.cursor=listo?'':'not-allowed';
+  }
 }
 
 // ── Emitir ──────────────────────────────────────────────────────────────────
