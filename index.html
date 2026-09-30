@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260930103126';
+var APP_BUILD='20260930103923';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -34598,7 +34598,7 @@ root.LOSAS_REC = API;
 (function (root) {
 'use strict';
 
-var DESCARGO = 'Este informe es una herramienta de predimensionamiento elaborada por CONCRE con base en las normas y métodos indicados en él. No sustituye el diseño, la revisión ni la firma de un profesional responsable, ni el estudio de suelos del sitio. Los resultados dependen de los datos ingresados; los valores marcados como estimados (E) o por defecto son referencias de CONCRE y deben confirmarse con las fichas de los equipos y con el estudio de suelos. CONCRE no asume responsabilidad por el uso de este informe fuera de ese alcance, ni por la construcción, el curado, el control de calidad o el uso posterior de la losa. Las recomendaciones sobre Fibra Plus 54 mm se calculan con las especificaciones y la calidad de la fibra de CONCRE / Concreequipos; no son válidas con otra fibra.';
+var DESCARGO = 'Este informe es una herramienta de predimensionamiento elaborada por CONCRE con base en las normas y métodos indicados en él. No sustituye el diseño, la revisión ni la firma de un profesional responsable, ni el estudio de suelos del sitio. Los resultados dependen de los datos ingresados; los valores marcados como estimados (E) o por defecto son referencias de CONCRE y deben confirmarse con las fichas de los equipos y con el estudio de suelos. CONCRE no asume responsabilidad por el uso de este informe fuera de ese alcance, ni por la construcción, el curado, el control de calidad o el uso posterior de la losa. Las recomendaciones sobre Fibra Plus 54 mm se calculan con las especificaciones y la calidad de la fibra de CONCRE; no son válidas con otra fibra.';
 var DESCARGO_CORTO = 'PREDIMENSIONAMIENTO COMERCIAL · NO ES UNA MEMORIA DE CÁLCULO. No sustituye el diseño, la revisión ni la firma de un profesional responsable inscrito en el CFIA. Ver el descargo completo y la lista de lo que este cálculo NO revisa.';
 // Lo que el programa NO verifica. Va en el informe, no en una nota al pie: es lo primero que
 // pregunta un ingeniero revisor y es lo que delimita la responsabilidad de CONCRE.
@@ -34758,7 +34758,7 @@ function html(ctx) {
   out.push(seccion('Descargo de responsabilidad', '<p class="p" style="font-size:8.5px;color:#555">' + esc(DESCARGO) + '</p>'));
 
   // Servicios de CONCRE: hoja aparte, para no mezclar promoción con el cuerpo técnico
-  out.push('<div class="sec salto"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE / Concreequipos; no son válidos con otra fibra.</p></div>');
+  out.push('<div class="sec salto"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE; no son válidos con otra fibra.</p></div>');
 
   var css = '*{box-sizing:border-box}html,body{margin:0}body{font-family:Arial,sans-serif;color:#3D3D3D;font-size:9.5px;background:#fff}' +
     '@page{size:A4;margin:11mm 12mm}' +
