@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260930094921';
+var APP_BUILD='20260930103126';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -33954,54 +33954,54 @@ root.LOSAS_MOTOR = API;
 
 // ── Montacargas y manejo de materiales (carga por rueda delantera, cargado) ─────
 const MONTACARGAS = [
-  { id: 'yale_gp40n',    nombre: 'Yale GP40N · 1.8 t · neumática',              W: 2326, A: 325, sep: 100, est: 'V', nota: 'Eje delantero 4 652 kg (ficha). Huella estimada.' },
-  { id: 'yale_gp50n',    nombre: 'Yale GP50N · "2.5 t" de mercado · neumática', W: 2663, A: 365, sep: 100, est: 'V', nota: 'Eje delantero 5 325 kg (ficha). Huella estimada.' },
-  { id: 'toyota_8fgcu25',nombre: 'Toyota 8FGCU25 · 2.5 t · llanta de cojín',    W: 2566, A: 315, sep: 100, est: 'D', nota: 'Peso de ficha; eje = 0.87 × (peso + capacidad).' },
-  { id: 'crown_fc5225',  nombre: 'Crown FC 5225 · 2.5 t eléctrico · cojín',     W: 3100, A: 315, sep: 100, est: 'V', nota: 'Eje delantero 6 201 kg (ficha). Huella estimada.' },
-  { id: 'crown_fc5245',  nombre: 'Crown FC 5245 · 3.0 t eléctrico · cojín',     W: 3635, A: 350, sep: 100, est: 'V', nota: 'Eje delantero 7 269 kg (ficha). Huella estimada.' },
-  { id: 'yale_gp70n',    nombre: 'Yale GP70N · 3.2 t · neumática',              W: 3455, A: 450, sep: 100, est: 'V', nota: 'Eje delantero 6 910 kg (ficha). Huella estimada.' },
-  { id: 'mc_35',         nombre: 'Montacargas 3.5 t · neumática',               W: 3785, A: 500, sep: 100, est: 'D', nota: 'Sin ficha: eje = 0.87 × (peso + capacidad).' },
-  { id: 'hyster_h40',    nombre: 'Hyster H4.0FT · 4.0 t · neumática',           W: 4485, A: 500, sep: 105, est: 'V', nota: 'Eje delantero 8 969 kg (ficha). Huella estimada.' },
-  { id: 'hyster_h50',    nombre: 'Hyster H5.0FT · 5.0 t · neumática',           W: 5507, A: 600, sep: 110, est: 'V', nota: 'Eje delantero 11 014 kg (ficha). Huella estimada.' },
-  { id: 'hyster_h70',    nombre: 'Hyster H7.0FT · 7.0 t · neumática (por lado)',W: 7160, A: 700, sep: 120, est: 'D', nota: 'Peso de ficha; eje derivado. Llantas duales por lado.' },
+  { id: 'yale_gp40n',    nombre: 'Yale GP40N · 1.8 t · neumática',              W: 2326, A: 325, sep: 100, est: 'V', nota: 'Eje delantero 4 652 kg (ficha). Huella estimada.', ayuda: 'Montacargas de horquillas de tamaño mediano, de los que se usan en patio: 1.8 toneladas de capacidad y llanta de aire. Lo que pesa cada rueda de adelante cuando va cargado.' },
+  { id: 'yale_gp50n',    nombre: 'Yale GP50N · "2.5 t" de mercado · neumática', W: 2663, A: 365, sep: 100, est: 'V', nota: 'Eje delantero 5 325 kg (ficha). Huella estimada.', ayuda: 'Montacargas de horquillas que en el mercado se vende como «de 2.5 toneladas», con llanta de aire. El dato es cuánto peso carga UNA rueda delantera cuando va con la carga arriba, que es lo que castiga el piso.' },
+  { id: 'toyota_8fgcu25',nombre: 'Toyota 8FGCU25 · 2.5 t · llanta de cojín',    W: 2566, A: 315, sep: 100, est: 'D', nota: 'Peso de ficha; eje = 0.87 × (peso + capacidad).', ayuda: 'Montacargas de horquillas de 2.5 toneladas con llanta de hule macizo, de los que trabajan dentro de bodega.' },
+  { id: 'crown_fc5225',  nombre: 'Crown FC 5225 · 2.5 t eléctrico · cojín',     W: 3100, A: 315, sep: 100, est: 'V', nota: 'Eje delantero 6 201 kg (ficha). Huella estimada.', ayuda: 'Montacargas eléctrico de 2.5 toneladas con llanta de hule macizo. El más común dentro de bodegas con piso terminado.' },
+  { id: 'crown_fc5245',  nombre: 'Crown FC 5245 · 3.0 t eléctrico · cojín',     W: 3635, A: 350, sep: 100, est: 'V', nota: 'Eje delantero 7 269 kg (ficha). Huella estimada.', ayuda: 'Montacargas eléctrico de 3 toneladas con llanta de hule macizo, para bodega con carga más pesada.' },
+  { id: 'yale_gp70n',    nombre: 'Yale GP70N · 3.2 t · neumática',              W: 3455, A: 450, sep: 100, est: 'V', nota: 'Eje delantero 6 910 kg (ficha). Huella estimada.', ayuda: 'Montacargas de horquillas grande, de 3.2 toneladas, con llanta de aire. Para patio y carga pesada.' },
+  { id: 'mc_35',         nombre: 'Montacargas 3.5 t · neumática',               W: 3785, A: 500, sep: 100, est: 'D', nota: 'Sin ficha: eje = 0.87 × (peso + capacidad).', ayuda: 'Montacargas de horquillas de 3.5 toneladas, llanta de aire. Medida genérica, sin marca.' },
+  { id: 'hyster_h40',    nombre: 'Hyster H4.0FT · 4.0 t · neumática',           W: 4485, A: 500, sep: 105, est: 'V', nota: 'Eje delantero 8 969 kg (ficha). Huella estimada.', ayuda: 'Montacargas de horquillas de 4 toneladas con llanta de aire. Ya es equipo grande.' },
+  { id: 'hyster_h50',    nombre: 'Hyster H5.0FT · 5.0 t · neumática',           W: 5507, A: 600, sep: 110, est: 'V', nota: 'Eje delantero 11 014 kg (ficha). Huella estimada.', ayuda: 'Montacargas de horquillas de 5 toneladas con llanta de aire. Equipo de patio pesado.' },
+  { id: 'hyster_h70',    nombre: 'Hyster H7.0FT · 7.0 t · neumática (por lado)',W: 7160, A: 700, sep: 120, est: 'D', nota: 'Peso de ficha; eje derivado. Llantas duales por lado.', ayuda: 'Montacargas de horquillas de 7 toneladas con llanta de aire, con dos llantas por lado adelante. De los más pesados que entran a una nave.' },
 ];
 const MANEJO = [
-  { id: 'reach_2t',   nombre: 'Retráctil Crown ESR 5280S · 2.0 t · rueda de carga', W: 3080, A: 38,  est: 'V', nota: 'Rueda de poliuretano de 33 × 10 cm: contacto pequeño, presión alta.' },
-  { id: 'trans_elec', nombre: 'Transpaleta eléctrica Crown PE 4500 · 2.7 t',        W: 1230, A: 30,  est: 'D', nota: 'Ruedas de carga 85 × 165 mm, ~90 % del peso.' },
-  { id: 'trans_man',  nombre: 'Transpaleta manual · 2.5 t',                          W: 1250, A: 25,  est: 'E', nota: 'Sin ficha. Poliuretano ~ 20–30 cm² por rueda.' },
-  { id: 'apilador',   nombre: 'Apilador eléctrico · 1.5 t',                          W: 1000, A: 30,  est: 'E', nota: 'Sin ficha verificada.' },
-  { id: 'vna',        nombre: 'VNA (pasillo muy angosto) · 1.5 t, 10–12 m',          W: 7000, A: 200, est: 'E', nota: 'Estimado: pedir la ficha del fabricante. Los VNA se revisan con TR34 movimiento definido.' },
+  { id: 'reach_2t',   nombre: 'Retráctil Crown ESR 5280S · 2.0 t · rueda de carga', W: 3080, A: 38,  est: 'V', nota: 'Rueda de poliuretano de 33 × 10 cm: contacto pequeño, presión alta.', ayuda: 'Montacargas retráctil: el de pasillo angosto, que mete las horquillas dentro del rack. Tiene ruedas chicas y duras de poliuretano, así que concentra el peso en poca área. Es más exigente para el piso que un montacargas normal, aunque pese menos.' },
+  { id: 'trans_elec', nombre: 'Transpaleta eléctrica Crown PE 4500 · 2.7 t',        W: 1230, A: 30,  est: 'D', nota: 'Ruedas de carga 85 × 165 mm, ~90 % del peso.', ayuda: 'Patineta eléctrica (transpaleta): la que se maneja caminando al lado y mueve tarimas a ras de piso. Ruedas chicas y duras.' },
+  { id: 'trans_man',  nombre: 'Transpaleta manual · 2.5 t',                          W: 1250, A: 25,  est: 'E', nota: 'Sin ficha. Poliuretano ~ 20–30 cm² por rueda.', ayuda: 'Patineta manual, la de palanca. Ruedas chicas y duras de poliuretano.' },
+  { id: 'apilador',   nombre: 'Apilador eléctrico · 1.5 t',                          W: 1000, A: 30,  est: 'E', nota: 'Sin ficha verificada.', ayuda: 'Apilador eléctrico: como una patineta pero que además levanta la tarima a altura. Uso liviano.' },
+  { id: 'vna',        nombre: 'VNA (pasillo muy angosto) · 1.5 t, 10–12 m',          W: 7000, A: 200, est: 'E', nota: 'Estimado: pedir la ficha del fabricante. Los VNA se revisan con TR34 movimiento definido.', ayuda: 'Equipo de pasillo muy angosto (VNA). Trabaja en bodegas de 10 a 12 metros de alto por pasillos apenas más anchos que la tarima. Exige un piso mucho más plano que lo normal y hay que pedir la ficha al proveedor.' },
 ];
 
 // ── Vehículos (carga por rueda) ─────────────────────────────────────────────────
 const VEHICULOS = [
-  { id: 'sedan',     nombre: 'Sedán (Corolla)',                          W: 450,  A: 190, dual: false, est: 'E', nota: 'Peso propio de ficha; reparto de ejes estimado.' },
-  { id: 'suv',       nombre: 'SUV (Corolla Cross) al peso bruto',        W: 550,  A: 225, dual: false, est: 'E', nota: 'PBV de ficha 1 930–2 005 kg.' },
-  { id: 'pickup',    nombre: 'Pickup doble cabina (Hilux) · rueda trasera',W: 950, A: 375, dual: false, est: 'E', nota: 'PBV 3 080–3 120 kg (ficha); ejes estimados.' },
-  { id: 'hino300',   nombre: 'Camión liviano Hino 300 916 (8.5 t)',       W: 1550, A: 200, dual: true, sep: 30, est: 'V', nota: 'Eje trasero 6 200 kg (ficha), 4 llantas.' },
-  { id: 'hino500',   nombre: 'Camión mediano Hino 500 1326 (13.5 t)',     W: 2500, A: 295, dual: true, sep: 32, est: 'V', nota: 'Eje trasero 10 000 kg (ficha), 4 llantas.' },
-  { id: 'camion_cr', nombre: 'Camión pesado · eje de diseño CR 11 t',     W: 2750, A: 300, dual: true, sep: 32, est: 'E', nota: 'Eje legal 10 t + tolerancia y sobrecarga (11 t). Presión de llanta estimada.' },
-  { id: 'tandem',    nombre: 'Camión tándem Hino 500 2836 (27.5 t)',       W: 2725, A: 330, dual: true, sep: 32, est: 'V', nota: 'Tándem trasero 21 800 kg (ficha), 8 llantas.' },
-  { id: 'recolector',nombre: 'Camión recolector (eje motriz tándem 17 t)', W: 2125, A: 300, dual: true, sep: 32, est: 'E', nota: 'Dato de EE. UU. (Seattle). Confirmar con el municipio.' },
+  { id: 'sedan',     nombre: 'Sedán (Corolla)',                          W: 450,  A: 190, dual: false, est: 'E', nota: 'Peso propio de ficha; reparto de ejes estimado.', ayuda: 'Carro de pasajeros común, tipo Corolla.' },
+  { id: 'suv',       nombre: 'SUV (Corolla Cross) al peso bruto',        W: 550,  A: 225, dual: false, est: 'E', nota: 'PBV de ficha 1 930–2 005 kg.', ayuda: 'Camioneta familiar o SUV, tipo Corolla Cross, con pasajeros y equipaje.' },
+  { id: 'pickup',    nombre: 'Pickup doble cabina (Hilux) · rueda trasera',W: 950, A: 375, dual: false, est: 'E', nota: 'PBV 3 080–3 120 kg (ficha); ejes estimados.', ayuda: 'Pick-up doble cabina, tipo Hilux, cargada. El dato es lo que pesa una rueda de atrás.' },
+  { id: 'hino300',   nombre: 'Camión liviano Hino 300 916 (8.5 t)',       W: 1550, A: 200, dual: true, sep: 30, est: 'V', nota: 'Eje trasero 6 200 kg (ficha), 4 llantas.', ayuda: 'Camión liviano de reparto, tipo Hino 300, de unas 8.5 toneladas en total. Llanta doble atrás.' },
+  { id: 'hino500',   nombre: 'Camión mediano Hino 500 1326 (13.5 t)',     W: 2500, A: 295, dual: true, sep: 32, est: 'V', nota: 'Eje trasero 10 000 kg (ficha), 4 llantas.', ayuda: 'Camión mediano, tipo Hino 500, de unas 13.5 toneladas. Llanta doble atrás.' },
+  { id: 'camion_cr', nombre: 'Camión pesado · eje de diseño CR 11 t',     W: 2750, A: 300, dual: true, sep: 32, est: 'E', nota: 'Eje legal 10 t + tolerancia y sobrecarga (11 t). Presión de llanta estimada.', ayuda: 'Camión pesado, con el eje de diseño que se usa en Costa Rica: 11 toneladas por eje, que es el límite legal más una tolerancia.' },
+  { id: 'tandem',    nombre: 'Camión tándem Hino 500 2836 (27.5 t)',       W: 2725, A: 330, dual: true, sep: 32, est: 'V', nota: 'Tándem trasero 21 800 kg (ficha), 8 llantas.', ayuda: 'Camión de dos ejes traseros juntos (tándem), de unas 27.5 toneladas cargado.' },
+  { id: 'recolector',nombre: 'Camión recolector (eje motriz tándem 17 t)', W: 2125, A: 300, dual: true, sep: 32, est: 'E', nota: 'Dato de EE. UU. (Seattle). Confirmar con el municipio.', ayuda: 'Camión recolector de basura, cargado. Es pesado y pasa siempre por el mismo lugar.' },
 ];
 
 // ── Elevadores, gatos y puntuales ───────────────────────────────────────────────
 const PUNTUALES = [
-  { id: 'gato',      nombre: 'Gato de piso · carga de norma de garaje',      P: 1361, x: 11.4, y: 11.4, est: 'V', nota: '3 000 lb sobre 11.4 × 11.4 cm (ASCE 7).' },
-  { id: 'elev2_9k',  nombre: 'Elevador de 2 postes · 4.1 t (9 000 lb) · columna', P: 2700, x: 18.4, y: 27.6, est: 'D', nota: 'Columna ~ 2 330 kg, hasta 2 700 con reparto 60/40. Manda el arranque de anclajes, no la placa.' },
-  { id: 'elev2_8k',  nombre: 'Elevador de 2 postes · 3.6 t (8 000 lb) · columna', P: 2400, x: 44.5, y: 45, est: 'D', nota: 'Columna ~ 2 100 kg, hasta 2 400 con reparto 60/40.' },
-  { id: 'elev4',     nombre: 'Elevador de 4 postes · 3.6 t · poste',         P: 1450, x: 25.4, y: 30.5, est: 'D', nota: 'Poste ~ 1 100 kg, hasta 1 450 con asimetría.' },
-  { id: 'pata_liv',  nombre: 'Equipo liviano (compresor, torno) · pata',      P: 350,  x: 10, y: 10, est: 'E', nota: '100–350 kg por pata.' },
-  { id: 'cnc_vf2',   nombre: 'CNC vertical Haas VF-2 (3.4 t) · pata',         P: 850,  x: 15, y: 15, est: 'D', nota: '4–6 patas de 600–850 kg.' },
-  { id: 'entrepiso', nombre: 'Columna de entrepiso (mezanine)',               P: 10000, x: 25, y: 25, est: 'E', nota: 'TR34: entrepisos superan 20 t por columna. Pedir la carga al proveedor.' },
+  { id: 'gato',      nombre: 'Gato de piso · carga de norma de garaje',      P: 1361, x: 11.4, y: 11.4, est: 'V', nota: '3 000 lb sobre 11.4 × 11.4 cm (ASCE 7).', ayuda: 'Gato de piso, el que se mete debajo del carro para levantarlo. Apoya todo el peso en un área muy pequeña, y por eso se revisa aparte.' },
+  { id: 'elev2_9k',  nombre: 'Elevador de 2 postes · 4.1 t (9 000 lb) · columna', P: 2700, x: 18.4, y: 27.6, est: 'D', nota: 'Columna ~ 2 330 kg, hasta 2 700 con reparto 60/40. Manda el arranque de anclajes, no la placa.', ayuda: 'Elevador de vehículos de dos postes, de 4.1 toneladas (9 000 libras). El dato es lo que baja por UNA columna al piso.' },
+  { id: 'elev2_8k',  nombre: 'Elevador de 2 postes · 3.6 t (8 000 lb) · columna', P: 2400, x: 44.5, y: 45, est: 'D', nota: 'Columna ~ 2 100 kg, hasta 2 400 con reparto 60/40.', ayuda: 'Elevador de vehículos de dos postes, de 3.6 toneladas (8 000 libras). El dato es lo que baja por UNA columna.' },
+  { id: 'elev4',     nombre: 'Elevador de 4 postes · 3.6 t · poste',         P: 1450, x: 25.4, y: 30.5, est: 'D', nota: 'Poste ~ 1 100 kg, hasta 1 450 con asimetría.', ayuda: 'Elevador de vehículos de cuatro postes, de 3.6 toneladas. El dato es lo que baja por UN poste.' },
+  { id: 'pata_liv',  nombre: 'Equipo liviano (compresor, torno) · pata',      P: 350,  x: 10, y: 10, est: 'E', nota: '100–350 kg por pata.', ayuda: 'Pata de un equipo liviano de taller: un compresor, un torno pequeño, una soldadora. Cada pata concentra el peso en una placa chica.' },
+  { id: 'cnc_vf2',   nombre: 'CNC vertical Haas VF-2 (3.4 t) · pata',         P: 850,  x: 15, y: 15, est: 'D', nota: '4–6 patas de 600–850 kg.', ayuda: 'Centro de mecanizado (máquina CNC) de tamaño mediano, tipo Haas VF-2, que pesa unas 3.4 toneladas. Se apoya en cuatro a seis patas, y el dato es lo que baja por UNA pata. Aunque la máquina no sea tan pesada, concentra todo en puntos chicos.' },
+  { id: 'entrepiso', nombre: 'Columna de entrepiso (mezanine)',               P: 10000, x: 25, y: 25, est: 'E', nota: 'TR34: entrepisos superan 20 t por columna. Pedir la carga al proveedor.', ayuda: 'Columna de un entrepiso o mezanine que se apoya directamente en la losa. Es la carga puntual más alta que suele aparecer en una bodega: baja todo el piso de arriba por una sola placa. Pídale la carga exacta al proveedor del entrepiso.' },
 ];
 
 // ── Carga lineal y uniforme típicas ─────────────────────────────────────────────
 const LINEALES = [
-  { id: 'muro12',  nombre: 'Muro de bloque 12 cm · 2.4 m de alto',   Q: 631,  est: 'V', nota: '263 kg/m² con viga corona (UCR).' },
-  { id: 'muro15',  nombre: 'Muro de bloque 15 cm · 2.4 m de alto',   Q: 840,  est: 'E', nota: 'Interpolado entre 12 y 20 cm.' },
-  { id: 'muro20',  nombre: 'Muro de bloque 20 cm · 2.4 m de alto',   Q: 1049, est: 'V', nota: '437 kg/m² con viga (UCR).' },
-  { id: 'gen_patin',nombre: 'Patín de generador Cummins C500D5',      Q: 550,  est: 'D', nota: '~ 1.9 t por patín de 3.5 m.' },
+  { id: 'muro12',  nombre: 'Muro de bloque 12 cm · 2.4 m de alto',   Q: 631,  est: 'V', nota: '263 kg/m² con viga corona (UCR).', ayuda: 'Pared de bloque de 12 cm de ancho y 2.4 m de alto, apoyada sobre la losa. Es carga «lineal»: se reparte a lo largo de la pared, no en un punto.' },
+  { id: 'muro15',  nombre: 'Muro de bloque 15 cm · 2.4 m de alto',   Q: 840,  est: 'E', nota: 'Interpolado entre 12 y 20 cm.', ayuda: 'Pared de bloque de 15 cm de ancho y 2.4 m de alto, apoyada sobre la losa.' },
+  { id: 'muro20',  nombre: 'Muro de bloque 20 cm · 2.4 m de alto',   Q: 1049, est: 'V', nota: '437 kg/m² con viga (UCR).', ayuda: 'Pared de bloque de 20 cm de ancho y 2.4 m de alto, apoyada sobre la losa.' },
+  { id: 'gen_patin',nombre: 'Patín de generador Cummins C500D5',      Q: 550,  est: 'D', nota: '~ 1.9 t por patín de 3.5 m.', ayuda: 'Planta eléctrica de emergencia montada en su base metálica (patín). El peso se reparte a lo largo de los dos rieles de la base.' },
 ];
 const UNIFORMES = [
   { id: 'q_res',   nombre: 'Habitación / vivienda',                  q: 200,  est: 'V', nota: 'CSCR-2010 Tabla 6.1.' },
@@ -34067,15 +34067,17 @@ const _li = id => LINEALES.find(x => x.id === id);
 function cRueda(x, extra) {
   const sep = x.sep || 0;
   const dual = x.dual !== undefined ? !!x.dual : sep > 0;   // dos ruedas a 'sep' cm: se revisa con la fórmula de par
-  return Object.assign({ tipo: 'rueda', nombre: x.nombre, W_kg: x.W, A_cm2: x.A, sep_cm: sep, dual: dual, gF: 1.6, impacto: 1.0, est: x.est, nota: x.nota, ubic: { interior: true, borde: true } }, extra || {});
+  return Object.assign({ tipo: 'rueda', nombre: x.nombre, W_kg: x.W, A_cm2: x.A, sep_cm: sep, dual: dual, gF: 1.6, impacto: 1.0, est: x.est, nota: x.nota, ayuda: x.ayuda, ubic: { interior: true, borde: true } }, extra || {});
 }
 function cPuntual(x, extra) {
   // γF 1.5: TR34 reserva el 1.2 para racking BIEN DEFINIDO. Las cargas puntuales de equipo,
   // elevadores, gatos y columnas son «otras cargas» y llevan 1.5.
-  return Object.assign({ tipo: 'rack', nombre: x.nombre, P_kg: x.P, x_cm: x.x, y_cm: x.y, gF: 1.5, est: x.est, nota: x.nota, ubic: { interior: true, borde: true, esquina: true } }, extra || {});
+  return Object.assign({ tipo: 'rack', nombre: x.nombre, P_kg: x.P, x_cm: x.x, y_cm: x.y, gF: 1.5, est: x.est, nota: x.nota, ayuda: x.ayuda, ubic: { interior: true, borde: true, esquina: true } }, extra || {});
 }
-function cUdl(nombre, q, est, nota) { return { tipo: 'udl', nombre, q_kg_m2: q, gF: 1.5, est: est || 'E', nota: nota || '' }; }
-function cLineal(x, extra) { return Object.assign({ tipo: 'lineal', nombre: x.nombre, Q_kg_m: x.Q, gF: 1.5, est: x.est, nota: x.nota }, extra || {}); }
+// Prefijo común de la explicación de una carga uniforme, para el usuario común.
+const A = 'Carga «uniforme»: es el peso repartido por metro cuadrado en toda el área, sin contar los puntos de apoyo. ';
+function cUdl(nombre, q, est, nota, ayuda) { return { tipo: 'udl', nombre, q_kg_m2: q, gF: 1.5, est: est || 'E', nota: nota || '', ayuda: ayuda || '' }; }
+function cLineal(x, extra) { return Object.assign({ tipo: 'lineal', nombre: x.nombre, Q_kg_m: x.Q, gF: 1.5, est: x.est, nota: x.nota, ayuda: x.ayuda }, extra || {}); }
 
 function cargasRacks(o) {
   const alt = +o.altura || 6;
@@ -34088,6 +34090,7 @@ function cargasRacks(o) {
     nombre: 'Pata de rack selectivo · ' + niv + ' niveles · ' + tb + ' tarimas de ' + W + ' kg',
     P: P, x: pl.x, y: pl.y, est: 'D', gF: 1.2,
     nota: 'N × W / 2 por nivel + 4 % de vigas. Pida la carga por pata al proveedor (ANSI MH16.1). Placa base editable.',
+    ayuda: 'Pata de una estantería industrial (rack). Es la carga más exigente de una bodega: todo lo que está en ese cuerpo del rack baja al piso por unas pocas placas de 15 × 15 cm. Se calcula como los niveles de tarima por el peso de cada tarima, repartido entre las dos patas del marco, más un 4 % por las vigas. Pídale al proveedor del rack la carga exacta por pata.',
   });
 }
 function udlBodega(W) { return W <= 600 ? 500 : W <= 1200 ? 650 : 800; }
@@ -34099,11 +34102,11 @@ const USOS = [
     ejemplos: 'Sedán / SUV / pickup (Hilux) · camión liviano (Hino 300) · camión pesado (eje de 11 t) · elevadores de 2 y 4 postes',
     hmin: 10, fcMin: 250, acabado: 'neumatico',
     opciones: [
-      { id: 'veh', tipo: 'multi', etiqueta: 'Vehículos que entran', def: ['liviano'],
+      { id: 'veh', tipo: 'multi', etiqueta: 'Vehículos que entran', ayuda: 'Marque todo lo que vaya a entrar al taller, aunque sea de vez en cuando. Un camión que entra una vez al mes ya obliga a un piso más grueso.', def: ['liviano'],
         valores: [{ v: 'liviano', l: 'Sedán, SUV y pickup' }, { v: 'camion_liviano', l: 'Camiones livianos (5–8 t)' }, { v: 'camion_pesado', l: 'Camiones pesados (eje de 11 t)' }] },
-      { id: 'elevador', tipo: 'select', etiqueta: 'Elevador', def: 'ninguno',
+      { id: 'elevador', tipo: 'select', etiqueta: 'Elevador', ayuda: 'El elevador de vehículos concentra todo el peso del carro en dos o cuatro columnas ancladas al piso. Si el taller lo va a tener, escójalo: cambia el cálculo.', def: 'ninguno',
         valores: [{ v: 'ninguno', l: 'Sin elevador' }, { v: 'elev2_9k', l: '2 postes · 9 000 lb' }, { v: 'elev4', l: '4 postes · 8 000 lb' }] },
-      { id: 'gato', tipo: 'check', etiqueta: 'Gato de piso (norma de garaje)', def: true },
+      { id: 'gato', tipo: 'check', etiqueta: 'Gato de piso (norma de garaje)', def: true, ayuda: 'Gato de piso, el que se mete debajo del carro para levantarlo. Apoya todo el peso en un área muy pequeña, y por eso se revisa aparte.' },
     ],
     cargas(o) {
       const c = [];
@@ -34113,7 +34116,7 @@ const USOS = [
       if (v.includes('camion_pesado')) c.push(cRueda(_veh('camion_cr')));
       if (o.elevador && o.elevador !== 'ninguno') c.push(cPuntual(_pt(o.elevador)));
       if (o.gato) c.push(cPuntual(_pt('gato')));
-      c.push(cUdl('Carga uniforme del taller', 500, 'E', 'CSCR: bodega ligera 500 kg/m² (extrapolación a taller).'));
+      c.push(cUdl('Carga uniforme del taller', 500, 'E', 'CSCR: bodega ligera 500 kg/m² (extrapolación a taller).', A + 'Aquí cubre repuestos en estantería, llantas, bancos de trabajo, herramienta y material en el suelo. No incluye los vehículos ni el elevador: esos van aparte como cargas propias.'));
       return c;
     },
     fcMinDe(o) { return (o.veh || []).some(x => x !== 'liviano') ? 280 : 250; },
@@ -34124,21 +34127,21 @@ const USOS = [
     ejemplos: 'Liviano: compresor, torno pequeño, soldadora · Mediano: CNC Haas VF-2, prensa 100 t · Pesado: generador 500 kW, prensa 200 t, CNC de pórtico',
     hmin: 12, fcMin: 280, acabado: 'duro',
     opciones: [
-      { id: 'equipo', tipo: 'multi', etiqueta: 'Clase de equipos', def: ['mediano'],
+      { id: 'equipo', tipo: 'multi', etiqueta: 'Clase de equipos', ayuda: 'Escoja por peso del equipo, no por el tipo de trabajo. Livianos: compresor, torno pequeño, soldadora. Medianos: centro de mecanizado, prensa de 100 toneladas. Pesados: planta eléctrica, prensa de 200 toneladas, equipo de pórtico.', def: ['mediano'],
         valores: [{ v: 'liviano', l: 'Livianos (compresor, torno pequeño, soldadora)' }, { v: 'mediano', l: 'Medianos (CNC vertical, prensa 100 t)' }, { v: 'pesado', l: 'Pesados (generador, prensa 200 t, CNC de pórtico)' }] },
-      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', def: 'ninguno',
+      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', ayuda: 'Escoja el montacargas más pesado que vaya a trabajar sobre esta losa. Si todavía no lo compró, escoja uno un poco más grande del que piensa: cambiar el piso después cuesta mucho más que unos centímetros de concreto hoy.', def: 'ninguno',
         valores: [{ v: 'ninguno', l: 'Sin montacargas' }].concat(MONTACARGAS.slice(0, 6).map(m => ({ v: m.id, l: m.nombre }))) },
     ],
     cargas(o) {
       const c = []; const e = o.equipo || [];
-      if (e.includes('liviano')) { c.push(cPuntual(_pt('pata_liv'))); c.push(cUdl('Carga uniforme, equipos livianos', 500, 'E', 'Torno pequeño 300–900 kg/m².')); }
-      if (e.includes('mediano')) { c.push(cPuntual(_pt('cnc_vf2'))); c.push(cUdl('Carga uniforme, equipos medianos', 700, 'D', 'Haas VF-2: ~ 640 kg/m² de promedio; prensa 100 t ~ 425.')); }
+      if (e.includes('liviano')) { c.push(cPuntual(_pt('pata_liv'))); c.push(cUdl('Carga uniforme, equipos livianos', 500, 'E', 'Torno pequeño 300–900 kg/m².', A + 'Representa el taller lleno de equipo liviano: compresores, tornos pequeños, soldadoras, mesas y material. Es el promedio del área ocupada, no un equipo en particular.')); }
+      if (e.includes('mediano')) { c.push(cPuntual(_pt('cnc_vf2'))); c.push(cUdl('Carga uniforme, equipos medianos', 700, 'D', 'Haas VF-2: ~ 640 kg/m² de promedio; prensa 100 t ~ 425.', A + 'Es el piso del taller ocupado con maquinaria mediana: centros de mecanizado, prensas de unas 100 toneladas, material en proceso. Además de esto, cada máquina apoya en patas, y eso se revisa por separado en la carga puntual.')); }
       if (e.includes('pesado')) {
         c.push(cLineal(_li('gen_patin')));
-        c.push(cUdl('Carga uniforme, equipos pesados', 1500, 'E', 'Prensa 200 t: 1 000–1 700 kg/m². CNC de pórtico: 1–3 t/m² con cimentación propia.'));
+        c.push(cUdl('Carga uniforme, equipos pesados', 1500, 'E', 'Prensa 200 t: 1 000–1 700 kg/m². CNC de pórtico: 1–3 t/m² con cimentación propia.', A + 'Maquinaria pesada de planta: prensas de 200 toneladas, centros de pórtico, hornos. Aviso: el equipo muy pesado normalmente pide su propia cimentación, aparte de la losa.'));
       }
       if (o.mc && o.mc !== 'ninguno') c.push(cRueda(_mc(o.mc)));
-      if (!c.some(x => x.tipo === 'udl')) c.push(cUdl('Carga uniforme del taller', 500, 'E'));
+      if (!c.some(x => x.tipo === 'udl')) c.push(cUdl('Carga uniforme del taller', 500, 'E', '', A + 'Valor de arranque para un taller sin equipo definido.'));
       return c;
     },
     fcMinDe(o) { return 280; },
@@ -34149,17 +34152,17 @@ const USOS = [
     ejemplos: 'CSCR-2010: 200 kg/m² · muro de bloque 12 cm: 631 kg/m · placa corrida 35 × 20 cm (1 piso)',
     hmin: 10, fcMin: 210, acabado: 'peatonal',
     opciones: [
-      { id: 'tipo', tipo: 'select', etiqueta: 'Sistema', def: 'contrapiso',
+      { id: 'tipo', tipo: 'select', etiqueta: 'Sistema', ayuda: 'Contrapiso con placa corrida: las paredes se apoyan en su propia viga de cimentación y la losa solo recibe el piso. Losa flotante: las paredes se apoyan directamente sobre la losa, y entonces la losa tiene que aguantarlas.', def: 'contrapiso',
         valores: [{ v: 'contrapiso', l: 'Contrapiso con placa corrida (los muros apoyan en la placa)' }, { v: 'flotante', l: 'Losa flotante (los muros apoyan sobre la losa)' }] },
-      { id: 'muro', tipo: 'select', etiqueta: 'Muro que se apoya (solo losa flotante)', def: 'muro12',
+      { id: 'muro', tipo: 'select', etiqueta: 'Muro que se apoya (solo losa flotante)', ayuda: 'Solo aplica si escogió losa flotante. Escoja el ancho del bloque de la pared que se va a apoyar sobre la losa.', def: 'muro12',
         valores: [{ v: 'muro12', l: 'Bloque 12 cm' }, { v: 'muro15', l: 'Bloque 15 cm' }, { v: 'muro20', l: 'Bloque 20 cm' }] },
-      { id: 'cochera', tipo: 'check', etiqueta: 'Cochera (un vehículo liviano)', def: false },
+      { id: 'cochera', tipo: 'check', etiqueta: 'Cochera (un vehículo liviano)', ayuda: 'Marque si la losa va a recibir un carro. Una cochera pide más espesor que un piso de sala.', def: false },
     ],
     cargas(o) {
-      const c = [cUdl('Carga uniforme de vivienda', 200, 'V', 'CSCR-2010 Tabla 6.1.')];
+      const c = [cUdl('Carga uniforme de vivienda', 200, 'V', 'CSCR-2010 Tabla 6.1.', A + 'Es el valor que manda el Código Sísmico de Costa Rica para una casa: muebles, personas y lo que se guarda. No incluye las paredes, que van como carga lineal.')];
       if (o.tipo === 'flotante') {
         c.push(cLineal(_li(o.muro || 'muro12'), { nombre: 'Muro sobre la losa · ' + (_li(o.muro || 'muro12').nombre) }));
-        c.push({ tipo: 'lineal', nombre: 'Techo y entrepiso que descargan sobre el muro (COMPLETAR)', Q_kg_m: 0, gF: 1.0, est: 'E', nota: 'El programa no estima la carga del techo ni del entrepiso: sume la del diseño estructural. Está en 0 para que no pase por alto.', pendiente: true });
+        c.push({ tipo: 'lineal', nombre: 'Techo y entrepiso que descargan sobre el muro (COMPLETAR)', Q_kg_m: 0, gF: 1.0, est: 'E', nota: 'El programa no estima la carga del techo ni del entrepiso: sume la del diseño estructural. Está en 0 para que no pase por alto.', ayuda: 'FALTA ESTE DATO. Si la pared descarga el techo o un segundo piso, todo ese peso también baja a la losa por la pared. El programa no lo puede adivinar: tómelo del diseño estructural de la casa y escríbalo aquí. Está en cero a propósito, para que no se le pase.', pendiente: true });
       }
       if (o.cochera) c.push(cRueda(_veh('suv')));
       return c;
@@ -34172,13 +34175,13 @@ const USOS = [
     ejemplos: 'Rack selectivo hasta 4 m (2–3 niveles), hasta 8 m (4–5) y 10 m o más (6–7) · tarimas GMA 1.22 × 1.02 m · montacargas contrabalanceado o retráctil',
     hmin: 12, fcMin: 280, acabado: 'duro',
     opciones: [
-      { id: 'altura', tipo: 'num', etiqueta: 'Altura del rack (m)', def: 6, min: 2, max: 16, paso: 0.5 },
-      { id: 'niveles', tipo: 'num', etiqueta: 'Niveles de tarimas (vacío = según la altura)', def: '', min: 1, max: 9, paso: 1, auto: 'niveles' },
-      { id: 'tarimasBahia', tipo: 'select', etiqueta: 'Tarimas por bahía y nivel', def: '2', valores: [{ v: '2', l: '2 (viga de 2.7 m)' }, { v: '3', l: '3 (viga de 3.6 m)' }] },
-      { id: 'pesoTarima', tipo: 'select', etiqueta: 'Peso por tarima cargada', def: '1000', valores: TARIMAS.map(t => ({ v: String(t.W), l: t.nombre })) },
-      { id: 'mc', tipo: 'select', etiqueta: 'Equipo de manejo', def: 'crown_fc5225',
+      { id: 'altura', tipo: 'num', etiqueta: 'Altura del rack (m)', ayuda: 'Altura total de la estantería, desde el piso hasta la última tarima. Es el dato que más mueve el resultado: entre más alto el rack, más tarimas se apilan y más peso baja por cada pata.', def: 6, min: 2, max: 16, paso: 0.5 },
+      { id: 'niveles', tipo: 'num', etiqueta: 'Niveles de tarimas (vacío = según la altura)', ayuda: 'Cuántas tarimas quedan una encima de otra en el rack. Si lo deja vacío, el programa lo estima con la altura. Si ya tiene la cotización del rack, escriba el número exacto de ahí.', def: '', min: 1, max: 9, paso: 1, auto: 'niveles' },
+      { id: 'tarimasBahia', tipo: 'select', etiqueta: 'Tarimas por bahía y nivel', ayuda: 'Una «bahía» es el espacio entre dos marcos del rack, es decir entre dos pares de patas. Lo normal es que en ese espacio quepan 2 tarimas lado a lado, con una viga de 2.7 metros; con viga de 3.6 metros caben 3. Entre más tarimas por bahía, más peso baja por cada pata.', def: '2', valores: [{ v: '2', l: '2 (viga de 2.7 m)' }, { v: '3', l: '3 (viga de 3.6 m)' }] },
+      { id: 'pesoTarima', tipo: 'select', etiqueta: 'Peso por tarima cargada', ayuda: 'Cuánto pesa una tarima con el producto encima, no la tarima vacía. Si no lo sabe, escoja según lo que va a guardar: envases vacíos y textiles son livianos, bebidas y material de construcción son pesados.', def: '1000', valores: TARIMAS.map(t => ({ v: String(t.W), l: t.nombre })) },
+      { id: 'mc', tipo: 'select', etiqueta: 'Equipo de manejo', ayuda: 'Con qué se van a mover las tarimas. Ojo: un retráctil o una patineta pesan menos que un montacargas, pero tienen ruedas chicas y duras, así que a veces castigan más el piso.', def: 'crown_fc5225',
         valores: [{ v: 'ninguno', l: 'Ninguno' }].concat(MONTACARGAS.slice(0, 8).map(m => ({ v: m.id, l: m.nombre })), MANEJO.map(m => ({ v: m.id, l: m.nombre }))) },
-      { id: 'estiba', tipo: 'select', etiqueta: 'Tarimas apiladas en piso (sin rack)', def: 'no',
+      { id: 'estiba', tipo: 'select', etiqueta: 'Tarimas apiladas en piso (sin rack)', ayuda: 'Tarimas puestas una encima de otra directamente en el suelo, sin estantería. Dice cuántos niveles se van a apilar. Si no se apila nada en el piso, deje «No hay».', def: 'no',
         valores: [{ v: 'no', l: 'No hay' }, { v: '1', l: 'Sin estiba (1 nivel)' }, { v: '2', l: 'Estiba de 2 niveles' }, { v: '3', l: 'Estiba de 3 niveles' }, { v: '4', l: 'Estiba de 4 niveles' }] },
     ],
     cargas(o) {
@@ -34186,9 +34189,9 @@ const USOS = [
       const W = +o.pesoTarima || 1000;
       if (o.estiba && o.estiba !== 'no') {
         const q = Math.max(udlEstiba(+o.estiba, W), udlBodega(W));
-        c.push(cUdl('Tarimas en piso · ' + o.estiba + ' nivel(es) de ' + W + ' kg', q, 'D', 'n × W / 1.24 m² con 60 % de ocupación de la nave. Apilar 4 niveles pesados excede la capacidad de la tarima.'));
+        c.push(cUdl('Tarimas en piso · ' + o.estiba + ' nivel(es) de ' + W + ' kg', q, 'D', 'n × W / 1.4 m² por posición de tarima. Apilar 4 niveles pesados excede la capacidad de la tarima.', A + 'Tarimas puestas una encima de otra directamente en el piso, sin rack. Se calcula el bloque cargado al máximo, no el promedio de la bodega: el caso que castiga la losa es un bloque lleno con un pasillo vacío al lado. Apilar 4 niveles de tarima pesada normalmente excede lo que aguanta la tarima de abajo.'));
       } else {
-        c.push(cUdl('Carga uniforme de bodega', udlBodega(W), 'V', 'CSCR-2010: 500 / 650 / 800 kg/m² según la mercancía.'));
+        c.push(cUdl('Carga uniforme de bodega', udlBodega(W), 'V', 'CSCR-2010: 500 / 650 / 800 kg/m² según la mercancía.', A + 'Mercadería repartida por el piso de la bodega. El valor sube con lo pesado que sea el producto. Las patas del rack y el montacargas van aparte.'));
       }
       if (o.mc && o.mc !== 'ninguno') c.push(cRueda(_mc(o.mc)));
       return c;
@@ -34201,23 +34204,23 @@ const USOS = [
     ejemplos: 'Vaca Holstein 680–770 kg · cerdo de engorde 100–120 kg · aves 2–3 kg · tractor con pala o minicargador de limpieza',
     hmin: 10, fcMin: 250, acabado: 'antideslizante',
     opciones: [
-      { id: 'especie', tipo: 'select', etiqueta: 'Animales', def: 'bovino',
+      { id: 'especie', tipo: 'select', etiqueta: 'Animales', ayuda: 'Qué animales van a estar sobre la losa. Cambia tanto el peso repartido como el acabado que conviene darle al piso.', def: 'bovino',
         valores: [{ v: 'bovino', l: 'Bovinos (leche o carne)' }, { v: 'cerdos', l: 'Cerdos' }, { v: 'aves', l: 'Aves' }] },
-      { id: 'maq', tipo: 'select', etiqueta: 'Maquinaria de limpieza', def: 'minicargador',
+      { id: 'maq', tipo: 'select', etiqueta: 'Maquinaria de limpieza', ayuda: 'Con qué se va a limpiar el galpón. La maquinaria pesa mucho más que los animales y suele pasar siempre por el mismo carril.', def: 'minicargador',
         valores: [{ v: 'ninguna', l: 'Ninguna (limpieza manual o lavado)' }, { v: 'minicargador', l: 'Minicargador (~ 3 t)' }, { v: 'tractor', l: 'Tractor con pala (~ 5 t)' }] },
     ],
     cargas(o) {
       const c = [];
       if (o.especie === 'bovino') {
-        c.push(cUdl('Vacas en corral libre', 250, 'E', '700 kg por vaca en 3–5 m² (150–250 kg/m²).'));
-        c.push({ tipo: 'rack', nombre: 'Pezuña de vaca', P_kg: 180, x_cm: 8.5, y_cm: 8.5, gF: 1.2, est: 'E', nota: '120–180 kg por pezuña en 60–90 cm². Sin fuente verificada.', ubic: { interior: true, borde: true, esquina: false } });
+        c.push(cUdl('Vacas en corral libre', 250, 'E', '700 kg por vaca en 3–5 m² (150–250 kg/m²).', A + 'El hato repartido en el corral: unos 700 kg por vaca en 3 a 5 m² cada una. Además se revisa la pezuña, que es lo que concentra el peso.'));
+        c.push({ tipo: 'rack', nombre: 'Pezuña de vaca', P_kg: 180, x_cm: 8.5, y_cm: 8.5, gF: 1.2, est: 'E', nota: '120–180 kg por pezuña en 60–90 cm². Sin fuente verificada.', ayuda: 'El peso de la vaca no se reparte: baja por cuatro pezuñas, y cada una apoya en unos 8 × 8 cm. Es lo que desgasta y descascara el piso de un establo, más que el peso total del animal.', ubic: { interior: true, borde: true, esquina: false } });
       } else if (o.especie === 'cerdos') {
-        c.push(cUdl('Cerdos', 300, 'E', 'Cerda 200–250 kg; verraco 250–350 kg.'));
+        c.push(cUdl('Cerdos', 300, 'E', 'Cerda 200–250 kg; verraco 250–350 kg.', A + 'Los animales repartidos en el corral, más los comederos y divisiones.'));
       } else {
-        c.push(cUdl('Aves', 100, 'E', '20–40 kg/m² de aves más cama de viruta de 5–10 cm.'));
+        c.push(cUdl('Aves', 100, 'E', '20–40 kg/m² de aves más cama de viruta de 5–10 cm.', A + 'Las aves pesan poco: lo que más cuenta es la cama de viruta y los equipos de comida y agua.'));
       }
-      if (o.maq === 'minicargador') c.push(cRueda({ nombre: 'Minicargador de limpieza', W: 1500, A: 400, est: 'E', nota: 'Sin ficha: 1–2.5 t por rueda en equipos de 2.5–5 t.' }));
-      if (o.maq === 'tractor') c.push(cRueda({ nombre: 'Tractor con pala', W: 2000, A: 500, est: 'E', nota: 'Sin ficha: 1–2.5 t por rueda en equipos de 2.5–5 t.' }));
+      if (o.maq === 'minicargador') c.push(cRueda({ nombre: 'Minicargador de limpieza', W: 1500, A: 400, est: 'E', nota: 'Sin ficha: 1–2.5 t por rueda en equipos de 2.5–5 t.', ayuda: 'Minicargador tipo Bobcat, de los que se usan para sacar el estiércol. El dato es lo que pesa una rueda.' }));
+      if (o.maq === 'tractor') c.push(cRueda({ nombre: 'Tractor con pala', W: 2000, A: 500, est: 'E', nota: 'Sin ficha: 1–2.5 t por rueda en equipos de 2.5–5 t.', ayuda: 'Tractor con pala frontal para limpieza del galpón. El dato es lo que pesa una rueda.' }));
       return c;
     },
     fcMinDe(o) { return o.especie === 'bovino' ? 280 : o.especie === 'cerdos' ? 250 : 210; },
@@ -34228,12 +34231,12 @@ const USOS = [
     ejemplos: 'Gimnasios y reunión: 400–500 kg/m² · FIBA: hasta 1 % en un plano · espesor usual 10–12 cm',
     hmin: 10, fcMin: 250, acabado: 'antideslizante',
     opciones: [
-      { id: 'techo', tipo: 'select', etiqueta: 'Cubierta', def: 'sin', valores: [{ v: 'sin', l: 'Sin techo' }, { v: 'con', l: 'Con techo' }] },
-      { id: 'mant', tipo: 'check', etiqueta: 'Entra maquinaria de mantenimiento (minicargador)', def: false },
+      { id: 'techo', tipo: 'select', etiqueta: 'Cubierta', ayuda: 'Si la cancha tiene techo o está a la intemperie. Cambia la pendiente de desagüe y la separación de las juntas: una losa al sol y la lluvia se mueve más.', def: 'sin', valores: [{ v: 'sin', l: 'Sin techo' }, { v: 'con', l: 'Con techo' }] },
+      { id: 'mant', tipo: 'check', etiqueta: 'Entra maquinaria de mantenimiento (minicargador)', ayuda: 'Marque si va a entrar maquinaria a la cancha para mantenimiento. Es la carga más pesada que va a recibir, muy por encima del público.', def: false },
     ],
     cargas(o) {
-      const c = [cUdl('Público y actividad deportiva', 400, 'V', 'CSCR-2010: gimnasios y reunión 400 kg/m².')];
-      if (o.mant) c.push(cRueda({ nombre: 'Minicargador de mantenimiento', W: 1500, A: 400, est: 'E', nota: 'Sin ficha.' }));
+      const c = [cUdl('Público y actividad deportiva', 400, 'V', 'CSCR-2010: gimnasios y reunión 400 kg/m².', A + 'Es el valor que manda el Código Sísmico de Costa Rica para gimnasios y lugares de reunión: la cancha llena de gente.')];
+      if (o.mant) c.push(cRueda({ nombre: 'Minicargador de mantenimiento', W: 1500, A: 400, est: 'E', nota: 'Sin ficha.', ayuda: 'Maquinaria chica que entra a la cancha para mantenimiento o limpieza. El dato es lo que pesa una rueda.' }));
       return c;
     },
     fcMinDe(o) { return 250; },
@@ -34245,12 +34248,12 @@ const USOS = [
     ejemplos: 'Manufactura pesada 1 000–1 250 kg/m² · montacargas de 3–5 t · maquinaria con patas puntuales',
     hmin: 12, fcMin: 280, acabado: 'duro',
     opciones: [
-      { id: 'q', tipo: 'select', etiqueta: 'Carga uniforme', def: '1250', valores: [{ v: '1000', l: '1 000 kg/m² (manufactura media)' }, { v: '1250', l: '1 250 kg/m² (manufactura pesada, ASCE 7)' }] },
-      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', def: 'crown_fc5245', valores: MONTACARGAS.map(m => ({ v: m.id, l: m.nombre })) },
-      { id: 'maq', tipo: 'check', etiqueta: 'Maquinaria con patas puntuales (CNC vertical)', def: true },
+      { id: 'q', tipo: 'select', etiqueta: 'Carga uniforme', ayuda: 'Cuánto peso va a haber repartido por metro cuadrado. Si no está seguro, escoja el valor más alto: es lo que se usa cuando no se conoce el inquilino o el producto.', def: '1250', valores: [{ v: '1000', l: '1 000 kg/m² (manufactura media)' }, { v: '1250', l: '1 250 kg/m² (manufactura pesada, ASCE 7)' }] },
+      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', ayuda: 'Escoja el montacargas más pesado que vaya a trabajar sobre esta losa. Si todavía no lo compró, escoja uno un poco más grande del que piensa: cambiar el piso después cuesta mucho más que unos centímetros de concreto hoy.', def: 'crown_fc5245', valores: MONTACARGAS.map(m => ({ v: m.id, l: m.nombre })) },
+      { id: 'maq', tipo: 'check', etiqueta: 'Maquinaria con patas puntuales (CNC vertical)', ayuda: 'Marque si hay maquinaria que se apoya en patas en vez de en toda su base. Es el caso de casi todo centro de mecanizado y prensa.', def: true },
     ],
     cargas(o) {
-      const c = [cUdl('Carga uniforme de producción', +o.q || 1250, 'V', 'ASCE 7 manufactura pesada 1 221 kg/m² (fuente secundaria).')];
+      const c = [cUdl('Carga uniforme de producción', +o.q || 1250, 'V', 'ASCE 7 manufactura pesada 1 221 kg/m² (fuente secundaria).', A + 'La nave de producción trabajando: maquinaria, producto en proceso, materia prima y tarimas de salida, todo repartido.')];
       if (o.mc) c.push(cRueda(_mc(o.mc)));
       if (o.maq) c.push(cPuntual(_pt('cnc_vf2')));
       return c;
@@ -34263,20 +34266,20 @@ const USOS = [
     ejemplos: 'Racks a la altura de la nave · montacargas de 3.5 t · entrepiso (mezanine) · cargas propias del inquilino',
     hmin: 12, fcMin: 280, acabado: 'duro',
     opciones: [
-      { id: 'racks', tipo: 'check', etiqueta: 'Admite racks', def: true },
-      { id: 'altura', tipo: 'num', etiqueta: 'Altura del rack (m)', def: 8, min: 2, max: 16, paso: 0.5 },
-      { id: 'niveles', tipo: 'num', etiqueta: 'Niveles de tarimas (vacío = según la altura)', def: '', min: 1, max: 9, paso: 1, auto: 'niveles' },
-      { id: 'tarimasBahia', tipo: 'select', etiqueta: 'Tarimas por bahía y nivel', def: '2', valores: [{ v: '2', l: '2' }, { v: '3', l: '3' }] },
-      { id: 'pesoTarima', tipo: 'select', etiqueta: 'Peso por tarima cargada', def: '1200', valores: TARIMAS.map(t => ({ v: String(t.W), l: t.nombre })) },
-      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', def: 'mc_35', valores: MONTACARGAS.map(m => ({ v: m.id, l: m.nombre })) },
-      { id: 'entrepiso', tipo: 'check', etiqueta: 'Entrepiso (mezanine) apoyado en la losa', def: false },
-      { id: 'q', tipo: 'select', etiqueta: 'Carga uniforme', def: '800', valores: [{ v: '500', l: '500 kg/m² (ligera)' }, { v: '650', l: '650 kg/m² (intermedia)' }, { v: '800', l: '800 kg/m² (pesada)' }, { v: '1250', l: '1 250 kg/m² (producción)' }] },
+      { id: 'racks', tipo: 'check', etiqueta: 'Admite racks', ayuda: 'Marque si el inquilino va a poder poner estantería. Es lo que más obliga a subir el espesor de una bodega de alquiler.', def: true },
+      { id: 'altura', tipo: 'num', etiqueta: 'Altura del rack (m)', ayuda: 'Altura total de la estantería, desde el piso hasta la última tarima. Es el dato que más mueve el resultado: entre más alto el rack, más tarimas se apilan y más peso baja por cada pata.', def: 8, min: 2, max: 16, paso: 0.5 },
+      { id: 'niveles', tipo: 'num', etiqueta: 'Niveles de tarimas (vacío = según la altura)', ayuda: 'Cuántas tarimas quedan una encima de otra en el rack. Si lo deja vacío, el programa lo estima con la altura. Si ya tiene la cotización del rack, escriba el número exacto de ahí.', def: '', min: 1, max: 9, paso: 1, auto: 'niveles' },
+      { id: 'tarimasBahia', tipo: 'select', etiqueta: 'Tarimas por bahía y nivel', ayuda: 'Una «bahía» es el espacio entre dos marcos del rack, es decir entre dos pares de patas. Lo normal es que en ese espacio quepan 2 tarimas lado a lado, con una viga de 2.7 metros; con viga de 3.6 metros caben 3. Entre más tarimas por bahía, más peso baja por cada pata.', def: '2', valores: [{ v: '2', l: '2' }, { v: '3', l: '3' }] },
+      { id: 'pesoTarima', tipo: 'select', etiqueta: 'Peso por tarima cargada', ayuda: 'Cuánto pesa una tarima con el producto encima, no la tarima vacía. Si no lo sabe, escoja según lo que va a guardar: envases vacíos y textiles son livianos, bebidas y material de construcción son pesados.', def: '1200', valores: TARIMAS.map(t => ({ v: String(t.W), l: t.nombre })) },
+      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', ayuda: 'Escoja el montacargas más pesado que vaya a trabajar sobre esta losa. Si todavía no lo compró, escoja uno un poco más grande del que piensa: cambiar el piso después cuesta mucho más que unos centímetros de concreto hoy.', def: 'mc_35', valores: MONTACARGAS.map(m => ({ v: m.id, l: m.nombre })) },
+      { id: 'entrepiso', tipo: 'check', etiqueta: 'Entrepiso (mezanine) apoyado en la losa', def: false, ayuda: 'Columna de un entrepiso o mezanine que se apoya directamente en la losa. Es la carga puntual más alta que suele aparecer en una bodega: baja todo el piso de arriba por una sola placa. Pídale la carga exacta al proveedor del entrepiso.' },
+      { id: 'q', tipo: 'select', etiqueta: 'Carga uniforme', ayuda: 'Cuánto peso va a haber repartido por metro cuadrado. Si no está seguro, escoja el valor más alto: es lo que se usa cuando no se conoce el inquilino o el producto.', def: '800', valores: [{ v: '500', l: '500 kg/m² (ligera)' }, { v: '650', l: '650 kg/m² (intermedia)' }, { v: '800', l: '800 kg/m² (pesada)' }, { v: '1250', l: '1 250 kg/m² (producción)' }] },
     ],
     cargas(o) {
       const c = [];
       if (o.racks) c.push(cargasRacks(o));
       if (o.entrepiso) c.push(cPuntual(_pt('entrepiso')));
-      c.push(cUdl('Carga uniforme de la nave', +o.q || 800, 'V', 'CSCR-2010: 500 / 650 / 800 kg/m². Agregue abajo las cargas propias de cada inquilino.'));
+      c.push(cUdl('Carga uniforme de la nave', +o.q || 800, 'V', 'CSCR-2010: 500 / 650 / 800 kg/m². Agregue abajo las cargas propias de cada inquilino.', A + 'Como no se sabe qué va a guardar el inquilino, se toma un valor alto y parejo. Si ya conoce al inquilino, agregue abajo sus cargas reales.'));
       if (o.mc) c.push(cRueda(_mc(o.mc)));
       return c;
     },
@@ -34288,10 +34291,10 @@ const USOS = [
     ejemplos: 'CSCR-2010: 300 kg/m² · gato de 1 361 kg en 130 cm² · pendiente de drenaje 1–2 %',
     hmin: 10, fcMin: 250, acabado: 'antideslizante',
     opciones: [
-      { id: 'camion', tipo: 'select', etiqueta: 'Paso de camiones', def: 'no', valores: [{ v: 'no', l: 'Solo vehículos livianos' }, { v: 'hino300', l: 'Camión liviano ocasional (Hino 300)' }, { v: 'hino500', l: 'Camión mediano ocasional (Hino 500)' }] },
+      { id: 'camion', tipo: 'select', etiqueta: 'Paso de camiones', ayuda: 'Si además de carros livianos va a entrar algún camión, aunque sea de vez en cuando. Un solo camión obliga a más espesor y a más resistencia.', def: 'no', valores: [{ v: 'no', l: 'Solo vehículos livianos' }, { v: 'hino300', l: 'Camión liviano ocasional (Hino 300)' }, { v: 'hino500', l: 'Camión mediano ocasional (Hino 500)' }] },
     ],
     cargas(o) {
-      const c = [cRueda(_veh('suv')), cPuntual(_pt('gato')), cUdl('Estacionamiento de automóviles', 300, 'V', 'CSCR-2010 Tabla 6.1.')];
+      const c = [cRueda(_veh('suv')), cPuntual(_pt('gato')), cUdl('Estacionamiento de automóviles', 300, 'V', 'CSCR-2010 Tabla 6.1.', A + 'Valor del Código Sísmico de Costa Rica para estacionamientos: los carros parqueados repartidos en el área.')];
       if (o.camion && o.camion !== 'no') c.push(cRueda(_veh(o.camion)));
       return c;
     },
@@ -34303,17 +34306,17 @@ const USOS = [
     ejemplos: 'Reach stacker Kalmar DRG450 (25.4 t por rueda con 45 t) · contenedor 20/40 pies (36 t) · 1 a 4 alturas',
     hmin: 15, fcMin: 350, acabado: 'exterior',
     opciones: [
-      { id: 'equipo', tipo: 'check', etiqueta: 'Reach stacker (Kalmar DRG450, 45 t)', def: true },
-      { id: 'alturas', tipo: 'select', etiqueta: 'Contenedores apilados', def: '2', valores: [{ v: '0', l: 'No se apilan' }, { v: '1', l: '1 altura' }, { v: '2', l: '2 alturas' }, { v: '3', l: '3 alturas' }, { v: '4', l: '4 alturas' }] },
-      { id: 'trailer', tipo: 'check', etiqueta: 'Tráilers estacionados (patas de apoyo)', def: true },
+      { id: 'equipo', tipo: 'check', etiqueta: 'Reach stacker (Kalmar DRG450, 45 t)', ayuda: 'La grúa de patio que levanta contenedores.', def: true },
+      { id: 'alturas', tipo: 'select', etiqueta: 'Contenedores apilados', ayuda: 'Cuántos contenedores van a quedar uno encima de otro.', def: '2', valores: [{ v: '0', l: 'No se apilan' }, { v: '1', l: '1 altura' }, { v: '2', l: '2 alturas' }, { v: '3', l: '3 alturas' }, { v: '4', l: '4 alturas' }] },
+      { id: 'trailer', tipo: 'check', etiqueta: 'Tráilers estacionados (patas de apoyo)', ayuda: 'Si los tráilers se van a dejar estacionados sin el cabezal, apoyados en sus patas.', def: true },
     ],
     fueraDeAlcance: 'Un patio de contenedores no se puede predimensionar con este método. La esquina de un contenedor apilado exige un detalle que el programa no modela (borde engrosado, pedestal o dado bajo la posición de apilado), TR34 excluye los pavimentos exteriores y ACI 330R no cubre las cargas de un reach stacker. Con las cargas típicas el esfuerzo de servicio en el borde supera el módulo de rotura del concreto. Consúltenos: este caso lo tiene que calcular un especialista.',
     cargas(o) {
       const c = [];
-      if (o.equipo) c.push(cRueda({ nombre: 'Reach stacker Kalmar DRG450 · rueda delantera con 45 t', W: 25400, A: 2500, est: 'D', nota: 'Eje delantero 101 600 kg (ficha) / 4 ruedas. Presión de llanta 1.0 MPa.' }, { impacto: 1.15, dual: false, sep_cm: 0 }));
+      if (o.equipo) c.push(cRueda({ nombre: 'Reach stacker Kalmar DRG450 · rueda delantera con 45 t', W: 25400, A: 2500, est: 'D', nota: 'Eje delantero 101 600 kg (ficha) / 4 ruedas. Presión de llanta 1.0 MPa.', ayuda: 'Grúa de patio que levanta contenedores. Es el equipo más pesado del catálogo: una sola rueda pesa más de 25 toneladas cuando va cargada.' }, { impacto: 1.15, dual: false, sep_cm: 0 }));
       const n = +o.alturas || 0;
-      if (n > 0) c.push({ tipo: 'rack', nombre: 'Esquina de contenedor · ' + n + ' altura(s)', P_kg: Math.round(n * 30480 / 4 * 1.25), x_cm: 17.8, y_cm: 16.2, gF: 1.5, est: 'D', nota: 'n × 30.48 t / 4 esquinas, con 1.25 por excentricidad. Apoyo máximo 17.8 × 16.2 cm. Use placa de reparto.', ubic: { interior: true, borde: true, esquina: true } });
-      if (o.trailer) c.push({ tipo: 'rack', nombre: 'Pata de apoyo de tráiler', P_kg: 6500, x_cm: 20, y_cm: 25, gF: 1.2, est: 'E', nota: 'Estimado: 5–8 t por pata sobre ~ 500 cm². Pida el catálogo (JOST, SAF-Holland).', ubic: { interior: true, borde: true, esquina: false } });
+      if (n > 0) c.push({ tipo: 'rack', nombre: 'Esquina de contenedor · ' + n + ' altura(s)', P_kg: Math.round(n * 30480 / 4 * 1.25), x_cm: 17.8, y_cm: 16.2, gF: 1.5, est: 'D', nota: 'n × 30.48 t / 4 esquinas, con 1.25 por excentricidad. Apoyo máximo 17.8 × 16.2 cm. Use placa de reparto.', ayuda: 'Un contenedor no se apoya en toda su base: se apoya en los cuatro herrajes de las esquinas, de unos 18 × 16 cm. Al apilar contenedores, todo el peso de la torre baja por esos cuatro puntos.', ubic: { interior: true, borde: true, esquina: true } });
+      if (o.trailer) c.push({ tipo: 'rack', nombre: 'Pata de apoyo de tráiler', P_kg: 6500, x_cm: 20, y_cm: 25, gF: 1.2, est: 'E', nota: 'Estimado: 5–8 t por pata sobre ~ 500 cm². Pida el catálogo (JOST, SAF-Holland).', ayuda: 'Cuando el tráiler queda estacionado sin el cabezal, se sostiene en dos patas de apoyo. Cada pata concentra varias toneladas en una placa chica, y el tráiler siempre se estaciona en el mismo lugar.', ubic: { interior: true, borde: true, esquina: false } });
       return c;
     },
     fcMinDe(o) { return 350; },
@@ -34326,18 +34329,18 @@ const USOS = [
     hmin: 15, fcMin: 280, acabado: 'duro',
     kFijo: 2.1,
     opciones: [
-      { id: 'temp', tipo: 'select', etiqueta: 'Temperatura de operación', def: 'cong', valores: [{ v: 'ref', l: 'Refrigerada (0 a 5 °C)' }, { v: 'cong', l: 'Congelada (−18 °C o menos)' }] },
-      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', def: 'crown_fc5225', valores: MONTACARGAS.slice(0, 4).map(m => ({ v: m.id, l: m.nombre })) },
-      { id: 'racks', tipo: 'check', etiqueta: 'Racks', def: true },
-      { id: 'altura', tipo: 'num', etiqueta: 'Altura del rack (m)', def: 6, min: 2, max: 12, paso: 0.5 },
-      { id: 'niveles', tipo: 'num', etiqueta: 'Niveles de tarimas (vacío = según la altura)', def: '', min: 1, max: 9, paso: 1, auto: 'niveles' },
-      { id: 'tarimasBahia', tipo: 'select', etiqueta: 'Tarimas por bahía y nivel', def: '2', valores: [{ v: '2', l: '2' }, { v: '3', l: '3' }] },
-      { id: 'pesoTarima', tipo: 'select', etiqueta: 'Peso por tarima cargada', def: '1000', valores: TARIMAS.map(t => ({ v: String(t.W), l: t.nombre })) },
+      { id: 'temp', tipo: 'select', etiqueta: 'Temperatura de operación', ayuda: 'Refrigerada es de 0 a 5 grados; congelada es de 18 grados bajo cero o menos. En congelado hay que prever calefacción debajo del aislante, porque si no el suelo se congela y levanta la losa.', def: 'cong', valores: [{ v: 'ref', l: 'Refrigerada (0 a 5 °C)' }, { v: 'cong', l: 'Congelada (−18 °C o menos)' }] },
+      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', ayuda: 'Escoja el montacargas más pesado que vaya a trabajar sobre esta losa. Si todavía no lo compró, escoja uno un poco más grande del que piensa: cambiar el piso después cuesta mucho más que unos centímetros de concreto hoy.', def: 'crown_fc5225', valores: MONTACARGAS.slice(0, 4).map(m => ({ v: m.id, l: m.nombre })) },
+      { id: 'racks', tipo: 'check', etiqueta: 'Racks', ayuda: 'Marque si la cámara va a tener estantería.', def: true },
+      { id: 'altura', tipo: 'num', etiqueta: 'Altura del rack (m)', ayuda: 'Altura total de la estantería, desde el piso hasta la última tarima. Es el dato que más mueve el resultado: entre más alto el rack, más tarimas se apilan y más peso baja por cada pata.', def: 6, min: 2, max: 12, paso: 0.5 },
+      { id: 'niveles', tipo: 'num', etiqueta: 'Niveles de tarimas (vacío = según la altura)', ayuda: 'Cuántas tarimas quedan una encima de otra en el rack. Si lo deja vacío, el programa lo estima con la altura. Si ya tiene la cotización del rack, escriba el número exacto de ahí.', def: '', min: 1, max: 9, paso: 1, auto: 'niveles' },
+      { id: 'tarimasBahia', tipo: 'select', etiqueta: 'Tarimas por bahía y nivel', ayuda: 'Una «bahía» es el espacio entre dos marcos del rack, es decir entre dos pares de patas. Lo normal es que en ese espacio quepan 2 tarimas lado a lado, con una viga de 2.7 metros; con viga de 3.6 metros caben 3. Entre más tarimas por bahía, más peso baja por cada pata.', def: '2', valores: [{ v: '2', l: '2' }, { v: '3', l: '3' }] },
+      { id: 'pesoTarima', tipo: 'select', etiqueta: 'Peso por tarima cargada', ayuda: 'Cuánto pesa una tarima con el producto encima, no la tarima vacía. Si no lo sabe, escoja según lo que va a guardar: envases vacíos y textiles son livianos, bebidas y material de construcción son pesados.', def: '1000', valores: TARIMAS.map(t => ({ v: String(t.W), l: t.nombre })) },
     ],
     cargas(o) {
       const c = [];
       if (o.racks) c.push(cargasRacks(o));
-      c.push(cUdl('Carga uniforme de cámara', 800, 'V', 'CSCR-2010 bodega pesada 800 kg/m².'));
+      c.push(cUdl('Carga uniforme de cámara', 800, 'V', 'CSCR-2010 bodega pesada 800 kg/m².', A + 'Producto congelado o refrigerado repartido en el piso de la cámara. Se toma el valor de bodega pesada porque el producto frío suele ser denso.'));
       if (o.mc) c.push(cRueda(_mc(o.mc)));
       return c;
     },
@@ -34353,10 +34356,10 @@ const USOS = [
     ejemplos: 'Peatonal 400 kg/m² · vehículo liviano · camión recolector ocasional (eje motriz 17 t)',
     hmin: 10, fcMin: 210, acabado: 'exterior',
     opciones: [
-      { id: 'trafico', tipo: 'select', etiqueta: 'Tránsito', def: 'autos', valores: [{ v: 'peatonal', l: 'Solo peatonal' }, { v: 'autos', l: 'Vehículos livianos' }, { v: 'recolector', l: 'Camión recolector ocasional' }] },
+      { id: 'trafico', tipo: 'select', etiqueta: 'Tránsito', ayuda: 'Qué va a pasar por encima. El camión recolector de basura es la carga que manda en la mayoría de las aceras y calles de acceso, porque es pesado y pasa siempre por el mismo lugar.', def: 'autos', valores: [{ v: 'peatonal', l: 'Solo peatonal' }, { v: 'autos', l: 'Vehículos livianos' }, { v: 'recolector', l: 'Camión recolector ocasional' }] },
     ],
     cargas(o) {
-      const c = [cUdl('Peatonal y uso público', 400, 'V', 'CSCR-2010: áreas de acceso público 400 kg/m².')];
+      const c = [cUdl('Peatonal y uso público', 400, 'V', 'CSCR-2010: áreas de acceso público 400 kg/m².', A + 'Valor del Código Sísmico de Costa Rica para aceras y zonas de acceso público: gente de pie, apretada.')];
       if (o.trafico === 'autos') c.push(cRueda(_veh('suv')));
       if (o.trafico === 'recolector') c.push(cRueda(_veh('recolector')));
       return c;
@@ -34658,7 +34661,7 @@ function html(ctx) {
     '<div class="sub">' + esc(u.nombre) + ' · Referencia <b>' + esc(ref) + '</b> · ' + esc(ctx.fecha || '') + '</div></div></div>');
   out.push(kv([
     ['Proyecto', esc(S.proy.nombre || '—')], ['Cliente', esc(S.proy.cliente || '—')], ['Ubicación', esc(S.proy.ubicacion || '—')],
-    ['Preparado por', esc(ctx.autor || 'CONCRE') + ' · CONCRE / Concreequipos (proveedor)'], ['Área de la losa', fmt(R.area, 0) + ' m²']]));
+    ['Preparado por', 'CONCRE'], ['Área de la losa', fmt(R.area, 0) + ' m²']]));
 
   // Resultado
   var cumple = ev.okA && (R.criterio === 'tr34' || ev.okB);
@@ -34752,15 +34755,6 @@ function html(ctx) {
   // Lo que NO revisa
   out.push(seccion('Lo que este cálculo NO revisa', '<ul class="av">' + NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'));
 
-  // Bloque de firma, en blanco: lo llena el profesional responsable del proyecto
-  out.push(seccion('Revisión y responsabilidad profesional', kv([
-    ['Preparado por (proveedor)', esc(ctx.autor || 'CONCRE') + ' · CONCRE / Concreequipos'],
-    ['Revisado por (profesional responsable)', '<span class="firma">&nbsp;</span>'],
-    ['N° de inscripción CFIA', '<span class="firma">&nbsp;</span>'],
-    ['Firma', '<span class="firma">&nbsp;</span>'],
-    ['Fecha de revisión', '<span class="firma">&nbsp;</span>']]) +
-    '<p class="n">En Costa Rica el diseño de la losa lo firma un profesional inscrito en el CFIA. CONCRE prepara este predimensionamiento como proveedor de materiales y servicios; mientras este bloque esté en blanco, el documento es un borrador comercial y no un documento de diseño.</p>'));
-
   out.push(seccion('Descargo de responsabilidad', '<p class="p" style="font-size:8.5px;color:#555">' + esc(DESCARGO) + '</p>'));
 
   // Servicios de CONCRE: hoja aparte, para no mezclar promoción con el cuerpo técnico
@@ -34770,9 +34764,8 @@ function html(ctx) {
     '@page{size:A4;margin:11mm 12mm}' +
     'table.pg{width:100%;border-collapse:collapse}table.pg>tfoot>tr>td,table.pg>tbody>tr>td{padding:0}' +
     '.marca{position:fixed;left:0;right:0;top:32%;text-align:center;z-index:0;pointer-events:none}.marca img{width:60%;opacity:.07}' +
-    '.borrador{position:fixed;left:0;right:0;top:44%;text-align:center;z-index:0;pointer-events:none;font-size:62px;font-weight:800;color:#C8102E;opacity:.10;letter-spacing:6px;transform:rotate(-24deg)}' +
+    '.sello{float:right;margin-left:8px;white-space:nowrap;font-size:7px;font-weight:700;color:#C8102E;letter-spacing:.5px;text-transform:uppercase;border:1px solid #e0a3ae;border-radius:3px;padding:2px 6px}' +
     '.nomem{display:inline-block;background:#C8102E;color:#fff;font-size:9px;font-weight:800;padding:2px 7px;border-radius:3px;margin:3px 0;letter-spacing:.4px;text-transform:uppercase}' +
-    '.firma{display:inline-block;min-width:60%;border-bottom:1px solid #999}' +
     '.pie{border-top:2px solid #C8102E;margin-top:6px;padding-top:4px;font-size:7.5px;color:#777;line-height:1.4}' +
     '.enc{display:flex;align-items:center;gap:14px;border-bottom:3px solid #C8102E;padding-bottom:8px;margin-bottom:8px}' +
     '.enc .logo{height:46px;width:auto}.enc div.logo{font-size:22px;font-weight:800;color:#C8102E}.tit{font-size:19px;font-weight:800}.sub{font-size:10px;color:#666;margin-top:2px}' +
@@ -34789,9 +34782,8 @@ function html(ctx) {
   return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>CONCRE — ' + esc(ref) + '</title><style>' + css + '</style></head><body>' +
     '<div class="barra"><button onclick="window.print()">🖨 Imprimir / Guardar PDF</button>Informe ' + esc(ref) + '</div>' +
     (logo ? '<div class="marca"><img src="' + logo + '"></div>' : '') +
-    '<div class="borrador">BORRADOR</div>' +
     '<table class="pg"><tbody><tr><td>' + out.join('') + '</td></tr></tbody>' +
-    '<tfoot><tr><td><div class="pie"><b>CONCRE</b> · ' + esc(ref) + ' · ' + esc(DESCARGO_CORTO) + '</div></td></tr></tfoot></table></body></html>';
+    '<tfoot><tr><td><div class="pie"><span class="sello">Sujeto a revisión del profesional responsable</span><b>CONCRE</b> · ' + esc(ref) + ' · ' + esc(DESCARGO_CORTO) + '</div></td></tr></tfoot></table></body></html>';
 }
 
 var API = { html: html, DESCARGO: DESCARGO, DESCARGO_CORTO: DESCARGO_CORTO, NO_REVISA: NO_REVISA, CLIMAS: CLIMAS };
@@ -34937,6 +34929,9 @@ var CSS = [
 '.ls-est{display:inline-block;font-size:10px;font-weight:800;border-radius:9px;padding:1px 7px;margin-left:6px;color:#fff}',
 '.ls-est.V{background:#2e7d32}.ls-est.D{background:#1565c0}.ls-est.E{background:#ef6c00}.ls-est.U{background:#6a1b9a}',
 '.ls-nota{font-size:10.5px;color:#777;margin-top:6px;line-height:1.4}',
+'.ls-ayuda{font-size:12px;color:#3D3D3D;background:#eef4ff;border-left:3px solid #6b8fd4;border-radius:0 5px 5px 0;padding:7px 10px;margin:0 0 9px;line-height:1.5}',
+'.ls-tipico{display:inline-block;font-size:10px;font-weight:700;color:#6a4b00;background:#fff4d6;border:1px solid #f0d089;border-radius:9px;padding:1px 8px;margin-left:6px;vertical-align:middle}',
+'.ls-tipico-pie{font-size:11px;color:#8a6d1f;background:#fff9ea;border:1px solid #f0e0b0;border-radius:6px;padding:6px 9px;margin-top:8px;line-height:1.45}',
 '.ls-btn{background:#C8102E;color:#fff;border:0;border-radius:7px;padding:9px 18px;font-weight:700;font-size:13px;cursor:pointer}',
 '.ls-btn.sec{background:#fff;color:#555;border:1px solid #bbb}',
 '.ls-btn.sm{padding:4px 10px;font-size:11px}',
@@ -35118,22 +35113,34 @@ function pintarUso(S, box, ir) {
 function tarjetaCarga(S, c, idx, redibujar) {
   var t = { rack: 'Carga puntual (pata / placa)', rueda: 'Carga de rueda', lineal: 'Carga lineal (muro)', udl: 'Carga uniforme' }[c.tipo];
   var top = el('div', { class: 'top' }, [
-    el('div', {}, [el('span', { class: 'nm' }, [c.nombre || t]), el('span', { class: 'ls-est ' + (c.est || 'U'), title: 'V verificado · D derivado · E estimado por CONCRE · U ingresado por el usuario' }, [c.est || 'U'])]),
+    el('div', {}, [el('span', { class: 'nm' }, [c.nombre || t]),
+      el('span', { class: 'ls-est ' + (c.est || 'U'), title: 'V verificado en norma o ficha · D derivado por fórmula · E estimado por CONCRE · U ingresado por usted' }, [c.est || 'U']),
+      c.est && c.est !== 'U' ? el('span', { class: 'ls-tipico' }, ['valor típico recomendado']) : null,
+      el('div', { class: 'ls-nota', style: 'margin-top:2px' }, [t])]),
     el('button', { class: 'ls-btn sec sm', onclick: function () { S.cargas.splice(idx, 1); redibujar(); } }, ['Quitar'])
   ]);
+  var box0 = [];
+  if (c.ayuda) box0.push(el('div', { class: 'ls-ayuda' }, [c.ayuda]));
   var g = el('div', { class: 'ls-grid' });
   function n(lbl, key, hint, step) { g.appendChild(campo(lbl, inpNum(c[key], function (v) { c[key] = v; c.est = 'U'; }, { step: step }), hint)); }
-  if (c.tipo === 'rack') { n('Carga por apoyo (kg)', 'P_kg'); n('Placa · lado x (cm)', 'x_cm'); n('Placa · lado y (cm)', 'y_cm'); }
-  if (c.tipo === 'rueda') {
-    n('Carga por rueda (kg)', 'W_kg'); n('Área de contacto (cm²)', 'A_cm2', 'Huella de la llanta');
-    n('Separación entre ruedas (cm)', 'sep_cm', 'Solo si revisa el par de ruedas'); n('Impacto (1.0 = sin impacto)', 'impacto', 'Reach stacker: 1.15', 0.05);
-    var ck = el('input', { type: 'checkbox' }); ck.checked = !!c.dual; ck.addEventListener('change', function () { c.dual = ck.checked; });
-    g.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Revisar par de ruedas']), el('label', { class: 'ls-chk' }, [ck, 'Sí, hay dos ruedas juntas'])]));
+  if (c.tipo === 'rack') {
+    n('Carga por apoyo (kg)', 'P_kg', 'Lo que baja al piso por UN apoyo, no el peso total');
+    n('Placa · lado x (cm)', 'x_cm', 'Medida de la placa metálica que toca el piso');
+    n('Placa · lado y (cm)', 'y_cm', 'La otra medida de esa misma placa');
   }
-  if (c.tipo === 'lineal') n('Carga lineal (kg/m)', 'Q_kg_m');
-  if (c.tipo === 'udl') n('Carga uniforme (kg/m²)', 'q_kg_m2');
-  n('Factor de carga γF', 'gF', 'Rack 1.2 · equipos 1.6 · uniforme 1.0', 0.05);
-  var box = el('div', { class: 'ls-carga' }, [top, g]);
+  if (c.tipo === 'rueda') {
+    n('Carga por rueda (kg)', 'W_kg', 'Lo que pesa UNA rueda con el equipo cargado');
+    n('Área de contacto (cm²)', 'A_cm2', 'La huella que deja la llanta en el piso. Más chica, más castiga');
+    n('Separación entre ruedas (cm)', 'sep_cm', 'Distancia de centro a centro entre las dos ruedas del mismo eje');
+    n('Impacto (1.0 = sin impacto)', 'impacto', 'Sube la carga si el equipo golpea el piso: 1.0 normal, 1.15 grúa de patio', 0.05);
+    var ck = el('input', { type: 'checkbox' }); ck.checked = !!c.dual; ck.addEventListener('change', function () { c.dual = ck.checked; });
+    g.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Revisar par de ruedas']), el('label', { class: 'ls-chk' }, [ck, 'Sí, hay dos ruedas juntas']),
+      el('div', { class: 'hint' }, ['Cuando dos ruedas van juntas, el piso las «siente» como una sola carga mayor'])]));
+  }
+  if (c.tipo === 'lineal') n('Carga lineal (kg/m)', 'Q_kg_m', 'Peso por cada metro de largo, como una pared');
+  if (c.tipo === 'udl') n('Carga uniforme (kg/m²)', 'q_kg_m2', 'Peso repartido por cada metro cuadrado de piso');
+  n('Factor de carga γF', 'gF', 'Margen de seguridad de la norma: rack 1.2 · otras cargas 1.5 · equipos en movimiento 1.6. No lo deje vacío', 0.05);
+  var box = el('div', { class: 'ls-carga' }, [top].concat(box0, [g]));
   if (c.tipo === 'rack' || c.tipo === 'rueda') {
     var u = c.ubic = c.ubic || { interior: true, borde: true, esquina: c.tipo === 'rack' };
     var row = el('div', { style: 'display:flex;gap:16px;margin-top:6px;flex-wrap:wrap' });
@@ -35143,7 +35150,8 @@ function tarjetaCarga(S, c, idx, redibujar) {
     });
     box.appendChild(row);
   }
-  if (c.nota) box.appendChild(el('div', { class: 'ls-nota' }, [c.nota]));
+  if (c.nota) box.appendChild(el('div', { class: 'ls-nota' }, ['Dato técnico: ' + c.nota]));
+  if (c.est && c.est !== 'U') box.appendChild(el('div', { class: 'ls-tipico-pie' }, ['Valores típicos recomendados por CONCRE para este uso. Cámbielos solo si tiene el dato real del equipo; al cambiar uno, la etiqueta pasa a «U», ingresado por usted.']));
   return box;
 }
 
@@ -35151,7 +35159,7 @@ function pintarDatos(S, box, ir) {
   var u = usoActual(S);
   if (!u) { ir(0); return; }
   box.appendChild(el('h2', { class: 'ls-h2' }, [u.icono + ' ' + u.nombre]));
-  box.appendChild(el('p', { class: 'ls-p' }, ['Los valores vienen por defecto según el uso; cámbielos solo si conoce el dato real. Todo se escribe en kilos.']));
+  box.appendChild(el('p', { class: 'ls-p' }, ['Todos los valores vienen precargados con los típicos de este uso. No tiene que cambiar nada para calcular: cámbielos solo si tiene el dato real del equipo. Todo se escribe en kilos.']));
 
   // proyecto
   var bp = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Proyecto'])]);
@@ -35173,13 +35181,14 @@ function pintarDatos(S, box, ir) {
   var go = el('div', { class: 'ls-grid' });
   function alCambiarOpcion() { S.cargas = cargasDeUso(S); S.res = null; redibujarCargas(); }
   u.opciones.forEach(function (p) {
-    if (p.tipo === 'select') go.appendChild(campo(p.etiqueta, selBox(p.valores, S.o[p.id], function (v) { S.o[p.id] = v; if (u.id === 'cancha' && p.id === 'techo') S.clima = REC.climaPorDefecto('cancha', S.o); alCambiarOpcion(); })));
+    var ayu = p.ayuda ? el('div', { class: 'hint' }, [p.ayuda]) : null;
+    if (p.tipo === 'select') go.appendChild(campo(p.etiqueta, selBox(p.valores, S.o[p.id], function (v) { S.o[p.id] = v; if (u.id === 'cancha' && p.id === 'techo') S.clima = REC.climaPorDefecto('cancha', S.o); alCambiarOpcion(); }), p.ayuda));
     else if (p.tipo === 'num') {
-      var hint = p.auto === 'niveles' ? 'Vacío: ' + C.nivelesPorAltura(+S.o.altura || 6) + ' niveles según la altura' : null;
+      var hint = p.auto === 'niveles' ? 'Si lo deja vacío el programa usa ' + C.nivelesPorAltura(+S.o.altura || 6) + ' niveles, calculados con la altura. ' + (p.ayuda || '') : p.ayuda;
       go.appendChild(campo(p.etiqueta, inpNum(S.o[p.id], function (v) { S.o[p.id] = v === '' ? '' : num(v, ''); alCambiarOpcion(); }, { step: p.paso }), hint));
     } else if (p.tipo === 'check') {
       var ck = el('input', { type: 'checkbox' }); ck.checked = !!S.o[p.id]; ck.addEventListener('change', function () { S.o[p.id] = ck.checked; alCambiarOpcion(); });
-      go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, [p.etiqueta]), el('label', { class: 'ls-chk' }, [ck, 'Sí'])]));
+      go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, [p.etiqueta]), el('label', { class: 'ls-chk' }, [ck, 'Sí']), ayu]));
     } else if (p.tipo === 'multi') {
       var mb = el('div', { class: 'ls-multi' });
       p.valores.forEach(function (v) {
@@ -35187,24 +35196,30 @@ function pintarDatos(S, box, ir) {
         ck.addEventListener('change', function () { var a = (S.o[p.id] || []).filter(function (x) { return x !== v.v; }); if (ck.checked) a.push(v.v); S.o[p.id] = a; alCambiarOpcion(); });
         mb.appendChild(el('label', {}, [ck, v.l]));
       });
-      go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, [p.etiqueta]), mb]));
+      go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, [p.etiqueta]), mb, ayu]));
     }
   });
   bo.appendChild(go);
-  bo.appendChild(el('div', { class: 'ls-nota' }, ['Al cambiar una característica se recargan las cargas por defecto de la lista de abajo.']));
+  bo.appendChild(el('div', { class: 'ls-tipico-pie' }, ['Valores típicos recomendados. Al cambiar una característica aquí arriba, se recargan las cargas típicas de la lista de abajo, y se pierden los cambios que haya hecho en ellas.']));
   box.appendChild(bo);
   if (u.avisos) u.avisos.forEach(function (a) { box.appendChild(el('div', { class: 'ls-warn' }, [a])); });
 
   // cargas
   var bc = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Cargas que se revisan (editables)'])]);
-  bc.appendChild(el('div', { class: 'ls-leyenda' }, ['Etiqueta de cada dato: V verificado en ficha o norma · D derivado por fórmula · E estimado por CONCRE · U ingresado por usted.']));
+  bc.appendChild(el('div', { class: 'ls-p', style: 'margin-bottom:8px' }, ['Estas son las cargas que la losa va a tener que aguantar. Cada tarjeta explica qué es y de dónde sale el número. Puede cambiar cualquier valor, quitar una carga que no aplique, o agregar otra al final.']));
+  bc.appendChild(el('div', { class: 'ls-leyenda' }, ['Etiqueta de cada dato: V verificado en ficha del fabricante o en norma · D derivado por fórmula · E estimado por CONCRE · U ingresado por usted.']));
   bc.appendChild(lista); redibujarCargas();
   var add = selBox([{ v: '', l: '＋ Agregar otra carga…' }, { v: 'rack', l: 'Carga puntual (pata, columna, placa)' }, { v: 'rueda', l: 'Carga de rueda' }, { v: 'lineal', l: 'Carga lineal (muro)' }, { v: 'udl', l: 'Carga uniforme' }], '', function (v) {
     if (!v) return;
-    var nuevo = { rack: { tipo: 'rack', nombre: 'Carga puntual del usuario', P_kg: 1000, x_cm: 15, y_cm: 15, gF: 1.2, ubic: { interior: true, borde: true, esquina: true } },
-      rueda: { tipo: 'rueda', nombre: 'Rueda del usuario', W_kg: 1000, A_cm2: 200, sep_cm: 0, dual: false, gF: 1.6, impacto: 1, ubic: { interior: true, borde: true } },
-      lineal: { tipo: 'lineal', nombre: 'Carga lineal del usuario', Q_kg_m: 500, gF: 1 },
-      udl: { tipo: 'udl', nombre: 'Carga uniforme del usuario', q_kg_m2: 500, gF: 1 } }[v];
+    var nuevo = {
+      rack: { tipo: 'rack', nombre: 'Carga puntual que usted agregó', P_kg: 1000, x_cm: 15, y_cm: 15, gF: 1.5, ubic: { interior: true, borde: true, esquina: true },
+        ayuda: 'Cualquier cosa que apoye el peso en uno o varios puntos y no en toda su base: la pata de una máquina, la columna de un entrepiso, la base de un tanque, un equipo con soportes. Escriba lo que baja por UN apoyo y el tamaño de la placa que toca el piso. Entre más chica la placa, más exige a la losa.' },
+      rueda: { tipo: 'rueda', nombre: 'Rueda que usted agregó', W_kg: 1000, A_cm2: 200, sep_cm: 0, dual: false, gF: 1.6, impacto: 1, ubic: { interior: true, borde: true },
+        ayuda: 'Cualquier equipo que se mueva sobre ruedas: un montacargas que no está en la lista, un camión, una plataforma, una carreta. Escriba lo que pesa UNA rueda con el equipo cargado y la huella que deja la llanta.' },
+      lineal: { tipo: 'lineal', nombre: 'Carga lineal que usted agregó', Q_kg_m: 500, gF: 1.5,
+        ayuda: 'Peso que se apoya a lo largo de una línea en vez de en un punto: una pared sobre la losa, la base corrida de una máquina, un riel, el patín de una planta eléctrica. Se escribe en kilos por cada metro de largo. Por ejemplo, una pared de bloque de 12 cm y 2.4 m de alto pesa unos 630 kg por metro.' },
+      udl: { tipo: 'udl', nombre: 'Carga uniforme que usted agregó', q_kg_m2: 500, gF: 1.5,
+        ayuda: 'Peso repartido en toda el área, en kilos por metro cuadrado: mercadería en el piso, materia prima, gente. Si no sabe el valor, piense cuánto pesaría lo que se guarda en un cuadro de un metro por un metro.' } }[v];
     nuevo.est = 'U'; S.cargas.push(nuevo); redibujarCargas(); add.value = '';
   });
   bc.appendChild(add);
@@ -35222,7 +35237,7 @@ var CLIMAS = [
 function pintarTerreno(S, box, ir) {
   var u = usoActual(S);
   box.appendChild(el('h2', { class: 'ls-h2' }, ['Terreno, clima y concreto']));
-  box.appendChild(el('p', { class: 'ls-p' }, ['Si no conoce el suelo deje «No lo sé»: el programa usa un valor conservador y lo indica en el informe.']));
+  box.appendChild(el('p', { class: 'ls-p' }, ['Todos los valores de este paso vienen precargados con los típicos recomendados: puede calcular sin cambiar nada. Si no conoce el suelo, deje «No lo sé»: el programa usa un valor del lado seguro y lo dice en el informe.']));
 
   var bs = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Suelo de apoyo'])]);
   var gs = el('div', { class: 'ls-grid' });
@@ -35231,8 +35246,10 @@ function pintarTerreno(S, box, ir) {
   if (u.kFijo) {
     box.appendChild(el('div', { class: 'ls-info' }, ['Cuarto frío: la losa apoya sobre aislante, se usa k = ' + u.kFijo + ' kg/cm³.']));
   } else {
-    gs.appendChild(campo('Tipo de suelo', selBox(C.SUELOS.map(function (s) { return { v: s.id, l: s.nombre }; }), S.suelo, function (v) { S.suelo = v; refInfo(); })));
-    gs.appendChild(campo('Base granular', selBox(C.BASES.map(function (s) { return { v: s.id, l: s.nombre }; }), S.base, function (v) { S.base = v; refInfo(); })));
+    gs.appendChild(campo('Tipo de suelo', selBox(C.SUELOS.map(function (s) { return { v: s.id, l: s.nombre }; }), S.suelo, function (v) { S.suelo = v; refInfo(); }),
+      'Qué hay debajo de la losa. Lo que importa es qué tan firme es: una arcilla blanda se hunde y hace trabajar más a la losa; una grava o un lastre compactado la sostienen. Si no tiene estudio de suelos, deje «No lo sé»: el programa usa un valor del lado seguro.'));
+    gs.appendChild(campo('Base granular', selBox(C.BASES.map(function (s) { return { v: s.id, l: s.nombre }; }), S.base, function (v) { S.base = v; refInfo(); }),
+      'La capa de material compactado (lastre o piedra triturada) que se pone entre el suelo natural y la losa. Sirve para nivelar, para drenar y para que la losa apoye parejo. Valor típico recomendado: 15 cm en obra normal.'));
     gs.appendChild(campo('CBR del estudio de suelos (%) — opcional', inpNum(S.cbr, function (v) { S.cbr = v; refInfo(); }), 'Si lo ingresa, reemplaza el tipo de suelo. Máximo 100 %'));
     gs.appendChild(campo('k medido con placa, en kg/cm³ — opcional', inpNum(S.kDirecto, function (v) { S.kDirecto = v; refInfo(); }), 'OJO CON LAS UNIDADES: si su laboratorio lo reporta en MPa/m divida entre 9.81; si lo reporta en pci multiplique por 0.0277. Rango 0.5 a 15'));
     bs.appendChild(gs); bs.appendChild(info); refInfo(); box.appendChild(bs);
@@ -35242,7 +35259,8 @@ function pintarTerreno(S, box, ir) {
   bcl.appendChild(campo('Ubicación de la losa', selBox(CLIMAS, S.clima, function (v) { S.clima = v; })));
   var ckS = el('input', { type: 'checkbox' }); ckS.checked = !!S.pisoSensible; ckS.addEventListener('change', function () { S.pisoSensible = ckS.checked; });
   bcl.appendChild(el('div', { class: 'ls-f', style: 'margin-top:8px' }, [el('label', { class: 'ls-chk' }, [ckS, 'Recibirá un piso sensible a la humedad (epóxico, vinílico, madera)'])]));
-  bcl.appendChild(el('div', { class: 'ls-nota' }, ['El clima decide la separación de juntas (24·h si la losa está a la intemperie), la barrera de vapor y el sello.']));
+  bcl.appendChild(el('div', { class: 'ls-nota' }, ['El clima no es un dato de adorno: decide cada cuánto hay que cortar las juntas, si la losa necesita barrera de vapor y qué sello lleva. Una losa al sol y la lluvia se expande y se contrae más, así que pide juntas más cercanas.']));
+  bcl.appendChild(el('div', { class: 'ls-tipico-pie' }, ['Viene precargado con lo típico de este uso: valor típico recomendado.']));
   box.appendChild(bcl);
 
   var bcc = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Resistencia del concreto'])]);
@@ -35254,22 +35272,31 @@ function pintarTerreno(S, box, ir) {
   gc.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Selección']), el('label', { class: 'ls-chk' }, [chk, 'Que el programa recomiende el f’c (recomendado)'])]));
   gc.appendChild(campo('f’c manual', selfc));
   bcc.appendChild(gc);
-  bcc.appendChild(el('div', { class: 'ls-nota' }, ['Automático: parte del f’c mínimo del uso (' + u.fcMinDe(S.o) + ' kg/cm²) y solo sube si el espesor pasa de 25 cm.']));
+  bcc.appendChild(el('div', { class: 'ls-nota' }, ['El f’c es la resistencia del concreto a la compresión: es lo que se le pide a la planta al ordenar la mezcla. En automático el programa parte del mínimo que pide este uso (' + u.fcMinDe(S.o) + ' kg/cm²) y solo lo sube si con ese valor el espesor se pasa de 25 cm, que ya es una losa poco práctica.']));
+  bcc.appendChild(el('div', { class: 'ls-tipico-pie' }, ['Valor típico recomendado: deje que el programa escoja el f’c. Escójalo a mano solo si la planta de concreto le limita las opciones o si el proyecto ya trae una especificación.']));
   box.appendChild(bcc);
 
   var bg = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Geometría, criterio y parámetros'])]);
   var gg = el('div', { class: 'ls-grid' });
-  gg.appendChild(campo('Paño previsto · lado 1 (m) — opcional', inpNum(S.panelLx, function (v) { S.panelLx = v; }), 'Vacío: se usa el paño recomendado'));
-  gg.appendChild(campo('Paño previsto · lado 2 (m) — opcional', inpNum(S.panelLy, function (v) { S.panelLy = v; })));
-  gg.appendChild(campo('Transferencia de carga en borde (%)', inpNum(S.borde, function (v) { S.borde = Math.min(35, Math.max(0, num(v, 15))); }), 'Dovelas o trabazón, de 0 a 35 %. Sin dovelas: 0 %'));
-  gg.appendChild(campo('Transferencia en esquina (%)', inpNum(S.esq, function (v) { S.esq = Math.min(35, Math.max(0, num(v, 15))); }), 'Ya no se usa en el cálculo: TR34 no da crédito por dovelas en la esquina del paño'));
-  gg.appendChild(campo('Poisson del concreto ν', inpNum(S.nu, function (v) { S.nu = Math.min(0.30, Math.max(0.10, num(v, 0.2))); }, { step: 0.01 }), 'Entre 0.10 y 0.30'));
-  gg.appendChild(campo('MR de diseño', selBox([{ v: 'aci318', l: 'ACI 318: 0.62·√f’c' }, { v: 'aci360', l: 'ACI 360R: 9·√f’c (psi)' }], S.mr, function (v) { S.mr = v; })));
+  gg.appendChild(campo('Tamaño del paño · lado 1 (m) — opcional', inpNum(S.panelLx, function (v) { S.panelLx = v; }),
+    'El «paño» es cada cuadro en que queda dividida la losa por las juntas que se cortan con sierra. No es el tamaño de la bodega: es el tamaño de cada cuadro. Si lo deja vacío, el programa usa el paño que él mismo recomienda, que es lo normal.'));
+  gg.appendChild(campo('Tamaño del paño · lado 2 (m) — opcional', inpNum(S.panelLy, function (v) { S.panelLy = v; }),
+    'La otra medida del cuadro. Conviene que los dos lados sean parecidos: un paño largo y angosto se fisura.'));
+  gg.appendChild(campo('Transferencia de carga en borde (%)', inpNum(S.borde, function (v) { S.borde = Math.min(35, Math.max(0, num(v, 15))); }),
+    'Cuando una carga cae justo al lado de una junta, parte del peso lo puede tomar el paño vecino si la junta lleva dovelas, que son las varillas o placas que cruzan la junta. Esto dice cuánto ayuda el paño vecino: 0 % si no va a poner dovelas, 15 a 25 % con placa diamante, 20 a 35 % con dovela redonda. Valor típico recomendado: 15 %.'));
+  gg.appendChild(campo('Transferencia en esquina (%)', inpNum(S.esq, function (v) { S.esq = Math.min(35, Math.max(0, num(v, 15))); }),
+    'Este campo ya no afecta el cálculo. La norma no permite contar con ayuda del paño vecino en la esquina, porque las dovelas se colocan a no menos de 30 cm de donde se cruzan dos juntas, y en la esquina justamente no hay dovela. Queda visible solo como referencia.'));
+  gg.appendChild(campo('Poisson del concreto ν', inpNum(S.nu, function (v) { S.nu = Math.min(0.30, Math.max(0.10, num(v, 0.2))); }, { step: 0.01 }),
+    'Cuánto se ensancha el concreto cuando se le aplica peso. Es una propiedad del material, no algo del proyecto: para concreto normal siempre vale 0.20. Valor típico recomendado: déjelo así salvo que un ingeniero le pida otro.'));
+  gg.appendChild(campo('MR de diseño', selBox([{ v: 'aci318', l: 'ACI 318: 0.62·√f’c — más conservador (recomendado)' }, { v: 'aci360', l: 'ACI 360R: 9·√f’c (psi) — usual en pavimentos' }], S.mr, function (v) { S.mr = v; }),
+    'El MR (módulo de rotura) es cuánto aguanta el concreto antes de fisurarse al doblarse. No se mide directo: se calcula a partir del f’c con una de estas dos fórmulas. La primera da un número más bajo, o sea una losa un poco más gruesa. Valor típico recomendado: la primera.'));
   gg.appendChild(campo('Criterio de espesor', selBox([
     { v: 'mayor', l: 'El más conservador de los dos métodos (recomendado)' },
     { v: 'tr34', l: 'TR34 manda; Westergaard solo advierte' }], S.criterio, function (v) { S.criterio = v; }),
     'El motor de Westergaard es además el chequeo de fatiga: con “TR34 manda” la losa no queda verificada a repetición de cargas'));
-  bg.appendChild(gg); box.appendChild(bg);
+  bg.appendChild(gg);
+  bg.appendChild(el('div', { class: 'ls-tipico-pie' }, ['Todos estos campos vienen con el valor típico recomendado. Los dos primeros son opcionales; los demás son propiedades del concreto y criterios de norma que normalmente no hay que tocar.']));
+  box.appendChild(bg);
 
   box.appendChild(el('div', { class: 'ls-nav' }, [el('button', { class: 'ls-btn sec', onclick: function () { ir(1); } }, ['← Datos']),
     el('button', { class: 'ls-btn', onclick: function () { S.aviso = ''; S.res = calcular(S); ir(3); } }, ['Calcular →'])]));
@@ -35415,7 +35442,7 @@ function pintarResultados(S, box, ir, nuevo) {
     el('ul', { style: 'font-size:12px;line-height:1.6;margin:0;padding-left:18px', html: INF.NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') })]));
 
   // descargo
-  var bd = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Descargo de responsabilidad · BORRADOR para revisión']), el('div', { class: 'ls-desc' }, [DESCARGO])]);
+  var bd = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Descargo de responsabilidad · sujeto a revisión del profesional']), el('div', { class: 'ls-desc' }, [DESCARGO])]);
   box.appendChild(bd);
   box.appendChild(navRes(ir, nuevo));
 }
