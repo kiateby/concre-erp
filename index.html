@@ -1953,7 +1953,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260929115449';
+var APP_BUILD='20260930094921';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -3871,6 +3871,7 @@ function buildAdminTabs(){
     {id:'precios',       label:'📚 Precios e Info',   extra:'try{initPreciosTab("preciosAdminRoot");}catch(e){console.error(e);}', superadmin_only:true},
     {id:'importaciones', label:'🚢 Importaciones',   extra:'try{initImportaciones();}catch(e){console.error(e);}', superadmin_only:true},
     {id:'facturacion',   label:'🧾 Facturación',     extra:'try{initFacturacion();}catch(e){console.error(e);}', optIn:true},
+    {id:'losas',         label:'📐 Diseño de losas', extra:'try{initLosas("losas-root-admin");}catch(e){console.error(e);}', optIn:true},
   ];
   // Filter tabs based on admin permissions (superadmin sees all)
   var allowedBtns=btns.filter(function(b){
@@ -20243,6 +20244,7 @@ var ADMIN_TAB_DEFS = [
   {id:'radar',          label:'Radar Comercial'},
   {id:'cxc',            label:'Cuentas por cobrar (solo lectura)'},
   {id:'facturacion',    label:'Facturación'},
+  {id:'losas',          label:'Diseño de losas'},
 ];
 
 function getUserTabPerms(uid){
@@ -20294,7 +20296,7 @@ function renderUserTabPermsRow(userId){
       // 'radar' para usuarios normales (no admin) es opt-in: requiere true explícito, oculta por defecto
       // 'cxc' es opt-in para todos los roles; 'radar' solo para usuarios normales
       // 'facturacion' también es opt-in: el superadmin la autoriza uno por uno
-      var esRadarOptIn=(t.id==='radar'&&!targetIsAdmin)||t.id==='cxc'||t.id==='facturacion';
+      var esRadarOptIn=(t.id==='radar'&&!targetIsAdmin)||t.id==='cxc'||t.id==='facturacion'||t.id==='losas';
       var allowed=esRadarOptIn?(perms[t.id]===true):(perms[t.id]!==false);
       var disabled=targetIsAdmin&&!isSA; // only superadmin can restrict admins
       return '<label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:'+(disabled?'not-allowed':'pointer')+';opacity:'+(disabled?'0.5':'1')+'">'
@@ -20315,7 +20317,7 @@ function onTabPermChange(chk){
   var users=getUsers();
   var targetUser=users.find(function(x){return x.id===uid;})||{};
   var targetIsAdmin=targetUser.rol==='admin'||targetUser.rol==='superadmin';
-  var esOptIn=(tab==='radar'&&!targetIsAdmin)||tab==='cxc'; // requieren true explícito; no basta con ausencia de 'false'
+  var esOptIn=(tab==='radar'&&!targetIsAdmin)||tab==='cxc'||tab==='facturacion'||tab==='losas'; // requieren true explícito; no basta con ausencia de 'false'
   if(esOptIn){
     if(allowed){ perms[tab]=true; }
     else { delete perms[tab]; }
@@ -23896,7 +23898,26 @@ const calcEll=(Ecm,h,v,k)=>Math.pow(Ecm*1000*h*h*h/(12*(1-v*v)*k),0.25);
 const calcLambda=(Ecm,h,k)=>Math.pow(3*k/(Ecm*1000*h*h*h),0.25);
 const calcSr=(fR1,fR4)=>[0.45*fR1,0.37*fR4];
 const calcMn=(fctd,h)=>fctd*h*h/6;
-const calcMp=(h,yc,s1,s4)=>(h*h/6/yc)*(0.29*s4+0.16*s1);
+// TR-34 4ª ed. — capacidad en ESQUINA. Depende SOLO de Mn (sin aporte de fibra) y NO lleva
+// crédito por dovelas: ACI 302.1R exige la dovela a ≥ 300 mm de la intersección de juntas,
+// así que en la esquina de un paño no hay transferencia.
+const puEsquinaRaw=(Mn,a,ell)=>{
+  const al=a/ell, P0=2*Mn/1000, P02=4*Mn/(1-al)/1000;
+  return al>=0.2?P02:P0+(al/0.2)*(P02-P0);
+};
+// Punzonamiento (TR-34 / EC2 §6.4) — sin aporte de la fibra, criterio conservador.
+// Devuelve {uso_cara, uso_perim, ok}. P en kN, x/y en mm, h en mm, fck en MPa.
+const punzonamiento=(P_kN,x,y,h,fck,yc)=>{
+  const d=0.75*h, P=P_kN*1000;
+  const u0=2*(x+y), u1=2*(x+y)+4*Math.PI*d;
+  const kd=Math.min(2,1+Math.sqrt(200/d));
+  const vRdc=0.035*Math.pow(kd,1.5)*Math.sqrt(fck);
+  const vMax=0.5*(0.6*(1-fck/250))*(fck/yc);
+  const vCara=P/(u0*d), vPer=P/(u1*d);
+  return {d:d,u0:u0,u1:u1,vRdc:vRdc,vMax:vMax,v_cara:vCara,v_perim:vPer,
+          uso_cara:vCara/vMax, uso_perim:vPer/vRdc, ok:(vCara<=vMax&&vPer<=vRdc)};
+};
+const calcMp=(h,yc,s1,s4)=>(h*h/yc)*(0.29*s4+0.16*s1);   // TR-34 4ª ed.: Mup = h²/γm·(0.29σr4+0.16σr1). NO lleva /6 (ese es del Mn elástico).
 const calcMmalla=(As,Fy,ys,d,fck,b,on)=>{
   if(!on)return 0;
   // EC2 §6.1: Mn_malla = As*(Fy/ys)*(d - a/2)
@@ -23933,7 +23954,9 @@ function calcularCp(inp){
     r.a_cp=Math.sqrt(inp.g1_x*inp.g1_y/Math.PI);r.al_cp=r.a_cp/r.ell;r.Pd_cp=inp.g1_P*inp.gF_rack;
     r.Pu_int=puInterior(r.Mr,r.Mn,r.a_cp,r.ell);
     r.Pu_borde_raw=puBordeRaw(r.Mr,r.Mn,r.a_cp,r.ell);
-    r.Pu_borde=r.Pu_borde_raw*(1+inp.borde_pct/100);r.Pu_esq=r.Pu_borde_raw*(1+inp.esq_pct/100);
+    r.Pu_borde=r.Pu_borde_raw*(1+inp.borde_pct/100);
+    r.Pu_esq=puEsquinaRaw(r.Mn,r.a_cp,r.ell);   // TR-34: 2Mn / 4Mn(1−a/ℓ), sin crédito de dovelas
+    r.pz=punzonamiento(r.Pd_cp,inp.g1_x,inp.g1_y,h,inp.fck,inp.yc);
     r.Rat_int=inp.g1_interior?(r.Pd_cp>0?r.Pu_int/r.Pd_cp:null):null;
     r.Rat_borde=inp.g1_borde?(r.Pd_cp>0?r.Pu_borde/r.Pd_cp:null):null;
     r.Rat_esq=inp.g1_esquina?(r.Pd_cp>0?r.Pu_esq/r.Pd_cp:null):null;
@@ -24660,7 +24683,7 @@ function cpDataTable(r){
     ['λ (parámetro)',r.lam.toFixed(8),'mm⁻¹','TR-34 §7.7'],['fR1',r.fR1.toFixed(4),'MPa','EN 14651'],
     ['fR4',r.fR4.toFixed(4),'MPa','EN 14651'],['σr1',r.sr1.toFixed(4),'MPa','TR-34 §6.4'],
     ['σr4',r.sr4.toFixed(4),'MPa','TR-34 §6.4'],['Mn',r.Mn.toFixed(2),'N·mm/mm','TR-34 §6.3'],
-    ['Mp',r.Mp.toFixed(2),'N·mm/mm','TR-34 §6.4'],['Re3 = Mp/Mn',(r.Re3*100).toFixed(2)+'%','','TR-34 §6.3.2 (≥10%)'],
+    ['Mp',r.Mp.toFixed(2),'N·mm/mm','TR-34 §6.4'],['Re3 = Mp/Mn',(r.Re3*100).toFixed(2)+'%','','TR-34 §6.3.2'],
     ['Lmax ACI',r.Lmax_ACI.toFixed(0),'cm','ACI 360R-10'],['Ratio aspecto',r.Rat_asp.toFixed(3),'','≤ 1.5'],
     ['Rat. juntas',r.Rat_jun.toFixed(3),'','≤ 1.0']];
   const tbl=_el('table',{class:'vt'});
@@ -25050,7 +25073,7 @@ async function exportPDF(mod, S, r) {
       row(td('σr1 = 0.45 × fR1'),td(`0.45 × ${r.fR1.toFixed(4)}`,'color:#58595B;font-size:8.5px'),tdv(r.sr1.toFixed(4)),td('MPa')),
       row(td('σr4 = 0.37 × fR4'),td(`0.37 × ${r.fR4.toFixed(4)}`,'color:#58595B;font-size:8.5px'),tdv(r.sr4.toFixed(4)),td('MPa')),
       row(td('Mn = fctd,fl × h²/6'),td(`${r.fctd_fl.toFixed(4)}×${inp.h_cm*10}²/6`,'color:#58595B;font-size:8.5px'),tdv(r.Mn.toFixed(2)),td('N·mm/mm')),
-      row(td('Mp = (h²/6/γc)×(0.29σr4+0.16σr1)'),td(`h=${inp.h_cm*10}mm γc=${inp.yc}`,'color:#58595B;font-size:8.5px'),tdv(r.Mp.toFixed(2)),td('N·mm/mm')),
+      row(td('Mp = (h²/γc)×(0.29σr4+0.16σr1)'),td(`h=${inp.h_cm*10}mm γc=${inp.yc}`,'color:#58595B;font-size:8.5px'),tdv(r.Mp.toFixed(2)),td('N·mm/mm')),
       row(td('Re3 = Mp/Mn (inf.)'),td(`${r.Mp.toFixed(2)}/${r.Mn.toFixed(2)}`,'color:#58595B;font-size:8.5px'),tdv((r.Re3*100).toFixed(2)+'%','color:#E67E22'),td('')),
     ]);
     body+=normaBox('TR-34 §6.4 — Momentos Resistentes de Sección FRC','Mn es el momento resistente negativo (hogging) calculado con la resistencia a tracción de diseño del hormigón. Mp es el momento resistente positivo (sagging) calculado con las resistencias residuales de la fibra. La relación Re3 = Mp/Mn ≥ 10% garantiza ductilidad mínima para redistribución de momentos (recomendación, no criterio de rechazo).','#2E7D32')
@@ -25072,8 +25095,16 @@ async function exportPDF(mod, S, r) {
       const rows_g1=[];
       if(inp.g1_interior&&r.Rat_int!=null)rows_g1.push(row(td('Interior — Meyerhof §7.3.1'),tdv(r.Pu_int.toFixed(3)),tdv(r.Pd_cp.toFixed(3)),tdv(r.Rat_int.toFixed(4)),td(ok_badge(r.Rat_int>=1))));
       if(inp.g1_borde&&r.Rat_borde!=null) rows_g1.push(row(td('Borde — Losberg §7.4.1'),tdv(r.Pu_borde.toFixed(3)),tdv(r.Pd_cp.toFixed(3)),tdv(r.Rat_borde.toFixed(4)),td(ok_badge(r.Rat_borde>=1))));
-      if(inp.g1_esquina&&r.Rat_esq!=null) rows_g1.push(row(td('Esquina — Losberg §7.4.2'),tdv(r.Pu_esq.toFixed(3)),tdv(r.Pd_cp.toFixed(3)),tdv(r.Rat_esq.toFixed(4)),td(ok_badge(r.Rat_esq>=1))));
+      if(inp.g1_esquina&&r.Rat_esq!=null) rows_g1.push(row(td('Esquina — TR-34 §7.4.2 (2Mn / 4Mn(1−a/ℓ))'),tdv(r.Pu_esq.toFixed(3)),tdv(r.Pd_cp.toFixed(3)),tdv(r.Rat_esq.toFixed(4)),td(ok_badge(r.Rat_esq>=1))));
       if(rows_g1.length)body+=tbl(['Posición','Pu (kN)','Pd (kN)','Pu/Pd ≥ 1.0','Estado'],rows_g1);
+      if(r.pz){
+        body+=tbl(['Punzonamiento (TR-34 / EC2 §6.4)','Solicitante','Resistente','Uso','Estado'],[
+          row(td('En la cara de la carga (u₀ = 2(x+y))'),tdv(r.pz.v_cara.toFixed(3)+' MPa'),tdv(r.pz.vMax.toFixed(3)+' MPa'),tdv((r.pz.uso_cara*100).toFixed(1)+'%'),td(ok_badge(r.pz.uso_cara<=1))),
+          row(td('En el perímetro a 2d (u₁ = 2(x+y)+4πd)'),tdv(r.pz.v_perim.toFixed(3)+' MPa'),tdv(r.pz.vRdc.toFixed(3)+' MPa'),tdv((r.pz.uso_perim*100).toFixed(1)+'%'),td(ok_badge(r.pz.uso_perim<=1))),
+        ]);
+        body+=normaBox('TR-34 / EC2 §6.4 — Punzonamiento','d = 0.75h. Resistencia sin aporte de la fibra (criterio conservador de TR-34 para punzonamiento). v_Rd,c = 0.035·k^1.5·√fck con k = 1+√(200/d) ≤ 2; v_max = 0.5·ν·fck/γc con ν = 0.6(1−fck/250). Este modo de falla gobierna con placas de apoyo pequeñas y cargas altas, donde el método de líneas de rotura no lo detecta.');
+      }
+      body+=normaBox('TR-34 §7.4.2 — Capacidad en Esquina','Pcu = 2·Mn/1000 para a/ℓ = 0, interpolado hasta Pcu = 4·Mn/(1−a/ℓ)/1000 para a/ℓ ≥ 0.2. Depende SOLO del momento de fisuración del concreto: la fibra no aporta en esquina. Tampoco se aplica transferencia por dovelas, porque ACI 302.1R exige colocarlas a no menos de 300 mm de la intersección de dos juntas y en la esquina de un paño no hay dovela.');
       body+=normaBox('TR-34 §7.3.1 — Capacidad Interior Meyerhof','Pu = 2π(Mr+Mn)/1000 para a/ℓ pequeño; la fórmula se interpola hasta Pu = 4π(Mr+Mn)/(1-a/3ℓ)/1000 para a/ℓ = 0.2. Representa el mecanismo circular de formación de rótulas plásticas en la losa. El criterio de diseño es Pu/Pd ≥ 1.0.','#2E7D32');
     }
     if(inp.g4_activa){
@@ -25353,7 +25384,7 @@ function plotRe3Dosis(h_cm, fck, yc, divId, limit10=true){
   for(let d=2.3;d<=6.01;d+=0.05){
     const fr=interpolarFrc(d);
     const sr1=0.45*fr[0],sr4=0.37*fr[3];
-    const Mp=(h*h/6/yc)*(0.29*sr4+0.16*sr1);
+    const Mp=(h*h/yc)*(0.29*sr4+0.16*sr1);
     dosisX.push(parseFloat(d.toFixed(2)));
     re3Y.push(Mp/Mn*100);
   }
@@ -25451,7 +25482,7 @@ function plotPuDosisCP(r, inp, divId){
   for(let d=2.3;d<=6.01;d+=0.1){
     const fr=interpolarFrc(d);
     const sr1=0.45*fr[0],sr4=0.37*fr[3];
-    const Mp=(h*h/6/inp.yc)*(0.29*sr4+0.16*sr1);
+    const Mp=(h*h/inp.yc)*(0.29*sr4+0.16*sr1);
     const Mr=Mp;
     // Pu interior
     const al=a/ell,Pu0=2*Math.PI*(Mr+Mn)/1000,Pu02=4*Math.PI*(Mr+Mn)/(1-a/(3*ell))/1000;
@@ -25846,7 +25877,14 @@ function initFibraPlus54(){
       });
     });
     const pjList=_div('');renderPjs(pjList,'CP');
-    pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjNew,pjList);sb.appendChild(pjSec);
+    const pjRev=_el('button',{class:'fp-btn'},['🔎 Revisar memorias guardadas']);
+    pjRev.style.cssText='margin-top:6px;background:#3D3D3D';
+    const pjRevBox=_div('');
+    pjRev.addEventListener('click',function(){
+      if(pjRevBox.firstChild){ pjRevBox.innerHTML=''; pjRev.textContent='🔎 Revisar memorias guardadas'; return; }
+      pjRevBox.appendChild(fp54PanelRevision()); pjRev.textContent='Ocultar la revisión';
+    });
+    pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjNew,pjList,pjRev,pjRevBox);sb.appendChild(pjSec);
     return sb;
   }
 
@@ -25956,6 +25994,68 @@ function initFibraPlus54(){
       });
       row.append(info,lb,db);container.appendChild(row);
     });
+  }
+
+  // ── REVISIÓN DE MEMORIAS GUARDADAS ────────────────────────────────────────
+  // Recalcula cada proyecto de contrapiso guardado con las fórmulas corregidas (esquina de
+  // TR-34, Mp sin el /6, punzonamiento) y lo clasifica. Sirve para hacer el inventario de las
+  // memorias ya entregadas. Solo lee: no modifica ningún proyecto.
+  function fp54Revisar(){
+    var out=[];
+    _listProjs().filter(function(p){return p.modulo==='CP';}).forEach(function(p){
+      var inp=Object.assign({},S.cp,p.params);
+      var r,err=null;
+      try{ r=calcularCp(inp); }catch(e){ err=e.message; }
+      if(err){ out.push({name:p.name,saved:p.saved,error:err}); return; }
+      // Lo que imprimía la versión anterior: esquina = borde sin transferencia × (1+esq_pct)
+      var esqAntes=r.Pu_borde_raw*(1+(inp.esq_pct||0)/100);
+      var o={name:p.name,saved:p.saved,ref:(p.params&&p.params.referencia)||'',cliente:(p.params&&p.params.cliente)||'',
+             h:inp.h_cm,P:inp.g1_P,placa:inp.g1_x+'×'+inp.g1_y,revisaEsq:!!inp.g1_activa&&!!inp.g1_esquina,
+             Pd:r.Pd_cp,esqAntes:esqAntes,esqAhora:r.Pu_esq,
+             ratAntes:r.Pd_cp>0?esqAntes/r.Pd_cp:null, ratAhora:r.Pd_cp>0?r.Pu_esq/r.Pd_cp:null,
+             pz:r.pz};
+      o.grupo = !o.revisaEsq ? 'sin-esquina' : o.ratAhora>=1 ? 'ok' : o.ratAhora>=0.8 ? 'documentar' : 'avisar';
+      if(o.pz && !o.pz.ok && o.grupo==='ok') o.grupo='documentar';
+      out.push(o);
+    });
+    return out;
+  }
+  window.fp54Revisar=fp54Revisar;
+  window.__panelRev=fp54PanelRevision;   // solo para pruebas automatizadas
+
+  function fp54PanelRevision(){
+    var box=_div('');
+    box.style.cssText='background:#fff;border:1px solid #E1E1E1;border-radius:8px;padding:12px;margin-top:10px';
+    var lista=fp54Revisar();
+    var n=function(g){return lista.filter(function(x){return x.grupo===g;}).length;};
+    var fmt=function(v,d){return (typeof v==='number'&&isFinite(v))?v.toFixed(d==null?2:d):'—';};
+    var h='<div style="font-size:11px;font-weight:800;color:#C8102E;margin-bottom:6px">REVISIÓN DE MEMORIAS GUARDADAS</div>';
+    if(!lista.length){ h+='<div style="font-size:11.5px;color:#666">No hay proyectos de contrapiso guardados.</div>'; box.innerHTML=h; return box; }
+    h+='<div style="font-size:11.5px;color:#444;line-height:1.6;margin-bottom:8px">Se recalcularon <b>'+lista.length+'</b> memorias con la esquina de TR-34 y el punzonamiento. '
+      +'<b style="color:#C62828">'+n('avisar')+'</b> requieren aviso al cliente (razón &lt; 0.80) · '
+      +'<b style="color:#EF6C00">'+n('documentar')+'</b> para documentar (0.80 a 1.00, o punzonamiento) · '
+      +'<b style="color:#2E7D32">'+n('ok')+'</b> sin cambio · '+n('sin-esquina')+' no revisaban esquina.</div>';
+    h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10.5px">'
+      +'<tr style="background:#3D3D3D;color:#fff"><th style="text-align:left;padding:4px 6px">Proyecto</th><th style="padding:4px 6px">h (cm)</th><th style="padding:4px 6px">P (kN)</th>'
+      +'<th style="padding:4px 6px">Placa (mm)</th><th style="padding:4px 6px">Razón antes</th><th style="padding:4px 6px">Razón ahora</th><th style="padding:4px 6px">Punzon.</th><th style="padding:4px 6px">Acción</th></tr>';
+    var col={'avisar':'#C62828','documentar':'#EF6C00','ok':'#2E7D32','sin-esquina':'#888'};
+    var txt={'avisar':'AVISAR AL CLIENTE','documentar':'Documentar','ok':'Sin cambio','sin-esquina':'No revisaba esquina'};
+    lista.sort(function(a,b){return (a.ratAhora==null?9:a.ratAhora)-(b.ratAhora==null?9:b.ratAhora);});
+    lista.forEach(function(x){
+      if(x.error){ h+='<tr><td colspan="8" style="padding:4px 6px;color:#C62828">'+x.name+' — no se pudo recalcular: '+x.error+'</td></tr>'; return; }
+      h+='<tr style="border-bottom:1px solid #eee"><td style="padding:4px 6px">'+x.name+(x.cliente?' · <span style="color:#888">'+x.cliente+'</span>':'')+'</td>'
+        +'<td style="text-align:center">'+fmt(x.h,1)+'</td><td style="text-align:center">'+(x.revisaEsq?fmt(x.P,1):'—')+'</td><td style="text-align:center">'+(x.revisaEsq?x.placa:'—')+'</td>'
+        +'<td style="text-align:center">'+fmt(x.ratAntes,3)+'</td>'
+        +'<td style="text-align:center;font-weight:800;color:'+col[x.grupo]+'">'+fmt(x.ratAhora,3)+'</td>'
+        +'<td style="text-align:center">'+(x.pz?(x.pz.ok?'ok':'<b style="color:#C62828">'+(Math.max(x.pz.uso_cara,x.pz.uso_perim)*100).toFixed(0)+'%</b>'):'—')+'</td>'
+        +'<td style="text-align:center;color:'+col[x.grupo]+';font-weight:700">'+txt[x.grupo]+'</td></tr>';
+    });
+    h+='</table></div>';
+    h+='<div style="font-size:10px;color:#777;margin-top:8px;line-height:1.5">La razón es capacidad ÷ demanda: cumple con 1.00 o más. «Antes» es lo que imprimía la versión anterior '
+      +'(borde aumentado por la transferencia); «ahora» es la fórmula de TR-34 para esquina, que depende solo de Mn y no lleva crédito por dovelas. '
+      +'Las memorias que quedan por debajo de 0.80 necesitan un aviso técnico escrito, redactado con un ingeniero inscrito en el CFIA.</div>';
+    box.innerHTML=h;
+    return box;
   }
 
   // Función para re-renderizar lista de proyectos buscando el container en el DOM activo
@@ -33268,6 +33368,2199 @@ window.initFacturacion=async function(){
 })();
 
 </script>
+<!-- ════════════════════════════════════════════════════════════════════════
+     MÓDULO DISEÑO DE LOSAS — bloque de guion propio (motor + catálogo + pantalla).
+     Fuente: losas/motor.js + catalogo.js + recomendaciones.js + informe.js + nube.js + ui.js  ->  mod/losas.js
+     ════════════════════════════════════════════════════════════════════════ -->
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+// CONCRE · Diseño de losas — MOTOR DE CÁLCULO (etapa 2)
+//
+// Módulo puro: sin DOM, sin red, sin almacenamiento. Corre igual en el navegador
+// (window.LOSAS_MOTOR) y en Node (module.exports), y por eso se puede probar solo.
+//
+// Unidades: la ENTRADA y la SALIDA visibles van en kg, t, cm, kg/cm², kg/cm³.
+// Por dentro se convierte a N, mm, MPa, N/mm³ como hace la FibraPlus54.
+//
+// Dos motores, misma entrada de suelo y concreto:
+//   A  TR34 4ª ed. + EC2 + ACI 360R-10 + ANSI-DSI C1.0   (portado, fiel, de la FibraPlus54 v3.0)
+//   B  Westergaard (base de PCA / WRI / COE)              (validador independiente)
+//
+// Convención de resultados: «uso» = demanda / capacidad. OK si uso <= 1.
+// (La FibraPlus54 muestra el inverso, capacidad/demanda; acá se unifica.)
+// ══════════════════════════════════════════════════════════════════════════════
+(function (root) {
+'use strict';
+
+// ── Unidades ─────────────────────────────────────────────────────────────────
+const G = 9.80665;                        // m/s²
+const KGCM2_A_MPA = 1 / 10.19716;         // 1 kg/cm² = 0.0980665 MPa
+const U = {
+  kg_kN:      kg => kg * G / 1000,
+  kN_kg:      kN => kN * 1000 / G,
+  kgcm2_MPa:  v => v * KGCM2_A_MPA,
+  MPa_kgcm2:  v => v / KGCM2_A_MPA,
+  // 1 kg/cm³ = 9.80665 MPa/m = 0.00980665 N/mm³   (1 MPa/m = 0.001 N/mm³)
+  kgcm3_Nmm3: v => v * 9.80665 / 1000,
+  Nmm3_kgcm3: v => v * 1000 / 9.80665,
+};
+
+// ── Concreto ─────────────────────────────────────────────────────────────────
+// f'c (kg/cm²) → fck (MPa). La FibraPlus54 hace la misma equivalencia
+// (C25 ↔ f'c 255 kg/cm²).
+const fckDeFc = fc => fc * KGCM2_A_MPA;
+
+// MR (módulo de rotura) en kg/cm², por criterio. Se muestran los dos.
+//   aci318: fr = 0.62·√f'c (MPa)                      ≈ 1.98·√f'c  (kg/cm²)
+//   aci360: MR = 9·√f'c (psi)  (fuente secundaria)     ≈ 2.39·√f'c  (kg/cm²)
+function mrDeFc(fc, criterio) {
+  const fckMPa = fckDeFc(fc);
+  if (criterio === 'aci360') {
+    const fcPsi = fc / 0.0703070;
+    return 9 * Math.sqrt(fcPsi) * 0.0703070;
+  }
+  return U.MPa_kgcm2(0.62 * Math.sqrt(fckMPa));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MOTOR A — portado de FibraPlus54 v3.0 (las fórmulas NO se cambiaron)
+//  Cada función lleva su referencia. La prueba de regresión compara contra el
+//  código vivo del index.html.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Tabla fR1–fR4 de Fibra Plus 54 mm por dosificación (kg/m³), EN 14651 / UNI 14651
+const TABLA_FRC = {2.3:[0.80,0.78,0.79,0.79],2.5:[0.85,0.83,0.84,0.85],3.0:[1.00,0.98,0.99,1.00],3.5:[1.15,1.13,1.14,1.15],4.0:[1.28,1.26,1.27,1.28],4.5:[1.39,1.50,1.52,1.48],5.0:[1.50,1.60,1.62,1.58],5.5:[1.60,1.70,1.72,1.68],6.0:[1.70,1.80,1.82,1.78]};
+const DOSIS_LIST = Object.keys(TABLA_FRC).map(Number).sort((a, b) => a - b);
+const DOSIS_MIN_UTIL = 2.4;   // ANSI-DSI C1.0 (uso industrial y entrepisos)
+
+// dosis = 0 → concreto simple (sin fibra). Fuera de eso, se acota a 2.3–6.0 como la app.
+function interpolarFrc(dosis) {
+  if (!(dosis > 0)) return [0, 0, 0, 0];
+  dosis = Math.max(DOSIS_LIST[0], Math.min(DOSIS_LIST[DOSIS_LIST.length - 1], dosis));
+  for (let i = 0; i < DOSIS_LIST.length - 1; i++) {
+    const d0 = DOSIS_LIST[i], d1 = DOSIS_LIST[i + 1];
+    if (dosis >= d0 && dosis <= d1) {
+      const t = (dosis - d0) / (d1 - d0), v0 = TABLA_FRC[d0], v1 = TABLA_FRC[d1];
+      return v0.map((x, j) => x + t * (v1[j] - x));
+    }
+  }
+  return TABLA_FRC[DOSIS_LIST[DOSIS_LIST.length - 1]];
+}
+
+// Propiedades del hormigón — EC2 §3.1
+const calcFctm = fck => 0.30 * Math.pow(fck, 2 / 3);
+const calcEcm = fck => 22.0 * Math.pow((fck + 8) / 10, 0.3);
+const calcFctdFl = (fctm, yc, h) => (fctm / yc) * (1.6 - h / 1000);
+const calcEll = (Ecm, h, v, k) => Math.pow(Ecm * 1000 * h * h * h / (12 * (1 - v * v) * k), 0.25);
+const calcLambda = (Ecm, h, k) => Math.pow(3 * k / (Ecm * 1000 * h * h * h), 0.25);
+const calcSr = (fR1, fR4) => [0.45 * fR1, 0.37 * fR4];
+const calcMn = (fctd, h) => fctd * h * h / 6;
+const calcMp = (h, yc, s1, s4) => (h * h / yc) * (0.29 * s4 + 0.16 * s1);   // TR34 4ª ed.: Mup = h²/γm·(0.29σr4+0.16σr1). El /6 es del Mn elástico, no de este.
+const calcMmalla = (As, Fy, ys, d, fck, b, on) => {
+  if (!on) return 0;
+  const a_block = As * Fy / (0.85 * fck * b);
+  const z = d - a_block / 2;
+  return As * (Fy / ys) * z / 1000;
+};
+
+// Cargas puntuales — TR34 §7.3 / §7.4
+function puInterior(Mr, Mn, a, ell) {
+  const al = a / ell, Pu0 = 2 * Math.PI * (Mr + Mn) / 1000, Pu02 = 4 * Math.PI * (Mr + Mn) / (1 - a / (3 * ell)) / 1000;
+  return al >= 0.2 ? Pu02 : Pu0 + (al / 0.2) * (Pu02 - Pu0);
+}
+function puBordeRaw(Mr, Mn, a, ell) {
+  const al = a / ell, Pu0 = (Math.PI / 2 * (Mr + Mn) + 2 * Mn) / 1000, Pu02 = (Math.PI * (Mr + Mn) + 4 * Mn) / (1 - 2 * a / (3 * ell)) / 1000;
+  return al >= 0.2 ? Pu02 : Pu0 + (al / 0.2) * (Pu02 - Pu0);
+}
+function puDual(Mr, Mn, A, ell) { return (2 * Math.PI + 1.8 * A / ell) * (Mr + Mn) / 1000; }
+// ESQUINA — TR34 §7.4.2. Depende SOLO de Mn: la fibra no aporta en esquina. Y no lleva crédito
+// por dovelas, porque ACI 302.1R las exige a ≥ 300 mm de la intersección de juntas: en la
+// esquina de un paño no hay dovela.
+function puEsquinaRaw(Mn, a, ell) {
+  const al = a / ell, P0 = 2 * Mn / 1000, P02 = 4 * Mn / (1 - al) / 1000;
+  return al >= 0.2 ? P02 : P0 + (al / 0.2) * (P02 - P0);
+}
+// PUNZONAMIENTO — TR34 / EC2 §6.4, sin aporte de la fibra (criterio conservador de TR34).
+// P en kN; x, y, h en mm; fck en MPa. Devuelve los dos usos (cara y perímetro a 2d).
+function punzonamiento(P_kN, x_mm, y_mm, h_mm, fck, yc) {
+  const d = 0.75 * h_mm, P = P_kN * 1000;
+  const u0 = 2 * (x_mm + y_mm), u1 = u0 + 4 * Math.PI * d;
+  const kd = Math.min(2, 1 + Math.sqrt(200 / d));
+  const vRdc = 0.035 * Math.pow(kd, 1.5) * Math.sqrt(fck);
+  const vMax = 0.5 * (0.6 * (1 - fck / 250)) * (fck / yc);
+  const vCara = P / (u0 * d), vPer = P / (u1 * d);
+  return { d, u0, u1, vRdc, vMax, v_cara: vCara, v_perim: vPer, uso_cara: vCara / vMax, uso_perim: vPer / vRdc, ok: (vCara <= vMax && vPer <= vRdc) };
+}
+// FATIGA — criterio de vida ilimitada de PCA: razón de esfuerzo σ/MR ≤ 0.50. Con MR/FS 1.7 el
+// motor B ya lo cubre; esta función es para informar las repeticiones admisibles.
+function repeticionesPCA(SR) {
+  if (SR <= 0.50) return Infinity;
+  if (SR >= 1.0) return 0;
+  return Math.pow(10, 11.737 - 12.077 * SR);
+}
+
+// Copia fiel de calcularCp (FibraPlus54 v3.0). Entradas en las unidades de la app:
+// h_cm, fck [MPa], k [N/mm³], cargas en kN (g1_P, g2_Q, g4_W), g3_q en MPa, áreas en mm².
+function calcularCp(inp) {
+  const r = {}, h = inp.h_cm * 10, fr = interpolarFrc(inp.dosis);
+  [r.fR1, r.fR2, r.fR3, r.fR4] = fr;
+  r.fctm = calcFctm(inp.fck); r.Ecm = calcEcm(inp.fck);
+  r.fctd_fl = calcFctdFl(r.fctm, inp.yc, h);
+  r.ell = calcEll(r.Ecm, h, inp.v, inp.k); r.lam = calcLambda(r.Ecm, h, inp.k);
+  [r.sr1, r.sr4] = calcSr(r.fR1, r.fR4);
+  r.Mn = calcMn(r.fctd_fl, h); r.Mp = calcMp(h, inp.yc, r.sr1, r.sr4);
+  r.Mr = r.Mp; r.Re3 = r.Mn > 0 ? r.Mp / r.Mn : 0;
+  if (inp.g1_activa) {
+    r.a_cp = Math.sqrt(inp.g1_x * inp.g1_y / Math.PI); r.al_cp = r.a_cp / r.ell; r.Pd_cp = inp.g1_P * inp.gF_rack;
+    r.Pu_int = puInterior(r.Mr, r.Mn, r.a_cp, r.ell);
+    r.Pu_borde_raw = puBordeRaw(r.Mr, r.Mn, r.a_cp, r.ell);
+    r.Pu_borde = r.Pu_borde_raw * (1 + inp.borde_pct / 100);
+    r.Pu_esq = puEsquinaRaw(r.Mn, r.a_cp, r.ell);
+    r.pz = punzonamiento(r.Pd_cp, inp.g1_x, inp.g1_y, h, inp.fck, inp.yc);
+    r.Rat_int = inp.g1_interior ? (r.Pd_cp > 0 ? r.Pu_int / r.Pd_cp : null) : null;
+    r.Rat_borde = inp.g1_borde ? (r.Pd_cp > 0 ? r.Pu_borde / r.Pd_cp : null) : null;
+    r.Rat_esq = inp.g1_esquina ? (r.Pd_cp > 0 ? r.Pu_esq / r.Pd_cp : null) : null;
+  } else { r.Rat_int = r.Rat_borde = r.Rat_esq = null; r.Pu_int = r.Pu_borde = r.Pu_esq = 0; r.Pd_cp = 0; r.a_cp = 0; r.al_cp = 0; }
+  if (inp.g2_activa) { r.Pd_ll = inp.g2_Q * inp.gF_ll; r.Pu_ll = 4 * r.lam * r.Mn; r.Rat_ll = r.Pu_ll > 0 ? r.Pd_ll / r.Pu_ll : null; }
+  else { r.Pd_ll = 0; r.Pu_ll = 0; r.Rat_ll = null; }
+  if (inp.g3_activa) {
+    r.qd = inp.g3_q * inp.gF_udl; r.qu_neg = 5.95 * r.lam * r.lam * r.Mn; r.qu_pos = 6.20 * r.lam * r.lam * (r.Mp + r.Mn);
+    r.qu = Math.min(r.qu_neg, r.qu_pos); r.Rat_udl = r.qu > 0 ? r.qd / r.qu : null;
+  } else { r.qd = 0; r.qu_neg = 0; r.qu_pos = 0; r.qu = 0; r.Rat_udl = null; }
+  if (inp.g4_activa) {
+    r.a_mtc = Math.sqrt(inp.g4_Ac / Math.PI); r.al_mtc = r.a_mtc / r.ell;
+    r.Pd_mtc = inp.g4_W * inp.gF_din; r.Pd_mtc2 = 2 * inp.g4_W * inp.gF_din;
+    r.Pu_mtc_int = puInterior(r.Mr, r.Mn, r.a_mtc, r.ell);
+    r.Pu_mtc_dual = puDual(r.Mr, r.Mn, inp.g4_A, r.ell);
+    r.Pu_mtc_borde = puBordeRaw(r.Mr, r.Mn, r.a_mtc, r.ell);
+    r.Rat_mtc_int = inp.g4_interior ? (r.Pd_mtc > 0 ? r.Pu_mtc_int / r.Pd_mtc : null) : null;
+    r.Rat_mtc_dual = inp.g4_dual ? (r.Pd_mtc2 > 0 ? r.Pu_mtc_dual / r.Pd_mtc2 : null) : null;
+    r.Rat_mtc_borde = inp.g4_borde ? (r.Pd_mtc > 0 ? r.Pu_mtc_borde / r.Pd_mtc : null) : null;
+  } else { r.Rat_mtc_int = r.Rat_mtc_dual = r.Rat_mtc_borde = null; r.Pu_mtc_int = r.Pu_mtc_dual = r.Pu_mtc_borde = 0; r.Pd_mtc = r.Pd_mtc2 = 0; r.a_mtc = 0; r.al_mtc = 0; }
+  return r;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MOTOR B — Westergaard (base de PCA / WRI / COE)
+//  Ecuaciones: Westergaard 1926/1948, tal como las reproducen los textos de
+//  pavimentos rígidos (ver etapa 1, §1.3). Unidades SI: N, mm, MPa, N/mm³.
+// ══════════════════════════════════════════════════════════════════════════════
+function westergaard(P_N, a_mm, h_mm, E_MPa, nu, k_Nmm3) {
+  const l = Math.pow(E_MPa * h_mm * h_mm * h_mm / (12 * (1 - nu * nu) * k_Nmm3), 0.25);
+  const b = a_mm < 1.724 * h_mm ? Math.sqrt(1.6 * a_mm * a_mm + h_mm * h_mm) - 0.675 * h_mm : a_mm;
+  const c = P_N / (h_mm * h_mm);
+  return {
+    ell: l, b: b,
+    sig_int: 0.316 * c * (4 * Math.log10(l / b) + 1.069),
+    sig_edge: 0.572 * c * (4 * Math.log10(l / b) + 0.359),
+    sig_corner: 3 * c * (1 - Math.pow(a_mm * Math.SQRT2 / l, 0.6)),
+  };
+}
+
+// Factores de seguridad sobre el MR — ACI 360R-06 Tabla 4.2 (ACI 360R-92 Tabla 4.9.2)
+// Rango «de uso común»; por defecto se toma el extremo conservador.
+const FS_RANGO = {
+  rueda:  [1.7, 2.0],   // cargas de ruedas en movimiento
+  rack:   [1.7, 2.0],   // cargas concentradas (patas de rack, postes)
+  udl:    [1.7, 2.0],   // cargas uniformes
+  lineal: [1.7, 1.7],   // cargas lineales y de franja (2.0 = límite superior conservador)
+};
+// El FS de ACI 360R está calibrado contra MR = 9√f'c. Como el motor B usa por defecto el MR más
+// bajo de ACI 318 (0.62√fck ≈ 7.5√f'c psi), el par coherente es el extremo BAJO del rango: 1.7.
+// Con ese par el esfuerzo admisible equivale a σ/MR ≈ 0.50, que es el criterio de vida ilimitada
+// a fatiga de PCA. Es decir: el motor B es, a la vez, el chequeo de fatiga.
+const FS_DEFECTO = { rueda: 1.7, rack: 1.7, udl: 1.7, lineal: 1.7 };
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EVALUACIÓN COMPLETA DE UNA LOSA
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// entrada = {
+//   h_cm, fc (kg/cm²), k (kg/cm³), nu (0.20), yc (1.5), dosis (kg/m³; 0 = simple),
+//   MRcriterio: 'aci318' | 'aci360',
+//   borde_pct, esq_pct       (transferencia por dovelas, % — igual que la FibraPlus54)
+//   Lx_cm, Ly_cm             (panel de juntas)
+//   FS: { rueda, rack, udl, lineal }   (opcional)
+//   cargas: [
+//     { tipo:'rack',  P_kg, x_cm, y_cm, gF:1.2, interior:true, borde:true, esquina:true, nombre },
+//     { tipo:'rueda', W_kg, A_cm2, sep_cm, gF:1.6, impacto:1.0, interior:true, dual:true, borde:true, nombre },
+//     { tipo:'lineal', Q_kg_m, gF:1.0, nombre },
+//     { tipo:'udl', q_kg_m2, gF:1.0, nombre },
+//   ]
+// }
+function evaluar(e) {
+  const nu = e.nu != null ? e.nu : 0.20;
+  const yc = e.yc != null ? e.yc : 1.5;
+  const fck = fckDeFc(e.fc);
+  const k = U.kgcm3_Nmm3(e.k);
+  const h = e.h_cm * 10;
+  const FS = Object.assign({}, FS_DEFECTO, e.FS || {});
+  const borde_pct = e.borde_pct || 0, esq_pct = e.esq_pct || 0;
+  const cargas = e.cargas || [];
+
+  // ── Propiedades y capacidades de la sección (motor A) ─────────────────────
+  const fr = interpolarFrc(e.dosis || 0);
+  const fctm = calcFctm(fck), Ecm = calcEcm(fck);
+  const fctd = calcFctdFl(fctm, yc, h);
+  const ell = calcEll(Ecm, h, nu, k), lam = calcLambda(Ecm, h, k);
+  const [sr1, sr4] = calcSr(fr[0], fr[3]);
+  const Mn = calcMn(fctd, h), Mp = calcMp(h, yc, sr1, sr4);
+  const Mr = Mp;
+  const MRdis = mrDeFc(e.fc, e.MRcriterio);          // kg/cm²
+  const MRdis_MPa = U.kgcm2_MPa(MRdis);
+
+  const props = { fck, fctm, Ecm, fctd_fl: fctd, ell, lam, fR: fr, sr1, sr4, Mn, Mp, Mr, Re3: Mn > 0 ? Mp / Mn : 0,
+                  MR_kgcm2: MRdis, k_Nmm3: k };
+  const chequeos = [];   // cada uno: {id, nombre, motor, ubic, demanda, capacidad, uso, ok, unidad}
+
+  const pasos = [];
+  const paso = e._sinPasos ? () => {} : (titulo, formula, valores, resultado, norma) => pasos.push({ titulo, formula, valores, resultado, norma });
+  paso('Resistencia del concreto', 'fck = f\'c / 10.197', `f'c = ${e.fc} kg/cm²`, `fck = ${fck.toFixed(2)} MPa`, 'EC2 §3.1');
+  paso('Resistencia a tracción', 'fctm = 0.30·fck^(2/3)', `fck = ${fck.toFixed(2)}`, `fctm = ${fctm.toFixed(3)} MPa`, 'EC2 §3.1');
+  paso('Módulo de elasticidad', 'Ecm = 22·((fck+8)/10)^0.3', `fck = ${fck.toFixed(2)}`, `Ecm = ${Ecm.toFixed(2)} GPa`, 'EC2 §3.1');
+  paso('Rigidez del suelo', 'k [N/mm³] = k [kg/cm³] × 9.80665 / 1000', `k = ${e.k} kg/cm³`, `k = ${k.toFixed(5)} N/mm³ (${(e.k * 9.80665).toFixed(1)} MPa/m)`, 'Conversión de unidades');
+  paso('Radio de rigidez relativa', 'ℓ = [Ecm·h³ / (12(1−ν²)·k)]^0.25', `h = ${h} mm · ν = ${nu} · k = ${k.toFixed(5)}`, `ℓ = ${ell.toFixed(0)} mm`, 'TR34 4ª ed.; Westergaard');
+  paso('Resistencia a flexión de diseño', 'fctd,fl = (fctm/γc)·(1.6 − h/1000)', `γc = ${yc} · h = ${h} mm`, `fctd,fl = ${fctd.toFixed(3)} MPa`, 'EC2 §3.1; TR34');
+  paso('Momento resistente, concreto simple', 'Mn = fctd,fl·h²/6', `h = ${h} mm`, `Mn = ${Mn.toFixed(2)} N·mm/mm`, 'TR34 4ª ed.');
+  if ((e.dosis || 0) > 0) {
+    paso('Fibra Plus 54 mm: resistencias residuales', 'fR1…fR4 por interpolación de la tabla EN 14651', `dosis = ${e.dosis} kg/m³`,
+         `fR1 = ${fr[0].toFixed(2)} · fR4 = ${fr[3].toFixed(2)} MPa`, 'EN 14651; ficha Fibra Plus 54 mm');
+    paso('Momento resistente aportado por la fibra', 'Mp = (h²/(6γc))·(0.29·σ4 + 0.16·σ1); σ1 = 0.45·fR1; σ4 = 0.37·fR4',
+         `σ1 = ${sr1.toFixed(3)} · σ4 = ${sr4.toFixed(3)}`, `Mp = ${Mp.toFixed(2)} N·mm/mm · Re3 = ${(Mn > 0 ? Mp / Mn : 0).toFixed(3)}`, 'TR34 4ª ed.; ANSI-DSI C1.0');
+  }
+  paso('MR de diseño', e.MRcriterio === 'aci360' ? 'MR = 9·√f\'c (psi)' : 'fr = 0.62·√f\'c (MPa)', `f'c = ${e.fc} kg/cm²`, `MR = ${MRdis.toFixed(1)} kg/cm²`, e.MRcriterio === 'aci360' ? 'ACI 360R' : 'ACI 318');
+
+  cargas.forEach((c, i) => {
+    const nombre = c.nombre || (c.tipo + ' ' + (i + 1));
+    if (c.tipo === 'rack') {
+      const gF = c.gF != null ? c.gF : 1.2;
+      const P_kN = U.kg_kN(c.P_kg);
+      const a = Math.sqrt((c.x_cm * 10) * (c.y_cm * 10) / Math.PI);
+      const Pd = P_kN * gF;
+      const Pi = puInterior(Mr, Mn, a, ell), Pb = puBordeRaw(Mr, Mn, a, ell);
+      const Pe = puEsquinaRaw(Mn, a, ell);
+      const ub = [
+        c.interior !== false && ['interior', Pi],
+        c.borde !== false && ['borde', Pb * (1 + borde_pct / 100)],
+        c.esquina !== false && ['esquina', Pe],
+      ].filter(Boolean);
+      paso(nombre + ': radio de contacto', 'a = √(x·y/π)', `placa ${c.x_cm} × ${c.y_cm} cm`, `a = ${a.toFixed(1)} mm · a/ℓ = ${(a / ell).toFixed(3)}`, 'TR34 §7.3');
+      paso(nombre + ': carga de cálculo', 'Pd = P × γF', `P = ${c.P_kg} kg = ${P_kN.toFixed(2)} kN · γF = ${gF}`, `Pd = ${Pd.toFixed(2)} kN`, 'TR34 §4');
+      ub.forEach(([u, Pu]) => {
+        chequeos.push({ id: 'A-' + i + '-' + u, carga: nombre, tipo: 'rack', motor: 'A', ubic: u, demanda: Pd, capacidad: Pu, uso: Pd / Pu, ok: Pd <= Pu, unidad: 'kN' });
+        const form = u === 'interior' ? 'Pu,int (TR34 §7.3)' : u === 'borde' ? 'Pu,borde·(1 + %transferencia) (TR34 §7.4)' : 'Pcu = 2·Mn ; 4·Mn/(1 − a/ℓ) (TR34 §7.4.2)';
+        paso(nombre + ': capacidad ' + u, form,
+             u === 'esquina' ? `Mn = ${Mn.toFixed(1)} N·mm/mm (la fibra no aporta en esquina, y no hay dovela en la esquina del paño)` : `Mr = ${Mr.toFixed(1)} · Mn = ${Mn.toFixed(1)} N·mm/mm`,
+             `Pu = ${Pu.toFixed(1)} kN · demanda ${Pd.toFixed(1)} kN · uso = ${(Pd / Pu).toFixed(2)}`, 'TR34 4ª ed.');
+      });
+      // Punzonamiento (TR34 / EC2 §6.4) — sin aporte de la fibra
+      const pz = punzonamiento(Pd, c.x_cm * 10, c.y_cm * 10, h, fck, yc);
+      chequeos.push({ id: 'P-' + i + '-cara', carga: nombre, tipo: 'punzonamiento', motor: 'A', ubic: 'cara de la carga', demanda: pz.v_cara, capacidad: pz.vMax, uso: pz.uso_cara, ok: pz.uso_cara <= 1, unidad: 'MPa' });
+      chequeos.push({ id: 'P-' + i + '-perim', carga: nombre, tipo: 'punzonamiento', motor: 'A', ubic: 'perímetro a 2d', demanda: pz.v_perim, capacidad: pz.vRdc, uso: pz.uso_perim, ok: pz.uso_perim <= 1, unidad: 'MPa' });
+      paso(nombre + ': punzonamiento', 'v = P/(u·d) ≤ v_Rd,c = 0.035·k^1.5·√fck (perímetro a 2d) y ≤ 0.5·ν·fck/γc (cara)',
+           `d = ${pz.d.toFixed(0)} mm · u₀ = ${pz.u0.toFixed(0)} · u₁ = ${pz.u1.toFixed(0)} mm`,
+           `cara ${(pz.uso_cara * 100).toFixed(0)} % · perímetro ${(pz.uso_perim * 100).toFixed(0)} %`, 'TR34 / EC2 §6.4');
+      // Motor B
+      const w = westergaard(P_kN * 1000, a, h, Ecm * 1000, nu, k);
+      const sAdm = MRdis_MPa / FS.rack;
+      [['interior', w.sig_int, 1], ['borde', w.sig_edge, 1 / (1 + borde_pct / 100)]].forEach(([u, s, f]) => {
+        if (c[u] === false) return;
+        const sd = s * f;
+        chequeos.push({ id: 'B-' + i + '-' + u, carga: nombre, tipo: 'rack', motor: 'B', ubic: u, demanda: sd, capacidad: sAdm, uso: sd / sAdm, ok: sd <= sAdm, unidad: 'MPa' });
+        paso(nombre + ': Westergaard ' + u, u === 'interior' ? 'σ = 0.316·P/h²·[4·log(ℓ/b) + 1.069]' : 'σ = 0.572·P/h²·[4·log(ℓ/b) + 0.359]',
+             `P = ${(P_kN * 1000).toFixed(0)} N · h = ${h} mm · ℓ = ${w.ell.toFixed(0)} · b = ${w.b.toFixed(1)} mm`,
+             `σ = ${sd.toFixed(2)} MPa ≤ MR/FS = ${MRdis_MPa.toFixed(2)}/${FS.rack} = ${sAdm.toFixed(2)} MPa → uso ${(sd / sAdm).toFixed(2)}`, 'Westergaard; ACI 360R Tabla 4.2');
+      });
+    } else if (c.tipo === 'rueda') {
+      const gF = c.gF != null ? c.gF : 1.6;
+      const imp = c.impacto != null ? c.impacto : 1.0;
+      const W_kN = U.kg_kN(c.W_kg);
+      const Ac = c.A_cm2 * 100;
+      const a = Math.sqrt(Ac / Math.PI);
+      const Pd = W_kN * gF * imp, Pd2 = 2 * W_kN * gF * imp;   // el impacto también entra al motor A
+      const Pi = puInterior(Mr, Mn, a, ell), Pb = puBordeRaw(Mr, Mn, a, ell);
+      paso(nombre + ': radio de contacto', 'a = √(Ac/π)', `Ac = ${c.A_cm2} cm²`, `a = ${a.toFixed(1)} mm · a/ℓ = ${(a / ell).toFixed(3)}`, 'TR34 §7.3');
+      paso(nombre + ': carga de cálculo', 'Pd = W × γF × impacto', `W = ${c.W_kg} kg = ${W_kN.toFixed(2)} kN · γF = ${gF} · impacto = ${imp}`, `Pd = ${Pd.toFixed(2)} kN`, 'TR34 §5.2');
+      if (c.interior !== false) {
+        chequeos.push({ id: 'A-' + i + '-interior', carga: nombre, tipo: 'rueda', motor: 'A', ubic: 'interior', demanda: Pd, capacidad: Pi, uso: Pd / Pi, ok: Pd <= Pi, unidad: 'kN' });
+        paso(nombre + ': capacidad interior', 'Pu,int (TR34 §7.3)', `Mr = ${Mr.toFixed(1)} · Mn = ${Mn.toFixed(1)}`, `Pu = ${Pi.toFixed(1)} kN · uso = ${(Pd / Pi).toFixed(2)}`, 'TR34 4ª ed.');
+      }
+      if (c.dual && c.sep_cm > 0) {
+        const Pdu = puDual(Mr, Mn, c.sep_cm * 10, ell);
+        chequeos.push({ id: 'A-' + i + '-dual', carga: nombre, tipo: 'rueda', motor: 'A', ubic: 'dual', demanda: Pd2, capacidad: Pdu, uso: Pd2 / Pdu, ok: Pd2 <= Pdu, unidad: 'kN' });
+        paso(nombre + ': ruedas gemelas', 'Pu,dual = (2π + 1.8·A/ℓ)·(Mr+Mn)', `A = ${c.sep_cm} cm`, `Pu = ${Pdu.toFixed(1)} kN · demanda ${Pd2.toFixed(1)} kN · uso = ${(Pd2 / Pdu).toFixed(2)}`, 'TR34 4ª ed.');
+      }
+      if (c.borde !== false) {
+        chequeos.push({ id: 'A-' + i + '-borde', carga: nombre, tipo: 'rueda', motor: 'A', ubic: 'borde', demanda: Pd, capacidad: Pb, uso: Pd / Pb, ok: Pd <= Pb, unidad: 'kN' });
+        paso(nombre + ': capacidad borde', 'Pu,borde (TR34 §7.4)', `Mr = ${Mr.toFixed(1)} · Mn = ${Mn.toFixed(1)}`, `Pu = ${Pb.toFixed(1)} kN · uso = ${(Pd / Pb).toFixed(2)}`, 'TR34 4ª ed.');
+      }
+      // Punzonamiento de la rueda: se usa un cuadrado equivalente a la huella
+      const lado = Math.sqrt(c.A_cm2 * 100);
+      const pzr = punzonamiento(Pd, lado, lado, h, fck, yc);
+      chequeos.push({ id: 'P-' + i + '-cara', carga: nombre, tipo: 'punzonamiento', motor: 'A', ubic: 'cara de la carga', demanda: pzr.v_cara, capacidad: pzr.vMax, uso: pzr.uso_cara, ok: pzr.uso_cara <= 1, unidad: 'MPa' });
+      chequeos.push({ id: 'P-' + i + '-perim', carga: nombre, tipo: 'punzonamiento', motor: 'A', ubic: 'perímetro a 2d', demanda: pzr.v_perim, capacidad: pzr.vRdc, uso: pzr.uso_perim, ok: pzr.uso_perim <= 1, unidad: 'MPa' });
+      paso(nombre + ': punzonamiento', 'v = P/(u·d) ≤ v_Rd,c (perímetro a 2d) y ≤ 0.5·ν·fck/γc (cara)',
+           `huella equivalente ${lado.toFixed(0)} × ${lado.toFixed(0)} mm · d = ${pzr.d.toFixed(0)} mm`,
+           `cara ${(pzr.uso_cara * 100).toFixed(0)} % · perímetro ${(pzr.uso_perim * 100).toFixed(0)} %`, 'TR34 / EC2 §6.4');
+      const Pw = W_kN * 1000 * imp;
+      const w = westergaard(Pw, a, h, Ecm * 1000, nu, k);
+      const sAdm = MRdis_MPa / FS.rueda;
+      [['interior', w.sig_int, 1], ['borde', w.sig_edge, 1 / (1 + borde_pct / 100)]].forEach(([u, s, f]) => {
+        if (c[u] === false) return;
+        const sd = s * f;
+        chequeos.push({ id: 'B-' + i + '-' + u, carga: nombre, tipo: 'rueda', motor: 'B', ubic: u, demanda: sd, capacidad: sAdm, uso: sd / sAdm, ok: sd <= sAdm, unidad: 'MPa' });
+        paso(nombre + ': Westergaard ' + u, u === 'interior' ? 'σ = 0.316·P/h²·[4·log(ℓ/b) + 1.069]' : 'σ = 0.572·P/h²·[4·log(ℓ/b) + 0.359]',
+             `P = ${Pw.toFixed(0)} N${imp !== 1 ? ' (con impacto ' + imp + ')' : ''} · h = ${h} mm · ℓ = ${w.ell.toFixed(0)} · b = ${w.b.toFixed(1)} mm`,
+             `σ = ${sd.toFixed(2)} MPa ≤ MR/FS = ${MRdis_MPa.toFixed(2)}/${FS.rueda} = ${sAdm.toFixed(2)} MPa → uso ${(sd / sAdm).toFixed(2)}`, 'Westergaard; ACI 360R Tabla 4.2');
+      });
+    } else if (c.tipo === 'lineal') {
+      const gF = c.gF != null ? c.gF : 1.0;
+      const Qd = (c.Q_kg_m * G / 1000) * gF;            // kN/m
+      const Pu = 4 * lam * Mn;                          // kN/m
+      chequeos.push({ id: 'A-' + i + '-lineal', carga: nombre, tipo: 'lineal', motor: 'A', ubic: 'lineal', demanda: Qd, capacidad: Pu, uso: Qd / Pu, ok: Qd <= Pu, unidad: 'kN/m' });
+      paso(nombre + ': carga lineal', 'Pu = 4·λ·Mn', `λ = ${lam.toExponential(3)} · Mn = ${Mn.toFixed(1)}`, `Pu = ${Pu.toFixed(2)} kN/m · demanda ${Qd.toFixed(2)} · uso = ${(Qd / Pu).toFixed(2)}`, 'TR34 4ª ed.');
+    } else if (c.tipo === 'udl') {
+      const gF = c.gF != null ? c.gF : 1.0;
+      const qd = (c.q_kg_m2 * G / 1e6) * gF;            // MPa = N/mm²
+      const qneg = 5.95 * lam * lam * Mn, qpos = 6.20 * lam * lam * (Mp + Mn);
+      const qu = Math.min(qneg, qpos);
+      chequeos.push({ id: 'A-' + i + '-udl', carga: nombre, tipo: 'udl', motor: 'A', ubic: 'udl', demanda: qd, capacidad: qu, uso: qd / qu, ok: qd <= qu, unidad: 'MPa' });
+      paso(nombre + ': carga uniforme', 'qu = mín(5.95·λ²·Mn ; 6.20·λ²·(Mp+Mn))', `λ = ${lam.toExponential(3)}`, `qu = ${(qu * 1e6 / G).toFixed(0)} kg/m² · demanda ${c.q_kg_m2 * gF} · uso = ${(qd / qu).toFixed(2)}`, 'TR34 §7.12');
+    }
+  });
+
+  // ── Juntas: relación de aspecto del panel ─────────────────────────────────
+  const juntas = juntasPanel(e.h_cm, e.Lx_cm, e.Ly_cm);
+
+  const chA = chequeos.filter(c => c.motor === 'A'), chB = chequeos.filter(c => c.motor === 'B');
+  const usoMaxA = Math.max(0, ...chA.map(c => c.uso));
+  const usoMaxB = Math.max(0, ...chB.map(c => c.uso));
+  // Fatiga: razón de esfuerzo σ/MR del motor B (el FS de 1.7 ya equivale a σ/MR ≈ 0.50, el
+  // criterio de vida ilimitada de PCA; esto es para informar las repeticiones admisibles).
+  let fatiga = null;
+  const chRueda = chB.filter(c => c.tipo === 'rueda');
+  if (chRueda.length) {
+    const MR_pca = U.kgcm2_MPa(mrDeFc(e.fc, 'aci360'));   // la curva de PCA está calibrada con 9√f'c
+    const sigMax = Math.max(...chRueda.map(c => c.demanda));
+    const srMax = sigMax / MR_pca;
+    fatiga = { SR: srMax, MR_pca: MR_pca, sigma: sigMax, repeticiones: repeticionesPCA(srMax), vida_ilimitada: srMax <= 0.50 };
+    paso('Fatiga por repetición de cargas de rueda', 'σ/MR ≤ 0.50 para vida ilimitada (PCA; MR = 9√f\'c)',
+         `σ máx = ${sigMax.toFixed(2)} MPa · MR = ${MR_pca.toFixed(2)} MPa`,
+         `σ/MR = ${srMax.toFixed(3)} → ${fatiga.vida_ilimitada ? 'vida ilimitada' : 'aprox. ' + Math.round(fatiga.repeticiones).toLocaleString('es-CR') + ' repeticiones'}`,
+         'PCA; ACI 360R');
+  }
+  return {
+    props, chequeos, pasos, juntas,
+    usoMaxA, usoMaxB, fatiga,
+    okA: chA.every(c => c.ok),
+    okB: chB.length ? chB.every(c => c.ok) : null,   // null = el motor B no aplica a estas cargas
+    aplicaB: chB.length > 0,
+    FS,
+  };
+}
+
+// Panel de juntas: máximo normativo y recomendado (etapa 1, §2.3)
+//   máximo:      min(36·h ; 5.5 m)      ACI 302.1R-04 §3.2.5.3
+//   recomendado: min(30·h ; 5.5 m)      criterio CONCRE (factor 30/36 = 0.83)
+//   severo:      min(24·h ; 5.5 m)      exterior, arcilla, alta retracción, cancha
+function juntasPanel(h_cm, Lx_cm, Ly_cm) {
+  const tope = 550;
+  const max = Math.min(36 * h_cm, tope), rec = Math.min(30 * h_cm, tope), sev = Math.min(24 * h_cm, tope);
+  const out = { max_cm: max, recomendado_cm: rec, severo_cm: sev };
+  if (Lx_cm > 0 && Ly_cm > 0) {
+    out.Lmax_cm = Math.max(Lx_cm, Ly_cm); out.Lmin_cm = Math.min(Lx_cm, Ly_cm);
+    out.aspecto = out.Lmax_cm / out.Lmin_cm;
+    out.ok_aspecto = out.aspecto <= 1.5;
+    out.ok_max = out.Lmax_cm <= max;
+    out.uso_max = out.Lmax_cm / max;
+  }
+  return out;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  BÚSQUEDA DE ESPESOR Y DOSIS
+// ══════════════════════════════════════════════════════════════════════════════
+const H_MIN = 10, H_MAX = 35, H_PASO = 0.5;
+
+function _cumple(e, motor) {
+  const r = evaluar(e);
+  // okB === null significa que el motor B no aplica a estas cargas: no bloquea.
+  return motor === 'A' ? r.okA : motor === 'B' ? (r.okB !== false) : (r.okA && r.okB !== false);
+}
+function _con(e, cambios) { return Object.assign({}, e, cambios); }
+
+// Devuelve el menor h (y dosis) que cumple, con las lecturas que se muestran:
+//   h_simple_A : concreto simple, motor A (dosis 0)
+//   h_B        : concreto simple, motor B (Westergaard, sin crédito de fibra)
+//   h_fibra_A  : con Fibra Plus 54 mm (dosis mínima ≥ 2.4), motor A (TR34)
+// «politica» decide cuál es el recomendado:
+//   'mayor'  (por defecto)  el más conservador de los dos métodos (criterio acordado):
+//            primer h donde cumplen A (con fibra) Y B (Westergaard sin fibra)
+//   'tr34'   el que sale de TR34 con fibra
+// Si con 'mayor' no hay solución hasta hmax pero TR34+fibra sí, se devuelve el de TR34
+// con revision = true (el programa debe advertirlo: Westergaard no alcanza).
+function buscarDiseno(e, opc) {
+  const o = Object.assign({ hmin: H_MIN, hmax: H_MAX, paso: H_PASO, politica: 'mayor', dosisMin: DOSIS_MIN_UTIL, dosisMax: 6.0 }, opc || {});
+  const ee = Object.assign({}, e, { _sinPasos: true });
+  const hs = [];
+  for (let h = o.hmin; h <= o.hmax + 1e-9; h += o.paso) hs.push(Math.round(h * 10) / 10);
+  const dosisGrid = [];
+  for (let d = o.dosisMin; d <= o.dosisMax + 1e-9; d += 0.1) dosisGrid.push(Math.round(d * 10) / 10);
+
+  const dosisA = h => { for (const d of dosisGrid) if (_cumple(_con(ee, { h_cm: h, dosis: d }), 'A')) return d; return null; };
+  const okBsimple = h => _cumple(_con(ee, { h_cm: h, dosis: 0 }), 'B');
+  const okAsimple = h => _cumple(_con(ee, { h_cm: h, dosis: 0 }), 'A');
+
+  let h_simple_A = null, h_B = null, h_fibra_A = null, dosis_fibra_A = null, h_mayor = null, dosis_mayor = null;
+  for (const h of hs) {
+    if (h_simple_A == null && okAsimple(h)) h_simple_A = h;
+    const bok = okBsimple(h);
+    if (h_B == null && bok) h_B = h;
+    if (h_fibra_A == null || (bok && h_mayor == null)) {
+      const d = dosisA(h);
+      if (d != null) {
+        if (h_fibra_A == null) { h_fibra_A = h; dosis_fibra_A = d; }
+        if (bok && h_mayor == null) { h_mayor = h; dosis_mayor = d; }
+      }
+    }
+    if (h_simple_A != null && h_B != null && h_fibra_A != null && h_mayor != null) break;
+  }
+
+  let h_rec = null, dosis_rec = null, motivo = 'ninguno', revision = false;
+  if (o.politica === 'tr34') {
+    if (h_fibra_A != null) { h_rec = h_fibra_A; dosis_rec = dosis_fibra_A; motivo = 'tr34'; }
+  } else if (h_mayor != null) {
+    h_rec = h_mayor; dosis_rec = dosis_mayor;
+    motivo = (h_fibra_A != null && h_mayor > h_fibra_A) ? 'westergaard' : 'tr34';
+  } else if (h_fibra_A != null) {
+    h_rec = h_fibra_A; dosis_rec = dosis_fibra_A; motivo = 'westergaard_no_alcanza'; revision = true;
+  }
+
+  // Sensibilidad: h−1 cm no debe cumplir (para mostrar que h es el mínimo)
+  let cumple_h_menos = null;
+  if (h_rec != null && h_rec - 1 >= o.hmin) {
+    const cond = o.politica === 'tr34' || revision ? 'A' : 'ambos';
+    cumple_h_menos = _cumple(_con(ee, { h_cm: h_rec - 1, dosis: dosis_rec != null ? dosis_rec : 0 }), cond);
+  }
+  return {
+    h_simple_A, h_B, h_fibra_A, dosis_fibra_A,
+    h_rec, dosis_rec, motivo, revision, politica: o.politica,
+    cumple_h_menos_1: cumple_h_menos,
+    no_cumple: h_rec == null,
+    limites: { hmin: o.hmin, hmax: o.hmax },
+  };
+}
+
+// Cantidad de Fibra Plus 54 mm para una losa: kg, sacos de 10 kg y bolsas de 1 kg
+function cantidadFibra(area_m2, h_cm, dosis, desperdicio) {
+  const d = desperdicio != null ? desperdicio : 0.03;
+  const vol = area_m2 * h_cm / 100;
+  const kg_neto = vol * dosis;
+  const kg = Math.ceil(kg_neto * (1 + d) - 1e-9);
+  const sacos = Math.floor(kg / 10);
+  const bolsas = kg - sacos * 10;
+  return { volumen_m3: vol, kg_neto, desperdicio: d, kg, sacos10: sacos, bolsas1: bolsas };
+}
+
+// Comparación fibra vs malla / varilla — misma lógica que el módulo Entrepiso de la FibraPlus54
+// (ANSI-DSI C1.0 §2.4; TR34 §6.3.2). malla = { As (mm²/m), Fy (MPa), ys, d (mm) }
+function comparaFibraMalla(h_cm, fc, dosis, yc, malla) {
+  const h = h_cm * 10, fck = fckDeFc(fc);
+  const m = Object.assign({ As: 212.18, Fy: 480, ys: 1.15, d: 0.5 * h }, malla || {});
+  const fr = interpolarFrc(dosis);
+  const [s1, s4] = calcSr(fr[0], fr[3]);
+  const fctm = calcFctm(fck);
+  const fctd = calcFctdFl(fctm, yc, h);
+  const Mn = calcMn(fctd, h), Mp = calcMp(h, yc, s1, s4);
+  const Mmalla = calcMmalla(m.As, m.Fy, m.ys, m.d, fck, 1000, true);
+  const AS_REF = 212.18, FY_REF = 480;
+  const fwwm = 0.85 * (AS_REF * FY_REF) / (1000 * h);
+  const frFl = fctm * (1.6 - h / 1000);
+  const Re3_min = frFl > 0 ? 1.5 * fwwm / frFl : 0.289;
+  const Re3 = Mn > 0 ? Mp / Mn : 0;
+  return {
+    Mp, Mmalla, Mn, Re3, Re3_min,
+    Mp_sobre_Mmalla: Mmalla > 0 ? Mp / Mmalla : null,
+    // La FibraPlus54 trata Re3 = Mp/Mn como INFORMATIVO (< 10 % es comportamiento de macrofibra
+    // sintética) y el criterio Re3_min solo aplica cuando fibra + malla se combinan.
+    re3_mayor_10pct: Re3 >= 0.10,
+    As_temp_ACI: 0.0018 * 1000 * h,     // mm²/m, ACI 318 §24.4.3.2 (malla de retracción y temperatura)
+    cumple_ANSI_DSI: dosis >= DOSIS_MIN_UTIL,   // la fibra sustituye la malla de retracción y temperatura
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RECOMENDACIÓN COMPLETA: f'c + espesor + dosis
+// ══════════════════════════════════════════════════════════════════════════════
+// Criterio de CONCRE (E): se parte del f'c mínimo del uso y solo se sube de clase si con esa
+// clase el espesor pasa de «hPractico» (25 cm). Se recomienda la clase MÁS BAJA que deja el
+// espesor dentro de lo práctico; si ninguna lo logra, la que dé el menor espesor.
+const FC_LISTA = [210, 250, 280, 315, 350, 420];
+function recomendarDiseno(e, opc) {
+  const o = Object.assign({ fcMin: 210, hPractico: 25, politica: 'mayor' }, opc || {});
+  const fcs = FC_LISTA.filter(f => f >= o.fcMin);
+  if (!fcs.length) fcs.push(o.fcMin);
+  const intentos = [];
+  for (const fc of fcs) {
+    const d = buscarDiseno(Object.assign({}, e, { fc }), o);
+    intentos.push({ fc, h_rec: d.h_rec, dosis_rec: d.dosis_rec, revision: d.revision, no_cumple: d.no_cumple, diseno: d });
+  }
+  let elegido = intentos.find(x => !x.no_cumple && x.h_rec <= o.hPractico);
+  let subio = false;
+  if (!elegido) {
+    const ok = intentos.filter(x => !x.no_cumple);
+    elegido = ok.length ? ok.reduce((a, b) => (b.h_rec < a.h_rec ? b : a)) : intentos[intentos.length - 1];
+    subio = ok.length > 0;
+  }
+  return {
+    fc: elegido.fc, diseno: elegido.diseno,
+    intentos: intentos.map(x => ({ fc: x.fc, h_rec: x.h_rec, dosis_rec: x.dosis_rec, revision: x.revision, no_cumple: x.no_cumple })),
+    supera_practico: !elegido.no_cumple && elegido.h_rec > o.hPractico,
+    fc_subido: elegido.fc > fcs[0],
+    hPractico: o.hPractico,
+  };
+}
+
+// CBR (%) → k (kg/cm³). MINVU Chile, Manual de Pavimentación, Tabla 1.3.4 (fuente secundaria).
+function kDeCbr(cbr) {
+  if (!(cbr > 0)) return null;
+  return cbr <= 10 ? 0.25 + 5.15 * Math.log10(cbr) : 4.51 + 0.89 * Math.pow(Math.log10(cbr), 4.34);
+}
+
+const API = {
+  U, G, fckDeFc, mrDeFc,
+  TABLA_FRC, DOSIS_MIN_UTIL, interpolarFrc,
+  calcFctm, calcEcm, calcFctdFl, calcEll, calcLambda, calcSr, calcMn, calcMp, calcMmalla,
+  puInterior, puBordeRaw, puDual, puEsquinaRaw, punzonamiento, repeticionesPCA, calcularCp,
+  westergaard, FS_RANGO, FS_DEFECTO,
+  evaluar, juntasPanel, buscarDiseno, cantidadFibra, comparaFibraMalla, recomendarDiseno, kDeCbr, FC_LISTA,
+  H_MIN, H_MAX,
+};
+if (typeof module !== 'undefined' && module.exports) module.exports = API;
+root.LOSAS_MOTOR = API;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONCRE · Diseño de losas — CATÁLOGO DE USOS, EQUIPOS Y VALORES POR DEFECTO (etapa 3)
+//
+// Todo dato lleva su estado, como en el documento de la etapa 1:
+//   'V'  verificado en ficha de fabricante o norma
+//   'D'  derivado por fórmula a partir de datos verificados
+//   'E'  estimado por CONCRE (criterio de ingeniería; confirmar con la ficha del equipo)
+// Pesos en kg, áreas en cm². Las cargas de rueda son POR RUEDA.
+// ══════════════════════════════════════════════════════════════════════════════
+(function (root) {
+'use strict';
+
+// ── Montacargas y manejo de materiales (carga por rueda delantera, cargado) ─────
+const MONTACARGAS = [
+  { id: 'yale_gp40n',    nombre: 'Yale GP40N · 1.8 t · neumática',              W: 2326, A: 325, sep: 100, est: 'V', nota: 'Eje delantero 4 652 kg (ficha). Huella estimada.' },
+  { id: 'yale_gp50n',    nombre: 'Yale GP50N · "2.5 t" de mercado · neumática', W: 2663, A: 365, sep: 100, est: 'V', nota: 'Eje delantero 5 325 kg (ficha). Huella estimada.' },
+  { id: 'toyota_8fgcu25',nombre: 'Toyota 8FGCU25 · 2.5 t · llanta de cojín',    W: 2566, A: 315, sep: 100, est: 'D', nota: 'Peso de ficha; eje = 0.87 × (peso + capacidad).' },
+  { id: 'crown_fc5225',  nombre: 'Crown FC 5225 · 2.5 t eléctrico · cojín',     W: 3100, A: 315, sep: 100, est: 'V', nota: 'Eje delantero 6 201 kg (ficha). Huella estimada.' },
+  { id: 'crown_fc5245',  nombre: 'Crown FC 5245 · 3.0 t eléctrico · cojín',     W: 3635, A: 350, sep: 100, est: 'V', nota: 'Eje delantero 7 269 kg (ficha). Huella estimada.' },
+  { id: 'yale_gp70n',    nombre: 'Yale GP70N · 3.2 t · neumática',              W: 3455, A: 450, sep: 100, est: 'V', nota: 'Eje delantero 6 910 kg (ficha). Huella estimada.' },
+  { id: 'mc_35',         nombre: 'Montacargas 3.5 t · neumática',               W: 3785, A: 500, sep: 100, est: 'D', nota: 'Sin ficha: eje = 0.87 × (peso + capacidad).' },
+  { id: 'hyster_h40',    nombre: 'Hyster H4.0FT · 4.0 t · neumática',           W: 4485, A: 500, sep: 105, est: 'V', nota: 'Eje delantero 8 969 kg (ficha). Huella estimada.' },
+  { id: 'hyster_h50',    nombre: 'Hyster H5.0FT · 5.0 t · neumática',           W: 5507, A: 600, sep: 110, est: 'V', nota: 'Eje delantero 11 014 kg (ficha). Huella estimada.' },
+  { id: 'hyster_h70',    nombre: 'Hyster H7.0FT · 7.0 t · neumática (por lado)',W: 7160, A: 700, sep: 120, est: 'D', nota: 'Peso de ficha; eje derivado. Llantas duales por lado.' },
+];
+const MANEJO = [
+  { id: 'reach_2t',   nombre: 'Retráctil Crown ESR 5280S · 2.0 t · rueda de carga', W: 3080, A: 38,  est: 'V', nota: 'Rueda de poliuretano de 33 × 10 cm: contacto pequeño, presión alta.' },
+  { id: 'trans_elec', nombre: 'Transpaleta eléctrica Crown PE 4500 · 2.7 t',        W: 1230, A: 30,  est: 'D', nota: 'Ruedas de carga 85 × 165 mm, ~90 % del peso.' },
+  { id: 'trans_man',  nombre: 'Transpaleta manual · 2.5 t',                          W: 1250, A: 25,  est: 'E', nota: 'Sin ficha. Poliuretano ~ 20–30 cm² por rueda.' },
+  { id: 'apilador',   nombre: 'Apilador eléctrico · 1.5 t',                          W: 1000, A: 30,  est: 'E', nota: 'Sin ficha verificada.' },
+  { id: 'vna',        nombre: 'VNA (pasillo muy angosto) · 1.5 t, 10–12 m',          W: 7000, A: 200, est: 'E', nota: 'Estimado: pedir la ficha del fabricante. Los VNA se revisan con TR34 movimiento definido.' },
+];
+
+// ── Vehículos (carga por rueda) ─────────────────────────────────────────────────
+const VEHICULOS = [
+  { id: 'sedan',     nombre: 'Sedán (Corolla)',                          W: 450,  A: 190, dual: false, est: 'E', nota: 'Peso propio de ficha; reparto de ejes estimado.' },
+  { id: 'suv',       nombre: 'SUV (Corolla Cross) al peso bruto',        W: 550,  A: 225, dual: false, est: 'E', nota: 'PBV de ficha 1 930–2 005 kg.' },
+  { id: 'pickup',    nombre: 'Pickup doble cabina (Hilux) · rueda trasera',W: 950, A: 375, dual: false, est: 'E', nota: 'PBV 3 080–3 120 kg (ficha); ejes estimados.' },
+  { id: 'hino300',   nombre: 'Camión liviano Hino 300 916 (8.5 t)',       W: 1550, A: 200, dual: true, sep: 30, est: 'V', nota: 'Eje trasero 6 200 kg (ficha), 4 llantas.' },
+  { id: 'hino500',   nombre: 'Camión mediano Hino 500 1326 (13.5 t)',     W: 2500, A: 295, dual: true, sep: 32, est: 'V', nota: 'Eje trasero 10 000 kg (ficha), 4 llantas.' },
+  { id: 'camion_cr', nombre: 'Camión pesado · eje de diseño CR 11 t',     W: 2750, A: 300, dual: true, sep: 32, est: 'E', nota: 'Eje legal 10 t + tolerancia y sobrecarga (11 t). Presión de llanta estimada.' },
+  { id: 'tandem',    nombre: 'Camión tándem Hino 500 2836 (27.5 t)',       W: 2725, A: 330, dual: true, sep: 32, est: 'V', nota: 'Tándem trasero 21 800 kg (ficha), 8 llantas.' },
+  { id: 'recolector',nombre: 'Camión recolector (eje motriz tándem 17 t)', W: 2125, A: 300, dual: true, sep: 32, est: 'E', nota: 'Dato de EE. UU. (Seattle). Confirmar con el municipio.' },
+];
+
+// ── Elevadores, gatos y puntuales ───────────────────────────────────────────────
+const PUNTUALES = [
+  { id: 'gato',      nombre: 'Gato de piso · carga de norma de garaje',      P: 1361, x: 11.4, y: 11.4, est: 'V', nota: '3 000 lb sobre 11.4 × 11.4 cm (ASCE 7).' },
+  { id: 'elev2_9k',  nombre: 'Elevador de 2 postes · 4.1 t (9 000 lb) · columna', P: 2700, x: 18.4, y: 27.6, est: 'D', nota: 'Columna ~ 2 330 kg, hasta 2 700 con reparto 60/40. Manda el arranque de anclajes, no la placa.' },
+  { id: 'elev2_8k',  nombre: 'Elevador de 2 postes · 3.6 t (8 000 lb) · columna', P: 2400, x: 44.5, y: 45, est: 'D', nota: 'Columna ~ 2 100 kg, hasta 2 400 con reparto 60/40.' },
+  { id: 'elev4',     nombre: 'Elevador de 4 postes · 3.6 t · poste',         P: 1450, x: 25.4, y: 30.5, est: 'D', nota: 'Poste ~ 1 100 kg, hasta 1 450 con asimetría.' },
+  { id: 'pata_liv',  nombre: 'Equipo liviano (compresor, torno) · pata',      P: 350,  x: 10, y: 10, est: 'E', nota: '100–350 kg por pata.' },
+  { id: 'cnc_vf2',   nombre: 'CNC vertical Haas VF-2 (3.4 t) · pata',         P: 850,  x: 15, y: 15, est: 'D', nota: '4–6 patas de 600–850 kg.' },
+  { id: 'entrepiso', nombre: 'Columna de entrepiso (mezanine)',               P: 10000, x: 25, y: 25, est: 'E', nota: 'TR34: entrepisos superan 20 t por columna. Pedir la carga al proveedor.' },
+];
+
+// ── Carga lineal y uniforme típicas ─────────────────────────────────────────────
+const LINEALES = [
+  { id: 'muro12',  nombre: 'Muro de bloque 12 cm · 2.4 m de alto',   Q: 631,  est: 'V', nota: '263 kg/m² con viga corona (UCR).' },
+  { id: 'muro15',  nombre: 'Muro de bloque 15 cm · 2.4 m de alto',   Q: 840,  est: 'E', nota: 'Interpolado entre 12 y 20 cm.' },
+  { id: 'muro20',  nombre: 'Muro de bloque 20 cm · 2.4 m de alto',   Q: 1049, est: 'V', nota: '437 kg/m² con viga (UCR).' },
+  { id: 'gen_patin',nombre: 'Patín de generador Cummins C500D5',      Q: 550,  est: 'D', nota: '~ 1.9 t por patín de 3.5 m.' },
+];
+const UNIFORMES = [
+  { id: 'q_res',   nombre: 'Habitación / vivienda',                  q: 200,  est: 'V', nota: 'CSCR-2010 Tabla 6.1.' },
+  { id: 'q_ofi',   nombre: 'Oficinas, aulas',                        q: 250,  est: 'V', nota: 'CSCR-2010 Tabla 6.1.' },
+  { id: 'q_parq',  nombre: 'Estacionamiento de automóviles',         q: 300,  est: 'V', nota: 'CSCR-2010 Tabla 6.1.' },
+  { id: 'q_pub',   nombre: 'Vestíbulos y áreas públicas',            q: 400,  est: 'V', nota: 'CSCR-2010 Tabla 6.1.' },
+  { id: 'q_b500',  nombre: 'Bodega · mercancía ligera',              q: 500,  est: 'V', nota: 'CSCR-2010 Tabla 6.1.' },
+  { id: 'q_b650',  nombre: 'Bodega · mercancía intermedia',          q: 650,  est: 'V', nota: 'CSCR-2010 Tabla 6.1.' },
+  { id: 'q_b800',  nombre: 'Bodega · mercancía pesada',              q: 800,  est: 'V', nota: 'CSCR-2010 Tabla 6.1.' },
+  { id: 'q_prod',  nombre: 'Producción / manufactura pesada',        q: 1250, est: 'V', nota: 'ASCE 7: 1 221 kg/m² (fuente secundaria).' },
+];
+
+// ── Suelos ("no sé") — k a partir del CBR típico con la correlación MINVU ───────
+// CBR por tipo de suelo: ESTIMADO (rangos generales). k = 0.25 + 5.15·log10(CBR) (CBR ≤ 10).
+function _k(cbr) { return cbr <= 10 ? 0.25 + 5.15 * Math.log10(cbr) : 4.51 + 0.89 * Math.pow(Math.log10(cbr), 4.34); }
+const SUELOS = [
+  { id: 'nose',      nombre: 'No lo sé (valor conservador)',              cbr: 3.4, k: 3.0,  nota: 'k = 3.0 kg/cm³, criterio conservador de CONCRE. Pida un estudio de suelos.' },
+  { id: 'arc_blanda',nombre: 'Arcilla blanda o limo débil',               cbr: 3,   k: _k(3) },
+  { id: 'arc_media', nombre: 'Arcilla de consistencia media',             cbr: 5,   k: _k(5) },
+  { id: 'arc_firme', nombre: 'Arcilla firme o limo arenoso',              cbr: 8,   k: _k(8) },
+  { id: 'arena_suelta',nombre: 'Arena suelta',                            cbr: 10,  k: _k(10) },
+  { id: 'arena_densa',nombre: 'Arena densa',                              cbr: 20,  k: _k(20) },
+  { id: 'grava',     nombre: 'Grava o grava arenosa',                     cbr: 40,  k: _k(40) },
+  { id: 'lastre',    nombre: 'Lastre compactado (material granular)',     cbr: 60,  k: _k(60) },
+];
+// Base granular sobre el suelo. La tabla PCA de incremento de k no se pudo verificar: criterio de CONCRE (E).
+const BASES = [
+  { id: 'ninguna', nombre: 'Sin base granular',       kmin: 0 },
+  { id: 'b15',     nombre: 'Base granular 15 cm compactada', kmin: 6.0 },
+  { id: 'b30',     nombre: 'Base granular 30 cm compactada', kmin: 8.0 },
+];
+
+// ── Racks ────────────────────────────────────────────────────────────────────────
+function nivelesPorAltura(alt) { return alt <= 4 ? 2 : alt <= 6 ? 3 : alt <= 8 ? 4 : alt <= 10 ? 5 : alt <= 12 ? 6 : 7; }
+function placaRack(alt) { return alt <= 4 ? { x: 10, y: 15 } : alt <= 8 ? { x: 15, y: 15 } : { x: 15, y: 20 }; }
+// carga por columna = niveles × tarimas por bahía × peso / 2, más 3-5 % de vigas (se usa 4 %)
+function cargaColumnaRack(niveles, tarimasBahia, W) { return Math.round(niveles * tarimasBahia * W / 2 * 1.04); }
+const TARIMAS = [
+  { id: 't500',  nombre: 'Liviana · 500 kg (envases vacíos, plásticos, textiles)', W: 500 },
+  { id: 't1000', nombre: 'Media · 1 000 kg (alimentos secos, bebidas livianas)',   W: 1000 },
+  { id: 't1200', nombre: 'Media-pesada · 1 200 kg (abarrotes, repuestos)',         W: 1200 },
+  { id: 't1500', nombre: 'Pesada · 1 500 kg (bebidas, materiales de construcción)',W: 1500 },
+];
+const TARIMA_AREA_GMA_M2 = 1.219 * 1.016;
+// Área por POSICIÓN de tarima, con las holguras de estiba (la tarima GMA desnuda mide 1.24 m²).
+const TARIMA_AREA_POSICION_M2 = 1.4;
+// Carga uniforme de un bloque de tarimas estibadas: n × W / área por posición.
+// NO se aplica ningún factor de ocupación de nave: la verificación de carga uniforme de TR34 es
+// LOCAL (el caso crítico es un bloque cargado al 100 % con un pasillo al lado).
+function udlEstiba(n, W, ocupacion) { return Math.round(n * W / (ocupacion || TARIMA_AREA_POSICION_M2)); }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  USOS
+//  Cada uso: opciones (controles del asistente) y una función cargas(o) que devuelve las cargas del
+//  motor. Una carga lleva: tipo ('rack' | 'rueda' | 'lineal' | 'udl'), nombre, los datos del tipo,
+//  est (V/D/E), nota. El usuario puede editar todos los valores.
+// ══════════════════════════════════════════════════════════════════════════════
+const _mc = id => MONTACARGAS.concat(MANEJO).find(x => x.id === id);
+const _veh = id => VEHICULOS.find(x => x.id === id);
+const _pt = id => PUNTUALES.find(x => x.id === id);
+const _li = id => LINEALES.find(x => x.id === id);
+
+function cRueda(x, extra) {
+  const sep = x.sep || 0;
+  const dual = x.dual !== undefined ? !!x.dual : sep > 0;   // dos ruedas a 'sep' cm: se revisa con la fórmula de par
+  return Object.assign({ tipo: 'rueda', nombre: x.nombre, W_kg: x.W, A_cm2: x.A, sep_cm: sep, dual: dual, gF: 1.6, impacto: 1.0, est: x.est, nota: x.nota, ubic: { interior: true, borde: true } }, extra || {});
+}
+function cPuntual(x, extra) {
+  // γF 1.5: TR34 reserva el 1.2 para racking BIEN DEFINIDO. Las cargas puntuales de equipo,
+  // elevadores, gatos y columnas son «otras cargas» y llevan 1.5.
+  return Object.assign({ tipo: 'rack', nombre: x.nombre, P_kg: x.P, x_cm: x.x, y_cm: x.y, gF: 1.5, est: x.est, nota: x.nota, ubic: { interior: true, borde: true, esquina: true } }, extra || {});
+}
+function cUdl(nombre, q, est, nota) { return { tipo: 'udl', nombre, q_kg_m2: q, gF: 1.5, est: est || 'E', nota: nota || '' }; }
+function cLineal(x, extra) { return Object.assign({ tipo: 'lineal', nombre: x.nombre, Q_kg_m: x.Q, gF: 1.5, est: x.est, nota: x.nota }, extra || {}); }
+
+function cargasRacks(o) {
+  const alt = +o.altura || 6;
+  const niv = +o.niveles || nivelesPorAltura(alt);
+  const tb = +o.tarimasBahia || 2;
+  const W = +o.pesoTarima || 1000;
+  const P = cargaColumnaRack(niv, tb, W);
+  const pl = placaRack(alt);
+  return cPuntual({
+    nombre: 'Pata de rack selectivo · ' + niv + ' niveles · ' + tb + ' tarimas de ' + W + ' kg',
+    P: P, x: pl.x, y: pl.y, est: 'D', gF: 1.2,
+    nota: 'N × W / 2 por nivel + 4 % de vigas. Pida la carga por pata al proveedor (ANSI MH16.1). Placa base editable.',
+  });
+}
+function udlBodega(W) { return W <= 600 ? 500 : W <= 1200 ? 650 : 800; }
+
+const USOS = [
+  {
+    id: 'taller_vehicular', icono: '🚗', nombre: 'Taller vehicular',
+    desc: 'Talleres mecánicos, lubricentros, llantas, pintura. Sedán, SUV, pickup y camiones.',
+    ejemplos: 'Sedán / SUV / pickup (Hilux) · camión liviano (Hino 300) · camión pesado (eje de 11 t) · elevadores de 2 y 4 postes',
+    hmin: 10, fcMin: 250, acabado: 'neumatico',
+    opciones: [
+      { id: 'veh', tipo: 'multi', etiqueta: 'Vehículos que entran', def: ['liviano'],
+        valores: [{ v: 'liviano', l: 'Sedán, SUV y pickup' }, { v: 'camion_liviano', l: 'Camiones livianos (5–8 t)' }, { v: 'camion_pesado', l: 'Camiones pesados (eje de 11 t)' }] },
+      { id: 'elevador', tipo: 'select', etiqueta: 'Elevador', def: 'ninguno',
+        valores: [{ v: 'ninguno', l: 'Sin elevador' }, { v: 'elev2_9k', l: '2 postes · 9 000 lb' }, { v: 'elev4', l: '4 postes · 8 000 lb' }] },
+      { id: 'gato', tipo: 'check', etiqueta: 'Gato de piso (norma de garaje)', def: true },
+    ],
+    cargas(o) {
+      const c = [];
+      const v = o.veh || [];
+      if (v.includes('liviano')) c.push(cRueda(_veh('pickup')));
+      if (v.includes('camion_liviano')) c.push(cRueda(_veh('hino300')));
+      if (v.includes('camion_pesado')) c.push(cRueda(_veh('camion_cr')));
+      if (o.elevador && o.elevador !== 'ninguno') c.push(cPuntual(_pt(o.elevador)));
+      if (o.gato) c.push(cPuntual(_pt('gato')));
+      c.push(cUdl('Carga uniforme del taller', 500, 'E', 'CSCR: bodega ligera 500 kg/m² (extrapolación a taller).'));
+      return c;
+    },
+    fcMinDe(o) { return (o.veh || []).some(x => x !== 'liviano') ? 280 : 250; },
+  },
+  {
+    id: 'taller_industrial', icono: '🏭', nombre: 'Taller industrial',
+    desc: 'Metalmecánica, carpintería industrial, soldadura, maquinado.',
+    ejemplos: 'Liviano: compresor, torno pequeño, soldadora · Mediano: CNC Haas VF-2, prensa 100 t · Pesado: generador 500 kW, prensa 200 t, CNC de pórtico',
+    hmin: 12, fcMin: 280, acabado: 'duro',
+    opciones: [
+      { id: 'equipo', tipo: 'multi', etiqueta: 'Clase de equipos', def: ['mediano'],
+        valores: [{ v: 'liviano', l: 'Livianos (compresor, torno pequeño, soldadora)' }, { v: 'mediano', l: 'Medianos (CNC vertical, prensa 100 t)' }, { v: 'pesado', l: 'Pesados (generador, prensa 200 t, CNC de pórtico)' }] },
+      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', def: 'ninguno',
+        valores: [{ v: 'ninguno', l: 'Sin montacargas' }].concat(MONTACARGAS.slice(0, 6).map(m => ({ v: m.id, l: m.nombre }))) },
+    ],
+    cargas(o) {
+      const c = []; const e = o.equipo || [];
+      if (e.includes('liviano')) { c.push(cPuntual(_pt('pata_liv'))); c.push(cUdl('Carga uniforme, equipos livianos', 500, 'E', 'Torno pequeño 300–900 kg/m².')); }
+      if (e.includes('mediano')) { c.push(cPuntual(_pt('cnc_vf2'))); c.push(cUdl('Carga uniforme, equipos medianos', 700, 'D', 'Haas VF-2: ~ 640 kg/m² de promedio; prensa 100 t ~ 425.')); }
+      if (e.includes('pesado')) {
+        c.push(cLineal(_li('gen_patin')));
+        c.push(cUdl('Carga uniforme, equipos pesados', 1500, 'E', 'Prensa 200 t: 1 000–1 700 kg/m². CNC de pórtico: 1–3 t/m² con cimentación propia.'));
+      }
+      if (o.mc && o.mc !== 'ninguno') c.push(cRueda(_mc(o.mc)));
+      if (!c.some(x => x.tipo === 'udl')) c.push(cUdl('Carga uniforme del taller', 500, 'E'));
+      return c;
+    },
+    fcMinDe(o) { return 280; },
+  },
+  {
+    id: 'residencial', icono: '🏠', nombre: 'Uso residencial',
+    desc: 'Casa de habitación. Contrapiso con placa corrida o losa flotante.',
+    ejemplos: 'CSCR-2010: 200 kg/m² · muro de bloque 12 cm: 631 kg/m · placa corrida 35 × 20 cm (1 piso)',
+    hmin: 10, fcMin: 210, acabado: 'peatonal',
+    opciones: [
+      { id: 'tipo', tipo: 'select', etiqueta: 'Sistema', def: 'contrapiso',
+        valores: [{ v: 'contrapiso', l: 'Contrapiso con placa corrida (los muros apoyan en la placa)' }, { v: 'flotante', l: 'Losa flotante (los muros apoyan sobre la losa)' }] },
+      { id: 'muro', tipo: 'select', etiqueta: 'Muro que se apoya (solo losa flotante)', def: 'muro12',
+        valores: [{ v: 'muro12', l: 'Bloque 12 cm' }, { v: 'muro15', l: 'Bloque 15 cm' }, { v: 'muro20', l: 'Bloque 20 cm' }] },
+      { id: 'cochera', tipo: 'check', etiqueta: 'Cochera (un vehículo liviano)', def: false },
+    ],
+    cargas(o) {
+      const c = [cUdl('Carga uniforme de vivienda', 200, 'V', 'CSCR-2010 Tabla 6.1.')];
+      if (o.tipo === 'flotante') {
+        c.push(cLineal(_li(o.muro || 'muro12'), { nombre: 'Muro sobre la losa · ' + (_li(o.muro || 'muro12').nombre) }));
+        c.push({ tipo: 'lineal', nombre: 'Techo y entrepiso que descargan sobre el muro (COMPLETAR)', Q_kg_m: 0, gF: 1.0, est: 'E', nota: 'El programa no estima la carga del techo ni del entrepiso: sume la del diseño estructural. Está en 0 para que no pase por alto.', pendiente: true });
+      }
+      if (o.cochera) c.push(cRueda(_veh('suv')));
+      return c;
+    },
+    fcMinDe(o) { return 210; },
+  },
+  {
+    id: 'bodega_almacen', icono: '📦', nombre: 'Bodega de almacenamiento',
+    desc: 'Estanterías (racks) y tarimas. Pregunta la altura, los niveles y el peso por tarima.',
+    ejemplos: 'Rack selectivo hasta 4 m (2–3 niveles), hasta 8 m (4–5) y 10 m o más (6–7) · tarimas GMA 1.22 × 1.02 m · montacargas contrabalanceado o retráctil',
+    hmin: 12, fcMin: 280, acabado: 'duro',
+    opciones: [
+      { id: 'altura', tipo: 'num', etiqueta: 'Altura del rack (m)', def: 6, min: 2, max: 16, paso: 0.5 },
+      { id: 'niveles', tipo: 'num', etiqueta: 'Niveles de tarimas (vacío = según la altura)', def: '', min: 1, max: 9, paso: 1, auto: 'niveles' },
+      { id: 'tarimasBahia', tipo: 'select', etiqueta: 'Tarimas por bahía y nivel', def: '2', valores: [{ v: '2', l: '2 (viga de 2.7 m)' }, { v: '3', l: '3 (viga de 3.6 m)' }] },
+      { id: 'pesoTarima', tipo: 'select', etiqueta: 'Peso por tarima cargada', def: '1000', valores: TARIMAS.map(t => ({ v: String(t.W), l: t.nombre })) },
+      { id: 'mc', tipo: 'select', etiqueta: 'Equipo de manejo', def: 'crown_fc5225',
+        valores: [{ v: 'ninguno', l: 'Ninguno' }].concat(MONTACARGAS.slice(0, 8).map(m => ({ v: m.id, l: m.nombre })), MANEJO.map(m => ({ v: m.id, l: m.nombre }))) },
+      { id: 'estiba', tipo: 'select', etiqueta: 'Tarimas apiladas en piso (sin rack)', def: 'no',
+        valores: [{ v: 'no', l: 'No hay' }, { v: '1', l: 'Sin estiba (1 nivel)' }, { v: '2', l: 'Estiba de 2 niveles' }, { v: '3', l: 'Estiba de 3 niveles' }, { v: '4', l: 'Estiba de 4 niveles' }] },
+    ],
+    cargas(o) {
+      const c = [cargasRacks(o)];
+      const W = +o.pesoTarima || 1000;
+      if (o.estiba && o.estiba !== 'no') {
+        const q = Math.max(udlEstiba(+o.estiba, W), udlBodega(W));
+        c.push(cUdl('Tarimas en piso · ' + o.estiba + ' nivel(es) de ' + W + ' kg', q, 'D', 'n × W / 1.24 m² con 60 % de ocupación de la nave. Apilar 4 niveles pesados excede la capacidad de la tarima.'));
+      } else {
+        c.push(cUdl('Carga uniforme de bodega', udlBodega(W), 'V', 'CSCR-2010: 500 / 650 / 800 kg/m² según la mercancía.'));
+      }
+      if (o.mc && o.mc !== 'ninguno') c.push(cRueda(_mc(o.mc)));
+      return c;
+    },
+    fcMinDe(o) { return 280; },
+  },
+  {
+    id: 'galpon_animales', icono: '🐄', nombre: 'Galpón para animales',
+    desc: 'Establos lecheros, corrales de cerdos, galpones de aves.',
+    ejemplos: 'Vaca Holstein 680–770 kg · cerdo de engorde 100–120 kg · aves 2–3 kg · tractor con pala o minicargador de limpieza',
+    hmin: 10, fcMin: 250, acabado: 'antideslizante',
+    opciones: [
+      { id: 'especie', tipo: 'select', etiqueta: 'Animales', def: 'bovino',
+        valores: [{ v: 'bovino', l: 'Bovinos (leche o carne)' }, { v: 'cerdos', l: 'Cerdos' }, { v: 'aves', l: 'Aves' }] },
+      { id: 'maq', tipo: 'select', etiqueta: 'Maquinaria de limpieza', def: 'minicargador',
+        valores: [{ v: 'ninguna', l: 'Ninguna (limpieza manual o lavado)' }, { v: 'minicargador', l: 'Minicargador (~ 3 t)' }, { v: 'tractor', l: 'Tractor con pala (~ 5 t)' }] },
+    ],
+    cargas(o) {
+      const c = [];
+      if (o.especie === 'bovino') {
+        c.push(cUdl('Vacas en corral libre', 250, 'E', '700 kg por vaca en 3–5 m² (150–250 kg/m²).'));
+        c.push({ tipo: 'rack', nombre: 'Pezuña de vaca', P_kg: 180, x_cm: 8.5, y_cm: 8.5, gF: 1.2, est: 'E', nota: '120–180 kg por pezuña en 60–90 cm². Sin fuente verificada.', ubic: { interior: true, borde: true, esquina: false } });
+      } else if (o.especie === 'cerdos') {
+        c.push(cUdl('Cerdos', 300, 'E', 'Cerda 200–250 kg; verraco 250–350 kg.'));
+      } else {
+        c.push(cUdl('Aves', 100, 'E', '20–40 kg/m² de aves más cama de viruta de 5–10 cm.'));
+      }
+      if (o.maq === 'minicargador') c.push(cRueda({ nombre: 'Minicargador de limpieza', W: 1500, A: 400, est: 'E', nota: 'Sin ficha: 1–2.5 t por rueda en equipos de 2.5–5 t.' }));
+      if (o.maq === 'tractor') c.push(cRueda({ nombre: 'Tractor con pala', W: 2000, A: 500, est: 'E', nota: 'Sin ficha: 1–2.5 t por rueda en equipos de 2.5–5 t.' }));
+      return c;
+    },
+    fcMinDe(o) { return o.especie === 'bovino' ? 280 : o.especie === 'cerdos' ? 250 : 210; },
+  },
+  {
+    id: 'cancha', icono: '🏀', nombre: 'Cancha deportiva',
+    desc: 'Multiusos, baloncesto, futsal, con techo o sin techo. Incluye pendiente mínima.',
+    ejemplos: 'Gimnasios y reunión: 400–500 kg/m² · FIBA: hasta 1 % en un plano · espesor usual 10–12 cm',
+    hmin: 10, fcMin: 250, acabado: 'antideslizante',
+    opciones: [
+      { id: 'techo', tipo: 'select', etiqueta: 'Cubierta', def: 'sin', valores: [{ v: 'sin', l: 'Sin techo' }, { v: 'con', l: 'Con techo' }] },
+      { id: 'mant', tipo: 'check', etiqueta: 'Entra maquinaria de mantenimiento (minicargador)', def: false },
+    ],
+    cargas(o) {
+      const c = [cUdl('Público y actividad deportiva', 400, 'V', 'CSCR-2010: gimnasios y reunión 400 kg/m².')];
+      if (o.mant) c.push(cRueda({ nombre: 'Minicargador de mantenimiento', W: 1500, A: 400, est: 'E', nota: 'Sin ficha.' }));
+      return c;
+    },
+    fcMinDe(o) { return 250; },
+    pendiente(o) { return o.techo === 'con' ? { valor: 0.5, rango: '0.5–1 %', est: 'E' } : { valor: 1.0, rango: '0.83–1 % (máx. razonable 1.5 %)', est: 'V' }; },
+  },
+  {
+    id: 'bodega_produccion', icono: '⚙️', nombre: 'Bodega industrial de producción',
+    desc: 'Naves de manufactura con maquinaria, montacargas y producto en proceso.',
+    ejemplos: 'Manufactura pesada 1 000–1 250 kg/m² · montacargas de 3–5 t · maquinaria con patas puntuales',
+    hmin: 12, fcMin: 280, acabado: 'duro',
+    opciones: [
+      { id: 'q', tipo: 'select', etiqueta: 'Carga uniforme', def: '1250', valores: [{ v: '1000', l: '1 000 kg/m² (manufactura media)' }, { v: '1250', l: '1 250 kg/m² (manufactura pesada, ASCE 7)' }] },
+      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', def: 'crown_fc5245', valores: MONTACARGAS.map(m => ({ v: m.id, l: m.nombre })) },
+      { id: 'maq', tipo: 'check', etiqueta: 'Maquinaria con patas puntuales (CNC vertical)', def: true },
+    ],
+    cargas(o) {
+      const c = [cUdl('Carga uniforme de producción', +o.q || 1250, 'V', 'ASCE 7 manufactura pesada 1 221 kg/m² (fuente secundaria).')];
+      if (o.mc) c.push(cRueda(_mc(o.mc)));
+      if (o.maq) c.push(cPuntual(_pt('cnc_vf2')));
+      return c;
+    },
+    fcMinDe(o) { return 280; },
+  },
+  {
+    id: 'bodega_alquiler', icono: '🏢', nombre: 'Bodega de alquiler',
+    desc: 'La más completa: puede alojar de todo. Racks, montacargas, entrepisos y cargas de cada inquilino.',
+    ejemplos: 'Racks a la altura de la nave · montacargas de 3.5 t · entrepiso (mezanine) · cargas propias del inquilino',
+    hmin: 12, fcMin: 280, acabado: 'duro',
+    opciones: [
+      { id: 'racks', tipo: 'check', etiqueta: 'Admite racks', def: true },
+      { id: 'altura', tipo: 'num', etiqueta: 'Altura del rack (m)', def: 8, min: 2, max: 16, paso: 0.5 },
+      { id: 'niveles', tipo: 'num', etiqueta: 'Niveles de tarimas (vacío = según la altura)', def: '', min: 1, max: 9, paso: 1, auto: 'niveles' },
+      { id: 'tarimasBahia', tipo: 'select', etiqueta: 'Tarimas por bahía y nivel', def: '2', valores: [{ v: '2', l: '2' }, { v: '3', l: '3' }] },
+      { id: 'pesoTarima', tipo: 'select', etiqueta: 'Peso por tarima cargada', def: '1200', valores: TARIMAS.map(t => ({ v: String(t.W), l: t.nombre })) },
+      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', def: 'mc_35', valores: MONTACARGAS.map(m => ({ v: m.id, l: m.nombre })) },
+      { id: 'entrepiso', tipo: 'check', etiqueta: 'Entrepiso (mezanine) apoyado en la losa', def: false },
+      { id: 'q', tipo: 'select', etiqueta: 'Carga uniforme', def: '800', valores: [{ v: '500', l: '500 kg/m² (ligera)' }, { v: '650', l: '650 kg/m² (intermedia)' }, { v: '800', l: '800 kg/m² (pesada)' }, { v: '1250', l: '1 250 kg/m² (producción)' }] },
+    ],
+    cargas(o) {
+      const c = [];
+      if (o.racks) c.push(cargasRacks(o));
+      if (o.entrepiso) c.push(cPuntual(_pt('entrepiso')));
+      c.push(cUdl('Carga uniforme de la nave', +o.q || 800, 'V', 'CSCR-2010: 500 / 650 / 800 kg/m². Agregue abajo las cargas propias de cada inquilino.'));
+      if (o.mc) c.push(cRueda(_mc(o.mc)));
+      return c;
+    },
+    fcMinDe(o) { return 280; },
+  },
+  {
+    id: 'parqueo', icono: '🅿️', nombre: 'Parqueos y rampas',
+    desc: 'Estacionamientos de vehículos livianos, con paso ocasional de camiones.',
+    ejemplos: 'CSCR-2010: 300 kg/m² · gato de 1 361 kg en 130 cm² · pendiente de drenaje 1–2 %',
+    hmin: 10, fcMin: 250, acabado: 'antideslizante',
+    opciones: [
+      { id: 'camion', tipo: 'select', etiqueta: 'Paso de camiones', def: 'no', valores: [{ v: 'no', l: 'Solo vehículos livianos' }, { v: 'hino300', l: 'Camión liviano ocasional (Hino 300)' }, { v: 'hino500', l: 'Camión mediano ocasional (Hino 500)' }] },
+    ],
+    cargas(o) {
+      const c = [cRueda(_veh('suv')), cPuntual(_pt('gato')), cUdl('Estacionamiento de automóviles', 300, 'V', 'CSCR-2010 Tabla 6.1.')];
+      if (o.camion && o.camion !== 'no') c.push(cRueda(_veh(o.camion)));
+      return c;
+    },
+    fcMinDe(o) { return o.camion && o.camion !== 'no' ? 280 : 250; },
+  },
+  {
+    id: 'patio_contenedores', icono: '🚛', nombre: 'Muelles y patios de contenedores',
+    desc: 'Patios con reach stacker, contenedores apilados y tráilers estacionados.',
+    ejemplos: 'Reach stacker Kalmar DRG450 (25.4 t por rueda con 45 t) · contenedor 20/40 pies (36 t) · 1 a 4 alturas',
+    hmin: 15, fcMin: 350, acabado: 'exterior',
+    opciones: [
+      { id: 'equipo', tipo: 'check', etiqueta: 'Reach stacker (Kalmar DRG450, 45 t)', def: true },
+      { id: 'alturas', tipo: 'select', etiqueta: 'Contenedores apilados', def: '2', valores: [{ v: '0', l: 'No se apilan' }, { v: '1', l: '1 altura' }, { v: '2', l: '2 alturas' }, { v: '3', l: '3 alturas' }, { v: '4', l: '4 alturas' }] },
+      { id: 'trailer', tipo: 'check', etiqueta: 'Tráilers estacionados (patas de apoyo)', def: true },
+    ],
+    fueraDeAlcance: 'Un patio de contenedores no se puede predimensionar con este método. La esquina de un contenedor apilado exige un detalle que el programa no modela (borde engrosado, pedestal o dado bajo la posición de apilado), TR34 excluye los pavimentos exteriores y ACI 330R no cubre las cargas de un reach stacker. Con las cargas típicas el esfuerzo de servicio en el borde supera el módulo de rotura del concreto. Consúltenos: este caso lo tiene que calcular un especialista.',
+    cargas(o) {
+      const c = [];
+      if (o.equipo) c.push(cRueda({ nombre: 'Reach stacker Kalmar DRG450 · rueda delantera con 45 t', W: 25400, A: 2500, est: 'D', nota: 'Eje delantero 101 600 kg (ficha) / 4 ruedas. Presión de llanta 1.0 MPa.' }, { impacto: 1.15, dual: false, sep_cm: 0 }));
+      const n = +o.alturas || 0;
+      if (n > 0) c.push({ tipo: 'rack', nombre: 'Esquina de contenedor · ' + n + ' altura(s)', P_kg: Math.round(n * 30480 / 4 * 1.25), x_cm: 17.8, y_cm: 16.2, gF: 1.5, est: 'D', nota: 'n × 30.48 t / 4 esquinas, con 1.25 por excentricidad. Apoyo máximo 17.8 × 16.2 cm. Use placa de reparto.', ubic: { interior: true, borde: true, esquina: true } });
+      if (o.trailer) c.push({ tipo: 'rack', nombre: 'Pata de apoyo de tráiler', P_kg: 6500, x_cm: 20, y_cm: 25, gF: 1.2, est: 'E', nota: 'Estimado: 5–8 t por pata sobre ~ 500 cm². Pida el catálogo (JOST, SAF-Holland).', ubic: { interior: true, borde: true, esquina: false } });
+      return c;
+    },
+    fcMinDe(o) { return 350; },
+    avisos: ['TR34 excluye pavimentos exteriores y ACI 330R no cubre cargas de reach stacker. Los resultados son una referencia: un pavimento de patio se debe calcular con un especialista.'],
+  },
+  {
+    id: 'camara_fria', icono: '❄️', nombre: 'Cuartos fríos y cámaras',
+    desc: 'Losa sobre aislante térmico. Refrigerados y congelados.',
+    ejemplos: 'Aislante XPS 100–200 mm · montacargas eléctrico de 2.5 t · racks · calefacción bajo el aislante en congelados',
+    hmin: 15, fcMin: 280, acabado: 'duro',
+    kFijo: 2.1,
+    opciones: [
+      { id: 'temp', tipo: 'select', etiqueta: 'Temperatura de operación', def: 'cong', valores: [{ v: 'ref', l: 'Refrigerada (0 a 5 °C)' }, { v: 'cong', l: 'Congelada (−18 °C o menos)' }] },
+      { id: 'mc', tipo: 'select', etiqueta: 'Montacargas', def: 'crown_fc5225', valores: MONTACARGAS.slice(0, 4).map(m => ({ v: m.id, l: m.nombre })) },
+      { id: 'racks', tipo: 'check', etiqueta: 'Racks', def: true },
+      { id: 'altura', tipo: 'num', etiqueta: 'Altura del rack (m)', def: 6, min: 2, max: 12, paso: 0.5 },
+      { id: 'niveles', tipo: 'num', etiqueta: 'Niveles de tarimas (vacío = según la altura)', def: '', min: 1, max: 9, paso: 1, auto: 'niveles' },
+      { id: 'tarimasBahia', tipo: 'select', etiqueta: 'Tarimas por bahía y nivel', def: '2', valores: [{ v: '2', l: '2' }, { v: '3', l: '3' }] },
+      { id: 'pesoTarima', tipo: 'select', etiqueta: 'Peso por tarima cargada', def: '1000', valores: TARIMAS.map(t => ({ v: String(t.W), l: t.nombre })) },
+    ],
+    cargas(o) {
+      const c = [];
+      if (o.racks) c.push(cargasRacks(o));
+      c.push(cUdl('Carga uniforme de cámara', 800, 'V', 'CSCR-2010 bodega pesada 800 kg/m².'));
+      if (o.mc) c.push(cRueda(_mc(o.mc)));
+      return c;
+    },
+    fcMinDe(o) { return 280; },
+    avisos: [
+      'La losa apoya sobre aislante: se usa k = 2.1 kg/cm³ (75 pci, valor conservador sin dato del fabricante). Revise que el aislante resista la presión: XPS de 30 psi admite ~ 4.2 t/m² (factor de seguridad 5).',
+      'En cámaras congeladas se debe prever calefacción bajo el aislante (4.7–7.9 W/m²) para evitar el levantamiento por congelamiento.',
+    ],
+  },
+  {
+    id: 'via_liviana', icono: '🛣️', nombre: 'Aceras, patios y vías livianas',
+    desc: 'Aceras, patios, accesos y calles de bajo tránsito.',
+    ejemplos: 'Peatonal 400 kg/m² · vehículo liviano · camión recolector ocasional (eje motriz 17 t)',
+    hmin: 10, fcMin: 210, acabado: 'exterior',
+    opciones: [
+      { id: 'trafico', tipo: 'select', etiqueta: 'Tránsito', def: 'autos', valores: [{ v: 'peatonal', l: 'Solo peatonal' }, { v: 'autos', l: 'Vehículos livianos' }, { v: 'recolector', l: 'Camión recolector ocasional' }] },
+    ],
+    cargas(o) {
+      const c = [cUdl('Peatonal y uso público', 400, 'V', 'CSCR-2010: áreas de acceso público 400 kg/m².')];
+      if (o.trafico === 'autos') c.push(cRueda(_veh('suv')));
+      if (o.trafico === 'recolector') c.push(cRueda(_veh('recolector')));
+      return c;
+    },
+    fcMinDe(o) { return o.trafico === 'recolector' ? 280 : o.trafico === 'autos' ? 250 : 210; },
+  },
+];
+
+const CATALOGO = {
+  MONTACARGAS, MANEJO, VEHICULOS, PUNTUALES, LINEALES, UNIFORMES, SUELOS, BASES, TARIMAS, USOS,
+  nivelesPorAltura, placaRack, cargaColumnaRack, udlEstiba, cargasRacks, udlBodega,
+  TARIMA_AREA_GMA_M2,
+  cRueda, cPuntual, cUdl, cLineal,
+};
+if (typeof module !== 'undefined' && module.exports) module.exports = CATALOGO;
+root.LOSAS_CAT = CATALOGO;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONCRE · Diseño de losas — RECOMENDACIONES (etapa 4)
+// Convierte el resultado del cálculo en recomendaciones constructivas. Cada línea lleva la regla, la
+// norma (solo el nombre) y el estado del dato, como en el documento de la etapa 1 (§2):
+//   V verificado en norma · S fuente secundaria (fabricante, universidad) · D derivado por fórmula
+//   E criterio de CONCRE (no es cita de norma)
+// No calcula esfuerzos: eso lo hace el motor. Sin dependencias de pantalla; se prueba en Node.
+// ══════════════════════════════════════════════════════════════════════════════
+(function (root) {
+'use strict';
+
+// Tablas de ACI 302.1R-04 (etapa 1, §2.5). Espesores en cm.
+const DOVELA_REDONDA = [
+  { hasta: 15,   rango: '12.5–15 cm',  diam: 'Ø 19 mm (¾")',  largo: '36 cm', sep: '30 cm' },
+  { hasta: 20,   rango: '17.5–20 cm',  diam: 'Ø 25 mm (1")',  largo: '41 cm', sep: '30 cm' },
+  { hasta: 27.5, rango: '22.5–27.5 cm', diam: 'Ø 32 mm (1¼")', largo: '46 cm', sep: '30 cm' },
+];
+const DOVELA_DIAMANTE = [
+  { hasta: 15,   rango: '12.5–15 cm',  placa: '6 × 115 × 115 mm',  sep: '45 cm' },
+  { hasta: 20,   rango: '17.5–20 cm',  placa: '10 × 115 × 115 mm', sep: '45 cm' },
+  { hasta: 27.5, rango: '22.5–27.5 cm', placa: '19 × 115 × 115 mm', sep: '50 cm' },
+];
+// Diamond Dowel (fabricante; fuente secundaria): por espesor de losa
+function modeloDiamond(h) { return h <= 15 ? 'DD-6' : h <= 20 ? 'DD-10' : 'DD-20'; }
+
+const FFFL = {
+  convencional: { nombre: 'Convencional', ff: 20, fl: 15, ffl: 12, fll: 9 },
+  moderada:     { nombre: 'Moderadamente plana', ff: 25, fl: 20, ffl: 15, fll: 12 },
+  plana:        { nombre: 'Plana', ff: 35, fl: 25, ffl: 21, fll: 15 },
+  muyplana:     { nombre: 'Muy plana', ff: 45, fl: 35, ffl: 27, fll: 21 },
+};
+
+const RE_DURA = /cojín|poliuretano|retráctil|transpaleta|apilador|VNA/i;
+const RE_MONTACARGAS = /montacargas|Yale|Toyota|Crown|Hyster|retráctil|transpaleta|apilador|VNA|reach stacker/i;
+
+function fila(t, v, norma, estado, nota) { return { t: t, v: v, norma: norma || '', estado: estado || 'E', nota: nota || '' }; }
+function fmt(n, d) { return (Math.round(n * Math.pow(10, d || 0)) / Math.pow(10, d || 0)).toString().replace('.', ','); }
+
+// Clima con el que se abre cada uso (el usuario lo puede cambiar)
+function climaPorDefecto(usoId, o) {
+  if (usoId === 'cancha') return (o && o.techo === 'con') ? 'interior' : 'exterior';
+  if (usoId === 'patio_contenedores' || usoId === 'via_liviana' || usoId === 'parqueo') return 'exterior';
+  return 'interior';
+}
+
+// Regla del 24·h (ACI 302.1R: mínimo de la regla empírica). Criterio de CONCRE para aplicarla.
+function severidad(ctx) {
+  const r = [];
+  if (ctx.clima === 'exterior' || ctx.clima === 'costero') r.push('losa expuesta a la intemperie');
+  if (ctx.uso && ctx.uso.id === 'cancha') r.push('cancha deportiva');
+  if (/^arc_/.test(ctx.suelo || '')) r.push('subrasante arcillosa');
+  return r;
+}
+
+function trafico(ctx) {
+  const ruedas = (ctx.cargas || []).filter(function (c) { return c.tipo === 'rueda'; });
+  const dura = ruedas.filter(function (c) { return RE_DURA.test(c.nombre || ''); });
+  const mont = ruedas.filter(function (c) { return RE_MONTACARGAS.test(c.nombre || ''); });
+  const vna = ruedas.some(function (c) { return /VNA/i.test(c.nombre || ''); });
+  const maxW = ruedas.reduce(function (m, c) { return Math.max(m, c.W_kg || 0); }, 0);
+  const durasPesadas = dura.filter(function (c) { return (c.W_kg || 0) >= 1500; });
+  return { hayRuedas: ruedas.length > 0, dura: dura.length > 0, mont: mont.length > 0, vna: vna, maxW: maxW, durasPesadas: durasPesadas.length > 0 };
+}
+
+function recomendar(ctx) {
+  const u = ctx.uso, o = ctx.o || {}, h = ctx.h_cm;
+  const t = trafico(ctx);
+  const sev = severidad(ctx);
+  const grupos = [];
+  const avisos = [];
+  const exterior = ctx.clima === 'exterior' || ctx.clima === 'costero';
+  const interior = ctx.clima === 'interior';
+  const alturaRack = (u.id === 'bodega_almacen' || u.id === 'bodega_alquiler' || u.id === 'camara_fria') && (u.id === 'bodega_almacen' || u.id === 'camara_fria' || o.racks) ? (+o.altura || 0) : 0;
+
+  // ── 1. Concreto y acabado ──────────────────────────────────────────────────
+  const g1 = { id: 'concreto', titulo: 'Concreto y acabado', filas: [] };
+  g1.filas.push(fila('Resistencia', 'f’c ' + ctx.fc + ' kg/cm² · MR ' + fmt(ctx.MR, 1) + ' kg/cm²', 'ACI 318 / ACI 360R', 'D', 'Es la menor clase que deja el espesor en un valor práctico.'));
+  if (u.id === 'galpon_animales') g1.filas.push(fila('Relación agua/cemento y curado', 'a/c ≤ 0.45 · curado de 7 días', 'Univ. de Wisconsin (galpones lecheros)', 'S', 'El concreto de galpones para animales trabaja con humedad y ácidos.'));
+  if (ctx.fc > 280) g1.filas.push(fila('Retracción', 'Evite subir el f’c sin necesidad', 'TR34', 'S', 'Un f’c mayor aumenta la retracción y el alabeo.'));
+  const acab = {
+    peatonal: ['Llana de acero normal', 'ACI 302.1R clases 2–4', 'V'],
+    neumatico: ['Llana dura (clase 5). Densificador opcional', 'ACI 302.1R clase 5', 'V'],
+    duro: ['Densificador o endurecedor de superficie (clase 6). Densificado y pulido si la bodega es de imagen', 'ACI 302.1R clase 6; pulido: ACI 310.1', 'V'],
+    antideslizante: ['Llana con textura antideslizante', 'ACI 302.1R', 'V'],
+    exterior: ['Llana con textura antideslizante (escobillado)', 'ACI 302.1R', 'V'],
+  }[u.acabado] || ['Llana de acero normal', 'ACI 302.1R', 'V'];
+  let acabado = acab[0];
+  if (u.id === 'galpon_animales') acabado = o.especie === 'cerdos' ? 'Liso con llana de acero (cerdos)' : o.especie === 'aves' ? 'Llana de acero normal' : 'Textura antideslizante y ranurado en las zonas de tránsito de animales (bovinos)';
+  g1.filas.push(fila('Acabado final', acabado, acab[1], u.id === 'galpon_animales' ? 'S' : acab[2], u.id === 'galpon_animales' ? 'Univ. de Nebraska (cerdos) y Wisconsin (bovinos): las dos fuentes no coinciden.' : ''));
+  if (u.id === 'bodega_produccion' || (u.id === 'taller_industrial' && (o.equipo || []).indexOf('pesado') >= 0)) g1.filas.push(fila('Abrasión muy fuerte', 'Considere un topping (clase 7 u 8)', 'ACI 302.1R', 'V', 'Adherido ≥ 19 mm; no adherido ≥ 75 mm.'));
+  grupos.push(g1);
+
+  // ── 2. Juntas ──────────────────────────────────────────────────────────────
+  const j = ctx.juntas;
+  const g2 = { id: 'juntas', titulo: 'Juntas', filas: [] };
+  const sepRec = sev.length ? j.severo_cm : j.recomendado_cm;
+  g2.filas.push(fila('Separación máxima de juntas de contracción', fmt(j.max_cm / 100, 2) + ' m', 'ACI 302.1R (36·h, tope 5.5 m)', 'V'));
+  g2.filas.push(fila('Separación recomendada por CONCRE', fmt(sepRec / 100, 2) + ' m', sev.length ? 'ACI 302.1R (24·h, tope 5.5 m)' : 'Criterio CONCRE (30·h, tope 5.5 m)', 'E',
+    sev.length ? 'Se usa 24·h por: ' + sev.join(', ') + '.' : 'Es el máximo con un factor de seguridad de 30/36.'));
+  g2.filas.push(fila('Forma del paño', 'Relación largo/ancho ≤ 1.5 (mejor 1:1), sin esquinas entrantes', 'ACI 302.1R', 'V'));
+  g2.filas.push(fila('Profundidad del corte', 'Mínimo ' + Math.max(25, Math.round(h * 10 / 4)) + ' mm (¼ del espesor, no menos de 25 mm); ' + Math.round(h * 10 / 3) + ' mm (⅓) para mayor confiabilidad', 'ACI 302.1R', 'S'));
+  g2.filas.push(fila('Momento del corte', 'Aserrar temprano, entre 4 y 12 horas después de la colada, según el clima', 'ACI 302.1R / ACI 360R', 'S'));
+  const Lmax = j.Lmax_cm || 0;
+  if (Lmax > 550) { g2.filas.push(fila('Paño mayor de 5.5 m', 'Fuera de la regla empírica: requiere diseño específico y juntas con transferencia', 'ACI 360R / TR34', 'E')); avisos.push('El paño previsto pasa de 5.5 m: la regla empírica de juntas no aplica.'); }
+  const tipos = ['Contracción aserrada: regla general dentro de la retícula', 'Construcción: al final de cada colada, a ≥ 1.5 m de otra junta' + (t.hayRuedas ? ' y con dovelas' : ''), 'Aislamiento: contra muros, columnas y bases de equipo, en todo el espesor'];
+  g2.filas.push(fila('Tipos de junta que lleva la losa', tipos.join(' · '), 'ACI 302.1R', 'V'));
+
+  // blindada
+  const razones = [];
+  if (t.durasPesadas) razones.push('ruedas duras con carga ≥ 1 500 kg');
+  if (t.vna) razones.push('pasillo muy angosto (VNA)');
+  if (u.id === 'camara_fria') razones.push('cámara fría');
+  if (u.id === 'patio_contenedores') razones.push('patio de contenedores');
+  if (Lmax > 550) razones.push('paño sin juntas o mayor de 5.5 m');
+  g2.filas.push(fila('Juntas blindadas (con ángulo de acero)', razones.length ? 'Sí, en las juntas que cruza el tránsito: ' + razones.join(', ') : 'No hacen falta con las ruedas de este uso',
+    'ACI 302.1R (detalle); el umbral es de CONCRE', 'E', razones.length ? 'No hay umbral numérico en norma: es criterio de CONCRE. Un fabricante las sitúa donde hay ruedas pequeñas y duras que cruzan la junta.' : ''));
+  grupos.push(g2);
+
+  // ── 3. Dovelas ─────────────────────────────────────────────────────────────
+  const g3 = { id: 'dovelas', titulo: 'Dovelas (transferencia de carga)', filas: [] };
+  const conDovelasContr = t.mont || t.dura;
+  const conTrafico = t.hayRuedas && (t.maxW >= 1000);
+  const necesita = conTrafico || conDovelasContr;
+  if (!necesita) {
+    g3.filas.push(fila('Dovelas', 'No son obligatorias con las cargas de este uso; siguen siendo recomendables en las juntas de construcción con tránsito', 'ACI 302.1R', 'V'));
+  } else {
+    g3.filas.push(fila('Dónde', 'Todas las juntas de construcción con tránsito' + (conDovelasContr ? ' y las de contracción por donde pasan montacargas o ruedas duras' : ''), 'ACI 302.1R', 'V'));
+    if (h < 12.5) {
+      g3.filas.push(fila('Dovela', 'El espesor (' + fmt(h, 1) + ' cm) está por debajo de las tablas (12.5 cm). Verifique el aplastamiento del concreto y pida el dato al fabricante', 'ACI 302.1R', 'V'));
+      avisos.push('Con ' + fmt(h, 1) + ' cm las tablas de dovelas no aplican.');
+    } else if (h > 27.5) {
+      g3.filas.push(fila('Dovela', 'El espesor (' + fmt(h, 1) + ' cm) pasa de las tablas (27.5 cm). Requiere diseño específico y ficha del fabricante', 'ACI 302.1R', 'V'));
+      avisos.push('Con ' + fmt(h, 1) + ' cm las tablas de dovelas no aplican.');
+    } else {
+      const r = DOVELA_REDONDA.filter(function (x) { return h <= x.hasta; })[0];
+      const d = DOVELA_DIAMANTE.filter(function (x) { return h <= x.hasta; })[0];
+      const enHueco = (h > 15 && h < 17.5) || (h > 20 && h < 22.5);
+      g3.filas.push(fila('Dovela redonda lisa', r.diam + ' × ' + r.largo + ', cada ' + r.sep + ' (' + fmt(100 / parseFloat(r.sep), 1) + ' por metro de junta)', 'ACI 302.1R Tabla 3.1', 'V',
+        'Fila de ' + r.rango + (enHueco ? ' (el espesor cae entre filas: se toma la siguiente, del lado seguro)' : '') + '. Base: apertura de junta ≤ 5 mm.'));
+      g3.filas.push(fila('Placa diamante', d.placa + ', cada ' + d.sep + ' · modelo tipo ' + modeloDiamond(h), 'ACI 302.1R Tabla 3.2', 'V',
+        'Modelo del fabricante (Diamond Dowel), fuente secundaria: confirme con su ficha.'));
+      g3.filas.push(fila('Ubicación', 'A ≥ 30 cm de la intersección de dos juntas; alinear y engrasar la mitad de cada dovela redonda', 'ACI 302.1R', 'V'));
+    }
+    g3.filas.push(fila('Transferencia usada en el cálculo', ctx.borde_pct + ' % en bordes · ' + ctx.esq_pct + ' % en esquinas',
+      'Ayuda de la FibraPlus54', 'S', 'Referencia: sin dovelas 0 %; placa diamante 15–25 %; dovela redonda 20–35 %. Si no coloca dovelas, ponga 0 % y recalcule.'));
+  }
+  grupos.push(g3);
+
+  // ── 4. Barreras ────────────────────────────────────────────────────────────
+  const g4 = { id: 'barreras', titulo: 'Barreras de vapor y de fricción', filas: [] };
+  const sinVapor = u.id === 'cancha' || u.id === 'via_liviana' || u.id === 'patio_contenedores' || exterior;
+  let hayVapor = false;
+  if (sinVapor) {
+    g4.filas.push(fila('Barrera de vapor', 'No corresponde: losa expuesta o exterior', 'ACI 302.1R / 302.2R', 'V'));
+  } else if (u.id === 'galpon_animales') {
+    g4.filas.push(fila('Barrera de vapor', 'Opcional: solo si el galpón es cerrado y hay humedad ascendente', 'ACI 302.2R', 'E'));
+  } else {
+    hayVapor = true;
+    const spec = 'Polietileno clase A (ASTM E1745), ≥ 10 mil (0.25 mm), permeancia ≤ 0.1 perm; traslapes de 15 cm sellados con cinta y penetraciones selladas';
+    if (ctx.pisoSensible) g4.filas.push(fila('Barrera de vapor', 'OBLIGATORIA, directamente bajo la losa. ' + spec, 'ACI 302.1R', 'V', 'Bajo un piso sensible a la humedad (epóxico, vinílico, madera).'));
+    else g4.filas.push(fila('Barrera de vapor', 'Recomendada. ' + spec, 'ACI 302.1R / IRC', 'V', 'Si el piso no es sensible a la humedad se puede cubrir con 10 cm de material triturado (NRMCA); sin esa capa sube el riesgo de alabeo y fisura plástica.'));
+    if (u.id === 'camara_fria') g4.filas.push(fila('Cámara fría', 'La posición de la barrera depende del sistema de aislante: siga el diseño del proveedor', 'ACI 302.1R', 'E'));
+  }
+  const panelMax = (j.Lmax_cm || 0);
+  if (panelMax >= 450) {
+    if (hayVapor) g4.filas.push(fila('Barrera de fricción', 'La barrera de vapor clase A puede cumplir también esta función: se especifica una sola', 'ACI 302.1R', 'S', 'Avise del riesgo de alabeo.'));
+    else g4.filas.push(fila('Barrera de fricción', 'Recomendada: polietileno de 250 µm bajo la losa (paño ≥ 4.5 m sobre base rugosa)', 'Criterio CONCRE', 'E', 'No la use con juntas de contracción sin dovelas. Coeficiente de fricción: 1.5 sobre base granular (ACI 360R); ≈ 0.5 con polietileno (ejemplo de ACI 360R, fuente secundaria).'));
+  } else g4.filas.push(fila('Barrera de fricción', 'No hace falta con paños menores de 4.5 m', 'Criterio CONCRE', 'E'));
+  grupos.push(g4);
+
+  // ── 5. Planicidad ──────────────────────────────────────────────────────────
+  const g5 = { id: 'ffl', titulo: 'Planicidad (FF / FL)', filas: [] };
+  function ffl(k, nota) { const c = FFFL[k]; return fila('FF / FL mínimo global', c.ff + ' / ' + c.fl + ' (' + c.nombre.toLowerCase() + ')', 'ACI 302.1R (tabla de planicidad)', 'V',
+    'Mínimo local: ' + c.ffl + ' / ' + c.fll + ' (60 % del global). Medición ASTM E1155 dentro de 72 horas.' + (nota ? ' ' + nota : '')); }
+  if (u.id === 'cancha') g5.filas.push(fila('Planicidad', 'La define el piso deportivo. FIBA: 5 mm bajo regla de 3 m', 'FIBA', 'V'));
+  else if (t.vna || alturaRack > 8) g5.filas.push(fila('Planicidad', 'No use FF/FL global. Racks de más de 8 m o pasillo muy angosto: movimiento definido TR34 (DM3 hasta 8 m, DM2 de 8 a 13 m, DM1 sobre 13 m) y ficha del fabricante del equipo', 'TR34', 'S'));
+  else if (u.id === 'camara_fria') g5.filas.push(fila('Planicidad', 'A definir con TR34 / ACI 117 según el tránsito; no hay dato verificado', 'TR34 / ACI 117', 'E'));
+  else if (u.id === 'bodega_almacen' || (u.id === 'bodega_alquiler' && o.racks)) g5.filas.push(ffl('plana', 'Racks hasta 8 m con montacargas.'));
+  else if (u.id === 'bodega_produccion') g5.filas.push(ffl(t.mont ? 'plana' : 'moderada'));
+  else if (u.id === 'taller_vehicular' || u.id === 'taller_industrial' || u.id === 'bodega_alquiler') g5.filas.push(ffl('moderada'));
+  else g5.filas.push(ffl('convencional', exterior ? 'En exteriores manda la pendiente de drenaje.' : ''));
+  g5.filas.push(fila('Sin exagerar', 'No se recomienda FF 50 o más salvo que el usuario lo pida', 'ACI 302.1R', 'E'));
+  grupos.push(g5);
+
+  // ── 6. Sello ───────────────────────────────────────────────────────────────
+  const g6 = { id: 'sello', titulo: 'Sello de juntas', filas: [] };
+  if (t.mont || t.dura) {
+    g6.filas.push(fila('Juntas con ruedas duras', 'Semirrígido (epoxi Shore A 80–85 o poliurea Shore A 85–90)', 'ACI 302.1R', 'V', 'La norma exige relleno semirrígido; las durezas son de fabricantes (fuente secundaria).'));
+    g6.filas.push(fila('Juntas de aislamiento, contra columnas y muros', 'Flexible (poliuretano)', 'ACI 302.1R', 'V'));
+  } else {
+    g6.filas.push(fila('Juntas', 'Sello flexible (poliuretano)' + (exterior ? ': recomendado en exteriores' : ''), 'ACI 302.1R', 'V'));
+    if (t.hayRuedas) g6.filas.push(fila('Si entran montacargas más adelante', 'Cambie a semirrígido en las juntas del recorrido', 'ACI 302.1R', 'V'));
+  }
+  g6.filas.push(fila('Cuándo y cómo', 'Lo más tarde posible: 60–90 días después de la colada; profundidad de sello ≥ 25 mm; en juntas de construcción aserrar 25 mm antes de sellar', 'ACI 302.1R / fabricantes', 'S'));
+  grupos.push(g6);
+
+  // ── 7. Fibra ───────────────────────────────────────────────────────────────
+  const g7 = { id: 'fibra', titulo: 'Fibra Plus 54 mm', filas: [] };
+  g7.filas.push(fila('Dosis', fmt(ctx.dosis, 1) + ' kg/m³ (la menor de la tabla que cumple todas las verificaciones)', 'ANSI-DSI C1.0 / EN 14651', 'D'));
+  g7.filas.push(fila('Malla de retracción y temperatura', ctx.dosis >= 2.4 ? 'La fibra la sustituye (dosis ≥ 2.4 kg/m³)' : 'Dosis bajo el mínimo: use malla', 'ANSI-DSI C1.0', 'V'));
+  grupos.push(g7);
+
+  return { grupos: grupos, avisos: avisos, severidad: sev, trafico: t, sepRecomendada_cm: sepRec };
+}
+
+const API = { recomendar: recomendar, severidad: severidad, trafico: trafico, climaPorDefecto: climaPorDefecto, DOVELA_REDONDA: DOVELA_REDONDA, DOVELA_DIAMANTE: DOVELA_DIAMANTE, FFFL: FFFL };
+if (typeof module !== 'undefined' && module.exports) module.exports = API;
+root.LOSAS_REC = API;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONCRE · Diseño de losas — INFORME IMPRIMIBLE / PDF (etapa 5)
+// Devuelve un documento HTML completo e independiente (no comparte estilos con el ERP). La ventana que
+// lo muestra imprime o guarda como PDF. Lleva la marca de agua del logo y el descargo en CADA página
+// (pie repetido con thead/tfoot; marca de agua fija).
+// opts.formulas = false → omite el cálculo paso a paso (lo usará la versión web).
+// ══════════════════════════════════════════════════════════════════════════════
+(function (root) {
+'use strict';
+
+var DESCARGO = 'Este informe es una herramienta de predimensionamiento elaborada por CONCRE con base en las normas y métodos indicados en él. No sustituye el diseño, la revisión ni la firma de un profesional responsable, ni el estudio de suelos del sitio. Los resultados dependen de los datos ingresados; los valores marcados como estimados (E) o por defecto son referencias de CONCRE y deben confirmarse con las fichas de los equipos y con el estudio de suelos. CONCRE no asume responsabilidad por el uso de este informe fuera de ese alcance, ni por la construcción, el curado, el control de calidad o el uso posterior de la losa. Las recomendaciones sobre Fibra Plus 54 mm se calculan con las especificaciones y la calidad de la fibra de CONCRE / Concreequipos; no son válidas con otra fibra.';
+var DESCARGO_CORTO = 'PREDIMENSIONAMIENTO COMERCIAL · NO ES UNA MEMORIA DE CÁLCULO. No sustituye el diseño, la revisión ni la firma de un profesional responsable inscrito en el CFIA. Ver el descargo completo y la lista de lo que este cálculo NO revisa.';
+// Lo que el programa NO verifica. Va en el informe, no en una nota al pie: es lo primero que
+// pregunta un ingeniero revisor y es lo que delimita la responsabilidad de CONCRE.
+var NO_REVISA = [
+  'Efecto de grupo de patas de rack cercanas (racks espalda con espalda, patas a menos de unas 3 veces el radio de rigidez).',
+  'Alabeo y fisuración por retracción restringida. Se mitiga con las juntas, el curado y la barrera, pero no se calcula.',
+  'Asentamientos del suelo, diferenciales o totales. Eso lo da el estudio de suelos.',
+  'Movimiento térmico en cámaras congeladas y su efecto en la separación de juntas.',
+  'Cargas uniformes y lineales en el segundo método (Westergaard no aplica a cargas repartidas).',
+  'Espesores mayores de 35 cm y cargas fuera del rango del programa: no se extrapola.',
+  'Diseño de las dovelas como elemento (aplastamiento del concreto contra la dovela): siga la ficha del fabricante.',
+  'Pavimentos exteriores de tránsito pesado, patios de contenedores y pisos con equipo de pasillo muy angosto (VNA): requieren un especialista.',
+];
+
+var CLIMAS = { interior: 'Interior, cubierto', exterior: 'Exterior, expuesto a sol y lluvia', costero: 'Zona costera o salina', frio: 'Zona de altura, con clima frío' };
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function fmt(n, d) { if (typeof n !== 'number' || !isFinite(n)) return '—'; d = d == null ? 1 : d; return n.toLocaleString('es-CR', { minimumFractionDigits: 0, maximumFractionDigits: d }); }
+
+function opcionesTexto(u, o) {
+  return u.opciones.map(function (p) {
+    var v = o[p.id], t;
+    if (p.tipo === 'select') { var x = p.valores.filter(function (q) { return String(q.v) === String(v); })[0]; t = x ? x.l : v; }
+    else if (p.tipo === 'multi') { t = (v || []).map(function (k) { var x = p.valores.filter(function (q) { return q.v === k; })[0]; return x ? x.l : k; }).join('; ') || 'Ninguno'; }
+    else if (p.tipo === 'check') t = v ? 'Sí' : 'No';
+    else t = (v === '' || v == null) ? 'Según la altura' : v;
+    return [p.etiqueta, t];
+  });
+}
+
+// Se imprime lo que REALMENTE entró al motor (la carga saneada), no lo que quedó escrito en la
+// pantalla: si el usuario dejó un campo vacío, el informe debe mostrar el valor que se usó.
+function cargaTexto(c, m) {
+  var gF = (m && m.gF) || c.gF;
+  if (c.tipo === 'rack') return fmt(+(m ? m.P_kg : c.P_kg), 0) + ' kg sobre placa ' + (m ? m.x_cm : c.x_cm) + ' × ' + (m ? m.y_cm : c.y_cm) + ' cm · γF ' + gF;
+  if (c.tipo === 'rueda') { var imp = m ? m.impacto : c.impacto; var sep = m ? m.sep_cm : c.sep_cm;
+    return fmt(+(m ? m.W_kg : c.W_kg), 0) + ' kg por rueda · huella ' + (m ? m.A_cm2 : c.A_cm2) + ' cm²' + (c.dual && +sep > 0 ? ' · par a ' + sep + ' cm' : '') + (+imp && +imp !== 1 ? ' · impacto ' + imp : '') + ' · γF ' + gF; }
+  if (c.tipo === 'lineal') return fmt(+(m ? m.Q_kg_m : c.Q_kg_m), 0) + ' kg/m · γF ' + gF;
+  return fmt(+(m ? m.q_kg_m2 : c.q_kg_m2), 0) + ' kg/m² · γF ' + gF;
+}
+
+function tabla(cabeceras, filas, anchos) {
+  return '<table class="t"><tr>' + cabeceras.map(function (h, i) { return '<th' + (anchos && anchos[i] ? ' style="width:' + anchos[i] + '"' : '') + '>' + h + '</th>'; }).join('') + '</tr>' +
+    filas.map(function (f) { return '<tr>' + f.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+}
+function seccion(titulo, cuerpo) { return '<div class="sec"><h2>' + esc(titulo) + '</h2>' + cuerpo + '</div>'; }
+function kv(pares) { return '<table class="kv">' + pares.map(function (p) { return '<tr><td>' + esc(p[0]) + '</td><td><b>' + p[1] + '</b></td></tr>'; }).join('') + '</table>'; }
+
+function html(ctx) {
+  var S = ctx.S, R = ctx.R, u = R.u, d = R.d, ev = R.ev, ff = R.fibra, j = R.juntas, m = R.malla;
+  var formulas = ctx.formulas !== false;
+  var ref = ctx.ref || 'SIN GUARDAR';
+  var logo = ctx.logo ? 'data:image/png;base64,' + ctx.logo : '';
+  var out = [];
+
+  // Encabezado
+  out.push('<div class="enc">' + (logo ? '<img class="logo" src="' + logo + '">' : '<div class="logo">CONCRE</div>') +
+    '<div class="encd"><div class="tit">Predimensionamiento de losa</div>' +
+    '<div class="nomem">No constituye una memoria de cálculo</div>' +
+    '<div class="sub">' + esc(u.nombre) + ' · Referencia <b>' + esc(ref) + '</b> · ' + esc(ctx.fecha || '') + '</div></div></div>');
+  out.push(kv([
+    ['Proyecto', esc(S.proy.nombre || '—')], ['Cliente', esc(S.proy.cliente || '—')], ['Ubicación', esc(S.proy.ubicacion || '—')],
+    ['Preparado por', esc(ctx.autor || 'CONCRE') + ' · CONCRE / Concreequipos (proveedor)'], ['Área de la losa', fmt(R.area, 0) + ' m²']]));
+
+  // Resultado
+  var cumple = ev.okA && (R.criterio === 'tr34' || ev.okB);
+  out.push(seccion('Resultado', '<div class="kpis">' +
+    '<div class="kpi"><b>' + fmt(d.h_rec, 1) + ' cm</b><span>' + (ev.okA && ev.okB !== false ? 'Espesor mínimo · cumplen los dos métodos' : 'Espesor mínimo según TR34') + '</span></div>' +
+    '<div class="kpi"><b>f’c ' + R.rec.fc + ' kg/cm²</b><span>MR ' + fmt(R.MR, 1) + ' kg/cm² (' + fmt(R.MR / 10.197, 2) + ' MPa)</span></div>' +
+    '<div class="kpi"><b>' + fmt(d.dosis_rec, 1) + ' kg/m³</b><span>Fibra Plus 54 mm</span></div>' +
+    '<div class="kpi"><b>' + fmt(ff.kg, 0) + ' kg</b><span>' + ff.sacos10 + ' sacos de 10 kg + ' + ff.bolsas1 + ' bolsas de 1 kg (3 % de desperdicio)</span></div></div>' +
+    '<p class="p">' + (cumple ? (R.criterio === 'tr34' && !ev.okB ? 'Todas las verificaciones de TR34 cumplen. <b>Westergaard no cumple con este espesor</b>: el ingeniero responsable debe decidir si acepta el criterio de TR34 o aumenta el espesor.' : 'Todas las verificaciones cumplen con el criterio elegido.') : 'Hay verificaciones que no cumplen; revise la tabla de verificación.') + '</p>'));
+  if (ev.fatiga) out.push(seccion('Fatiga por repetición de cargas', '<p class="p">Relación de esfuerzo σ/MR = <b>' + fmt(ev.fatiga.SR, 3) + '</b> (σ = ' + fmt(ev.fatiga.sigma, 2) + ' MPa contra MR = ' + fmt(ev.fatiga.MR_pca, 2) + ' MPa, que es el MR de 9√f\'c con que está calibrada la curva de PCA). ' +
+    (ev.fatiga.vida_ilimitada ? 'Por debajo de 0.50: vida ilimitada a repetición de cargas, según el criterio de PCA.'
+      : '<b>Por encima de 0.50: la losa NO tiene vida ilimitada.</b> Alcanza del orden de ' + fmt(ev.fatiga.repeticiones, 0) + ' pasadas del equipo más pesado. Un equipo que cruce 200 veces al día las agota en unos ' + fmt(ev.fatiga.repeticiones / 200, 0) + ' días.') + '</p>'));
+  var av = [];
+  if (d.revision) av.push('Westergaard no alcanza a cumplir con ningún espesor hasta 35 cm; se muestra el espesor de TR34. Requiere revisión de un ingeniero.');
+  if (R.criterio === 'tr34' && d.h_B != null && d.h_B > d.h_rec) av.push('Con el criterio TR34 el espesor es ' + fmt(d.h_rec, 1) + ' cm; Westergaard (PCA / COE, FS 2.0) pide ' + fmt(d.h_B, 1) + ' cm para concreto simple. Decide el ingeniero responsable.');
+  if (R.rec.supera_practico) av.push('El espesor supera 25 cm incluso con el f’c más alto probado.');
+  if (R.rec.fc_subido) av.push('Se subió el f’c de ' + R.rec.intentos[0].fc + ' a ' + R.rec.fc + ' kg/cm² para mantener el espesor en un valor práctico.');
+  (u.avisos || []).forEach(function (a) { av.push(a); });
+  S.cargas.filter(function (c) { return c.pendiente; }).forEach(function (c) { av.push('Falta un dato: ' + c.nombre + ' (está en 0 y no se revisó).'); });
+  if (R.pend) av.push('Pendiente de drenaje: ' + R.pend.valor + ' % (rango ' + R.pend.rango + ').');
+  (R.recs.avisos || []).forEach(function (a) { av.push(a); });
+  if (av.length) out.push(seccion('Avisos', '<ul class="av">' + av.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'));
+
+  // Datos de entrada
+  var k = R.k;
+  var entradas = opcionesTexto(u, S.o).map(function (p) { return [esc(p[0]), esc(p[1])]; });
+  entradas.push(['Suelo de apoyo', esc(k.nota) + ' <b>k = ' + fmt(k.k, 2) + ' kg/cm³</b>']);
+  entradas.push(['Clima y exposición', esc(CLIMAS[S.clima] || S.clima) + (S.pisoSensible ? ' · piso sensible a la humedad' : '')]);
+  entradas.push(['Resistencia del concreto', S.fcAuto ? 'Recomendada por el programa' : 'Manual']);
+  entradas.push(['Criterio de espesor', R.criterio === 'tr34' ? 'TR34 manda; Westergaard advierte' : 'El más conservador de los dos métodos']);
+  entradas.push(['Transferencia de carga', S.borde + ' % en bordes · ' + S.esq + ' % en esquinas · ν = ' + S.nu]);
+  entradas.push(['Paño', fmt(j.Lmax_cm / 100, 2) + ' × ' + fmt(j.Lmin_cm / 100, 2) + ' m' + (R.panelAuto ? ' (recomendado)' : ' (ingresado)')]);
+  out.push(seccion('Datos de entrada', tabla(['Dato', 'Valor'], entradas, ['34%', '66%'])));
+  out.push(seccion('Cargas revisadas (kg)', tabla(['Carga', 'Valores', 'Origen'], S.cargas.map(function (c) {
+    var m = (R.cargas || []).filter(function (x) { return x.nombre === c.nombre && x.tipo === c.tipo; })[0];
+    return [esc(c.nombre), esc(cargaTexto(c, m)), '<b>' + esc(c.est || 'U') + '</b>'];
+  }), ['38%', '54%', '8%']) + '<p class="n">Origen: V verificado en ficha o norma · D derivado por fórmula · E estimado por CONCRE · U ingresado por el usuario.</p>'));
+
+  // Métodos
+  out.push(seccion('Los dos métodos, lado a lado', tabla(['Método', 'Espesor mínimo', 'Uso máximo a ' + fmt(d.h_rec, 1) + ' cm'], [
+    ['A · TR34 4ª ed. (concreto simple)', d.h_simple_A != null ? fmt(d.h_simple_A, 1) + ' cm' : 'no cumple', fmt(ev.usoMaxA * 100, 0) + ' %'],
+    ['A · TR34 con Fibra Plus 54 (' + fmt(d.dosis_rec, 1) + ' kg/m³)', d.h_fibra_A != null ? fmt(d.h_fibra_A, 1) + ' cm' : 'no cumple', ''],
+    ['B · Westergaard, FS ' + (window.LOSAS_MOTOR ? window.LOSAS_MOTOR.FS_DEFECTO.rack : 1.7) + ' (concreto simple)', d.h_B != null ? fmt(d.h_B, 1) + ' cm' : 'no alcanza en 35 cm', fmt(ev.usoMaxB * 100, 0) + ' %']]) +
+    '<p class="n">«Uso» = demanda ÷ capacidad; menor de 100 % cumple.</p>'));
+  out.push(seccion('Verificación por carga', tabla(['Carga', 'Método · ubicación', 'Demanda', 'Capacidad', 'Uso', ''], ev.chequeos.map(function (c) {
+    var esU = c.unidad === 'MPa' && c.motor === 'A';
+    var dm = esU ? fmt(c.demanda * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.demanda, 2) + ' ' + c.unidad;
+    var cp = esU ? fmt(c.capacidad * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.capacidad, 2) + ' ' + c.unidad;
+    return [esc(c.carga), c.motor + ' · ' + c.ubic, dm, cp, fmt(c.uso * 100, 0) + ' %', c.ok ? 'Cumple' : '<b>No cumple</b>'];
+  }))));
+
+  // Juntas
+  out.push(seccion('Paños y juntas de contracción', kv([
+    ['Separación máxima permitida', fmt(j.max_cm / 100, 2) + ' m (36·h, tope 5.5 m) · ACI 302.1R'],
+    ['Separación recomendada', fmt(R.recs.sepRecomendada_cm / 100, 2) + ' m (' + (R.recs.severidad.length ? '24' : '30') + '·h, tope 5.5 m)'],
+    ['Paño revisado', fmt(j.Lmax_cm / 100, 2) + ' × ' + fmt(j.Lmin_cm / 100, 2) + ' m · aspecto ' + fmt(j.aspecto, 2) + (j.ok_aspecto ? ' (cumple ≤ 1.5)' : ' (NO cumple ≤ 1.5)')]])));
+
+  // Recomendaciones
+  R.recs.grupos.forEach(function (g) {
+    out.push(seccion(g.titulo, tabla(['Tema', 'Recomendación', 'Norma', ''], g.filas.map(function (f) {
+      return ['<b>' + esc(f.t) + '</b>', esc(f.v) + (f.nota ? '<div class="n">' + esc(f.nota) + '</div>' : ''), esc(f.norma), '<b>' + esc(f.estado) + '</b>'];
+    }), ['20%', '52%', '22%', '6%'])));
+  });
+  out.push('<p class="n">V verificado en norma · S fuente secundaria (fabricante, universidad) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.</p>');
+
+  // Fibra vs malla
+  out.push(seccion('Fibra Plus 54 mm frente a malla electrosoldada', kv([
+    ['Dosis de fibra', fmt(d.dosis_rec, 1) + ' kg/m³ · ' + (m.cumple_ANSI_DSI ? 'cumple el mínimo de ANSI-DSI C1.0 (2.4 kg/m³)' : 'bajo el mínimo de 2.4 kg/m³')],
+    ['Malla de retracción y temperatura equivalente (ACI 318)', 'As = ' + fmt(m.As_temp_ACI, 0) + ' mm²/m'],
+    ['Momento de la fibra Mp', fmt(m.Mp, 2) + ' N·mm/mm'],
+    ['Momento de la malla de referencia (212 mm²/m, Fy 480 MPa)', fmt(m.Mmalla, 2) + ' N·mm/mm'],
+    ['Relación Mp / Mmalla', m.Mp_sobre_Mmalla != null ? fmt(m.Mp_sobre_Mmalla * 100, 0) + ' %' : '—']]) +
+    '<p class="n">La fibra aporta poco momento en flexión (Re3 = ' + fmt(m.Re3, 3) + '); su función principal es controlar la fisuración por retracción y temperatura.</p>'));
+
+  // Resumen para el usuario
+  var resumen = [
+    'Para <b>' + esc(u.nombre.toLowerCase()) + '</b>' + (S.proy.nombre ? ' («' + esc(S.proy.nombre) + '»)' : '') + ', con las cargas ingresadas y un suelo de k = ' + fmt(k.k, 2) + ' kg/cm³, la losa necesita como mínimo <b>' + fmt(d.h_rec, 1) + ' cm de espesor</b> con concreto de <b>f’c ' + R.rec.fc + ' kg/cm²</b> reforzado con <b>' + fmt(d.dosis_rec, 1) + ' kg de Fibra Plus 54 mm por m³</b>.',
+    'Para <b>' + fmt(R.area, 0) + ' m²</b> se necesitan <b>' + fmt(ff.kg, 0) + ' kg de fibra</b> (' + ff.sacos10 + ' sacos de 10 kg y ' + ff.bolsas1 + ' bolsas de 1 kg), con 3 % de desperdicio.',
+    'Las juntas de aserrado deben quedar a no más de <b>' + fmt(j.max_cm / 100, 1) + ' m</b>; se recomienda <b>' + fmt(R.recs.sepRecomendada_cm / 100, 1) + ' m</b>, con paños lo más cuadrados posible.'
+  ];
+  if (ctx.resumenRecs) resumen.push('Recomendaciones: ' + esc(ctx.resumenRecs) + '.');
+  out.push(seccion('Resumen para el usuario', resumen.map(function (t) { return '<p class="p">' + t + '</p>'; }).join('')));
+
+  // Paso a paso
+  if (formulas) {
+    out.push('<div class="sec salto"><h2>Cálculo paso a paso</h2>' + ev.pasos.map(function (p, i) {
+      return '<div class="paso"><div class="pt">' + (i + 1) + '. ' + esc(p.titulo) + '</div><div class="pf">' + esc(p.formula) + '</div><div class="pv">' + esc(p.valores) + '</div><div class="pr">' + esc(p.resultado) + '</div><div class="pn">' + esc(p.norma) + '</div></div>';
+    }).join('') + '</div>');
+  }
+
+  // Lo que NO revisa
+  out.push(seccion('Lo que este cálculo NO revisa', '<ul class="av">' + NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'));
+
+  // Bloque de firma, en blanco: lo llena el profesional responsable del proyecto
+  out.push(seccion('Revisión y responsabilidad profesional', kv([
+    ['Preparado por (proveedor)', esc(ctx.autor || 'CONCRE') + ' · CONCRE / Concreequipos'],
+    ['Revisado por (profesional responsable)', '<span class="firma">&nbsp;</span>'],
+    ['N° de inscripción CFIA', '<span class="firma">&nbsp;</span>'],
+    ['Firma', '<span class="firma">&nbsp;</span>'],
+    ['Fecha de revisión', '<span class="firma">&nbsp;</span>']]) +
+    '<p class="n">En Costa Rica el diseño de la losa lo firma un profesional inscrito en el CFIA. CONCRE prepara este predimensionamiento como proveedor de materiales y servicios; mientras este bloque esté en blanco, el documento es un borrador comercial y no un documento de diseño.</p>'));
+
+  out.push(seccion('Descargo de responsabilidad', '<p class="p" style="font-size:8.5px;color:#555">' + esc(DESCARGO) + '</p>'));
+
+  // Servicios de CONCRE: hoja aparte, para no mezclar promoción con el cuerpo técnico
+  out.push('<div class="sec salto"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE / Concreequipos; no son válidos con otra fibra.</p></div>');
+
+  var css = '*{box-sizing:border-box}html,body{margin:0}body{font-family:Arial,sans-serif;color:#3D3D3D;font-size:9.5px;background:#fff}' +
+    '@page{size:A4;margin:11mm 12mm}' +
+    'table.pg{width:100%;border-collapse:collapse}table.pg>tfoot>tr>td,table.pg>tbody>tr>td{padding:0}' +
+    '.marca{position:fixed;left:0;right:0;top:32%;text-align:center;z-index:0;pointer-events:none}.marca img{width:60%;opacity:.07}' +
+    '.borrador{position:fixed;left:0;right:0;top:44%;text-align:center;z-index:0;pointer-events:none;font-size:62px;font-weight:800;color:#C8102E;opacity:.10;letter-spacing:6px;transform:rotate(-24deg)}' +
+    '.nomem{display:inline-block;background:#C8102E;color:#fff;font-size:9px;font-weight:800;padding:2px 7px;border-radius:3px;margin:3px 0;letter-spacing:.4px;text-transform:uppercase}' +
+    '.firma{display:inline-block;min-width:60%;border-bottom:1px solid #999}' +
+    '.pie{border-top:2px solid #C8102E;margin-top:6px;padding-top:4px;font-size:7.5px;color:#777;line-height:1.4}' +
+    '.enc{display:flex;align-items:center;gap:14px;border-bottom:3px solid #C8102E;padding-bottom:8px;margin-bottom:8px}' +
+    '.enc .logo{height:46px;width:auto}.enc div.logo{font-size:22px;font-weight:800;color:#C8102E}.tit{font-size:19px;font-weight:800}.sub{font-size:10px;color:#666;margin-top:2px}' +
+    '.sec{margin:0 0 9px;position:relative;z-index:1}.sec h2{font-size:11px;margin:0 0 4px;padding:3px 7px;background:#3D3D3D;color:#fff;break-after:avoid}' +
+    '.salto{break-before:page}' +
+    'table.t{width:100%;border-collapse:collapse;font-size:8.6px}table.t th{background:#eee;text-align:left;padding:3px 5px;border:1px solid #ddd}table.t td{padding:3px 5px;border:1px solid #e3e3e3;vertical-align:top}table.t tr{break-inside:avoid}' +
+    'table.kv{width:100%;border-collapse:collapse;font-size:9px}table.kv td{padding:2.5px 5px;border-bottom:1px solid #eee;vertical-align:top}table.kv td:first-child{width:38%;color:#666}' +
+    '.kpis{display:flex;gap:6px;margin-bottom:5px}.kpi{flex:1;border:1px solid #ddd;border-left:4px solid #C8102E;padding:5px 7px}.kpi b{display:block;font-size:14px;color:#C8102E}.kpi span{font-size:8px;color:#777}' +
+    '.p{margin:4px 0;line-height:1.5}.n{font-size:8px;color:#777;margin:3px 0;line-height:1.4}.av{margin:2px 0 0;padding-left:15px;line-height:1.5}' +
+    '.paso{border-bottom:1px solid #eee;padding:3px 0;break-inside:avoid}.pt{font-weight:800}.pf{font-family:Consolas,monospace;color:#444;font-size:8.5px}.pv{color:#666}.pr{font-weight:700;color:#C8102E}.pn{font-size:7.5px;color:#999}' +
+    '.barra{position:sticky;top:0;background:#3D3D3D;color:#fff;padding:8px 14px;z-index:5;font-size:12px}.barra button{background:#C8102E;color:#fff;border:0;border-radius:5px;padding:6px 14px;font-weight:700;cursor:pointer;margin-right:10px}' +
+    '@media print{.barra{display:none}}';
+
+  return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>CONCRE — ' + esc(ref) + '</title><style>' + css + '</style></head><body>' +
+    '<div class="barra"><button onclick="window.print()">🖨 Imprimir / Guardar PDF</button>Informe ' + esc(ref) + '</div>' +
+    (logo ? '<div class="marca"><img src="' + logo + '"></div>' : '') +
+    '<div class="borrador">BORRADOR</div>' +
+    '<table class="pg"><tbody><tr><td>' + out.join('') + '</td></tr></tbody>' +
+    '<tfoot><tr><td><div class="pie"><b>CONCRE</b> · ' + esc(ref) + ' · ' + esc(DESCARGO_CORTO) + '</div></td></tr></tfoot></table></body></html>';
+}
+
+var API = { html: html, DESCARGO: DESCARGO, DESCARGO_CORTO: DESCARGO_CORTO, NO_REVISA: NO_REVISA, CLIMAS: CLIMAS };
+if (typeof module !== 'undefined' && module.exports) module.exports = API;
+root.LOSAS_INFORME = API;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONCRE · Diseño de losas — GUARDADO EN LA NUBE (etapa 5, corregido tras la auditoría)
+//
+// Tabla propia `losas_proyectos`, una fila por proyecto. Requiere haber corrido
+// sql/10_losas_proyectos.sql EN SUPABASE ANTES de desplegar.
+//
+// Por qué no la tabla `configuracion` como la FibraPlus54: guardar la lista entera en una sola
+// celda obliga a leer-modificar-escribir. Si dos personas guardan a la vez, la segunda pisa a la
+// primera y el proyecto de la primera desaparece sin error. Con una fila por proyecto no pasa.
+//
+// La referencia (INICIALES-LO-AAAA-NNNN) la genera una secuencia de Postgres, que es atómica:
+// aunque tres personas guarden en el mismo instante, cada una recibe un número distinto.
+// ══════════════════════════════════════════════════════════════════════════════
+(function (root) {
+'use strict';
+var TABLA = 'losas_proyectos';
+var VERSION = '2.0';   // 2.0 = con esquina de TR34, punzonamiento y fatiga
+
+function _db() { if (typeof DB === 'undefined' || !DB) throw new Error('No hay conexión con la base de datos.'); return DB; }
+function _ses() { return (typeof SESSION !== 'undefined' && SESSION) ? SESSION : null; }
+function _falta(e) {
+  var m = (e && (e.message || e.msg)) || '';
+  if (/relation .*losas_proyectos.* does not exist|losas_next_ref|schema cache|PGRST20[02]/i.test(m))
+    return new Error('Falta correr sql/10_losas_proyectos.sql en Supabase antes de usar esta pantalla.');
+  return e;
+}
+
+function iniciales() {
+  var s = _ses();
+  if (!s || !s.nombre) return 'XX';
+  return s.nombre.trim().split(/\s+/).map(function (w) { return w[0] || ''; }).join('').toUpperCase().slice(0, 4);
+}
+
+async function siguienteRef() {
+  var r = await _db().rpc('losas_next_ref', { p_ini: iniciales() });
+  if (r.error) throw _falta(r.error);
+  return r.data;
+}
+
+// El superadmin ve todos; los demás solo los suyos. El filtro va en la consulta, no en el
+// navegador, para que los proyectos ajenos no lleguen siquiera al equipo del usuario.
+async function listar(limite) {
+  var s = _ses();
+  var q = _db().from(TABLA).select('*').order('actualizado', { ascending: false }).limit(limite || 200);
+  if (!s || s.rol !== 'superadmin') q = q.eq('usuario_id', (s && s.id) || '\u0000');
+  var r = await q;
+  if (r.error) throw _falta(r.error);
+  return r.data || [];
+}
+
+async function obtener(id) {
+  var r = await _db().from(TABLA).select('*').eq('id', id).limit(1);
+  if (r.error) throw _falta(r.error);
+  return (r.data && r.data[0]) || null;
+}
+
+// p: {id, nombre, cliente, ubicacion, uso, estado, resumen}. Devuelve el proyecto guardado.
+async function guardar(p) {
+  var s = _ses();
+  if (!s || !s.id) throw new Error('No hay sesión activa: vuelva a entrar antes de guardar.');
+  var prev = await obtener(p.id);
+  if (prev && s.rol !== 'superadmin' && prev.usuario_id !== s.id) throw new Error('Este proyecto es de otro usuario.');
+  var ahora = new Date().toISOString();
+  var fila = {
+    id: p.id,
+    ref: prev ? prev.ref : await siguienteRef(),
+    nombre: p.nombre || 'Sin nombre', cliente: p.cliente || '', ubicacion: p.ubicacion || '',
+    uso: p.uso, estado: p.estado, resumen: p.resumen, motor: VERSION,
+    usuario_id: prev ? prev.usuario_id : s.id,
+    usuario_nombre: prev ? prev.usuario_nombre : (s.nombre || ''),
+    creado: prev ? prev.creado : ahora,
+    actualizado: ahora,
+  };
+  var r = await _db().from(TABLA).upsert(fila, { onConflict: 'id' }).select();
+  if (r.error) throw _falta(r.error);
+  return (r.data && r.data[0]) || fila;
+}
+
+async function eliminar(id) {
+  var s = _ses();
+  if (!s || !s.id) throw new Error('No hay sesión activa.');
+  var p = await obtener(id);
+  if (!p) return;
+  if (s.rol !== 'superadmin' && p.usuario_id !== s.id) throw new Error('Este proyecto es de otro usuario.');
+  var r = await _db().from(TABLA).delete().eq('id', id);
+  if (r.error) throw _falta(r.error);
+}
+
+var API = { TABLA: TABLA, VERSION: VERSION, iniciales: iniciales, listar: listar, obtener: obtener,
+            guardar: guardar, eliminar: eliminar, siguienteRef: siguienteRef };
+if (typeof module !== 'undefined' && module.exports) module.exports = API;
+root.LOSAS_NUBE = API;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONCRE · Diseño de losas — PANTALLA (etapa 3)
+// Usa LOSAS_MOTOR (cálculo) y LOSAS_CAT (usos, equipos y valores por defecto).
+// Regla de la casa: los campos NUNCA se repintan mientras se escribe; solo se recalcula al pulsar
+// «Calcular». Nada se guarda en el navegador (la nube llega en la etapa 5).
+// ══════════════════════════════════════════════════════════════════════════════
+(function () {
+'use strict';
+var M = window.LOSAS_MOTOR, C = window.LOSAS_CAT, REC = window.LOSAS_REC, INF = window.LOSAS_INFORME, NUBE = window.LOSAS_NUBE;
+
+var CSS = [
+'.ls{font-family:Arial,sans-serif;color:#3D3D3D;background:#F5F5F5;padding:0 0 30px}',
+'.ls *{box-sizing:border-box}',
+'.ls-hdr{background:linear-gradient(135deg,#3D3D3D 0%,#58595B 60%,#6D6E70 100%);display:flex;min-height:72px}',
+'.ls-hdr-bar{background:#C8102E;width:7px;flex-shrink:0}',
+'.ls-hdr-body{padding:14px 20px}',
+'.ls-hdr-title{color:#fff;font-size:20px;font-weight:800}',
+'.ls-hdr-sub{color:#ddd;font-size:11.5px;margin-top:3px}',
+'.ls-steps{display:flex;gap:0;background:#fff;border-bottom:1px solid #ddd;flex-wrap:wrap}',
+'.ls-step{padding:11px 18px;font-size:12.5px;font-weight:700;color:#888;border-bottom:3px solid transparent;cursor:pointer}',
+'.ls-step.on{color:#C8102E;border-bottom-color:#C8102E}',
+'.ls-body{padding:18px 20px;max-width:1100px}',
+'.ls-h2{font-size:15px;font-weight:800;margin:0 0 4px}',
+'.ls-p{font-size:12.5px;color:#666;margin:0 0 14px;line-height:1.5}',
+'.ls-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}',
+'.ls-card{background:#fff;border:2px solid #e2e2e2;border-radius:10px;padding:14px;cursor:pointer}',
+'.ls-card:hover{border-color:#bbb}.ls-card.on{border-color:#C8102E;background:#fff8f8}',
+'.ls-card.fuera{opacity:.72;border-style:dashed}',
+'.ls-card .ic{font-size:26px}.ls-card .nm{font-weight:800;font-size:13.5px;margin:4px 0}',
+'.ls-card .ds{font-size:11.5px;color:#666;line-height:1.4}',
+'.ls-box{background:#fff;border:1px solid #e2e2e2;border-radius:10px;padding:14px 16px;margin-bottom:14px}',
+'.ls-box>.t{font-size:11px;font-weight:800;text-transform:uppercase;color:#777;margin-bottom:10px;letter-spacing:.3px}',
+'.ls-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px 14px}',
+'.ls-f label{display:block;font-size:11px;font-weight:700;color:#555;margin-bottom:3px}',
+'.ls-f input[type=text],.ls-f input[type=number],.ls-f select{width:100%;padding:7px 8px;border:1px solid #ccc;border-radius:6px;font-size:13px;background:#fff}',
+'.ls-f .hint{font-size:10.5px;color:#888;margin-top:2px}',
+'.ls-chk{display:flex;align-items:center;gap:6px;font-size:12.5px;margin:4px 0}',
+'.ls-multi label{display:flex;align-items:center;gap:6px;font-size:12.5px;margin:3px 0;font-weight:400}',
+'.ls-carga{border:1px solid #e2e2e2;border-left:4px solid #C8102E;border-radius:8px;padding:10px 12px;margin-bottom:10px;background:#fafafa}',
+'.ls-carga .top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:8px}',
+'.ls-carga .nm{font-weight:700;font-size:12.5px}',
+'.ls-est{display:inline-block;font-size:10px;font-weight:800;border-radius:9px;padding:1px 7px;margin-left:6px;color:#fff}',
+'.ls-est.V{background:#2e7d32}.ls-est.D{background:#1565c0}.ls-est.E{background:#ef6c00}.ls-est.U{background:#6a1b9a}',
+'.ls-nota{font-size:10.5px;color:#777;margin-top:6px;line-height:1.4}',
+'.ls-btn{background:#C8102E;color:#fff;border:0;border-radius:7px;padding:9px 18px;font-weight:700;font-size:13px;cursor:pointer}',
+'.ls-btn.sec{background:#fff;color:#555;border:1px solid #bbb}',
+'.ls-btn.sm{padding:4px 10px;font-size:11px}',
+'.ls-nav{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}',
+'.ls-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px}',
+'.ls-kpi{background:#fff;border:1px solid #e2e2e2;border-radius:10px;padding:12px}',
+'.ls-kpi .v{font-size:22px;font-weight:800;color:#C8102E}.ls-kpi .l{font-size:11px;color:#777;margin-top:2px}',
+'.ls-kpi .s{font-size:10.5px;color:#888;margin-top:3px}',
+'.ls-tb{width:100%;border-collapse:collapse;font-size:12px}',
+'.ls-tb th{background:#3D3D3D;color:#fff;text-align:left;padding:6px 8px;font-size:11px}',
+'.ls-tb td{padding:6px 8px;border-bottom:1px solid #eee;vertical-align:top}',
+'.ls-ok{color:#2e7d32;font-weight:800}.ls-no{color:#c62828;font-weight:800}',
+'.ls-warn{background:#fff8e1;border:1px solid #ffe082;border-radius:8px;padding:9px 12px;font-size:12px;margin-bottom:10px;line-height:1.5}',
+'.ls-bad{background:#ffebee;border-color:#ef9a9a}',
+'.ls-info{background:#e8f0fe;border:1px solid #b6c9f0;border-radius:8px;padding:9px 12px;font-size:12px;margin-bottom:10px;line-height:1.5}',
+'.ls-paso{border-bottom:1px solid #eee;padding:7px 0;font-size:12px}',
+'.ls-paso .tt{font-weight:800}.ls-paso .fm{font-family:Consolas,monospace;color:#444;font-size:11.5px}',
+'.ls-paso .vl{color:#666}.ls-paso .rs{font-weight:700;color:#C8102E}.ls-paso .nr{font-size:10.5px;color:#999}',
+'.ls details>summary{cursor:pointer;font-weight:800;font-size:13px;padding:4px 0}',
+'.ls-resumen p{font-size:13px;line-height:1.6;margin:0 0 9px}',
+'.ls-desc{font-size:11px;color:#666;line-height:1.55;white-space:pre-wrap}',
+'.ls-leyenda{font-size:10.5px;color:#777;margin:8px 0}',
+'@media(max-width:700px){.ls-body{padding:12px}.ls-hdr-title{font-size:17px}}'
+].join('\n');
+
+// ── utilidades ───────────────────────────────────────────────────────────────
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function el(tag, attrs, kids) {
+  var n = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(function (k) {
+    if (k === 'class') n.className = attrs[k]; else if (k === 'html') n.innerHTML = attrs[k];
+    else if (k.slice(0, 2) === 'on') n.addEventListener(k.slice(2), attrs[k]); else n.setAttribute(k, attrs[k]);
+  });
+  (kids || []).forEach(function (c) { if (c != null) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return n;
+}
+function fmt(n, d) { if (typeof n !== 'number' || !isFinite(n)) return '—'; d = d == null ? 1 : d; return n.toLocaleString('es-CR', { minimumFractionDigits: 0, maximumFractionDigits: d }); }
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+function num(v, def) { var x = parseFloat(String(v).replace(',', '.')); return isFinite(x) ? x : def; }
+
+var MR_MPa = function (fc) { return M.mrDeFc(fc, 'aci318'); };
+
+// ── estado (solo en memoria) ─────────────────────────────────────────────────
+function nuevoEstado() {
+  return {
+    step: 0, id: null, ref: null, aviso: '', usoId: null, o: {}, cargas: [],
+    proy: { nombre: '', cliente: '', ubicacion: '', area: 200 },
+    suelo: 'nose', cbr: '', kDirecto: '', base: 'ninguna',
+    clima: 'interior', pisoSensible: false,
+    fcAuto: true, fcManual: 280,
+    panelLx: '', panelLy: '',
+    borde: 15, esq: 15, nu: 0.20,
+    criterio: 'mayor', mr: 'aci318',
+    res: null
+  };
+}
+
+var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr'];
+function serializar(S) { var e = {}; CAMPOS_ESTADO.forEach(function (k) { e[k] = clone(S[k]); }); return e; }
+function nuevoId() { return 'lo_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function usoActual(S) { return C.USOS.filter(function (u) { return u.id === S.usoId; })[0] || null; }
+function opcionesPorDefecto(u) { var o = {}; u.opciones.forEach(function (p) { o[p.id] = clone(p.def); }); return o; }
+function cargasDeUso(S) { var u = usoActual(S); return u ? u.cargas(S.o).map(clone) : []; }
+
+function kEfectivo(S, u) {
+  if (u && u.kFijo) return { k: u.kFijo, nota: 'Losa sobre aislante térmico: k fijo del uso.' };
+  var kd = num(S.kDirecto, null);
+  if (kd && kd > 0) {
+    var kc = Math.min(15, Math.max(0.5, kd));
+    return { k: kc, nota: 'k de ensayo de placa: ' + fmt(kc, 2) + ' kg/cm³' + (kc !== kd ? ' (el valor ingresado, ' + kd + ', quedó fuera del rango 0.5 a 15 y se acotó)' : '') + '.' };
+  }
+  var cbr = num(S.cbr, null);
+  if (cbr && cbr > 0) {
+    var cc = Math.min(100, cbr);
+    return { k: Math.min(11, M.kDeCbr(cc)), nota: 'k calculado desde CBR ' + cc + ' % (correlación MINVU, topado en 11 kg/cm³).' };
+  }
+  var s = C.SUELOS.filter(function (x) { return x.id === S.suelo; })[0] || C.SUELOS[0];
+  var b = C.BASES.filter(function (x) { return x.id === S.base; })[0] || C.BASES[0];
+  var k = s.k, nota = s.nombre + ' (CBR típico ≈ ' + s.cbr + ' %): k = ' + fmt(s.k, 2) + ' kg/cm³.';
+  if (b.kmin > k) { k = b.kmin; nota += ' Con ' + b.nombre.toLowerCase() + ' se adopta k = ' + fmt(b.kmin, 1) + ' kg/cm³ (estimado de CONCRE).'; }
+  return { k: k, nota: nota };
+}
+
+// Respaldo si el usuario deja el campo vacío. Se toma el valor CONSERVADOR de TR34 4ª ed.
+// (1.5 para «otras cargas»; el 1.2 es solo para racking bien definido, y si el campo está
+// vacío no hay manera de saber que lo es), y 1.6 para cargas dinámicas.
+var GF_DEF = { rack: 1.5, rueda: 1.6, lineal: 1.5, udl: 1.5 };
+function cargasParaMotor(S) {
+  return S.cargas.map(function (c) {
+    var u = c.ubic || {};
+    // gF NUNCA puede quedar vacío o en cero: eso anularía la demanda y todo «cumpliría».
+    var r = { tipo: c.tipo, nombre: c.nombre, gF: Math.max(1, num(c.gF, GF_DEF[c.tipo] || 1)) };
+    if (c.tipo === 'rack') { r.P_kg = Math.max(0, num(c.P_kg, 0)); r.x_cm = Math.max(1, num(c.x_cm, 10)); r.y_cm = Math.max(1, num(c.y_cm, 10)); r.interior = u.interior !== false; r.borde = u.borde !== false; r.esquina = u.esquina !== false; }
+    else if (c.tipo === 'rueda') { r.W_kg = Math.max(0, num(c.W_kg, 0)); r.A_cm2 = Math.max(1, num(c.A_cm2, 100)); r.sep_cm = Math.max(0, num(c.sep_cm, 0)); r.dual = !!c.dual; r.impacto = Math.min(2, Math.max(1, num(c.impacto, 1))); r.interior = u.interior !== false; r.borde = u.borde !== false; }
+    else if (c.tipo === 'lineal') { r.Q_kg_m = num(c.Q_kg_m, 0); }
+    else if (c.tipo === 'udl') { r.q_kg_m2 = num(c.q_kg_m2, 0); }
+    return r;
+  }).filter(function (c) {
+    return (c.tipo === 'rack' && c.P_kg > 0) || (c.tipo === 'rueda' && c.W_kg > 0) || (c.tipo === 'lineal' && c.Q_kg_m > 0) || (c.tipo === 'udl' && c.q_kg_m2 > 0);
+  });
+}
+
+// ── cálculo ──────────────────────────────────────────────────────────────────
+function calcular(S) {
+  var u = usoActual(S);
+  var kk = kEfectivo(S, u);
+  var cargas = cargasParaMotor(S);
+  if (!cargas.length) return { error: 'Agregue al menos una carga con valor mayor que cero.' };
+  var base = { h_cm: 15, fc: 280, k: kk.k, nu: S.nu, yc: 1.5, dosis: 0, MRcriterio: S.mr, borde_pct: S.borde, esq_pct: S.esq, Lx_cm: 0, Ly_cm: 0, cargas: cargas };
+  var hmin = Math.max(M.H_MIN, u.hmin);
+  var opc = { fcMin: u.fcMinDe(S.o), hPractico: 25, politica: S.criterio, hmin: hmin };
+  var rec;
+  if (S.fcAuto) rec = M.recomendarDiseno(base, opc);
+  else {
+    var dd = M.buscarDiseno(Object.assign({}, base, { fc: S.fcManual }), opc);
+    rec = { fc: S.fcManual, diseno: dd, intentos: [], supera_practico: !dd.no_cumple && dd.h_rec > 25, fc_subido: false, hPractico: 25 };
+  }
+  var d = rec.diseno;
+  var R = { u: u, k: kk, rec: rec, d: d, cargas: cargas, base: base, hmin: hmin, criterio: S.criterio };
+  if (d.no_cumple) return R;
+  var Lx = num(S.panelLx, 0) * 100, Ly = num(S.panelLy, 0) * 100;
+  var junt0 = M.juntasPanel(d.h_rec, 0, 0);
+  var sev = REC.severidad({ uso: u, clima: S.clima, suelo: S.suelo });
+  if (!(Lx > 0 && Ly > 0)) { Lx = Ly = sev.length ? junt0.severo_cm : junt0.recomendado_cm; R.panelAuto = true; }
+  var e = Object.assign({}, base, { h_cm: d.h_rec, fc: rec.fc, dosis: d.dosis_rec, Lx_cm: Lx, Ly_cm: Ly });
+  R.e = e; R.ev = M.evaluar(e);
+  R.juntas = R.ev.juntas;
+  R.area = Math.max(0, num(S.proy.area, 0));
+  R.fibra = M.cantidadFibra(R.area, d.h_rec, d.dosis_rec, 0.03);
+  R.malla = M.comparaFibraMalla(d.h_rec, rec.fc, d.dosis_rec, 1.5);
+  R.MR = M.mrDeFc(rec.fc, S.mr);
+  R.pend = u.pendiente ? u.pendiente(S.o) : null;
+  R.recs = REC.recomendar({ uso: u, o: S.o, clima: S.clima, suelo: S.suelo, pisoSensible: S.pisoSensible, h_cm: d.h_rec, fc: R.rec.fc, MR: R.MR,
+    dosis: d.dosis_rec, cargas: cargas, juntas: R.juntas, area: R.area, borde_pct: S.borde, esq_pct: S.esq });
+  return R;
+}
+
+// ── piezas de formulario (escriben en S al cambiar; no repintan) ─────────────
+function campo(label, input, hint) { return el('div', { class: 'ls-f' }, [el('label', {}, [label]), input, hint ? el('div', { class: 'hint' }, [hint]) : null]); }
+function inpNum(val, onchg, o) {
+  o = o || {};
+  var i = el('input', { type: 'number', step: o.step || 'any', min: o.min != null ? o.min : 0, value: val == null ? '' : val });
+  i.addEventListener('change', function () { onchg(i.value); });
+  return i;
+}
+function inpTxt(val, onchg) { var i = el('input', { type: 'text', value: val || '' }); i.addEventListener('change', function () { onchg(i.value); }); return i; }
+function selBox(vals, cur, onchg) {
+  var s = el('select', {}, vals.map(function (v) { var op = el('option', { value: v.v }, [v.l]); if (String(v.v) === String(cur)) op.selected = true; return op; }));
+  s.addEventListener('change', function () { onchg(s.value); });
+  return s;
+}
+
+// ── PASO 0: uso ──────────────────────────────────────────────────────────────
+function pintarUso(S, box, ir) {
+  box.appendChild(el('h2', { class: 'ls-h2' }, ['¿Para qué se va a usar la losa?']));
+  box.appendChild(el('p', { class: 'ls-p' }, ['Escoja el uso final. El programa carga los equipos y pesos típicos de ese uso; usted puede cambiar cualquier valor en el paso siguiente.']));
+  var g = el('div', { class: 'ls-cards' });
+  C.USOS.forEach(function (u) {
+    var c = el('div', { class: 'ls-card' + (S.usoId === u.id ? ' on' : '') + (u.fueraDeAlcance ? ' fuera' : '') }, [
+      el('div', { class: 'ic' }, [u.icono]), el('div', { class: 'nm' }, [u.nombre]), el('div', { class: 'ds' }, [u.desc]),
+      u.fueraDeAlcance ? el('div', { class: 'ls-nota', style: 'color:#c62828;font-weight:700;margin-top:6px' }, ['Fuera del alcance del programa'])
+                       : el('div', { class: 'ds', style: 'margin-top:6px;color:#999' }, [u.ejemplos])]);
+    c.addEventListener('click', function () {
+      if (u.fueraDeAlcance) {
+        box.querySelectorAll('.ls-fuera').forEach(function (x) { x.remove(); });
+        var av = el('div', { class: 'ls-warn ls-bad ls-fuera', html: '<b>' + esc(u.nombre) + ':</b> ' + esc(u.fueraDeAlcance) });
+        box.insertBefore(av, g); try { av.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+        return;
+      }
+      if (S.usoId !== u.id) { S.usoId = u.id; S.o = opcionesPorDefecto(u); S.cargas = cargasDeUso(S); S.res = null; S.clima = REC.climaPorDefecto(u.id, S.o); if (u.kFijo) S.base = 'ninguna'; }
+      ir(1);
+    });
+    g.appendChild(c);
+  });
+  box.appendChild(g);
+}
+
+// ── PASO 1: datos del uso y cargas ───────────────────────────────────────────
+function tarjetaCarga(S, c, idx, redibujar) {
+  var t = { rack: 'Carga puntual (pata / placa)', rueda: 'Carga de rueda', lineal: 'Carga lineal (muro)', udl: 'Carga uniforme' }[c.tipo];
+  var top = el('div', { class: 'top' }, [
+    el('div', {}, [el('span', { class: 'nm' }, [c.nombre || t]), el('span', { class: 'ls-est ' + (c.est || 'U'), title: 'V verificado · D derivado · E estimado por CONCRE · U ingresado por el usuario' }, [c.est || 'U'])]),
+    el('button', { class: 'ls-btn sec sm', onclick: function () { S.cargas.splice(idx, 1); redibujar(); } }, ['Quitar'])
+  ]);
+  var g = el('div', { class: 'ls-grid' });
+  function n(lbl, key, hint, step) { g.appendChild(campo(lbl, inpNum(c[key], function (v) { c[key] = v; c.est = 'U'; }, { step: step }), hint)); }
+  if (c.tipo === 'rack') { n('Carga por apoyo (kg)', 'P_kg'); n('Placa · lado x (cm)', 'x_cm'); n('Placa · lado y (cm)', 'y_cm'); }
+  if (c.tipo === 'rueda') {
+    n('Carga por rueda (kg)', 'W_kg'); n('Área de contacto (cm²)', 'A_cm2', 'Huella de la llanta');
+    n('Separación entre ruedas (cm)', 'sep_cm', 'Solo si revisa el par de ruedas'); n('Impacto (1.0 = sin impacto)', 'impacto', 'Reach stacker: 1.15', 0.05);
+    var ck = el('input', { type: 'checkbox' }); ck.checked = !!c.dual; ck.addEventListener('change', function () { c.dual = ck.checked; });
+    g.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Revisar par de ruedas']), el('label', { class: 'ls-chk' }, [ck, 'Sí, hay dos ruedas juntas'])]));
+  }
+  if (c.tipo === 'lineal') n('Carga lineal (kg/m)', 'Q_kg_m');
+  if (c.tipo === 'udl') n('Carga uniforme (kg/m²)', 'q_kg_m2');
+  n('Factor de carga γF', 'gF', 'Rack 1.2 · equipos 1.6 · uniforme 1.0', 0.05);
+  var box = el('div', { class: 'ls-carga' }, [top, g]);
+  if (c.tipo === 'rack' || c.tipo === 'rueda') {
+    var u = c.ubic = c.ubic || { interior: true, borde: true, esquina: c.tipo === 'rack' };
+    var row = el('div', { style: 'display:flex;gap:16px;margin-top:6px;flex-wrap:wrap' });
+    (c.tipo === 'rack' ? ['interior', 'borde', 'esquina'] : ['interior', 'borde']).forEach(function (k) {
+      var ck2 = el('input', { type: 'checkbox' }); ck2.checked = u[k] !== false; ck2.addEventListener('change', function () { u[k] = ck2.checked; });
+      row.appendChild(el('label', { class: 'ls-chk' }, [ck2, 'Puede quedar en ' + k]));
+    });
+    box.appendChild(row);
+  }
+  if (c.nota) box.appendChild(el('div', { class: 'ls-nota' }, [c.nota]));
+  return box;
+}
+
+function pintarDatos(S, box, ir) {
+  var u = usoActual(S);
+  if (!u) { ir(0); return; }
+  box.appendChild(el('h2', { class: 'ls-h2' }, [u.icono + ' ' + u.nombre]));
+  box.appendChild(el('p', { class: 'ls-p' }, ['Los valores vienen por defecto según el uso; cámbielos solo si conoce el dato real. Todo se escribe en kilos.']));
+
+  // proyecto
+  var bp = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Proyecto'])]);
+  var gp = el('div', { class: 'ls-grid' });
+  gp.appendChild(campo('Nombre del proyecto', inpTxt(S.proy.nombre, function (v) { S.proy.nombre = v; })));
+  gp.appendChild(campo('Cliente', inpTxt(S.proy.cliente, function (v) { S.proy.cliente = v; })));
+  gp.appendChild(campo('Ubicación', inpTxt(S.proy.ubicacion, function (v) { S.proy.ubicacion = v; })));
+  gp.appendChild(campo('Área de la losa (m²)', inpNum(S.proy.area, function (v) { S.proy.area = v; }), 'Sirve para calcular la fibra necesaria'));
+  bp.appendChild(gp); box.appendChild(bp);
+
+  // opciones del uso
+  var lista = el('div', {});
+  function redibujarCargas() {
+    lista.innerHTML = '';
+    S.cargas.forEach(function (c, i) { lista.appendChild(tarjetaCarga(S, c, i, redibujarCargas)); });
+    if (!S.cargas.length) lista.appendChild(el('div', { class: 'ls-warn' }, ['No hay cargas. Agregue al menos una.']));
+  }
+  var bo = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Características del uso'])]);
+  var go = el('div', { class: 'ls-grid' });
+  function alCambiarOpcion() { S.cargas = cargasDeUso(S); S.res = null; redibujarCargas(); }
+  u.opciones.forEach(function (p) {
+    if (p.tipo === 'select') go.appendChild(campo(p.etiqueta, selBox(p.valores, S.o[p.id], function (v) { S.o[p.id] = v; if (u.id === 'cancha' && p.id === 'techo') S.clima = REC.climaPorDefecto('cancha', S.o); alCambiarOpcion(); })));
+    else if (p.tipo === 'num') {
+      var hint = p.auto === 'niveles' ? 'Vacío: ' + C.nivelesPorAltura(+S.o.altura || 6) + ' niveles según la altura' : null;
+      go.appendChild(campo(p.etiqueta, inpNum(S.o[p.id], function (v) { S.o[p.id] = v === '' ? '' : num(v, ''); alCambiarOpcion(); }, { step: p.paso }), hint));
+    } else if (p.tipo === 'check') {
+      var ck = el('input', { type: 'checkbox' }); ck.checked = !!S.o[p.id]; ck.addEventListener('change', function () { S.o[p.id] = ck.checked; alCambiarOpcion(); });
+      go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, [p.etiqueta]), el('label', { class: 'ls-chk' }, [ck, 'Sí'])]));
+    } else if (p.tipo === 'multi') {
+      var mb = el('div', { class: 'ls-multi' });
+      p.valores.forEach(function (v) {
+        var ck = el('input', { type: 'checkbox' }); ck.checked = (S.o[p.id] || []).indexOf(v.v) >= 0;
+        ck.addEventListener('change', function () { var a = (S.o[p.id] || []).filter(function (x) { return x !== v.v; }); if (ck.checked) a.push(v.v); S.o[p.id] = a; alCambiarOpcion(); });
+        mb.appendChild(el('label', {}, [ck, v.l]));
+      });
+      go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, [p.etiqueta]), mb]));
+    }
+  });
+  bo.appendChild(go);
+  bo.appendChild(el('div', { class: 'ls-nota' }, ['Al cambiar una característica se recargan las cargas por defecto de la lista de abajo.']));
+  box.appendChild(bo);
+  if (u.avisos) u.avisos.forEach(function (a) { box.appendChild(el('div', { class: 'ls-warn' }, [a])); });
+
+  // cargas
+  var bc = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Cargas que se revisan (editables)'])]);
+  bc.appendChild(el('div', { class: 'ls-leyenda' }, ['Etiqueta de cada dato: V verificado en ficha o norma · D derivado por fórmula · E estimado por CONCRE · U ingresado por usted.']));
+  bc.appendChild(lista); redibujarCargas();
+  var add = selBox([{ v: '', l: '＋ Agregar otra carga…' }, { v: 'rack', l: 'Carga puntual (pata, columna, placa)' }, { v: 'rueda', l: 'Carga de rueda' }, { v: 'lineal', l: 'Carga lineal (muro)' }, { v: 'udl', l: 'Carga uniforme' }], '', function (v) {
+    if (!v) return;
+    var nuevo = { rack: { tipo: 'rack', nombre: 'Carga puntual del usuario', P_kg: 1000, x_cm: 15, y_cm: 15, gF: 1.2, ubic: { interior: true, borde: true, esquina: true } },
+      rueda: { tipo: 'rueda', nombre: 'Rueda del usuario', W_kg: 1000, A_cm2: 200, sep_cm: 0, dual: false, gF: 1.6, impacto: 1, ubic: { interior: true, borde: true } },
+      lineal: { tipo: 'lineal', nombre: 'Carga lineal del usuario', Q_kg_m: 500, gF: 1 },
+      udl: { tipo: 'udl', nombre: 'Carga uniforme del usuario', q_kg_m2: 500, gF: 1 } }[v];
+    nuevo.est = 'U'; S.cargas.push(nuevo); redibujarCargas(); add.value = '';
+  });
+  bc.appendChild(add);
+  bc.appendChild(el('button', { class: 'ls-btn sec sm', style: 'margin-left:8px', onclick: function () { S.cargas = cargasDeUso(S); redibujarCargas(); } }, ['Restaurar cargas por defecto']));
+  box.appendChild(bc);
+
+  box.appendChild(el('div', { class: 'ls-nav' }, [el('button', { class: 'ls-btn sec', onclick: function () { ir(0); } }, ['← Uso']), el('button', { class: 'ls-btn', onclick: function () { ir(2); } }, ['Siguiente: terreno y concreto →'])]));
+}
+
+// ── PASO 2: terreno, clima, concreto, geometría ─────────────────────────────
+var CLIMAS = [
+  { v: 'interior', l: 'Interior, cubierto' }, { v: 'exterior', l: 'Exterior, expuesto a sol y lluvia' },
+  { v: 'costero', l: 'Zona costera o salina' }, { v: 'frio', l: 'Zona de altura, con clima frío' }
+];
+function pintarTerreno(S, box, ir) {
+  var u = usoActual(S);
+  box.appendChild(el('h2', { class: 'ls-h2' }, ['Terreno, clima y concreto']));
+  box.appendChild(el('p', { class: 'ls-p' }, ['Si no conoce el suelo deje «No lo sé»: el programa usa un valor conservador y lo indica en el informe.']));
+
+  var bs = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Suelo de apoyo'])]);
+  var gs = el('div', { class: 'ls-grid' });
+  var info = el('div', { class: 'ls-info' });
+  function refInfo() { var k = kEfectivo(S, u); info.textContent = 'k de diseño = ' + fmt(k.k, 2) + ' kg/cm³ · ' + k.nota; }
+  if (u.kFijo) {
+    box.appendChild(el('div', { class: 'ls-info' }, ['Cuarto frío: la losa apoya sobre aislante, se usa k = ' + u.kFijo + ' kg/cm³.']));
+  } else {
+    gs.appendChild(campo('Tipo de suelo', selBox(C.SUELOS.map(function (s) { return { v: s.id, l: s.nombre }; }), S.suelo, function (v) { S.suelo = v; refInfo(); })));
+    gs.appendChild(campo('Base granular', selBox(C.BASES.map(function (s) { return { v: s.id, l: s.nombre }; }), S.base, function (v) { S.base = v; refInfo(); })));
+    gs.appendChild(campo('CBR del estudio de suelos (%) — opcional', inpNum(S.cbr, function (v) { S.cbr = v; refInfo(); }), 'Si lo ingresa, reemplaza el tipo de suelo. Máximo 100 %'));
+    gs.appendChild(campo('k medido con placa, en kg/cm³ — opcional', inpNum(S.kDirecto, function (v) { S.kDirecto = v; refInfo(); }), 'OJO CON LAS UNIDADES: si su laboratorio lo reporta en MPa/m divida entre 9.81; si lo reporta en pci multiplique por 0.0277. Rango 0.5 a 15'));
+    bs.appendChild(gs); bs.appendChild(info); refInfo(); box.appendChild(bs);
+  }
+
+  var bcl = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Clima y exposición'])]);
+  bcl.appendChild(campo('Ubicación de la losa', selBox(CLIMAS, S.clima, function (v) { S.clima = v; })));
+  var ckS = el('input', { type: 'checkbox' }); ckS.checked = !!S.pisoSensible; ckS.addEventListener('change', function () { S.pisoSensible = ckS.checked; });
+  bcl.appendChild(el('div', { class: 'ls-f', style: 'margin-top:8px' }, [el('label', { class: 'ls-chk' }, [ckS, 'Recibirá un piso sensible a la humedad (epóxico, vinílico, madera)'])]));
+  bcl.appendChild(el('div', { class: 'ls-nota' }, ['El clima decide la separación de juntas (24·h si la losa está a la intemperie), la barrera de vapor y el sello.']));
+  box.appendChild(bcl);
+
+  var bcc = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Resistencia del concreto'])]);
+  var gc = el('div', { class: 'ls-grid' });
+  var chk = el('input', { type: 'checkbox' }); chk.checked = S.fcAuto;
+  var selfc = selBox(M.FC_LISTA.map(function (f) { return { v: f, l: "f'c " + f + ' kg/cm² · MR ' + fmt(M.mrDeFc(f, S.mr), 1) + ' kg/cm²' }; }), S.fcManual, function (v) { S.fcManual = +v; });
+  selfc.disabled = S.fcAuto;
+  chk.addEventListener('change', function () { S.fcAuto = chk.checked; selfc.disabled = chk.checked; });
+  gc.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Selección']), el('label', { class: 'ls-chk' }, [chk, 'Que el programa recomiende el f’c (recomendado)'])]));
+  gc.appendChild(campo('f’c manual', selfc));
+  bcc.appendChild(gc);
+  bcc.appendChild(el('div', { class: 'ls-nota' }, ['Automático: parte del f’c mínimo del uso (' + u.fcMinDe(S.o) + ' kg/cm²) y solo sube si el espesor pasa de 25 cm.']));
+  box.appendChild(bcc);
+
+  var bg = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Geometría, criterio y parámetros'])]);
+  var gg = el('div', { class: 'ls-grid' });
+  gg.appendChild(campo('Paño previsto · lado 1 (m) — opcional', inpNum(S.panelLx, function (v) { S.panelLx = v; }), 'Vacío: se usa el paño recomendado'));
+  gg.appendChild(campo('Paño previsto · lado 2 (m) — opcional', inpNum(S.panelLy, function (v) { S.panelLy = v; })));
+  gg.appendChild(campo('Transferencia de carga en borde (%)', inpNum(S.borde, function (v) { S.borde = Math.min(35, Math.max(0, num(v, 15))); }), 'Dovelas o trabazón, de 0 a 35 %. Sin dovelas: 0 %'));
+  gg.appendChild(campo('Transferencia en esquina (%)', inpNum(S.esq, function (v) { S.esq = Math.min(35, Math.max(0, num(v, 15))); }), 'Ya no se usa en el cálculo: TR34 no da crédito por dovelas en la esquina del paño'));
+  gg.appendChild(campo('Poisson del concreto ν', inpNum(S.nu, function (v) { S.nu = Math.min(0.30, Math.max(0.10, num(v, 0.2))); }, { step: 0.01 }), 'Entre 0.10 y 0.30'));
+  gg.appendChild(campo('MR de diseño', selBox([{ v: 'aci318', l: 'ACI 318: 0.62·√f’c' }, { v: 'aci360', l: 'ACI 360R: 9·√f’c (psi)' }], S.mr, function (v) { S.mr = v; })));
+  gg.appendChild(campo('Criterio de espesor', selBox([
+    { v: 'mayor', l: 'El más conservador de los dos métodos (recomendado)' },
+    { v: 'tr34', l: 'TR34 manda; Westergaard solo advierte' }], S.criterio, function (v) { S.criterio = v; }),
+    'El motor de Westergaard es además el chequeo de fatiga: con “TR34 manda” la losa no queda verificada a repetición de cargas'));
+  bg.appendChild(gg); box.appendChild(bg);
+
+  box.appendChild(el('div', { class: 'ls-nav' }, [el('button', { class: 'ls-btn sec', onclick: function () { ir(1); } }, ['← Datos']),
+    el('button', { class: 'ls-btn', onclick: function () { S.aviso = ''; S.res = calcular(S); ir(3); } }, ['Calcular →'])]));
+}
+
+// ── PASO 3: resultados ───────────────────────────────────────────────────────
+var DESCARGO = INF.DESCARGO;
+
+function linea(k, v) { return '<tr><td style="color:#777;width:46%">' + k + '</td><td><b>' + v + '</b></td></tr>'; }
+
+function pintarResultados(S, box, ir, nuevo) {
+  var R = S.res;
+  box.appendChild(el('h2', { class: 'ls-h2' }, ['Resultado']));
+  if (!R) { box.appendChild(el('div', { class: 'ls-warn' }, ['Todavía no se ha calculado.'])); return; }
+  if (R.error) { box.appendChild(el('div', { class: 'ls-warn ls-bad' }, [R.error])); box.appendChild(navRes(ir, nuevo)); return; }
+  var d = R.d, u = R.u;
+  if (d.no_cumple) {
+    box.appendChild(el('div', { class: 'ls-warn ls-bad', html: '<b>Con estas cargas no hay un espesor de hasta ' + M.H_MAX + ' cm que cumpla.</b> Reduzca la carga por apoyo, aumente la placa de apoyo o el f’c, o mejore el suelo (base granular). No se extrapola fuera del rango.' }));
+    box.appendChild(navRes(ir, nuevo)); return;
+  }
+  var ev = R.ev, ff = R.fibra;
+  if (S.aviso) box.appendChild(el('div', { class: 'ls-info' }, [S.aviso]));
+  box.appendChild(barraAcciones(S, ir));
+
+  // KPIs
+  var k = el('div', { class: 'ls-kpis' });
+  function kpi(v, l, s) { k.appendChild(el('div', { class: 'ls-kpi' }, [el('div', { class: 'v' }, [v]), el('div', { class: 'l' }, [l]), s ? el('div', { class: 's' }, [s]) : null])); }
+  var okDos = ev.okA && ev.okB !== false;
+  kpi(fmt(d.h_rec, 1) + ' cm', okDos ? 'Espesor mínimo · cumplen los dos métodos' : 'Espesor mínimo según TR34',
+      okDos ? (d.cumple_h_menos_1 === false ? 'Con 0.5 cm menos ya no cumple' : '') : (d.h_B != null ? 'Westergaard pide ' + fmt(d.h_B, 1) + ' cm' : 'Westergaard no cumple a ningún espesor'));
+  kpi(R.rec.fc + ' kg/cm²', 'Resistencia del concreto f’c', 'MR ≈ ' + fmt(R.MR, 1) + ' kg/cm² (' + fmt(R.MR / 10.197, 2) + ' MPa)');
+  kpi(fmt(d.dosis_rec, 1) + ' kg/m³', 'Fibra Plus 54 mm', 'Mínimo de la norma 2.4 kg/m³');
+  kpi(fmt(ff.kg, 0) + ' kg', 'Fibra para ' + fmt(R.area, 0) + ' m²', ff.sacos10 + ' sacos de 10 kg + ' + ff.bolsas1 + ' bolsas de 1 kg (incluye 3 % de desperdicio)');
+  box.appendChild(k);
+
+  if (ev.fatiga) {
+    var f = ev.fatiga;
+    box.appendChild(el('div', { class: f.vida_ilimitada ? 'ls-info' : 'ls-warn ls-bad',
+      html: '<b>Fatiga por repetición.</b> Relación de esfuerzo σ/MR = ' + fmt(f.SR, 3) + ' (σ = ' + fmt(f.sigma, 2) + ' MPa contra MR = ' + fmt(f.MR_pca, 2) + ' MPa de la curva de PCA). ' +
+        (f.vida_ilimitada ? 'Por debajo de 0.50: vida ilimitada a repetición de cargas (criterio PCA).'
+          : 'Por encima de 0.50, así que la losa NO tiene vida ilimitada: alcanza del orden de <b>' + fmt(f.repeticiones, 0) + ' pasadas</b> del equipo más pesado. Un montacargas que cruce 200 veces al día las agota en unos ' + fmt(f.repeticiones / 200, 0) + ' días. Aumente el espesor o el f’c.') }));
+  }
+  // avisos
+  if (d.revision) box.appendChild(el('div', { class: 'ls-warn ls-bad', html: '<b>Revisar con un ingeniero.</b> Westergaard no alcanza a cumplir con ningún espesor hasta ' + M.H_MAX + ' cm; se muestra el espesor de TR34. Es una carga muy concentrada: conviene una placa de apoyo mayor o una revisión estructural específica.' }));
+  if (R.criterio === 'tr34' && ev.aplicaB && d.h_B != null && d.h_B > d.h_rec) box.appendChild(el('div', { class: 'ls-warn', html: '<b>Aviso de segundo método.</b> Con el criterio elegido (TR34 manda) el espesor es <b>' + fmt(d.h_rec, 1) + ' cm</b>. El método de Westergaard (PCA / COE), con factor de seguridad 2.0, pide <b>' + fmt(d.h_B, 1) + ' cm</b> para concreto simple. Los dos métodos usan filosofías distintas (rotura contra primera fisura); decide el ingeniero responsable. Puede cambiar el criterio en el paso anterior.' }));
+  if (R.criterio === 'tr34' && ev.aplicaB && d.h_B == null && !d.revision) box.appendChild(el('div', { class: 'ls-warn', html: '<b>Aviso de segundo método.</b> Westergaard no alcanza a cumplir con ningún espesor hasta ' + M.H_MAX + ' cm para estas cargas. El resultado de TR34 debe ser revisado por el ingeniero responsable.' }));
+  if (R.rec.supera_practico) box.appendChild(el('div', { class: 'ls-warn', html: 'El espesor supera 25 cm incluso con el f’c más alto probado. Considere reducir cargas puntuales o aumentar las placas de apoyo.' }));
+  if (R.rec.fc_subido) box.appendChild(el('div', { class: 'ls-info', html: 'Se subió el f’c de ' + R.rec.intentos[0].fc + ' a ' + R.rec.fc + ' kg/cm² para mantener el espesor en un valor práctico.' }));
+  if (u.avisos) u.avisos.forEach(function (a) { box.appendChild(el('div', { class: 'ls-warn' }, [a])); });
+  S.cargas.filter(function (c) { return c.pendiente; }).forEach(function (c) { box.appendChild(el('div', { class: 'ls-warn ls-bad', html: '<b>Falta un dato:</b> ' + esc(c.nombre) + '. Está en 0 y no se revisó.' })); });
+  if (R.pend) box.appendChild(el('div', { class: 'ls-info', html: '<b>Pendiente de drenaje:</b> ' + R.pend.valor + ' % (rango ' + R.pend.rango + ').' }));
+
+  // comparación de métodos
+  var bm = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Los dos métodos, lado a lado'])]);
+  bm.appendChild(el('table', { class: 'ls-tb', html:
+    '<tr><th>Método</th><th>Espesor mínimo</th><th>Uso máximo a ' + fmt(d.h_rec, 1) + ' cm</th></tr>' +
+    '<tr><td>A · TR34 4ª ed. (concreto simple)</td><td>' + (d.h_simple_A != null ? fmt(d.h_simple_A, 1) + ' cm' : 'no cumple') + '</td><td rowspan="2">' + fmt(ev.usoMaxA * 100, 0) + ' %</td></tr>' +
+    '<tr><td>A · TR34 con Fibra Plus 54 (' + fmt(d.dosis_rec, 1) + ' kg/m³)</td><td>' + (d.h_fibra_A != null ? fmt(d.h_fibra_A, 1) + ' cm' : 'no cumple') + '</td></tr>' +
+    '<tr><td>B · Westergaard, FS ' + M.FS_DEFECTO.rack + ' (concreto simple)</td><td>' + (ev.aplicaB ? (d.h_B != null ? fmt(d.h_B, 1) + ' cm' : 'no alcanza en ' + M.H_MAX + ' cm') : 'no aplica a estas cargas') + '</td><td>' + (ev.aplicaB ? fmt(ev.usoMaxB * 100, 0) + ' %' : '—') + '</td></tr>' }));
+  bm.appendChild(el('div', { class: 'ls-nota' }, ['«Uso» = demanda ÷ capacidad. Menor de 100 % cumple. El criterio aplicado es: ' + (R.criterio === 'tr34' ? 'TR34 manda y Westergaard advierte.' : 'el más conservador de los dos.') + (ev.aplicaB ? '' : ' Westergaard no aplica a cargas uniformes ni lineales, así que aquí no opina.')]));
+  box.appendChild(bm);
+
+  // chequeos
+  var bch = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Verificación por carga'])]);
+  var rows = ev.chequeos.map(function (c) {
+    var dm = c.unidad === 'MPa' && c.motor === 'A' ? fmt(c.demanda * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.demanda, 2) + ' ' + c.unidad;
+    var cp = c.unidad === 'MPa' && c.motor === 'A' ? fmt(c.capacidad * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.capacidad, 2) + ' ' + c.unidad;
+    return '<tr><td>' + esc(c.carga) + '</td><td>' + c.motor + ' · ' + c.ubic + '</td><td>' + dm + '</td><td>' + cp + '</td><td>' + fmt(c.uso * 100, 0) + ' %</td><td class="' + (c.ok ? 'ls-ok' : 'ls-no') + '">' + (c.ok ? 'Cumple' : 'No cumple') + '</td></tr>';
+  }).join('');
+  bch.appendChild(el('div', { style: 'overflow-x:auto', html: '<table class="ls-tb"><tr><th>Carga</th><th>Método · ubicación</th><th>Demanda</th><th>Capacidad</th><th>Uso</th><th></th></tr>' + rows + '</table>' }));
+  box.appendChild(bch);
+
+  // juntas
+  var j = R.juntas;
+  var bj = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Paños y juntas de contracción (aserrado)'])]);
+  bj.appendChild(el('table', { class: 'ls-tb', html:
+    linea('Separación máxima permitida', fmt(j.max_cm / 100, 2) + ' m (36 · h, tope 5.5 m) · ACI 302.1R') +
+    linea('Separación recomendada', fmt(R.recs.sepRecomendada_cm / 100, 2) + ' m (' + (R.recs.severidad.length ? '24' : '30') + ' · h, tope 5.5 m)') +
+    linea('Con clima o retracción severos', fmt(j.severo_cm / 100, 2) + ' m (24 · h, tope 5.5 m)') +
+    linea('Paño revisado', fmt(j.Lmax_cm / 100, 2) + ' × ' + fmt(j.Lmin_cm / 100, 2) + ' m' + (R.panelAuto ? ' (recomendado)' : ' (ingresado)')) +
+    linea('Relación de aspecto', fmt(j.aspecto, 2) + (j.ok_aspecto ? ' ≤ 1.5 · cumple' : ' &gt; 1.5 · NO cumple, corrija el paño')) }));
+  if (j.ok_max === false) bj.appendChild(el('div', { class: 'ls-warn ls-bad' }, ['El paño ingresado supera la separación máxima de juntas.']));
+  box.appendChild(bj);
+
+  // recomendaciones constructivas (etapa 4)
+  R.recs.avisos.forEach(function (a) { box.appendChild(el('div', { class: 'ls-warn' }, [a])); });
+  R.recs.grupos.forEach(function (g) {
+    var bg = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, [g.titulo])]);
+    var filas = g.filas.map(function (f) {
+      return '<tr><td style="width:24%"><b>' + esc(f.t) + '</b></td><td>' + esc(f.v) + (f.nota ? '<div class="ls-nota">' + esc(f.nota) + '</div>' : '') + '</td><td style="width:20%;color:#777;font-size:11px">' + esc(f.norma) + '</td><td style="width:34px"><span class="ls-est ' + ({ V: 'V', S: 'D', D: 'D', E: 'E' }[f.estado] || 'E') + '" title="V norma · D fuente secundaria o derivado · E criterio de CONCRE">' + (f.estado === 'S' ? 'S' : f.estado) + '</span></td></tr>';
+    }).join('');
+    bg.appendChild(el('div', { style: 'overflow-x:auto', html: '<table class="ls-tb"><tr><th>Tema</th><th>Recomendación</th><th>Norma</th><th></th></tr>' + filas + '</table>' }));
+    box.appendChild(bg);
+  });
+  box.appendChild(el('div', { class: 'ls-leyenda' }, ['V verificado en norma · S fuente secundaria (fabricante, universidad) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.']));
+
+  // fibra vs malla
+  var m = R.malla;
+  var bf = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Fibra Plus 54 mm frente a malla electrosoldada'])]);
+  bf.appendChild(el('table', { class: 'ls-tb', html:
+    linea('Dosis de fibra', fmt(d.dosis_rec, 1) + ' kg/m³ · ' + (m.cumple_ANSI_DSI ? 'cumple el mínimo de ANSI-DSI C1.0 (2.4 kg/m³) para sustituir la malla de retracción y temperatura' : 'por debajo del mínimo de 2.4 kg/m³') ) +
+    linea('Malla de retracción y temperatura equivalente (ACI 318)', 'As = ' + fmt(m.As_temp_ACI, 0) + ' mm²/m') +
+    linea('Momento de la fibra Mp', fmt(m.Mp, 2) + ' N·mm/mm') +
+    linea('Momento de la malla de referencia (212 mm²/m, Fy 480 MPa)', fmt(m.Mmalla, 2) + ' N·mm/mm') +
+    linea('Relación Mp / Mmalla', m.Mp_sobre_Mmalla != null ? fmt(m.Mp_sobre_Mmalla * 100, 0) + ' %' : '—') }));
+  bf.appendChild(el('div', { class: 'ls-nota' }, ['Misma comparación de la FibraPlus54. La fibra aporta poco momento en flexión (Re3 = ' + fmt(m.Re3, 3) + '); su función principal es controlar la fisuración por retracción y temperatura.']));
+  box.appendChild(bf);
+
+  // paso a paso
+  var bp = el('div', { class: 'ls-box' });
+  var det = el('details', {}, [el('summary', {}, ['Cálculo paso a paso (para revisión de un ingeniero)'])]);
+  ev.pasos.forEach(function (p, i) {
+    det.appendChild(el('div', { class: 'ls-paso', html: '<div class="tt">' + (i + 1) + '. ' + esc(p.titulo) + '</div><div class="fm">' + esc(p.formula) + '</div><div class="vl">' + esc(p.valores) + '</div><div class="rs">' + esc(p.resultado) + '</div><div class="nr">' + esc(p.norma) + '</div>' }));
+  });
+  bp.appendChild(det); box.appendChild(bp);
+
+  // resumen para el usuario
+  var br = el('div', { class: 'ls-box ls-resumen' }, [el('div', { class: 't' }, ['Resumen para el usuario'])]);
+  var cumple = ev.okA && (R.criterio === 'tr34' || ev.okB !== false);
+  var txt = [
+    'Para <b>' + esc(u.nombre.toLowerCase()) + '</b>' + (S.proy.nombre ? ' («' + esc(S.proy.nombre) + '»)' : '') + ', con las cargas ingresadas y un suelo de k = ' + fmt(R.k.k, 2) + ' kg/cm³, la losa necesita como mínimo <b>' + fmt(d.h_rec, 1) + ' cm de espesor</b> con concreto de <b>f’c ' + R.rec.fc + ' kg/cm²</b>' + (d.dosis_rec ? ' reforzado con <b>' + fmt(d.dosis_rec, 1) + ' kg de Fibra Plus 54 mm por m³</b>' : '') + '.',
+    'Para <b>' + fmt(R.area, 0) + ' m²</b> se necesitan <b>' + fmt(ff.kg, 0) + ' kg de fibra</b> (' + ff.sacos10 + ' sacos de 10 kg y ' + ff.bolsas1 + ' bolsas de 1 kg), con 3 % de desperdicio.',
+    'Las juntas de aserrado deben quedar a no más de <b>' + fmt(j.max_cm / 100, 1) + ' m</b>; se recomienda <b>' + fmt(j.recomendado_cm / 100, 1) + ' m</b>, con paños lo más cuadrados posible (largo no mayor a 1.5 veces el ancho).',
+    'Recomendaciones: ' + resumenRecs(R) + '.',
+    (ev.fatiga && !ev.fatiga.vida_ilimitada) ? '<b>Atención:</b> con este espesor la losa no tiene vida ilimitada a fatiga; aguanta del orden de ' + fmt(ev.fatiga.repeticiones, 0) + ' pasadas del equipo más pesado.' : null,
+    cumple
+      ? (R.criterio === 'tr34' && ev.okB === false
+          ? 'Todas las verificaciones de TR34 cumplen. <b>El método de Westergaard no cumple con este espesor</b> (ver el aviso y la tabla); el ingeniero responsable debe decidir si acepta el criterio de TR34 o aumenta el espesor.'
+          : 'Todas las verificaciones cumplen con el criterio elegido.')
+      : 'Hay verificaciones que no cumplen; revise la tabla de verificación antes de usar este resultado.'
+  ];
+  if (S.clima !== 'interior') txt.push('Exposición registrada: ' + esc(CLIMAS.filter(function (x) { return x.v === S.clima; })[0].l.toLowerCase()) + '.');
+  txt.filter(Boolean).forEach(function (t) { br.appendChild(el('p', { html: t })); });
+  box.appendChild(br);
+
+  // CONCRE
+  var bcn = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Servicios de CONCRE'])]);
+  bcn.appendChild(el('p', { style: 'font-size:12.5px;margin:0;line-height:1.6', html: 'Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este informe están orientados a la calidad y las especificaciones de la fibra de CONCRE.' }));
+  box.appendChild(bcn);
+
+  // lo que no revisa
+  box.appendChild(el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Lo que este cálculo NO revisa']),
+    el('ul', { style: 'font-size:12px;line-height:1.6;margin:0;padding-left:18px', html: INF.NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') })]));
+
+  // descargo
+  var bd = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Descargo de responsabilidad · BORRADOR para revisión']), el('div', { class: 'ls-desc' }, [DESCARGO])]);
+  box.appendChild(bd);
+  box.appendChild(navRes(ir, nuevo));
+}
+function resumenRecs(R) {
+  var g = {}; R.recs.grupos.forEach(function (x) { g[x.id] = x; });
+  var out = [];
+  var dov = g.dovelas.filas.filter(function (f) { return f.t === 'Dovela redonda lisa'; })[0];
+  out.push(dov ? 'dovelas ' + dov.v.split(',')[0] : 'dovelas solo en juntas de construcción con tránsito');
+  var ba = g.barreras.filas[0]; out.push('barrera de vapor: ' + (/^No/.test(ba.v) ? 'no corresponde' : /OBLIG/.test(ba.v) ? 'obligatoria' : /Opcional/.test(ba.v) ? 'opcional' : 'recomendada'));
+  var ff = g.ffl.filas[0]; out.push('planicidad ' + ff.v.split('(')[0].trim());
+  var sl = g.sello.filas[0]; out.push('sello ' + (/Semirr/.test(sl.v) ? 'semirrígido en el recorrido de montacargas' : 'flexible'));
+  return out.join('; ');
+}
+function resumenGuardar(S, R) { return { h_cm: R.d.h_rec, fc: R.rec.fc, dosis: R.d.dosis_rec, fibra_kg: R.fibra.kg, area: R.area, cumple: !!(R.ev.okA && (R.criterio === 'tr34' || R.ev.okB)) }; }
+
+function guardarProyecto(S) {
+  if (S._guardando) return S._guardando;          // reutiliza la operación en vuelo
+  S._guardando = (async function () {
+    var R = S.res;
+    if (!R || R.error || R.d.no_cumple) throw new Error('Calcule primero un resultado válido.');
+    if (!S.id) S.id = nuevoId();
+    var p = await NUBE.guardar({ id: S.id, nombre: S.proy.nombre || 'Sin nombre', cliente: S.proy.cliente || '', ubicacion: S.proy.ubicacion || '', uso: S.usoId, estado: serializar(S), resumen: resumenGuardar(S, R) });
+    S.ref = p.ref;
+    return p;
+  })();
+  var pr = S._guardando;
+  pr.then(function () { S._guardando = null; }, function () { S._guardando = null; });
+  return pr;
+}
+function toastLs(msg) { try { toast(msg); } catch (e) { alert(msg); } }
+
+async function abrirInforme(S, w) {
+  try {
+    await guardarProyecto(S);   // siempre se guarda antes: el informe y la nube quedan iguales
+    var ses = (typeof SESSION !== 'undefined' && SESSION) ? SESSION : null;
+    var html = INF.html({ S: S, R: S.res, ref: S.ref, fecha: new Date().toLocaleDateString('es-CR'), autor: ses && ses.nombre, logo: (typeof FACT_LOGO_B64 !== 'undefined' ? FACT_LOGO_B64 : ''), formulas: true, resumenRecs: resumenRecs(S.res) });
+    w.document.open(); w.document.write(html); w.document.close();
+    setTimeout(function () { try { w.focus(); w.print(); } catch (e) {} }, 700);
+  } catch (e) { console.error(e); try { w.close(); } catch (e2) {} toastLs('No se pudo generar el informe: ' + (e.message || e)); }
+}
+
+function barraAcciones(S, ir) {
+  var b = el('div', { class: 'ls-nav', style: 'margin:0 0 12px' });
+  var msg = el('span', { style: 'font-size:12px;color:#666;align-self:center' }, [S.ref ? 'Guardado como ' + S.ref : 'Sin guardar']);
+  var g = el('button', { class: 'ls-btn', onclick: async function () {
+    g.disabled = true; g.textContent = 'Guardando…';
+    try { await guardarProyecto(S); msg.textContent = 'Guardado como ' + S.ref; toastLs('✅ Proyecto guardado: ' + S.ref); } catch (e) { console.error(e); toastLs('No se pudo guardar: ' + (e.message || e)); }
+    g.disabled = false; g.textContent = '💾 Guardar proyecto';
+  } }, ['💾 Guardar proyecto']);
+  var p = el('button', { class: 'ls-btn sec', onclick: function () {
+    var w = window.open('', '_blank', 'width=980,height=780,scrollbars=yes');
+    if (!w) { toastLs('El navegador bloqueó la ventana del informe. Permita ventanas emergentes para este sitio.'); return; }
+    w.document.write('<p style="font-family:Arial;padding:20px">Generando informe…</p>');
+    p.disabled = true; g.disabled = true;
+    abrirInforme(S, w).then(function () { p.disabled = false; g.disabled = false; msg.textContent = S.ref ? 'Guardado como ' + S.ref : 'Sin guardar'; });
+  } }, ['🖨 Informe PDF']);
+  b.appendChild(g); b.appendChild(p); b.appendChild(msg);
+  return b;
+}
+
+function navRes(ir, nuevo) {
+  return el('div', { class: 'ls-nav' }, [el('button', { class: 'ls-btn sec', onclick: function () { ir(2); } }, ['← Cambiar datos']), el('button', { class: 'ls-btn sec', onclick: function () { ir(0); } }, ['Otro uso']),
+    el('button', { class: 'ls-btn sec', onclick: function () { if (nuevo) nuevo(); } }, ['＋ Nuevo proyecto'])]);
+}
+
+// ── PASO 4: proyectos guardados ──────────────────────────────────────────────
+function abrirProyecto(S, p, ir) {
+  var n = nuevoEstado();
+  CAMPOS_ESTADO.forEach(function (k) { if (p.estado && p.estado[k] !== undefined) n[k] = clone(p.estado[k]); });
+  Object.keys(n).forEach(function (k) { S[k] = n[k]; });
+  S.id = p.id; S.ref = p.ref;
+  if (!usoActual(S)) { toastLs('El uso de este proyecto ya no existe en el programa.'); S.step = 0; return ir(0); }
+  S.res = calcular(S);
+  if (S.res && !S.res.error && !S.res.d.no_cumple && p.resumen) {
+    var r = S.res, q = p.resumen;
+    if (q.h_cm !== r.d.h_rec || q.fc !== r.rec.fc || q.dosis !== r.d.dosis_rec)
+      S.aviso = 'Este proyecto se guardó con ' + fmt(q.h_cm, 1) + ' cm, f’c ' + q.fc + ' y ' + fmt(q.dosis, 1) + ' kg/m³. Con la versión actual del programa el resultado es ' + fmt(r.d.h_rec, 1) + ' cm, f’c ' + r.rec.fc + ' y ' + fmt(r.d.dosis_rec, 1) + ' kg/m³. Revise antes de usar el informe anterior.';
+  }
+  ir(3);
+}
+function pintarProyectos(S, box, ir, nuevo) {
+  box.appendChild(el('h2', { class: 'ls-h2' }, ['📁 Proyectos guardados']));
+  box.appendChild(el('p', { class: 'ls-p' }, ['Se guardan en la nube, con una referencia consecutiva. Al abrir un proyecto se vuelve a calcular con los datos guardados.']));
+  var lista = el('div', {}, [el('div', { class: 'ls-p' }, ['Cargando…'])]);
+  box.appendChild(lista);
+  box.appendChild(el('div', { class: 'ls-nav' }, [el('button', { class: 'ls-btn', onclick: function () { nuevo(); } }, ['＋ Nuevo proyecto'])]));
+  NUBE.listar().then(function (arr) {
+    lista.innerHTML = '';
+    if (!arr.length) { lista.appendChild(el('div', { class: 'ls-warn' }, ['Todavía no hay proyectos guardados.'])); return; }
+    var filas = arr.map(function (p) {
+      var f = p.actualizado ? new Date(p.actualizado).toLocaleDateString('es-CR') : '';
+      var uso = C.USOS.filter(function (u) { return u.id === p.uso; })[0];
+      return { p: p, html: '<td><b>' + esc(p.ref) + '</b></td><td>' + esc(p.nombre) + '</td><td>' + esc(p.cliente) + '</td><td>' + esc(uso ? uso.nombre : p.uso) + '</td><td>' + (p.resumen ? fmt(p.resumen.h_cm, 1) + ' cm · f’c ' + p.resumen.fc : '') + '</td><td>' + esc(p.usuario_nombre || '') + '</td><td>' + f + '</td>' };
+    });
+    var tb = el('table', { class: 'ls-tb', html: '<tr><th>Ref.</th><th>Proyecto</th><th>Cliente</th><th>Uso</th><th>Resultado</th><th>Usuario</th><th>Fecha</th><th></th></tr>' });
+    filas.forEach(function (x) {
+      var tr = el('tr', { html: x.html }); var td = el('td', { style: 'white-space:nowrap' });
+      td.appendChild(el('button', { class: 'ls-btn sm', onclick: function () { abrirProyecto(S, x.p, ir); } }, ['Abrir']));
+      var del = el('button', { class: 'ls-btn sec sm', style: 'margin-left:6px' }, ['Eliminar']);
+      del.addEventListener('click', function () {
+        if (del.dataset.ok !== '1') { del.dataset.ok = '1'; del.textContent = '¿Seguro? Pulse otra vez'; setTimeout(function () { del.dataset.ok = ''; del.textContent = 'Eliminar'; }, 4000); return; }
+        NUBE.eliminar(x.p.id).then(function () { if (S.id === x.p.id) { S.id = null; S.ref = null; } toastLs('Proyecto eliminado'); ir(4); }).catch(function (e) { toastLs('No se pudo eliminar: ' + (e.message || e)); });
+      });
+      td.appendChild(del); tr.appendChild(td); tb.appendChild(tr);
+    });
+    lista.appendChild(el('div', { style: 'overflow-x:auto' }, [tb]));
+  }).catch(function (e) { console.error(e); lista.innerHTML = ''; lista.appendChild(el('div', { class: 'ls-warn ls-bad' }, ['No se pudo leer la lista: ' + (e.message || e)])); });
+}
+
+// ── arranque ─────────────────────────────────────────────────────────────────
+function initLosas(rootId) {
+  var root = document.getElementById(rootId);
+  if (!root) { console.error('initLosas: no existe #' + rootId); return; }
+  if (!M || !C) { root.innerHTML = '<div style="padding:20px">El motor de losas no está cargado.</div>'; return; }
+  if (!document.getElementById('ls-css')) { var s = document.createElement('style'); s.id = 'ls-css'; s.textContent = CSS; document.head.appendChild(s); }
+  var S = root._ls || (root._ls = nuevoEstado());
+  var NAMES = ['1 · Uso', '2 · Datos y cargas', '3 · Terreno y concreto', '4 · Resultado', '📁 Proyectos'];
+  function nuevoProyecto() { var n = nuevoEstado(); Object.keys(n).forEach(function (k) { S[k] = n[k]; }); ir(0); }
+  function ir(n) {
+    if (n > 0 && n < 4 && !S.usoId) n = 0;
+    S.step = n; render();
+    try { root.scrollIntoView({ block: 'start' }); } catch (e) {}
+  }
+  function render() {
+    root.innerHTML = '';
+    var w = el('div', { class: 'ls' });
+    w.appendChild(el('div', { class: 'ls-hdr' }, [el('div', { class: 'ls-hdr-bar' }), el('div', { class: 'ls-hdr-body' }, [
+      el('div', { class: 'ls-hdr-title' }, ['📐 Diseño de losas']),
+      el('div', { class: 'ls-hdr-sub' }, ['TR-34 4ª ed. · Westergaard (PCA/COE) · EC2 · ACI 360R · ACI 302.1R · ANSI-DSI C1.0'])])]));
+    var st = el('div', { class: 'ls-steps' });
+    NAMES.forEach(function (nm, i) { st.appendChild(el('div', { class: 'ls-step' + (S.step === i ? ' on' : ''), onclick: function () { if (i === 3 && !S.res) return; ir(i); } }, [nm])); });
+    w.appendChild(st);
+    var box = el('div', { class: 'ls-body' });
+    w.appendChild(box);
+    root.appendChild(w);
+    try { [pintarUso, pintarDatos, pintarTerreno, pintarResultados, pintarProyectos][S.step](S, box, ir, nuevoProyecto); }
+    catch (e) { console.error(e); box.appendChild(el('div', { class: 'ls-warn ls-bad' }, ['Error al mostrar la pantalla: ' + e.message])); }
+  }
+  render();
+}
+window.initLosas = initLosas;
+})();
+
+
+</script>
 
 
 </head>
@@ -34616,6 +36909,9 @@ window.initFacturacion=async function(){
       <!-- FACTURACIÓN SECTION — proformas y (a futuro) facturación electrónica.
            Módulo aislado: solo LEE el catálogo de Ventas y los clientes del CRM. -->
       <div id="sec-facturacion" class="admin-section"><div id="fact-root-admin"></div></div>
+
+      <!-- DISEÑO DE LOSAS — módulo aislado; solo superadmin (opt-in para otros roles). -->
+      <div id="sec-losas" class="admin-section"><div id="losas-root-admin"></div></div>
 
       </div><!-- /admin-main -->
     </div><!-- /admin-layout -->
