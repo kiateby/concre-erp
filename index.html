@@ -153,29 +153,6 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 /* Section cards */
 .admin-section{display:none;padding:16px 20px;width:100%;max-width:100%;margin:0 auto;box-sizing:border-box}
 .admin-section.on{display:block}
-/* Presupuesto section — full viewport, no constraints */
-#sec-presupuesto.on{
-  position:fixed!important;
-  top:0;left:0;right:0;bottom:0;
-  z-index:150;
-  padding:0!important;
-  margin:0!important;
-  width:100vw!important;
-  height:100vh!important;
-  display:block!important;
-  background:#0f1117;
-}
-#presupuesto-root{
-  width:100%;
-  height:100%;
-  overflow:hidden;
-}
-#presupuesto-root iframe{
-  display:block;
-  width:100%;
-  height:100%;
-  border:none;
-}
 
 /* Page title */
 .page-title{
@@ -1953,7 +1930,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20260930103923';
+var APP_BUILD='20261001090434';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2011,47 +1988,6 @@ function dbRowToUser(row){
   };
 }
 
-
-// ══════════════════════════════════════════════════════
-//  PRESUPUESTO CONSTRUCCIÓN — módulo independiente
-// ══════════════════════════════════════════════════════
-var _presupuestoLoaded = false;
-function initPresupuesto(){
-  if(!SESSION||SESSION.rol!=='superadmin'){
-    document.getElementById('sec-presupuesto').innerHTML=
-      '<div style="padding:40px;text-align:center;color:var(--text3)">Módulo exclusivo para SuperAdmin</div>';
-    return;
-  }
-  var root=document.getElementById('presupuesto-root');
-  if(!root) return;
-  // Already loaded — just show
-  if(_presupuestoLoaded) return;
-  _presupuestoLoaded=true;
-  var src=window.location.origin+'/presupuesto_construccion.html';
-  // Verify file exists before creating iframe
-  fetch(src,{method:'HEAD'}).then(function(res){
-    if(res.ok){
-      var iframe=document.createElement('iframe');
-      iframe.src=src;
-      iframe.style.cssText='width:100%;height:100%;border:none;background:#0f1117;display:block;';
-      iframe.title='Presupuesto Construcción CR';
-      root.style.cssText='width:100%;height:100%;';
-      root.appendChild(iframe);
-    } else {
-      _presupuestoLoaded=false; // allow retry
-      root.innerHTML='<div style="padding:40px;text-align:center;font-family:sans-serif;">'
-        +'<div style="font-size:32px;margin-bottom:12px;">⚠️</div>'
-        +'<div style="font-size:16px;font-weight:700;color:#f4a30a;margin-bottom:8px;">Archivo no encontrado</div>'
-        +'<div style="font-size:13px;color:#9aa3cc;max-width:480px;margin:0 auto;line-height:1.6;">'
-        +'El archivo <code style="background:#22263a;padding:2px 6px;border-radius:4px;">presupuesto_construccion.html</code> '
-        +'debe estar en la raíz del repositorio de GitHub, junto al <code style="background:#22263a;padding:2px 6px;border-radius:4px;">index.html</code>.'
-        +'</div></div>';
-    }
-  }).catch(function(){
-    _presupuestoLoaded=false;
-    root.innerHTML='<div style="padding:40px;text-align:center;color:#9aa3cc;">Error de red al cargar el módulo.</div>';
-  });
-}
 
 // ── SEGURIDAD: hashing de contraseñas (SHA-256 + salt) ──────────────────────
 // Formato almacenado: sha256$<salt>$<hash hex> — misma columna password, sin cambio de esquema.
@@ -3810,7 +3746,6 @@ function doLogout(){
   window._catalogoCache=null; window._tiposProyCache=null;
   window._liqCostTypesCache=null; window._fondosLimCache=null;
   window._planillaHistCache={};
-  window._presupuestoLoaded=false;
   // Reset all tab/UI state
   try{
     document.querySelectorAll('.admin-section.on').forEach(function(s){s.classList.remove('on');});
@@ -3865,7 +3800,6 @@ function buildAdminTabs(){
     {id:'inventario',    label:'📦 Inventario',      extra:'try{initInventario();}catch(e){}'},
     {id:'fibraplus',     label:'🧮 FibraPlus',       extra:'try{initFibraPlus54();}catch(e){}', saOnly:true},
     {id:'calculos',      label:'🏗 Cálculos',        extra:'try{initCalcCONCRE();}catch(e){}',  saOnly:true},
-    {id:'presupuesto',   label:'🏗 Presupuesto',     extra:'try{initPresupuesto();}catch(e){console.error(e);}', superadmin_only:true},
     {id:'radar',         label:'📡 Radar Comercial', extra:'try{initRadarComercial();}catch(e){console.error(e);}'},
     {id:'proyectos',     label:'📁 Proyectos',       extra:'try{initProyectosTab("proyAdminRoot");}catch(e){console.error(e);}'},
     {id:'precios',       label:'📚 Precios e Info',   extra:'try{initPreciosTab("preciosAdminRoot");}catch(e){console.error(e);}', superadmin_only:true},
@@ -34894,6 +34828,10 @@ root.LOSAS_NUBE = API;
 (function () {
 'use strict';
 var M = window.LOSAS_MOTOR, C = window.LOSAS_CAT, REC = window.LOSAS_REC, INF = window.LOSAS_INFORME, NUBE = window.LOSAS_NUBE;
+// Dos modos, un solo código. El cálculo, la pantalla y el informe son IDÉNTICOS en los dos.
+// La única diferencia es que 'web' (sitio público) no guarda el proyecto: no tiene nube ni
+// pestaña de proyectos, y al final solo ofrece exportar el PDF o empezar de nuevo.
+var WEB = (window.LOSAS_MODO === 'web');
 
 var CSS = [
 '.ls{font-family:Arial,sans-serif;color:#3D3D3D;background:#F5F5F5;padding:0 0 30px}',
@@ -34992,6 +34930,10 @@ function nuevoEstado() {
 var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr'];
 function serializar(S) { var e = {}; CAMPOS_ESTADO.forEach(function (k) { e[k] = clone(S[k]); }); return e; }
 function nuevoId() { return 'lo_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function refLocal() {
+  var d = new Date(), p = function (x) { return (x < 10 ? '0' : '') + x; };
+  return 'WEB-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+}
 function usoActual(S) { return C.USOS.filter(function (u) { return u.id === S.usoId; })[0] || null; }
 function opcionesPorDefecto(u) { var o = {}; u.opciones.forEach(function (p) { o[p.id] = clone(p.def); }); return o; }
 function cargasDeUso(S) { var u = usoActual(S); return u ? u.cargas(S.o).map(clone) : []; }
@@ -35319,7 +35261,7 @@ function pintarResultados(S, box, ir, nuevo) {
   }
   var ev = R.ev, ff = R.fibra;
   if (S.aviso) box.appendChild(el('div', { class: 'ls-info' }, [S.aviso]));
-  box.appendChild(barraAcciones(S, ir));
+  box.appendChild(barraAcciones(S, ir, nuevo));
 
   // KPIs
   var k = el('div', { class: 'ls-kpis' });
@@ -35476,16 +35418,32 @@ function toastLs(msg) { try { toast(msg); } catch (e) { alert(msg); } }
 
 async function abrirInforme(S, w) {
   try {
-    await guardarProyecto(S);   // siempre se guarda antes: el informe y la nube quedan iguales
+    if (!WEB) await guardarProyecto(S);   // en el ERP el informe y lo guardado quedan iguales
+    else if (!S.ref) S.ref = refLocal();
     var ses = (typeof SESSION !== 'undefined' && SESSION) ? SESSION : null;
-    var html = INF.html({ S: S, R: S.res, ref: S.ref, fecha: new Date().toLocaleDateString('es-CR'), autor: ses && ses.nombre, logo: (typeof FACT_LOGO_B64 !== 'undefined' ? FACT_LOGO_B64 : ''), formulas: true, resumenRecs: resumenRecs(S.res) });
+    var html = INF.html({ S: S, R: S.res, ref: S.ref, fecha: new Date().toLocaleDateString('es-CR'), autor: ses && ses.nombre, logo: (typeof LOSAS_LOGO_B64 !== 'undefined' ? LOSAS_LOGO_B64 : (typeof FACT_LOGO_B64 !== 'undefined' ? FACT_LOGO_B64 : '')), formulas: true, resumenRecs: resumenRecs(S.res) });
     w.document.open(); w.document.write(html); w.document.close();
     setTimeout(function () { try { w.focus(); w.print(); } catch (e) {} }, 700);
   } catch (e) { console.error(e); try { w.close(); } catch (e2) {} toastLs('No se pudo generar el informe: ' + (e.message || e)); }
 }
 
-function barraAcciones(S, ir) {
+function barraAcciones(S, ir, nuevo) {
   var b = el('div', { class: 'ls-nav', style: 'margin:0 0 12px' });
+  if (WEB) {
+    var pw = el('button', { class: 'ls-btn' }, ['🖨 Exportar a PDF']);
+    pw.addEventListener('click', function () {
+      var w = window.open('', '_blank', 'width=980,height=780,scrollbars=yes');
+      if (!w) { toastLs('El navegador bloqueó la ventana del informe. Permita ventanas emergentes para este sitio.'); return; }
+      w.document.write('<p style="font-family:Arial;padding:20px">Generando informe…</p>');
+      pw.disabled = true;
+      abrirInforme(S, w).then(function () { pw.disabled = false; });
+    });
+    b.appendChild(pw);
+    b.appendChild(el('button', { class: 'ls-btn sec', onclick: function () { if (nuevo) nuevo(); } }, ['＋ Iniciar nuevo proyecto']));
+    b.appendChild(el('span', { style: 'font-size:11.5px;color:#666;align-self:center;max-width:430px;line-height:1.4' },
+      ['Este cálculo no se guarda: exporte el PDF antes de iniciar un proyecto nuevo, porque al hacerlo se pierde.']));
+    return b;
+  }
   var msg = el('span', { style: 'font-size:12px;color:#666;align-self:center' }, [S.ref ? 'Guardado como ' + S.ref : 'Sin guardar']);
   var g = el('button', { class: 'ls-btn', onclick: async function () {
     g.disabled = true; g.textContent = 'Guardando…';
@@ -35505,7 +35463,7 @@ function barraAcciones(S, ir) {
 
 function navRes(ir, nuevo) {
   return el('div', { class: 'ls-nav' }, [el('button', { class: 'ls-btn sec', onclick: function () { ir(2); } }, ['← Cambiar datos']), el('button', { class: 'ls-btn sec', onclick: function () { ir(0); } }, ['Otro uso']),
-    el('button', { class: 'ls-btn sec', onclick: function () { if (nuevo) nuevo(); } }, ['＋ Nuevo proyecto'])]);
+    WEB ? null : el('button', { class: 'ls-btn sec', onclick: function () { if (nuevo) nuevo(); } }, ['＋ Nuevo proyecto'])]);
 }
 
 // ── PASO 4: proyectos guardados ──────────────────────────────────────────────
@@ -35559,9 +35517,11 @@ function initLosas(rootId) {
   if (!M || !C) { root.innerHTML = '<div style="padding:20px">El motor de losas no está cargado.</div>'; return; }
   if (!document.getElementById('ls-css')) { var s = document.createElement('style'); s.id = 'ls-css'; s.textContent = CSS; document.head.appendChild(s); }
   var S = root._ls || (root._ls = nuevoEstado());
-  var NAMES = ['1 · Uso', '2 · Datos y cargas', '3 · Terreno y concreto', '4 · Resultado', '📁 Proyectos'];
+  var NAMES = WEB ? ['1 · Uso', '2 · Datos y cargas', '3 · Terreno y concreto', '4 · Resultado']
+                  : ['1 · Uso', '2 · Datos y cargas', '3 · Terreno y concreto', '4 · Resultado', '📁 Proyectos'];
   function nuevoProyecto() { var n = nuevoEstado(); Object.keys(n).forEach(function (k) { S[k] = n[k]; }); ir(0); }
   function ir(n) {
+    if (n > 3 && WEB) n = 3;
     if (n > 0 && n < 4 && !S.usoId) n = 0;
     S.step = n; render();
     try { root.scrollIntoView({ block: 'start' }); } catch (e) {}
@@ -35571,7 +35531,8 @@ function initLosas(rootId) {
     var w = el('div', { class: 'ls' });
     w.appendChild(el('div', { class: 'ls-hdr' }, [el('div', { class: 'ls-hdr-bar' }), el('div', { class: 'ls-hdr-body' }, [
       el('div', { class: 'ls-hdr-title' }, ['📐 Diseño de losas']),
-      el('div', { class: 'ls-hdr-sub' }, ['TR-34 4ª ed. · Westergaard (PCA/COE) · EC2 · ACI 360R · ACI 302.1R · ANSI-DSI C1.0'])])]));
+      el('div', { class: 'ls-hdr-sub' }, ['TR-34 4ª ed. · Westergaard (PCA/COE) · EC2 · ACI 360R · ACI 302.1R · ANSI-DSI C1.0']),
+      WEB ? el('div', { class: 'ls-hdr-sub', style: 'margin-top:4px' }, ['Herramienta de predimensionamiento de CONCRE. El resultado no sustituye el diseño ni la firma de un profesional responsable.']) : null])]));
     var st = el('div', { class: 'ls-steps' });
     NAMES.forEach(function (nm, i) { st.appendChild(el('div', { class: 'ls-step' + (S.step === i ? ' on' : ''), onclick: function () { if (i === 3 && !S.res) return; ir(i); } }, [nm])); });
     w.appendChild(st);
@@ -36923,9 +36884,6 @@ window.initLosas = initLosas;
 
           <!-- Cálculos CONCRE -->
           <div id="sec-calculos" class="admin-section"></div>
-
-      <!-- PRESUPUESTO SECTION -->
-      <div id="sec-presupuesto" class="admin-section" style="padding:0;height:calc(100vh - 60px);overflow:hidden;"><div id="presupuesto-root" style="height:100%;overflow-y:auto;"></div></div>
 
       <!-- RADAR COMERCIAL SECTION — módulo independiente de prospección -->
       <div id="sec-radar" class="admin-section"><div id="radar-root-admin"></div></div>
