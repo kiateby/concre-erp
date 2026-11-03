@@ -1930,7 +1930,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261001090434';
+var APP_BUILD='20261103160014';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -14893,12 +14893,46 @@ function _liqSiguientePeriodo(periodKey){
   var ny=(m===12)?y+1:y, nm=(m===12)?1:m+1;
   return ny+'-'+pad2(nm)+'-15';
 }
+// Devuelve la quincena ANTERIOR a la dada. Espejo exacto de _liqSiguientePeriodo.
+//   segunda quincena (día > 15) → primera del MISMO mes  ('YYYY-MM-15')
+//   primera quincena (día ≤ 15) → segunda del mes ANTERIOR ('YYYY-MM-<último día>')
+function _liqAnteriorPeriodo(periodKey){
+  if(!periodKey) return null;
+  var p=periodKey.split('-');
+  if(p.length<3) return null;
+  var y=parseInt(p[0]), m=parseInt(p[1]), day=parseInt(p[2]);
+  if(isNaN(y)||isNaN(m)||isNaN(day)) return null;
+  var pad2=function(n){ return n<10?'0'+n:String(n); };
+  if(day>15){
+    // Segunda quincena → primera del mismo mes
+    return y+'-'+pad2(m)+'-15';
+  }
+  // Primera quincena → segunda del mes anterior
+  var py=(m===1)?y-1:y, pm=(m===1)?12:m-1;
+  return py+'-'+pad2(pm)+'-'+lastDayOfMonth(py,pm-1);
+}
 // ¿Está cerrada esta quincena?
 function _liqEstaCerrada(subId, periodKey){
   try{
     var st=getLiqPeriodState(subId, periodKey)||{};
     return !!st.cerrada;
   }catch(e){ return false; }
+}
+// ¿Se puede meter un proyecto en esta quincena? Devuelve {ok, motivo, incierto}.
+// «incierto» = la quincena destino no tiene proyectos en memoria, y como el estado de cerrada
+// vive en las filas de los proyectos, no hay forma de saber si está cerrada. No se bloquea,
+// pero se avisa, para que nadie meta trabajo en una quincena ya pagada sin darse cuenta.
+function _liqDestinoAdmite(subId, periodKey){
+  var d=getLiqData(subId)||{};
+  var pd=d[periodKey];
+  if(pd && (pd.cerrada || pd.pagado)){
+    return {ok:false, motivo:'La quincena '+periodKey+' ya está '+(pd.pagado?'PAGADA':'CERRADA')+'. Ábrala primero.'};
+  }
+  if(_liqEstaCerrada(subId, periodKey)){
+    return {ok:false, motivo:'La quincena '+periodKey+' ya está CERRADA. Ábrala primero.'};
+  }
+  var vacia = !pd || !(pd.proyectos||[]).length;
+  return {ok:true, incierto:vacia};
 }
 // Busca la primera quincena ABIERTA a partir de la dada (máx 6 saltos)
 function _liqPrimeraQuincenaAbierta(subId, periodKey){
@@ -15378,11 +15412,10 @@ function moverProyectoSiguienteQuincena(idx){
   if(!proj){ toast('Proyecto no encontrado'); return; }
   var destino=_liqSiguientePeriodo(LIQ_PERIOD);
   if(!destino){ toast('No se pudo calcular la siguiente quincena'); return; }
-  if(_liqEstaCerrada(LIQ_SUB,destino)){
-    toast('⚠ La siguiente quincena ('+destino+') ya está CERRADA. Ábrala primero o elija otra.');
-    return;
-  }
-  if(!confirm('¿Mover "'+proj.nombre+'" a la quincena '+destino+'?\n\nSaldrá de la quincena actual y quedará disponible en la siguiente con toda su información.')) return;
+  var adm=_liqDestinoAdmite(LIQ_SUB,destino);
+  if(!adm.ok){ toast('⚠ '+adm.motivo); return; }
+  if(!confirm('¿Mover "'+proj.nombre+'" a la quincena '+destino+'?\n\nSaldrá de la quincena actual y quedará disponible en la siguiente con toda su información.'
+      +(adm.incierto?'\n\nATENCIÓN: esa quincena no tiene proyectos cargados, así que el programa no puede comprobar si ya fue cerrada o pagada. Revíselo antes de continuar.':''))) return;
 
   // Quitar de la quincena actual
   period.proyectos.splice(idx,1);
@@ -15401,6 +15434,41 @@ function moverProyectoSiguienteQuincena(idx){
   // (Un DELETE aquí borraría la fila que el upsert acaba de escribir.)
 
   toast('⏭ "'+proj.nombre+'" movido a la quincena '+destino);
+  renderLiqProjects();
+}
+
+// Mueve un proyecto de la quincena actual a la ANTERIOR.
+// Caso de uso: un proyecto con fecha de inicio de la quincena nueva que en realidad
+// pertenece a la liquidación que se está cerrando (por ejemplo, el 2 de noviembre
+// cayó en la quincena 11-15 pero corresponde a la del 10-31).
+// Solo reasigna el período — conserva TODOS los datos del proyecto, igual que al adelantar.
+function moverProyectoQuincenaAnterior(idx){
+  if(!LIQ_SUB||!LIQ_PERIOD) return;
+  var period=getLiqPeriod(LIQ_SUB,LIQ_PERIOD);
+  var proj=(period.proyectos||[])[idx];
+  if(!proj){ toast('Proyecto no encontrado'); return; }
+  var destino=_liqAnteriorPeriodo(LIQ_PERIOD);
+  if(!destino){ toast('No se pudo calcular la quincena anterior'); return; }
+  var adm=_liqDestinoAdmite(LIQ_SUB,destino);
+  if(!adm.ok){ toast('⚠ '+adm.motivo+' (quincena anterior)'); return; }
+  if(!confirm('¿Mover "'+proj.nombre+'" a la quincena ANTERIOR ('+destino+')?\n\nSaldrá de la quincena actual y quedará en la anterior con toda su información.'
+      +(adm.incierto?'\n\nATENCIÓN: esa quincena no tiene proyectos cargados, así que el programa no puede comprobar si ya fue cerrada o pagada. Revíselo antes de continuar.':''))) return;
+
+  // Quitar de la quincena actual
+  period.proyectos.splice(idx,1);
+  saveLiqPeriod(LIQ_SUB,LIQ_PERIOD,period);
+  // Agregar a la quincena destino (conserva id y todos los campos)
+  var pdDest=getLiqPeriod(LIQ_SUB,destino);
+  if(!pdDest.proyectos) pdDest.proyectos=[];
+  proj.movidoDesde=LIQ_PERIOD;
+  proj.movidoAt=new Date().toISOString();
+  proj.movidoPor=SESSION?(SESSION.nombre||SESSION.id):'';
+  pdDest.proyectos.push(proj);
+  saveLiqPeriod(LIQ_SUB,destino,pdDest);
+
+  // NO se borra la fila: el proyecto conserva su MISMO id y setLiqData() hace upsert
+  // por id, así que la fila existente se actualiza con el period_key nuevo.
+  toast('⏮ "'+proj.nombre+'" movido a la quincena '+destino);
   renderLiqProjects();
 }
 
@@ -15449,6 +15517,7 @@ function renderProjectCard(proj, idx){
         +'<div style="font-family:var(--cond);font-size:17px;font-weight:900;color:'+(r.aDepositar>=0?'#6ee7b7':'#fca5a5')+'">'+fmt(r.aDepositar)+'</div>'
       +'</div>'
       +(r.cobro>0?'<span class="liq-project-rentab '+rentClass+'">'+r.rentabilidad.toFixed(1)+'%</span>':'')
+      +'<button onclick="event.stopPropagation();moverProyectoQuincenaAnterior('+idx+')" title="Mover a la quincena ANTERIOR (el proyecto corresponde a la liquidación que se está cerrando)" style="background:rgba(217,119,6,.3);border:none;color:#fcd34d;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:12px">⏮</button>'
       +'<button onclick="event.stopPropagation();moverProyectoSiguienteQuincena('+idx+')" title="Mover a la siguiente quincena (proyecto en ejecución o incompleto)" style="background:rgba(217,119,6,.3);border:none;color:#fcd34d;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:12px">⏭</button>'
       +'<button onclick="event.stopPropagation();editProject('+idx+')" style="background:rgba(255,255,255,.1);border:none;color:#fff;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:12px">✏</button>'
       +'<button onclick="event.stopPropagation();deleteProject('+idx+')" style="background:rgba(227,24,55,.25);border:none;color:#fca5a5;border-radius:5px;padding:4px 10px;cursor:pointer;font-size:12px">✕</button>'
@@ -24049,7 +24118,12 @@ async function _fp54LoadCache(){
   try{
     var r=await DB.from('configuracion').select('valor').eq('clave','fp54_proyectos');
     if(!r.error&&r.data&&r.data.length>0&&Array.isArray(r.data[0].valor)){
-      window._fp54ProjCache=r.data[0].valor; return window._fp54ProjCache;
+      window._fp54ProjCache=r.data[0].valor;
+      // Los guardados antes de llevar identificador reciben uno ahora, de una sola vez.
+      if(_fp54NormalizaIds(window._fp54ProjCache)){
+        try{ await _fp54SaveCache(window._fp54ProjCache); }catch(e){ console.warn('fp54 ids:',e); }
+      }
+      return window._fp54ProjCache;
     }
   }catch(e){}
   window._fp54ProjCache=[]; return [];
@@ -24060,21 +24134,70 @@ async function _fp54SaveCache(arr){
   await DB.from('configuracion').upsert({clave:'fp54_proyectos',valor:arr,updated_at:new Date().toISOString()},{onConflict:'clave'});
 }
 
-// Sync wrappers (usados en renderPjs — inician async internamente)
-const _saveProj=(name,mod,p,onDone)=>{
-  // Guardar directamente en cache actual (evitar doble carga de Supabase)
+// Cada proyecto lleva un identificador propio. Antes no lo tenía y la lista se manejaba por
+// posición, de modo que borrar el segundo proyecto de la lista de Contrapiso borraba el
+// segundo de la lista COMPLETA, que podía ser otro proyecto o uno de Entrepiso.
+function _fp54NuevoId(){ return 'fp'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+// Los proyectos guardados antes de este cambio no tienen id: se les pone uno al cargarlos.
+function _fp54NormalizaIds(arr){
+  var cambio=false;
+  (arr||[]).forEach(function(p){ if(!p.id){ p.id=_fp54NuevoId(); cambio=true; } });
+  return cambio;
+}
+const _listProjs=()=>window._fp54ProjCache||[];
+const _findProj=id=>_listProjs().filter(function(p){return p.id===id;})[0]||null;
+
+// Guarda un proyecto. Si se pasa `pid` y ese proyecto existe, lo ACTUALIZA en su sitio
+// (conserva id, fecha de creación y autor). Si no, crea uno nuevo al inicio de la lista.
+// Devuelve el id por el callback, para que la pantalla sepa cuál quedó abierto.
+const _saveProj=(name,mod,p,onDone,pid)=>{
   var a=window._fp54ProjCache||[];
   if(!window._fp54ProjCache) window._fp54ProjCache=a;
-  a.unshift({name,modulo:mod,saved:new Date().toISOString(),params:p,uid:SESSION&&SESSION.id||'admin'});
-  var sliced=a.slice(0,100);
-  window._fp54ProjCache=sliced;
-  _fp54SaveCache(sliced).then(function(){ if(onDone) onDone(); });
+  var id=null;
+  var ex=pid?_findProj(pid):null;
+  if(ex && ex.modulo===mod){
+    ex.name=name; ex.params=p; ex.saved=new Date().toISOString();
+    ex.editadoPor=SESSION&&SESSION.nombre||SESSION&&SESSION.id||'';
+    id=ex.id;
+    window._fp54ProjCache=a;
+  } else {
+    id=_fp54NuevoId();
+    a.unshift({id:id,name:name,modulo:mod,saved:new Date().toISOString(),
+      creado:new Date().toISOString(),params:p,uid:SESSION&&SESSION.id||'admin',
+      uname:SESSION&&SESSION.nombre||''});
+    window._fp54ProjCache=a.slice(0,100);
+  }
+  _fp54SaveCache(window._fp54ProjCache).then(function(){ if(onDone) onDone(id); });
 };
-const _listProjs=()=>window._fp54ProjCache||[];
-const _delProj=i=>{
-  var a=_listProjs(); a.splice(i,1);
-  _fp54SaveCache(a);
+// Borra POR IDENTIFICADOR, nunca por posición.
+const _delProj=(id,onDone)=>{
+  var a=_listProjs().filter(function(p){return p.id!==id;});
+  window._fp54ProjCache=a;
+  _fp54SaveCache(a).then(function(){ if(onDone) onDone(); });
 };
+// Duplica un proyecto, con nombre nuevo.
+const _dupProj=(id,onDone)=>{
+  var p=_findProj(id); if(!p) return;
+  var copia=JSON.parse(JSON.stringify(p));
+  copia.id=_fp54NuevoId();
+  copia.name=(p.name||'Sin nombre')+' (copia)';
+  copia.saved=copia.creado=new Date().toISOString();
+  copia.uid=SESSION&&SESSION.id||'admin'; copia.uname=SESSION&&SESSION.nombre||'';
+  if(copia.params) copia.params=Object.assign({},copia.params,{referencia:''});
+  var a=_listProjs(); a.unshift(copia);
+  window._fp54ProjCache=a.slice(0,100);
+  _fp54SaveCache(window._fp54ProjCache).then(function(){ if(onDone) onDone(copia.id); });
+};
+// Cambia solo el nombre.
+const _renProj=(id,nombre,onDone)=>{
+  var p=_findProj(id); if(!p) return;
+  p.name=nombre; p.saved=new Date().toISOString();
+  _fp54SaveCache(_listProjs()).then(function(){ if(onDone) onDone(); });
+};
+// Cuál proyecto está abierto en cada módulo (sobrevive al repintado de la pantalla).
+window._fp54Abierto=window._fp54Abierto||{CP:null,EP:null};
+// Acceso para pruebas automatizadas. La aplicación no lo usa.
+window.__fp54={lista:_listProjs,buscar:_findProj,guardar:_saveProj,borrar:_delProj,duplicar:_dupProj,renombrar:_renProj};
 
 // Preload projects when FibraPlus54 initializes
 async function fp54PreloadProjs(){
@@ -25653,6 +25776,15 @@ function initFibraPlus54(){
   }
   root.innerHTML='';
   const S=makeState();
+  // Un proyecto abierto desde la lista se aplica AQUÍ: makeState() parte de los valores
+  // por omisión cada vez que se repinta la pantalla, de modo que cargar los parámetros
+  // antes de repintar los perdería.
+  var _fpAbrirEp=false;
+  if(window._fp54Pendiente){
+    var _pd=window._fp54Pendiente; window._fp54Pendiente=null;
+    if(_pd.params && S[_pd.tab]) Object.assign(S[_pd.tab],_pd.params);
+    S.tab=_pd.tab; _fpAbrirEp=(_pd.tab==='ep');
+  }
 
   // Unique IDs
   const ID={
@@ -25789,18 +25921,37 @@ function initFibraPlus54(){
     // Proyectos
     const pjSec=_div('sb-sec');pjSec.appendChild(_div('sb-tit',['💾 Proyectos']));
     const pjNom=_el('input',{type:'text',class:'fp-inp',value:S.cp.nombre,placeholder:'Nombre del proyecto'});
-    const pjSave=_el('button',{class:'fp-btn fp-btn-r'},['💾 Guardar proyecto']);
+    const pjAb=()=>_findProj(window._fp54Abierto.CP)?window._fp54Abierto.CP:null;
+    const pjSave=_el('button',{class:'fp-btn fp-btn-r'},[pjAb()?'💾 Guardar cambios':'💾 Guardar proyecto']);
+    const pjCopia=_el('button',{class:'fp-btn'},['📄 Guardar como copia']);
+    pjCopia.style.display=pjAb()?'block':'none';
     pjSave.addEventListener('click',()=>{
       if(pjSave.disabled) return;
       pjSave.disabled=true; pjSave.textContent='💾 Guardando...';
-      _saveProj(pjNom.value.trim()||S.cp.nombre||'Sin nombre','CP',{...S.cp},function(){
-        pjSave.disabled=false; pjSave.textContent='💾 Guardar proyecto';
+      // Con un proyecto abierto se ACTUALIZA ese mismo; si no, se crea uno nuevo.
+      _saveProj(pjNom.value.trim()||S.cp.nombre||'Sin nombre','CP',{...S.cp},function(id){
+        window._fp54Abierto.CP=id;
+        pjSave.disabled=false; pjSave.textContent='💾 Guardar cambios';
+        pjCopia.style.display='block';
+        _toastFp('✅ Proyecto guardado');
         refreshPjsList('CP');
-      });
+      },pjAb());
+    });
+    pjCopia.addEventListener('click',()=>{
+      if(pjCopia.disabled) return;
+      pjCopia.disabled=true; pjCopia.textContent='📄 Copiando...';
+      // Una copia: proyecto nuevo, sin pisar el que está abierto
+      _saveProj((pjNom.value.trim()||S.cp.nombre||'Sin nombre')+' (copia)','CP',
+        Object.assign({},S.cp,{referencia:''}),function(id){
+        window._fp54Abierto.CP=id;
+        pjCopia.disabled=false; pjCopia.textContent='📄 Guardar como copia';
+        _toastFp('✅ Copia guardada'); refreshPjsList('CP');
+      },null);
     });
     const pjNew=_el('button',{class:'fp-btn fp-btn-g'},['🆕 Nuevo proyecto']);
     pjNew.addEventListener('click',()=>{
       Object.assign(S.cp,{nombre:'Bodega',referencia:'',g1_P:0,g2_Q:0,g3_q:0,g4_W:0});
+      window._fp54Abierto.CP=null;
       root.innerHTML='<div style="padding:40px;text-align:center;color:#888">⏳ Cargando...</div>';
       fp54PreloadProjs().then(function(){
         if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
@@ -25811,6 +25962,13 @@ function initFibraPlus54(){
       });
     });
     const pjList=_div('');renderPjs(pjList,'CP');
+    const pjTodos=_el('button',{class:'fp-btn'},['📁 Todos los proyectos']);
+    pjTodos.style.cssText='margin-top:6px';
+    const pjTodosBox=_div('');
+    pjTodos.addEventListener('click',function(){
+      if(pjTodosBox.firstChild){ pjTodosBox.innerHTML=''; pjTodos.textContent='📁 Todos los proyectos'; return; }
+      pjTodosBox.appendChild(fp54PanelProyectos('CP')); pjTodos.textContent='Ocultar la lista';
+    });
     const pjRev=_el('button',{class:'fp-btn'},['🔎 Revisar memorias guardadas']);
     pjRev.style.cssText='margin-top:6px;background:#3D3D3D';
     const pjRevBox=_div('');
@@ -25818,7 +25976,7 @@ function initFibraPlus54(){
       if(pjRevBox.firstChild){ pjRevBox.innerHTML=''; pjRev.textContent='🔎 Revisar memorias guardadas'; return; }
       pjRevBox.appendChild(fp54PanelRevision()); pjRev.textContent='Ocultar la revisión';
     });
-    pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjNew,pjList,pjRev,pjRevBox);sb.appendChild(pjSec);
+    pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjCopia,pjNew,pjList,pjTodos,pjTodosBox,pjRev,pjRevBox);sb.appendChild(pjSec);
     return sb;
   }
 
@@ -25873,18 +26031,35 @@ function initFibraPlus54(){
     // Proyectos EP
     const pjSec=_div('sb-sec');pjSec.appendChild(_div('sb-tit',['💾 Proyectos']));
     const pjNom=_el('input',{type:'text',class:'fp-inp',value:S.ep.nombre,placeholder:'Nombre'});
-    const pjSave=_el('button',{class:'fp-btn fp-btn-r'},['💾 Guardar']);
+    const pjAbE=()=>_findProj(window._fp54Abierto.EP)?window._fp54Abierto.EP:null;
+    const pjSave=_el('button',{class:'fp-btn fp-btn-r'},[pjAbE()?'💾 Guardar cambios':'💾 Guardar']);
+    const pjCopia=_el('button',{class:'fp-btn'},['📄 Guardar como copia']);
+    pjCopia.style.display=pjAbE()?'block':'none';
     pjSave.addEventListener('click',()=>{
       if(pjSave.disabled) return;
       pjSave.disabled=true; pjSave.textContent='💾 Guardando...';
-      _saveProj(pjNom.value.trim()||S.ep.nombre||'Sin nombre','EP',{...S.ep},function(){
-        pjSave.disabled=false; pjSave.textContent='💾 Guardar';
+      _saveProj(pjNom.value.trim()||S.ep.nombre||'Sin nombre','EP',{...S.ep},function(id){
+        window._fp54Abierto.EP=id;
+        pjSave.disabled=false; pjSave.textContent='💾 Guardar cambios';
+        pjCopia.style.display='block';
+        _toastFp('✅ Proyecto guardado');
         refreshPjsList('EP');
-      });
+      },pjAbE());
+    });
+    pjCopia.addEventListener('click',()=>{
+      if(pjCopia.disabled) return;
+      pjCopia.disabled=true; pjCopia.textContent='📄 Copiando...';
+      _saveProj((pjNom.value.trim()||S.ep.nombre||'Sin nombre')+' (copia)','EP',
+        Object.assign({},S.ep,{referencia:''}),function(id){
+        window._fp54Abierto.EP=id;
+        pjCopia.disabled=false; pjCopia.textContent='📄 Guardar como copia';
+        _toastFp('✅ Copia guardada'); refreshPjsList('EP');
+      },null);
     });
     const pjNew=_el('button',{class:'fp-btn fp-btn-g'},['🆕 Nuevo']);
     pjNew.addEventListener('click',()=>{
       Object.assign(S.ep,{nombre:'Proyecto Entrepiso',referencia:'',CP:0,CT:0});
+      window._fp54Abierto.EP=null;
       root.innerHTML='<div style="padding:40px;text-align:center;color:#888">⏳ Cargando...</div>';
       fp54PreloadProjs().then(function(){
         if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
@@ -25895,40 +26070,165 @@ function initFibraPlus54(){
       });
     });
     const pjList=_div('');renderPjs(pjList,'EP');
-    pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjNew,pjList);sb.appendChild(pjSec);
+    const pjTodos=_el('button',{class:'fp-btn'},['📁 Todos los proyectos']);
+    pjTodos.style.cssText='margin-top:6px';
+    const pjTodosBox=_div('');
+    pjTodos.addEventListener('click',function(){
+      if(pjTodosBox.firstChild){ pjTodosBox.innerHTML=''; pjTodos.textContent='📁 Todos los proyectos'; return; }
+      pjTodosBox.appendChild(fp54PanelProyectos('EP')); pjTodos.textContent='Ocultar la lista';
+    });
+    pjSec.append(_lbl('Nombre'),pjNom,pjSave,pjCopia,pjNew,pjList,pjTodos,pjTodosBox);sb.appendChild(pjSec);
     return sb;
   }
 
   // ── PROYECTOS ───────────────────────────────────────────────────────────────
+  // Abre un proyecto guardado: carga sus datos y repinta la pantalla. Queda marcado como
+  // «abierto», de modo que el botón de guardar actualice ESE proyecto y no cree un duplicado.
+  function fp54Abrir(id){
+    const p=_findProj(id);
+    if(!p){ _toastFp('No se encontró el proyecto'); return; }
+    const mod=p.modulo==='EP'?'ep':'cp';
+    window._fp54Abierto[p.modulo]=id;
+    window._fp54Pendiente={tab:mod,params:JSON.parse(JSON.stringify(p.params||{}))};
+    root.innerHTML='<div style="padding:40px;text-align:center;color:#888">⏳ Cargando el proyecto…</div>';
+    fp54PreloadProjs().then(function(){
+      root.innerHTML='';
+      if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){ initFibraPlus54User(); }
+      else { initFibraPlus54(); }
+      _toastFp('Proyecto abierto: '+(p.name||''));
+    });
+  }
+  window.fp54Abrir=fp54Abrir;
+  function _toastFp(m){ try{ toast(m); }catch(e){ console.log(m); } }
+  function _fechaCorta(iso){ return iso?String(iso).slice(0,16).replace('T',' '):''; }
+
   function renderPjs(container,mod){
     container.innerHTML='';
     container.dataset.fpmod=mod; // Marcar para re-encontrar el container
     const all=_listProjs().filter(p=>p.modulo===mod);
     if(!all.length){container.appendChild(_div('fp-empty',['Sin proyectos guardados.']));return;}
-    all.slice(0,10).forEach((p,i)=>{
+    const abierto=window._fp54Abierto[mod];
+    all.slice(0,6).forEach((p)=>{
       const row=_div('pj-row');
-      const info=_div('');info.append(_div('pj-name',[(mod==='CP'?'🏭 ':'🏢 ')+p.name]),_div('pj-meta',[p.saved.slice(0,16).replace('T',' ')]));
+      if(p.id===abierto) row.style.cssText='outline:2px solid #C8102E;border-radius:6px';
+      const info=_div('');
+      info.append(_div('pj-name',[(mod==='CP'?'🏭 ':'🏢 ')+p.name+(p.id===abierto?'  · abierto':'')]),
+                  _div('pj-meta',[_fechaCorta(p.saved)+(p.params&&p.params.cliente?' · '+p.params.cliente:'')]));
       const lb=_el('button',{class:'pj-btn'},['Abrir']);
-      lb.addEventListener('click',()=>{
-        Object.assign(S[mod.toLowerCase()],p.params);
-        root.innerHTML='<div style="padding:40px;text-align:center;color:#888">⏳ Cargando...</div>';
-        fp54PreloadProjs().then(function(){
-          root.innerHTML='';
-          if(SESSION&&SESSION.rol!=='superadmin'&&SESSION.rol!=='admin'){
-            initFibraPlus54User();
-          } else {
-            initFibraPlus54();
-          }
-        });
-      });
+      lb.addEventListener('click',()=>fp54Abrir(p.id));
+      // Borrar POR ID, con doble confirmación en el propio botón
       const db=_el('button',{class:'pj-btn'},['✕']);
       db.addEventListener('click',()=>{
-        _delProj(i);
-        renderPjs(container,mod);
+        if(db.dataset.ok!=='1'){ db.dataset.ok='1'; db.textContent='¿Seguro?';
+          setTimeout(function(){ db.dataset.ok=''; db.textContent='✕'; },4000); return; }
+        _delProj(p.id,function(){
+          if(window._fp54Abierto[mod]===p.id) window._fp54Abierto[mod]=null;
+          _toastFp('Proyecto eliminado'); renderPjs(container,mod);
+        });
       });
       row.append(info,lb,db);container.appendChild(row);
     });
+    if(all.length>6){
+      const mas=_div('pj-meta',['y '+(all.length-6)+' más — ábralos en «Todos los proyectos»']);
+      mas.style.cssText='padding:4px 2px;font-style:italic';
+      container.appendChild(mas);
+    }
   }
+
+  // ── TODOS LOS PROYECTOS: abrir, renombrar, duplicar y eliminar ──────────────
+  function fp54PanelProyectos(mod){
+    const caja=_div('');
+    caja.style.cssText='background:#fff;border:1px solid #E1E1E1;border-radius:8px;padding:12px;margin-top:10px';
+    let filtro='';
+    function pintar(){
+      caja.innerHTML='';
+      const tit=_div('');
+      tit.style.cssText='font-size:11px;font-weight:800;color:#C8102E;margin-bottom:8px';
+      tit.textContent='TODOS LOS PROYECTOS GUARDADOS';
+      caja.appendChild(tit);
+      const bus=_el('input',{type:'text',class:'fp-inp',placeholder:'Buscar por nombre, cliente o referencia…',value:filtro});
+      bus.style.cssText='margin-bottom:8px';
+      bus.addEventListener('input',function(){ filtro=bus.value; redibujaTabla(); });
+      caja.appendChild(bus);
+      const cont=_div(''); caja.appendChild(cont);
+      function redibujaTabla(){
+        const q=filtro.trim().toLowerCase();
+        const todos=_listProjs().filter(function(p){
+          if(!q) return true;
+          const pr=p.params||{};
+          return [p.name,pr.cliente,pr.referencia,p.uname].filter(Boolean)
+            .some(function(x){ return String(x).toLowerCase().indexOf(q)>=0; });
+        });
+        cont.innerHTML='';
+        if(!todos.length){
+          const v=_div('fp-empty',[q?'Ningún proyecto coincide con la búsqueda.':'Todavía no hay proyectos guardados.']);
+          cont.appendChild(v); return;
+        }
+        const abiertoCP=window._fp54Abierto.CP, abiertoEP=window._fp54Abierto.EP;
+        const tabla=document.createElement('table');
+        tabla.style.cssText='width:100%;border-collapse:collapse;font-size:11.5px';
+        tabla.innerHTML='<tr style="background:#3D3D3D;color:#fff">'
+          +'<th style="text-align:left;padding:5px 7px">Proyecto</th>'
+          +'<th style="text-align:left;padding:5px 7px">Módulo</th>'
+          +'<th style="text-align:left;padding:5px 7px">Referencia</th>'
+          +'<th style="text-align:left;padding:5px 7px">Guardado</th>'
+          +'<th style="text-align:left;padding:5px 7px">Por</th>'
+          +'<th style="padding:5px 7px">Acciones</th></tr>';
+        todos.forEach(function(p){
+          const pr=p.params||{};
+          const esAbierto=(p.id===abiertoCP)||(p.id===abiertoEP);
+          const tr=document.createElement('tr');
+          tr.style.cssText='border-bottom:1px solid #eee'+(esAbierto?';background:#fff6f7':'');
+          tr.innerHTML='<td style="padding:5px 7px"><b>'+_escFp(p.name)+'</b>'
+              +(esAbierto?' <span style="color:#C8102E;font-weight:800">· abierto</span>':'')
+              +(pr.cliente?'<div style="color:#888;font-size:10.5px">'+_escFp(pr.cliente)+'</div>':'')+'</td>'
+            +'<td style="padding:5px 7px">'+(p.modulo==='EP'?'🏢 Entrepiso':'🏭 Contrapiso')+'</td>'
+            +'<td style="padding:5px 7px;font-family:monospace;font-size:10.5px">'+_escFp(pr.referencia||'—')+'</td>'
+            +'<td style="padding:5px 7px;color:#666">'+_fechaCorta(p.saved)+'</td>'
+            +'<td style="padding:5px 7px;color:#666">'+_escFp(p.uname||p.uid||'—')+'</td>';
+          const td=document.createElement('td');
+          td.style.cssText='padding:5px 7px;white-space:nowrap;text-align:right';
+          function boton(txt,fn,estilo){
+            const b=_el('button',{class:'pj-btn'},[txt]);
+            b.style.cssText='margin-left:4px'+(estilo||'');
+            b.addEventListener('click',fn); td.appendChild(b); return b;
+          }
+          boton('Abrir',function(){ fp54Abrir(p.id); });
+          boton('Renombrar',function(){
+            const n=prompt('Nombre del proyecto:',p.name||'');
+            if(n===null) return;
+            const limpio=n.trim(); if(!limpio) return;
+            _renProj(p.id,limpio,function(){ _toastFp('Nombre cambiado'); redibujaTabla(); refreshPjsList('CP'); refreshPjsList('EP'); });
+          });
+          boton('Duplicar',function(){
+            _dupProj(p.id,function(){ _toastFp('Proyecto duplicado'); redibujaTabla(); refreshPjsList('CP'); refreshPjsList('EP'); });
+          });
+          const bDel=boton('Eliminar',function(){
+            if(bDel.dataset.ok!=='1'){ bDel.dataset.ok='1'; bDel.textContent='¿Seguro? Pulse otra vez';
+              setTimeout(function(){ bDel.dataset.ok=''; bDel.textContent='Eliminar'; },4000); return; }
+            _delProj(p.id,function(){
+              if(window._fp54Abierto.CP===p.id) window._fp54Abierto.CP=null;
+              if(window._fp54Abierto.EP===p.id) window._fp54Abierto.EP=null;
+              _toastFp('Proyecto eliminado'); redibujaTabla(); refreshPjsList('CP'); refreshPjsList('EP');
+            });
+          },';color:#C8102E');
+          tr.appendChild(td); tabla.appendChild(tr);
+        });
+        const env=_div(''); env.style.cssText='overflow-x:auto'; env.appendChild(tabla);
+        cont.appendChild(env);
+        const pie=_div('');
+        pie.style.cssText='font-size:10.5px;color:#777;margin-top:8px;line-height:1.5';
+        pie.textContent='Abrir carga el proyecto en la calculadora; al guardar se actualiza ese mismo proyecto, '
+          +'sin crear copias. Duplicar sirve para partir de uno existente sin tocar el original. '
+          +'Todo se guarda en la nube; el tope son 100 proyectos.';
+        cont.appendChild(pie);
+      }
+      redibujaTabla();
+    }
+    pintar();
+    return caja;
+  }
+  function _escFp(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
 
   // ── REVISIÓN DE MEMORIAS GUARDADAS ────────────────────────────────────────
   // Recalcula cada proyecto de contrapiso guardado con las fórmulas corregidas (esquina de
@@ -25940,10 +26240,10 @@ function initFibraPlus54(){
       var inp=Object.assign({},S.cp,p.params);
       var r,err=null;
       try{ r=calcularCp(inp); }catch(e){ err=e.message; }
-      if(err){ out.push({name:p.name,saved:p.saved,error:err}); return; }
+      if(err){ out.push({id:p.id,name:p.name,saved:p.saved,error:err}); return; }
       // Lo que imprimía la versión anterior: esquina = borde sin transferencia × (1+esq_pct)
       var esqAntes=r.Pu_borde_raw*(1+(inp.esq_pct||0)/100);
-      var o={name:p.name,saved:p.saved,ref:(p.params&&p.params.referencia)||'',cliente:(p.params&&p.params.cliente)||'',
+      var o={id:p.id,name:p.name,saved:p.saved,ref:(p.params&&p.params.referencia)||'',cliente:(p.params&&p.params.cliente)||'',
              h:inp.h_cm,P:inp.g1_P,placa:inp.g1_x+'×'+inp.g1_y,revisaEsq:!!inp.g1_activa&&!!inp.g1_esquina,
              Pd:r.Pd_cp,esqAntes:esqAntes,esqAhora:r.Pu_esq,
              ratAntes:r.Pd_cp>0?esqAntes/r.Pd_cp:null, ratAhora:r.Pd_cp>0?r.Pu_esq/r.Pd_cp:null,
@@ -25971,24 +26271,30 @@ function initFibraPlus54(){
       +'<b style="color:#2E7D32">'+n('ok')+'</b> sin cambio · '+n('sin-esquina')+' no revisaban esquina.</div>';
     h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10.5px">'
       +'<tr style="background:#3D3D3D;color:#fff"><th style="text-align:left;padding:4px 6px">Proyecto</th><th style="padding:4px 6px">h (cm)</th><th style="padding:4px 6px">P (kN)</th>'
-      +'<th style="padding:4px 6px">Placa (mm)</th><th style="padding:4px 6px">Razón antes</th><th style="padding:4px 6px">Razón ahora</th><th style="padding:4px 6px">Punzon.</th><th style="padding:4px 6px">Acción</th></tr>';
+      +'<th style="padding:4px 6px">Placa (mm)</th><th style="padding:4px 6px">Razón antes</th><th style="padding:4px 6px">Razón ahora</th><th style="padding:4px 6px">Punzon.</th><th style="padding:4px 6px">Acción</th><th style="padding:4px 6px"></th></tr>';
     var col={'avisar':'#C62828','documentar':'#EF6C00','ok':'#2E7D32','sin-esquina':'#888'};
     var txt={'avisar':'AVISAR AL CLIENTE','documentar':'Documentar','ok':'Sin cambio','sin-esquina':'No revisaba esquina'};
     lista.sort(function(a,b){return (a.ratAhora==null?9:a.ratAhora)-(b.ratAhora==null?9:b.ratAhora);});
     lista.forEach(function(x){
-      if(x.error){ h+='<tr><td colspan="8" style="padding:4px 6px;color:#C62828">'+x.name+' — no se pudo recalcular: '+x.error+'</td></tr>'; return; }
+      var btn=x.id?'<button class="pj-btn" data-abrir="'+_escFp(x.id)+'">Abrir</button>':'';
+      if(x.error){ h+='<tr><td colspan="8" style="padding:4px 6px;color:#C62828">'+_escFp(x.name)+' — no se pudo recalcular: '+_escFp(x.error)+'</td><td style="text-align:center">'+btn+'</td></tr>'; return; }
       h+='<tr style="border-bottom:1px solid #eee"><td style="padding:4px 6px">'+x.name+(x.cliente?' · <span style="color:#888">'+x.cliente+'</span>':'')+'</td>'
         +'<td style="text-align:center">'+fmt(x.h,1)+'</td><td style="text-align:center">'+(x.revisaEsq?fmt(x.P,1):'—')+'</td><td style="text-align:center">'+(x.revisaEsq?x.placa:'—')+'</td>'
         +'<td style="text-align:center">'+fmt(x.ratAntes,3)+'</td>'
         +'<td style="text-align:center;font-weight:800;color:'+col[x.grupo]+'">'+fmt(x.ratAhora,3)+'</td>'
         +'<td style="text-align:center">'+(x.pz?(x.pz.ok?'ok':'<b style="color:#C62828">'+(Math.max(x.pz.uso_cara,x.pz.uso_perim)*100).toFixed(0)+'%</b>'):'—')+'</td>'
-        +'<td style="text-align:center;color:'+col[x.grupo]+';font-weight:700">'+txt[x.grupo]+'</td></tr>';
+        +'<td style="text-align:center;color:'+col[x.grupo]+';font-weight:700">'+txt[x.grupo]+'</td>'
+        +'<td style="text-align:center;padding:4px 6px">'+btn+'</td></tr>';
     });
     h+='</table></div>';
     h+='<div style="font-size:10px;color:#777;margin-top:8px;line-height:1.5">La razón es capacidad ÷ demanda: cumple con 1.00 o más. «Antes» es lo que imprimía la versión anterior '
       +'(borde aumentado por la transferencia); «ahora» es la fórmula de TR-34 para esquina, que depende solo de Mn y no lleva crédito por dovelas. '
-      +'Las memorias que quedan por debajo de 0.80 necesitan un aviso técnico escrito, redactado con un ingeniero inscrito en el CFIA.</div>';
+      +'Las memorias que quedan por debajo de 0.80 necesitan un aviso técnico escrito, redactado con un ingeniero inscrito en el CFIA.'
+      +' Con «Abrir» el proyecto se carga en la calculadora para revisarlo o corregirlo.</div>';
     box.innerHTML=h;
+    Array.prototype.forEach.call(box.querySelectorAll('[data-abrir]'),function(b){
+      b.addEventListener('click',function(){ fp54Abrir(b.getAttribute('data-abrir')); });
+    });
     return box;
   }
 
@@ -26187,7 +26493,8 @@ function initFibraPlus54(){
   paneCp.append(buildSbCp(),buildMainCp());
   paneEp.append(buildSbEp(),buildMainEp());
   root.append(hdr,modTabs,paneCp,paneEp);
-  setTimeout(recalcCp,200);
+  if(_fpAbrirEp){ btnEp.click(); }
+  setTimeout(_fpAbrirEp?recalcEp:recalcCp,200);
 }
 
 window.initFibraPlus54=initFibraPlus54;
