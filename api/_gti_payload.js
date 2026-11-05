@@ -220,12 +220,42 @@ function d3(n) { return red(n, 3); }
 // ── Fechas ──────────────────────────────────────────────────────────────────
 // El manual pide YYYY-MM-DDTHH:mm:ss, sin zona. Un ISO con «Z» se lo manda a
 // GTI en UTC y la factura sale con la hora corrida seis horas.
+// Costa Rica no tiene horario de verano: siempre seis horas menos que UTC.
+const CR_MS = 6 * 3600000;
+
+// Instante actual expresado en hora de Costa Rica, como 'YYYY-MM-DDTHH:mm:ss'.
+function _ahoraCR() {
+  return new Date(Date.now() - CR_MS).toISOString().replace(/\.\d+Z$/, '');
+}
+
+// El manual pide YYYY-MM-DDTHH:mm:ss SIN zona, en hora de Costa Rica.
+//
+// Ojo con la conversión: restar seis horas solo es correcto cuando el valor
+// representa un instante real en UTC. Antes se restaban siempre, y eso corría
+// la factura al DÍA ANTERIOR cuando el documento traía solo la fecha: un
+// '2026-11-04' lo lee JavaScript como medianoche UTC, y menos seis horas da
+// '2026-11-03T18:00:00'. La fecha de un comprobante es un dato fiscal, así que
+// cada forma se trata por separado.
 function fechaGTI(v) {
-  const f = v ? new Date(v) : new Date();
+  if (v == null || v === '') return _ahoraCR();
+  const s = String(v).trim();
+
+  // 1. Solo la fecha: es un día del calendario, no un instante, y no se
+  //    convierte de zona. Si es hoy se le pone la hora actual de Costa Rica;
+  //    si es otro día, el mediodía, que nunca se desborda al día vecino.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const ahora = _ahoraCR();
+    return s + 'T' + (s === ahora.slice(0, 10) ? ahora.slice(11) : '12:00:00');
+  }
+
+  // 2. Fecha y hora sin zona: ya viene en hora local, va tal cual.
+  const sinZona = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(:\d{2})?$/.exec(s);
+  if (sinZona) return sinZona[1] + 'T' + sinZona[2] + (sinZona[3] || ':00');
+
+  // 3. Con zona declarada (Z o +/-hh:mm): ahí sí se convierte a hora de CR.
+  const f = new Date(s);
   if (isNaN(f.getTime())) return null;
-  const off = 6 * 60;   // Costa Rica, sin horario de verano
-  const l = new Date(f.getTime() - off * 60000);
-  return l.toISOString().replace(/\.\d+Z$/, '');
+  return new Date(f.getTime() - CR_MS).toISOString().replace(/\.\d+Z$/, '');
 }
 
 // ── Texto ───────────────────────────────────────────────────────────────────
