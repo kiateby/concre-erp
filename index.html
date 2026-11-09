@@ -1930,7 +1930,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261109150917';
+var APP_BUILD='20261109173627';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -31219,30 +31219,73 @@ async function _tocarPuente(){
 // el documento en Supabase para que la pantalla se actualice sola, sin que
 // el usuario tenga que recargar.
 var _sondeos={};
+// Acompaña un documento desde que sale hasta que están el XML y el PDF.
+//
+// Dos cosas que antes faltaban y obligaban al usuario a pulsar botones:
+//   · El sondeo solo LEÍA la base, sin empujar la cola. En el plan actual de
+//     Vercel el reloj automático pasa una vez por hora, así que los trabajos
+//     programados (preguntar el estado, bajar los archivos) no corrían solos.
+//   · Se detenía al quedar «aceptado», justo ANTES de que se bajaran el XML y
+//     el PDF, que es el paso siguiente. Por eso había que pedirlos a mano.
+var _avisado={};
+
 function _sondear(docId, paso){
   paso=paso||0;
-  var esperas=[4000,9000,20000,40000,75000,150000,300000];
-  if(paso>=esperas.length) return;
+  var esperas=[4000,9000,20000,40000,75000,120000,180000,300000,300000,300000];
+  if(paso>=esperas.length){ delete _sondeos[docId]; return; }
   clearTimeout(_sondeos[docId]);
   _sondeos[docId]=setTimeout(async function(){
     try{
+      await _tocarPuente();
       var r=await DB.from('fact_docs').select('*').eq('id',docId).limit(1);
       var d=(r.data||[])[0];
       if(d){
         var i=S.docs.findIndex(function(x){ return x.id===docId; });
         if(i>=0) S.docs[i]=d; else S.docs.unshift(d);
         if(S.sub==='facturas' && !S.edit) renderBody();
-        if(d.estado_hacienda==='aceptado' || d.estado_hacienda==='rechazado'
-           || d.estado_hacienda==='error'){
-          delete _sondeos[docId];
-          _toast(d.estado_hacienda==='aceptado' ? '✓ Hacienda aceptó '+(d.consecutivo||'')
-                : '⚠ '+(ESTADO_HAC[d.estado_hacienda]||{}).lbl+': '+(d.estado_hacienda_msg||''));
+
+        // El aviso de que Hacienda resolvió se da una sola vez, aunque el
+        // sondeo siga vivo esperando los archivos.
+        if(!_avisado[docId] && (d.estado_hacienda==='aceptado'
+            || d.estado_hacienda==='rechazado' || d.estado_hacienda==='error')){
+          _avisado[docId]=true;
+          _toast(d.estado_hacienda==='aceptado' ? '✓ Hacienda aceptó '+(d.consecutivo_fiscal||d.consecutivo||'')
+                : '⚠ '+((ESTADO_HAC[d.estado_hacienda]||{}).lbl||'')+': '+(d.estado_hacienda_msg||''));
+        }
+
+        // Terminado de verdad: resuelto y, si fue aceptado, con sus archivos.
+        var listo = d.estado_hacienda==='rechazado' || d.estado_hacienda==='error'
+          || (d.estado_hacienda==='aceptado' && d.xml_path && d.pdf_path);
+        if(listo){
+          delete _sondeos[docId]; delete _avisado[docId];
+          if(d.estado_hacienda==='aceptado') _toast('📄 XML y PDF guardados');
           return;
         }
       }
     }catch(e){ console.warn('_sondear:',e); }
     _sondear(docId, paso+1);
   }, esperas[paso]);
+}
+
+// Documentos que todavía no terminaron su camino: sin resolver, o aceptados a
+// los que les faltan los archivos.
+function _pendientesHacienda(){
+  return (S.docs||[]).filter(function(d){
+    if(d.en_papelera) return false;
+    if(!d.estado_hacienda || d.estado_hacienda==='borrador') return false;
+    if(d.estado_hacienda==='rechazado' || d.estado_hacienda==='error') return false;
+    if(d.estado_hacienda==='aceptado') return !(d.xml_path && d.pdf_path);
+    return true;   // en_cola, enviando, recibido
+  });
+}
+
+// Al abrir la subpestaña de facturas se retoma el acompañamiento de lo que
+// quedó a medias, por ejemplo si se recargó la página mientras Hacienda
+// resolvía. Así el usuario no tiene que pulsar nada.
+function _retomarSondeos(){
+  _pendientesHacienda().forEach(function(d){
+    if(!_sondeos[d.id]) _sondear(d.id, 0);
+  });
 }
 
 // ── Emitir: de la proforma a la factura ─────────────────────────────────────
@@ -31486,6 +31529,7 @@ function _fechaHora(iso){
 // ── SUBPESTAÑA FACTURAS ─────────────────────────────────────────────────────
 function renderFacturas(b){
   var docs=facturasEmpresa();
+  _retomarSondeos();
   b.innerHTML=
     cardPreparacion()
     +'<div class="fx-card">'
@@ -33610,7 +33654,9 @@ window.FACT={
   devolverVenta:devolverVenta, botonDevolver:botonDevolver, origenVenta:origenVenta,
   motivoNoDevolver:motivoNoDevolver, candadoLinea:candadoLinea,
   // Acceso al estado interno para las pruebas automatizadas. La aplicación no lo usa.
-  __S:function(){ return S; }
+  __S:function(){ return S; },
+  __sondeos:function(){ return Object.keys(_sondeos); },
+  __pendientes:function(){ return _pendientesHacienda().map(function(d){ return d.id; }); }
 };
 
 // ── Punto de entrada (lo llama buildAdminTabs) ──────────────────────────────
