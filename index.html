@@ -1930,7 +1930,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261103160014';
+var APP_BUILD='20261109150917';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -29184,6 +29184,9 @@ async function guardarProforma(){
     if(idx>=0) S.docs[idx]=copia; else S.docs.unshift(copia);
     S.dirty=false;
     _toast('✅ Proforma '+d.consecutivo+' guardada');
+    // Guardar cierra el editor y devuelve al listado de proformas, para ver de
+    // una la proforma recién guardada en su lugar.
+    S.edit=null; S.lineas=[]; S.adjuntos=[];
     renderBody();
   }catch(e){
     console.error('guardarProforma:',e);
@@ -30690,11 +30693,25 @@ function modalCliente(c){
   renderFormCliente(esNuevo);
 }
 
+// El aviso de coincidencia con el CRM. Va aparte porque es lo único del
+// formulario que cambia mientras se escribe, y así se puede refrescar solo
+// este recuadro sin volver a dibujar los campos.
+function _crmAvisoHtml(it){
+  var coin=_crmCoincidencia(it);
+  return coin
+    ? '<div style="margin-top:11px;padding:9px 11px;border-radius:7px;background:rgba(34,197,94,.08);'
+      +'border:1px solid rgba(34,197,94,.3);font-size:11.5px;line-height:1.55">'
+      +'<b style="color:var(--green)">Coincide con el CRM</b> por '+coin.como+': «'+_esc(coin.cl.nombreEmpresa)+'»'
+      +'<div style="color:var(--text3);font-size:10.5px;margin-top:3px">'
+      +'Se guarda el vínculo. Los datos comerciales del CRM no se modifican.</div></div>'
+    : '<div style="margin-top:11px;font-size:11px;color:var(--text3)">'
+      +'No coincide con ningún cliente del CRM. Se guarda solo en Facturación.</div>';
+}
+
 function renderFormCliente(esNuevo){
   var el=document.getElementById('fact-cli-form'); if(!el) return;
   var it=S.cliEdit;
   var t=_tipoIdent(it.tipo_identificacion);
-  var coin=_crmCoincidencia(it);
 
   el.innerHTML=
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
@@ -30719,21 +30736,14 @@ function renderFormCliente(esNuevo){
         +'<div style="font-size:9.5px;color:var(--text3);margin-top:2px">'
           +(t.dig[0]===t.dig[1]?t.dig[0]+' dígitos':t.dig[0]+' a '+t.dig[1]+' dígitos')
           +' · se guarda sin guiones</div>')
-      +campo('Nombre o razón social *','<input class="fx-i" value="'+_esc(it.nombre||'')+'"'
+      +campo('Nombre o razón social *','<input class="fx-i" id="fcli-nombre" value="'+_esc(it.nombre||'')+'"'
         +' oninput="FACT.setCli(\'nombre\',this.value)">')
-      +campo('Correo electrónico *','<input class="fx-i" type="email" value="'+_esc(it.correo||'')+'"'
+      +campo('Correo electrónico *','<input class="fx-i" id="fcli-correo" type="email" value="'+_esc(it.correo||'')+'"'
         +' oninput="FACT.setCli(\'correo\',this.value)">')
     +'</div>'
 
     // ── Coincidencia con el CRM ──
-    +(coin
-      ? '<div style="margin-top:11px;padding:9px 11px;border-radius:7px;background:rgba(34,197,94,.08);'
-        +'border:1px solid rgba(34,197,94,.3);font-size:11.5px;line-height:1.55">'
-        +'<b style="color:var(--green)">Coincide con el CRM</b> por '+coin.como+': «'+_esc(coin.cl.nombreEmpresa)+'»'
-        +'<div style="color:var(--text3);font-size:10.5px;margin-top:3px">'
-        +'Se guarda el vínculo. Los datos comerciales del CRM no se modifican.</div></div>'
-      : '<div style="margin-top:11px;font-size:11px;color:var(--text3)">'
-        +'No coincide con ningún cliente del CRM. Se guarda solo en Facturación.</div>')
+    +'<div id="fcli-crm">'+_crmAvisoHtml(it)+'</div>'
 
     // ── Opcionales ──
     +'<div style="margin-top:16px;border-top:1px solid var(--border);padding-top:13px">'
@@ -30798,11 +30808,18 @@ function listaCopias(){
 function setCli(campo, val){
   if(campo==='tipo_identificacion') S.cliEdit[campo]=_n(val);
   else S.cliEdit[campo]=val;
-  if(campo==='tipo_identificacion' || campo==='identificacion' || campo==='nombre'){
-    // el recuadro del CRM y la ayuda de dígitos dependen de estos
+
+  // Al escribir NO se redibuja el formulario: el navegador destruye el campo y
+  // lo vuelve a crear, y el cursor se pierde después de cada tecla — era lo que
+  // pasaba al digitar el nombre o la razón social. Solo se refresca el recuadro
+  // del CRM, que es lo único que depende de lo que se va escribiendo.
+  if(campo==='tipo_identificacion'){
+    // El tipo sí redibuja: es un desplegable, no se escribe en él, y de él
+    // dependen el formato esperado de la cédula y la ayuda de dígitos.
     renderFormCliente(!S.clientes.find(function(x){ return x.id===S.cliEdit.id; }));
-    var inp=document.getElementById('fcli-ident');
-    if(inp && campo==='identificacion'){ inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  } else if(campo==='identificacion' || campo==='nombre'){
+    var box=document.getElementById('fcli-crm');
+    if(box) box.innerHTML=_crmAvisoHtml(S.cliEdit);
   }
 }
 function setProv(v){
@@ -33591,7 +33608,9 @@ window.FACT={
   quitarLineaCompra:quitarLineaCompra, emitirCompra:emitirCompra,
   // Devolver una venta a su proforma o factura, liberando el candado
   devolverVenta:devolverVenta, botonDevolver:botonDevolver, origenVenta:origenVenta,
-  motivoNoDevolver:motivoNoDevolver, candadoLinea:candadoLinea
+  motivoNoDevolver:motivoNoDevolver, candadoLinea:candadoLinea,
+  // Acceso al estado interno para las pruebas automatizadas. La aplicación no lo usa.
+  __S:function(){ return S; }
 };
 
 // ── Punto de entrada (lo llama buildAdminTabs) ──────────────────────────────
