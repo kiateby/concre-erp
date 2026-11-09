@@ -720,15 +720,19 @@ function leerEmision(datos) {
 
 // ── Lectura de EstadoHacienda ───────────────────────────────────────────────
 // Contesta { Codigo: "100", Respuesta, Detalle }. Los códigos son de la página
-// 56 del manual, y cada uno dice qué hacer: los 101, 105, 106 y 108 son
-// «todavía no», así que el documento sigue en camino y hay que volver a
-// preguntar; el 104 es «GTI no lo tiene», que es un error de verdad.
+// 56 del manual: los 101, 104, 105, 106, 107 y 108 son «todavía no», así que el
+// documento sigue en camino y hay que volver a preguntar. Solo el 102 y el 103
+// son resoluciones negativas de Hacienda.
 const ESTADO_HACIENDA = {
   100: { estado: 'aceptado',  txt: 'Aceptado por Hacienda' },
   101: { estado: 'recibido',  txt: 'En proceso en Hacienda' },
   102: { estado: 'rechazado', txt: 'Rechazado por Hacienda' },
   103: { estado: 'error',     txt: 'Hacienda reportó un error en el comprobante' },
-  104: { estado: 'error',     txt: 'GTI no encontró el documento' },
+  // El 104 se trataba como error definitivo y no lo es: GTI lo devuelve en los
+  // primeros segundos, mientras el documento aún no sale hacia Hacienda, y el
+  // mensaje que acompaña empieza con «...aún no». Pintarlo de rojo asustaba al
+  // usuario por algo que se resuelve solo en la siguiente consulta.
+  104: { estado: 'recibido',  txt: 'GTI todavía no lo ha enviado a Hacienda' },
   105: { estado: 'recibido',  txt: 'Pendiente de enviar a Hacienda' },
   106: { estado: 'recibido',  txt: 'Hacienda todavía no ha respondido' },
   107: { estado: 'recibido',  txt: 'Hacienda reporta un estado desconocido' },

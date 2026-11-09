@@ -25,6 +25,8 @@ const P = require('./_gti_payload');
 const BUCKET = 'fact-comprobantes';
 const MAX_POR_CORRIDA = 5;      // Vercel corta a los 30 s; 5 caben de sobra
 const MAX_INTENTOS = 4;
+// Hasta cuándo se le sigue preguntando a Hacienda por un documento sin resolver.
+const HORAS_SONDEO = 2;
 
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -242,6 +244,21 @@ async function consultarEstado(t) {
       estado: 'pendiente', correr_en: new Date(Date.now() + 45000).toISOString(),
       usuario_id: t.usuario_id, usuario_nombre: t.usuario_nombre,
     }]);
+  } else if (e.estado !== 'aceptado' && e.estado !== 'rechazado') {
+    // Todavía sin resolver. Se programa otra consulta, porque si no el
+    // documento se queda en «En Hacienda» hasta que alguien pulse reconsultar.
+    // Solo se encola si no hay ya otra esperando: de lo contrario las tres
+    // consultas iniciales se multiplicarían en cada vuelta.
+    const pendientes = await G.sbGet('fact_emisiones',
+      'doc_id=eq.' + t.doc_id + '&accion=eq.estado&estado=eq.pendiente&limit=1');
+    const desde = doc.enviado_en ? new Date(doc.enviado_en).getTime() : Date.now();
+    if (!pendientes.length && Date.now() - desde < HORAS_SONDEO * 3600000) {
+      await G.sbInsert('fact_emisiones', [{
+        empresa_id: doc.empresa_id, doc_id: t.doc_id, accion: 'estado',
+        estado: 'pendiente', correr_en: new Date(Date.now() + 600000).toISOString(),
+        usuario_id: t.usuario_id, usuario_nombre: t.usuario_nombre,
+      }]);
+    }
   }
 
   return { id: t.id, ok: true, estado: e.estado, codigo: e.codigo };
