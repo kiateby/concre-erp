@@ -268,6 +268,16 @@ function ent(v) {
   return isFinite(n) ? n : null;
 }
 
+// ── El código de actividad ──────────────────────────────────────────────────
+// GTI lo maneja con un decimal: la actividad 4390 se declara «4390.0», tal como
+// aparece en «Actividades Económicas» del portal. Enviarla como «4390» pelado
+// no la reconoce. Si en la ficha de la empresa ya viene con punto, se respeta.
+function actividadGTI(a) {
+  const t = txt(a);
+  if (!t) return t;
+  return /^\d+$/.test(t) ? t + '.0' : t;
+}
+
 // ── El receptor ─────────────────────────────────────────────────────────────
 //
 // En una factura de compra (FEC) el receptor es el VENDEDOR, que se digita en
@@ -425,10 +435,12 @@ function linea(l, i, doc) {
 
   if (pct > 0) {
     montoImp = d2(neto * pct / 100);
+    // GTI nombra este campo MontoImp. Se llamaba MontoImpuesto y por eso el
+    // impuesto de cada línea no se leía.
     const imp = {
       CodigoImp: IMP_IVA,
       PorcentajeImp: red(pct, 2),
-      MontoImpuesto: montoImp,
+      MontoImp: montoImp,
       CodigoTarifa: TARIFA[pct] != null ? TARIFA[pct] : TARIFA[13],
     };
 
@@ -528,28 +540,35 @@ function armar(doc, lineas, cliente, empresa, cred) {
   const totalImpuesto  = d2(T.impuesto - T.exonerado);
   const totalComprobante = d2(totalVentaNeta + totalImpuesto);
 
+  // Estos seis van siempre: son los que GTI usó al emitir el documento de
+  // prueba de esta misma cuenta. TotalMontoImpuesto y TotalImpuesto llevan el
+  // mismo valor; GTI espera los dos.
   const Totales = {
-    TotalServGravado:   d2(T.servGravado),
-    TotalServExento:    d2(T.servExento),
-    TotalServExonerado: d2(T.servExonerado),
-    TotalMercaGravada:  d2(T.mercaGravada),
-    TotalMercaExenta:   d2(T.mercaExenta),
-    TotalMercaExonerada:d2(T.mercaExonerada),
-    TotalGravado:       totalGravado,
-    TotalExento:        totalExento,
-    TotalExonerado:     totalExonerado,
-    TotalOtrosCargos:   0,
-    TotalIVADevuelto:   0,
-    TotalVenta:         totalVenta,
-    TotalDescuento:     totalDescuento,
-    TotalVentaNeta:     totalVentaNeta,
-    TotalImpuesto:      totalImpuesto,
-    TotalComprobante:   totalComprobante,
-    TotalNoSujeto:      0,
-    TotalServNoSujeto:  0,
-    TotalMercaNoSujeta: 0,
-    TotalImpuestoAsumidoFabrica: 0,
+    TotalGravado:        totalGravado,
+    TotalVenta:          totalVenta,
+    TotalVentaNeta:      totalVentaNeta,
+    TotalMontoImpuesto:  totalImpuesto,
+    TotalImpuesto:       totalImpuesto,
+    TotalComprobante:    totalComprobante,
   };
+
+  // Los baldes y los descuentos solo se declaran cuando tienen monto. Antes se
+  // mandaban veinte campos, la mayoría en cero y algunos con nombres que GTI no
+  // reconoce.
+  const siTiene = {
+    TotalServGravado:    d2(T.servGravado),
+    TotalServExento:     d2(T.servExento),
+    TotalServExonerado:  d2(T.servExonerado),
+    TotalMercaGravada:   d2(T.mercaGravada),
+    TotalMercaExenta:    d2(T.mercaExenta),
+    TotalMercaExonerada: d2(T.mercaExonerada),
+    TotalExento:         totalExento,
+    TotalExonerado:      totalExonerado,
+    TotalDescuento:      totalDescuento,
+  };
+  for (const k of Object.keys(siTiene)) {
+    if (siTiene[k]) Totales[k] = siTiene[k];
+  }
 
   // ── Encabezado ──
   const numCuenta = ent(cred && cred.cuenta) || ent(empresa && empresa.gti_num_cuenta);
@@ -569,15 +588,15 @@ function armar(doc, lineas, cliente, empresa, cred) {
   const cond = ent(doc.cond_venta) || COND_VENTA.contado;
   const moneda = MONEDA[txt(doc.moneda).toUpperCase()] || MONEDA.CRC;
 
+  // NumCuenta NO va acá: va en la RAÍZ del cuerpo, fuera de Documentos.
   const Encabezado = {
-    NumCuenta: numCuenta,
     TipoDoc: TIPO_DOC[doc.tipo_doc] != null ? TIPO_DOC[doc.tipo_doc] : TIPO_DOC.FE,
     CondicionVenta: cond,
     Sucursal: ent(empresa && empresa.casa_matriz) || 1,
     Terminal: ent(empresa && empresa.punto_venta) || 1,
     Moneda: moneda,
     SituacionEnvio: SITUACION_NORMAL,
-    CodigoActividad: actividad,
+    CodigoActividad: actividadGTI(actividad),
     // La clave de 50 dígitos y el consecutivo de 20 los asigna GTI: el manual
     // los marca opcionales y mutuamente dependientes. No se mandan.
     // NumeroFactura es NUESTRO consecutivo ('FA-12'), el que GTI devuelve como
@@ -607,12 +626,14 @@ function armar(doc, lineas, cliente, empresa, cred) {
   // Medios de pago: obligatorio salvo en las condiciones de crédito.
   if (cond !== COND_VENTA.credito) {
     const mp = ent(doc.medio_pago) || MEDIO_PAGO.efectivo;
-    Encabezado.MediosPagos = [{
-      TipoMedioPago: mp,
+    // El nodo se llama MedioPagos, en singular en «Medio», y va DENTRO del
+    // encabezado. El tipo viaja como texto.
+    Encabezado.MedioPagos = [{
+      TipoMedioPago: String(mp),
       TotalMedioPago: totalComprobante,
     }];
     if (mp === MEDIO_PAGO.otros) {
-      Encabezado.MediosPagos[0].MedioPagoOtros = txt(doc.condiciones, 100) || 'Otro medio de pago';
+      Encabezado.MedioPagos[0].MedioPagoOtros = txt(doc.condiciones, 100) || 'Otro medio de pago';
     }
   }
 
@@ -620,23 +641,33 @@ function armar(doc, lineas, cliente, empresa, cred) {
   // datos de CONCRE los toma GTI de la cuenta: no se envían, y mandarlos de
   // más era justamente lo que estaba mal antes.
 
-  const cuerpo = {
+  // El Receptor va DENTRO del encabezado, no al lado.
+  Encabezado.Receptor = (doc.tipo_doc === 'FEC') ? receptor(receptorDeDoc(doc), doc)
+                                                 : receptor(cliente, doc);
+
+  // ── La forma del cuerpo ──
+  // La raíz lleva NumCuenta y un arreglo Documentos; el comprobante va adentro.
+  // Así es como GTI compara la cuenta del cuerpo con la del parámetro pNumCuenta
+  // de la dirección: con NumCuenta enterrado en el encabezado leía vacío y
+  // devolvía «La cuenta de carga y parámetro no coinciden».
+  // El arreglo de líneas se llama Lineas, no Detalle.
+  const documento = {
     Encabezado: Encabezado,
-    Receptor: (doc.tipo_doc === 'FEC') ? receptor(receptorDeDoc(doc), doc)
-                                       : receptor(cliente, doc),
-    Detalle: det.map(l => { const o = Object.assign({}, l); delete o.__calc; return o; }),
+    Lineas: det.map(l => { const o = Object.assign({}, l); delete o.__calc; return o; }),
     Totales: Totales,
     Extra: { EsVersion4_4: true },       // obligatorio para facturar en 4.4
   };
 
-  if (doc.notas) cuerpo.Otros = { Notas: txt(doc.notas, 500) };
+  if (doc.notas) documento.Otros = { Notas: txt(doc.notas, 500) };
+
+  const cuerpo = { NumCuenta: numCuenta, Documentos: [documento] };
 
   // ── Referencia, para notas de crédito y débito ──
   // Sin esto la nota no se liga a nada y Hacienda la rechaza.
   if (doc.ref_clave) {
     const razon = txt(doc.ref_razon, 200);
     if (!razon) throw new Error('La nota no tiene el motivo escrito, y Hacienda lo exige.');
-    cuerpo.Referencia = {
+    documento.Referencia = {
       TipoDocRef: tipoDocReferido(doc.ref_tipo_doc, doc.tipo_doc),
       NumeroRef: txt(doc.ref_clave, 50),
       AccionRef: codigoReferencia(doc.ref_codigo),
