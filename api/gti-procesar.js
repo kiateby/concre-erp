@@ -28,6 +28,19 @@ const MAX_INTENTOS = 4;
 // Hasta cuándo se le sigue preguntando a Hacienda por un documento sin resolver.
 const HORAS_SONDEO = 2;
 
+// Cada cuánto se vuelve a preguntar, según lo que lleve esperando el documento.
+// Al principio seguido, porque es cuando el usuario está mirando la pantalla;
+// después más espaciado, para no castigar el servicio de GTI. Era fijo en diez
+// minutos, y eso hacía que un documento recién emitido se viera congelado hasta
+// que alguien pulsara «Actualizar».
+function esperaSiguienteConsulta(llevaEsperando) {
+  const m = llevaEsperando / 60000;
+  if (m < 2)  return 20000;    // 20 segundos
+  if (m < 5)  return 60000;    // 1 minuto
+  if (m < 15) return 180000;   // 3 minutos
+  return 600000;               // 10 minutos
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
 
@@ -252,10 +265,11 @@ async function consultarEstado(t) {
     const pendientes = await G.sbGet('fact_emisiones',
       'doc_id=eq.' + t.doc_id + '&accion=eq.estado&estado=eq.pendiente&limit=1');
     const desde = doc.enviado_en ? new Date(doc.enviado_en).getTime() : Date.now();
+    const espera = esperaSiguienteConsulta(Date.now() - desde);
     if (!pendientes.length && Date.now() - desde < HORAS_SONDEO * 3600000) {
       await G.sbInsert('fact_emisiones', [{
         empresa_id: doc.empresa_id, doc_id: t.doc_id, accion: 'estado',
-        estado: 'pendiente', correr_en: new Date(Date.now() + 600000).toISOString(),
+        estado: 'pendiente', correr_en: new Date(Date.now() + espera).toISOString(),
         usuario_id: t.usuario_id, usuario_nombre: t.usuario_nombre,
       }]);
     }
