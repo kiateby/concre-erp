@@ -326,9 +326,12 @@ function receptor(cli, doc) {
       throw new Error('La factura de compra necesita la actividad económica del vendedor '
         + '(Hacienda la exige en este tipo de comprobante).');
     }
-    r.ActividadEconomica = act;
+    // Va con el mismo formato que la del emisor: GTI la quiere con decimal
+    // («4390.0»). Enviada como «4390» responde «código de actividad económica
+    // del receptor inválido».
+    r.ActividadEconomica = actividadGTI(act);
   } else if (cli.actividad_economica) {
-    r.ActividadEconomica = txt(cli.actividad_economica, 6);
+    r.ActividadEconomica = actividadGTI(txt(cli.actividad_economica, 6));
   }
 
   if (cli.nombre_comercial) r.NombComercial = txt(cli.nombre_comercial, 80);
