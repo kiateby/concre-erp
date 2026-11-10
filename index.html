@@ -1742,7 +1742,8 @@ async function loadAllDataFromDB(){
       window._fondosConfCache = {};   // config de fondos por usuario (desde fase 1)
       window._vacRenewCache = {};     // flags de renovación anual de vacaciones
       window._preciosCache = {};      // pestaña Precios e Información
-      window._vacLogCache = {};       // historial de movimientos de vacaciones por usuario
+      window._vacLogCache = {};       // historial anterior al libro de movimientos
+      window._vacMovCache = {};       // libro de movimientos de vacaciones (fuente de verdad)
       configs.data.forEach(function(row){
         if(row.clave==='catalogo'){
           var lc=row.valor;
@@ -1904,10 +1905,12 @@ async function loadAllDataFromDB(){
         liqSubs.forEach(function(sub){
           promises.push(loadLiqFromDB(sub.id));
         });
+        promises.push(loadVacMovs(null));
       } else {
         // Usuario regular: solo sus propios datos (queries filtradas por RLS/uid)
         promises.push(loadVentasFromDB(uid));
         promises.push(loadVacFromDB(uid));
+        promises.push(loadVacMovs(uid));
         promises.push(loadFondosFromDB(uid));
         promises.push(loadGastosFromDB(uid));
         // Usa reloadNotifications: lee la tabla Y el respaldo en configuracion
@@ -1930,7 +1933,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261110162053';
+var APP_BUILD='20261110110905';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -5234,6 +5237,29 @@ async function loadAllRowsEq(tabla, col, val, orderCol){
   return {data:all, error:null};
 }
 
+// ── LIBRO DE MOVIMIENTOS DE VACACIONES ──────────────────────────────────────
+// El saldo de vacaciones NO es un número que el navegador escriba: es la suma
+// de esta tabla. Cada movimiento lleva una llave única (mov_id) y la suma la
+// hace la base de datos (función vac_mover). Así un mismo día no se puede
+// acreditar ni descontar dos veces, aunque haya doble clic, reintento o dos
+// pestañas abiertas.
+async function loadVacMovs(uid){
+  if(!window._vacMovCache) window._vacMovCache={};
+  try{
+    var r = uid
+      ? await loadAllRowsEq('vacaciones_movimientos','uid',uid)
+      : await loadAllRows('vacaciones_movimientos');
+    if(r.error) return;
+    var porUid={};
+    (r.data||[]).forEach(function(x){ (porUid[x.uid]=porUid[x.uid]||[]).push(x); });
+    Object.keys(porUid).forEach(function(k){
+      porUid[k].sort(function(a,b){ return String(a.creado_en||'')<String(b.creado_en||'')?-1:1; });
+    });
+    if(uid) window._vacMovCache[uid]=porUid[uid]||[];
+    else window._vacMovCache=porUid;
+  }catch(e){ console.warn('loadVacMovs:',e); }
+}
+
 function todayCR(){
   return new Date().toLocaleDateString('en-CA',{timeZone:'America/Costa_Rica'});
   // Devuelve 'YYYY-MM-DD' — formato correcto para inputs type=date
@@ -6355,7 +6381,9 @@ function setVacData(uid,d){
   window._vacCache[uid]=d;
   var _payload={
     uid:uid,
-    saldo:d.saldo||0,
+    // El saldo NO se escribe desde aquí. Vive en el libro de movimientos y solo
+    // lo mueve vac_mover, dentro de la base de datos. Escribirlo desde el
+    // navegador en cada guardado fue lo que regaló un día de vacaciones.
     cedula:d.cedula||'',
     fecha_nac:d.fechaNac||'',
     sexo:d.sexo||'',
@@ -6377,15 +6405,16 @@ function setVacData(uid,d){
       // (garantiza que la UI refleja el dato real, no el dato local)
       DB.from('vacaciones_saldo').select('*').eq('uid',uid).single().then(function(chk){
         if(!chk.error&&chk.data){
-          window._vacCache[uid]=Object.assign({},window._vacCache[uid],{
-            saldo:chk.data.saldo||0,
-            cedula:chk.data.cedula||'',
-            fechaNac:chk.data.fecha_nac||'',
-            sexo:chk.data.sexo||'',
-            fechaIngreso:chk.data.fecha_ingreso||'',
-            diasAnuales:chk.data.dias_anuales||0,
-            sabadoLibre:chk.data.sabado_libre||false
-          });
+          // Se MUTA el objeto que ya está en el cache (no se reemplaza), para no
+          // dejar vivas referencias viejas, y NUNCA se toca el saldo: ese solo
+          // cambia cuando vac_mover devuelve el nuevo total.
+          var _c=window._vacCache[uid]||(window._vacCache[uid]={saldo:0,requests:[]});
+          _c.cedula=chk.data.cedula||'';
+          _c.fechaNac=chk.data.fecha_nac||'';
+          _c.sexo=chk.data.sexo||'';
+          _c.fechaIngreso=chk.data.fecha_ingreso||'';
+          _c.diasAnuales=chk.data.dias_anuales||0;
+          _c.sabadoLibre=chk.data.sabado_libre||false;
         }
       });
     });
@@ -6529,23 +6558,37 @@ function getVacSaldo(uid){
   return parseFloat((vd.saldo||0).toFixed(1));
 }
 
-function adjustVacSaldo(uid,delta,reason){
-  const vd=getVacData(uid);
-  if(!vd.saldo) vd.saldo=0;
-  // Allow negative saldo (debt) - it will be netted on next renewal
-  vd.saldo=parseFloat((vd.saldo+delta).toFixed(1));
-  if(!vd.log) vd.log=[];
-  const entry={date:new Date().toISOString(),delta:parseFloat(delta.toFixed(1)),reason:reason||'',
-    saldo:vd.saldo, by:(SESSION?(SESSION.nombre||SESSION.id):'sistema')};
-  vd.log.push(entry);
-  setVacData(uid,vd);
-  // Historial PERSISTENTE en la nube (configuracion 'vac_log_{uid}') — visible para usuario y superadmin
-  if(!window._vacLogCache) window._vacLogCache={};
-  var log=window._vacLogCache[uid]||[];
-  log.push(entry);
-  if(log.length>200) log=log.slice(-200);
-  window._vacLogCache[uid]=log;
-  _saveToSupabase('vac_log_'+uid, log, '');
+// Mueve el saldo de vacaciones. La suma ocurre DENTRO de la base de datos
+// (función vac_mover), nunca en el navegador, y cada movimiento lleva una llave
+// única: si el mismo movimiento se intenta registrar dos veces — doble clic,
+// reintento, dos pestañas abiertas, red lenta — la base lo ignora y el saldo
+// no se mueve de más. Devuelve el saldo nuevo, o null si falló.
+async function adjustVacSaldo(uid,delta,reason,movId,reqId){
+  delta=parseFloat(parseFloat(delta||0).toFixed(1));
+  var id=movId||('ajuste_'+uid+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,7));
+  var por=(typeof SESSION!=='undefined'&&SESSION)?(SESSION.nombre||SESSION.id):'sistema';
+  try{
+    var r=await DB.rpc('vac_mover',{
+      p_mov_id:id, p_uid:uid, p_delta:delta,
+      p_motivo:reason||'', p_req_id:reqId||null, p_por:por
+    });
+    if(r.error) throw r.error;
+    var nuevo=parseFloat(parseFloat(r.data||0).toFixed(1));
+    if(!window._vacCache) window._vacCache={};
+    var vd=window._vacCache[uid]||(window._vacCache[uid]={saldo:0,requests:[]});
+    vd.saldo=nuevo;
+    if(!window._vacMovCache) window._vacMovCache={};
+    var lista=window._vacMovCache[uid]||(window._vacMovCache[uid]=[]);
+    if(!lista.some(function(m){ return m.mov_id===id; })){
+      lista.push({mov_id:id, uid:uid, delta:delta, motivo:reason||'',
+        req_id:reqId||null, creado_por:por, creado_en:new Date().toISOString()});
+    }
+    return nuevo;
+  }catch(e){
+    console.error('adjustVacSaldo:',e);
+    try{ toast('❌ No se pudo mover el saldo de vacaciones: '+(e.message||e)); }catch(_){}
+    return null;
+  }
 }
 
 // ── ALERTA PARA SUPERADMINS: celebraciones de colaboradores hoy ──────────────
@@ -6784,7 +6827,8 @@ function checkAnniversaries(){
         // Marcar el flag ANTES de ajustar el saldo (anti doble-ejecución)
         window._vacRenewCache[u.id]={year:today.getFullYear(),at:new Date().toISOString(),dias:diasAnuales};
         _saveToSupabase('vac_renew_'+u.id, window._vacRenewCache[u.id], '');
-        adjustVacSaldo(u.id, diasAnuales, 'Renovación anual de vacaciones');
+        adjustVacSaldo(u.id, diasAnuales, 'Renovación anual de vacaciones',
+          'renov_'+u.id+'_'+today.getFullYear());
         vd.lastRenewal=dkey(today);
         setVacData(u.id,vd);
         addNotification(u.id,'🎉','¡Se renovaron tus vacaciones!','Se agregaron '+diasAnuales+' días hábiles a tu saldo.');
@@ -6827,7 +6871,8 @@ function fixInflatedVacSaldos(){
         var delta=parseFloat((correcto-saldo).toFixed(1));
         adjustVacSaldo(u.id, delta,
           'Corrección del sistema: se eliminaron renovaciones duplicadas (saldo real anterior '
-          +base+' + '+anuales+' del aniversario = '+correcto+')');
+          +base+' + '+anuales+' del aniversario = '+correcto+')',
+          'fixinfla_'+u.id+'_'+new Date().getFullYear());
         window._vacRenewCache[u.id]={year:new Date().getFullYear(),at:new Date().toISOString(),dias:anuales,fixed:true};
         _saveToSupabase('vac_renew_'+u.id, window._vacRenewCache[u.id], '');
         corregidos.push(u.nombre+': '+saldo+' → '+correcto);
@@ -6849,62 +6894,38 @@ function fixInflatedVacSaldos(){
 // ── HISTORIAL DE VACACIONES: generación y uso ────────────────────────────────
 // Combina el log persistente (renovaciones, correcciones, ajustes) con las
 // solicitudes aprobadas históricas (uso previo al log). Orden: más nuevo primero.
+// Historial de saldo. Se arma con hechos registrados, no con reconstrucciones:
+//   1) el libro de movimientos (fuente de verdad desde noviembre 2026), y
+//   2) el historial anterior al libro, tal cual quedó guardado.
+// Antes se "adivinaban" entradas cruzando motivos con fechas, y por eso unas
+// mismas vacaciones aparecían dos veces (programadas + tomadas).
 function buildVacHistorial(uid){
   var out=[];
-  var vd=getVacData(uid)||{};
-  var anuales=parseFloat(vd.diasAnuales||0);
-  var saldoActual=parseFloat(vd.saldo||0);
-  var log=(window._vacLogCache||{})[uid]||[];
-  var thisYear=new Date().getFullYear();
+  var movs=((window._vacMovCache||{})[uid]||[]).slice();
+  var log =((window._vacLogCache||{})[uid]||[]).slice();
 
-  // 1) Movimientos del log persistente (renovaciones, ajustes, correcciones, aprobaciones nuevas)
+  // 1) Libro de movimientos, con el saldo acumulado real en cada paso
+  movs.sort(function(a,b){ return String(a.creado_en||'')<String(b.creado_en||'')?-1:1; });
+  var acum=0;
+  movs.forEach(function(m){
+    var d=parseFloat(m.delta)||0;
+    acum=parseFloat((acum+d).toFixed(1));
+    var esInicial=/^inicial_/.test(String(m.mov_id||''));
+    out.push({date:m.creado_en, delta:d, desc:m.motivo||'Movimiento',
+      saldo:acum, by:m.creado_por||'',
+      icon:(esInicial?'🏁':(d>0?'🟢':'🔴')), esInicial:esInicial});
+  });
+
+  // 2) Historial anterior al libro. Su efecto neto ya está incluido arriba, en
+  //    el movimiento "saldo inicial"; se conserva solo para poder consultarlo.
   log.forEach(function(e){
-    out.push({date:e.date,delta:e.delta,desc:e.reason||'Movimiento',saldo:e.saldo,by:e.by||'',icon:(e.delta>0?'🟢':'🔴')});
+    out.push({date:e.date, delta:parseFloat(e.delta)||0, desc:e.reason||'Movimiento',
+      saldo:(e.saldo!=null?parseFloat(e.saldo):null), by:e.by||'',
+      icon:(parseFloat(e.delta)>0?'🟢':'🔴'), previo:true});
   });
 
-  // 2) Uso histórico: solicitudes aprobadas que no están en el log
-  (vd.requests||[]).forEach(function(r){
-    var st=r.status||r.estado||'';
-    if(st!=='approved'&&st!=='aprobado') return;
-    var desde=r.desde||r.fechaInicio||'';
-    var yaEnLog=log.some(function(e){ return desde&&(e.reason||'').indexOf(desde)>=0; });
-    if(yaEnLog) return;
-    out.push({date:(r.approvedAt||r.created||desde||'')+'',delta:-(parseFloat(r.dias)||0),
-      desc:'Vacaciones tomadas del '+(desde?formatDate(parseDate(desde)):'—')
-        +((r.hasta&&r.hasta!==desde)?' al '+formatDate(parseDate(r.hasta)):''),
-      saldo:null, by:r.aprobadoPor||r.approvedBy||'', icon:'🔴'});
-  });
-
-  // 3) Generación por anualidad de ESTE año: si el flag de renovación existe
-  //    pero el movimiento no quedó en el log (ej. corrección por SQL), sintetizarlo
-  var renewFlag=(window._vacRenewCache||{})[uid]||{};
-  if(renewFlag.year===thisYear && anuales>0){
-    var renewEnLog=log.some(function(e){
-      return (e.reason||'').indexOf('Renovación')>=0
-        && e.date && String(e.date).indexOf(String(thisYear))===0;
-    });
-    // La corrección del sistema ya incluye la renovación en su descripción — también cuenta
-    var correccionEnLog=log.some(function(e){ return (e.reason||'').indexOf('Corrección')>=0; });
-    if(!renewEnLog && !correccionEnLog){
-      var anivDate=renewFlag.at||'';
-      if(!anivDate && vd.fechaIngreso){
-        var ing=parseDate(vd.fechaIngreso);
-        if(ing&&!isNaN(ing.getTime())) anivDate=thisYear+'-'+pad(ing.getMonth()+1)+'-'+pad(ing.getDate());
-      }
-      out.push({date:anivDate,delta:(renewFlag.dias||anuales),
-        desc:'Generación por anualidad — aniversario '+thisYear+' (+'+(renewFlag.dias||anuales)+' días anuales)',
-        saldo:null, by:'sistema', icon:'🎉'});
-    }
-  }
-
-  // 4) Saldo inicial: reconstruido como residuo (saldo actual − todos los movimientos conocidos)
-  var sumDeltas=out.reduce(function(s,e){ return s+(e.delta||0); },0);
-  var inicial=parseFloat((saldoActual-sumDeltas).toFixed(1));
-  out.push({date:(vd.fechaIngreso||''),delta:inicial,
-    desc:'Saldo inicial con el que empezó el registro',
-    saldo:null, by:'', icon:'🏁', esInicial:true});
-
-  out.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  // Si todavía no hay libro (antes de activarlo), cae de vuelta al historial viejo
+  out.sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
   return out;
 }
 function renderVacSaldoLogHtml(uid){
@@ -7466,22 +7487,22 @@ function renderVacHistory(){
   }).join('');
 }
 
-function vacCancelRequest(reqId){
+async function vacCancelRequest(reqId){
   if(!confirm('¿Cancelar esta solicitud de vacaciones?')) return;
   const uid=SESSION.id;
   const vd=getVacData(uid);
   const req=(vd.requests||[]).find(r=>r.id===reqId);
   if(!req) return;
+  if(req.status==='cancelled'){ toast('Esta solicitud ya estaba cancelada'); return; }
   const wasApproved=req.status==='approved';
   req.status='cancelled';
   req.cancelledAt=new Date().toISOString();
-  setVacData(uid,vd);
-  // If was approved, return days to saldo
   vd.usedDias=wasApproved?Math.max(0,(vd.usedDias||0)-req.dias):(vd.usedDias||0);
   setVacData(uid,vd);
-  // Return days AFTER setVacData
+  // La devolución de días lleva la llave 'canc_<solicitud>': la misma que usa la
+  // cancelación por administrador, así una solicitud solo se devuelve UNA vez.
   if(wasApproved){
-    adjustVacSaldo(uid,req.dias,'Cancelación de vacaciones aprobadas');
+    await adjustVacSaldo(uid,req.dias,'Cancelación de vacaciones aprobadas','canc_'+reqId,reqId);
   }
   // Notify admins in-app
   const admins=getUsers().filter(u=>u.rol==='admin'||u.rol==='superadmin');
@@ -7496,8 +7517,8 @@ function vacCancelRequest(reqId){
 }
 
 // ── ADMIN FUNCTIONS ──
-function vacAdminApprove(uid,reqId){
-  // Step 1: update request status in storage
+async function vacAdminApprove(uid,reqId){
+  // Paso 1: marcar la solicitud como aprobada
   let vd=getVacData(uid);
   const req=(vd.requests||[]).find(r=>r.id===reqId);
   if(!req) return;
@@ -7508,8 +7529,10 @@ function vacAdminApprove(uid,reqId){
   if(!vd.usedDias) vd.usedDias=0;
   vd.usedDias=parseFloat((vd.usedDias+req.dias).toFixed(1));
   setVacData(uid,vd);
-  // Step 2: NOW adjust saldo (reads fresh from storage, saves fresh)
-  adjustVacSaldo(uid,-req.dias,'Vacaciones aprobadas del '+req.desde+' al '+(req.hasta||req.desde));
+  // Paso 2: descontar los días con la llave 'aprob_<solicitud>' — irrepetible
+  await adjustVacSaldo(uid,-req.dias,
+    'Vacaciones aprobadas del '+req.desde+' al '+(req.hasta||req.desde),
+    'aprob_'+reqId, reqId);
   // Step 3: notify user
   addNotification(uid,'✅','Vacaciones aprobadas',
     'Tu solicitud de '+req.dias.toFixed(1)+' día(s) fue aprobada por '+SESSION.nombre+'.');
@@ -7533,7 +7556,7 @@ function vacAdminReject(uid,reqId,note){
   renderAdminVacSection();
 }
 
-function vacAdminProgramar(){
+async function vacAdminProgramar(){
   const userSel=document.getElementById('vac-prog-user').value;
   const desde=document.getElementById('vac-prog-desde').value;
   const hasta=document.getElementById('vac-prog-hasta').value;
@@ -7544,17 +7567,16 @@ function vacAdminProgramar(){
   const users=userSel==='all'
     ? getUsers().filter(u=>u.rol==='user')
     : getUsers().filter(u=>u.id===userSel);
-  users.forEach(u=>{
+  for(var _i=0;_i<users.length;_i++){
+    const u=users[_i];
     const dias=countWorkingDays(fromDate,toDate,u.id,'full');
-    // Deduct saldo FIRST so adjustVacSaldo writes its version
-    // La nota del superadmin queda dentro del motivo, que es lo que el historial muestra
-    adjustVacSaldo(u.id,-dias,'Vacaciones obligatorias programadas por '+SESSION.nombre
-      +(nota?' — '+nota:''));
-    // Now read fresh and add request + usedDias on top
+    // La solicitud se crea PRIMERO, con su id, para que el descuento quede
+    // amarrado a ella con una llave irrepetible ('prog_<id de la solicitud>').
+    const reqId='vac'+Date.now()+'_'+u.id;
     const vd=getVacData(u.id);
     if(!vd.requests) vd.requests=[];
     vd.requests.push({
-      id:'vac'+Date.now()+'_'+u.id,
+      id:reqId,
       tipo:'full',desde,hasta,dias,
       status:'approved',mandatory:true,
       created:new Date().toISOString(),
@@ -7565,10 +7587,14 @@ function vacAdminProgramar(){
     if(!vd.usedDias) vd.usedDias=0;
     vd.usedDias=parseFloat((vd.usedDias+dias).toFixed(1));
     setVacData(u.id,vd);
+    // La nota del superadmin queda dentro del motivo, que es lo que el historial muestra
+    await adjustVacSaldo(u.id,-dias,
+      'Vacaciones obligatorias programadas por '+SESSION.nombre+(nota?' — '+nota:''),
+      'prog_'+reqId, reqId);
     addNotification(u.id,'📅','Vacaciones programadas',
       'La administración programó vacaciones del '+formatDate(fromDate)+' al '+formatDate(toDate)+' ('+dias.toFixed(1)+' días hábiles).'
       +(nota?' Nota: '+nota:''));
-  });
+  }
   document.getElementById('vac-prog-desde').value='';
   document.getElementById('vac-prog-hasta').value='';
   var _nEl=document.getElementById('vac-prog-nota'); if(_nEl) _nEl.value='';
@@ -7672,19 +7698,22 @@ function renderAdminVacHistory(){
   </tr>`).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--text3);padding:20px">Sin registros</td></tr>';
 }
 
-function vacAdminCancel(uid,reqId){
+async function vacAdminCancel(uid,reqId){
   if(!confirm('¿Cancelar estas vacaciones? Se devolverán los días al saldo.')) return;
   let vd=getVacData(uid);
   const req=(vd.requests||[]).find(r=>r.id===reqId);
   if(!req) return;
+  if(req.status==='cancelled'){ toast('Estas vacaciones ya estaban canceladas'); return; }
   const wasApproved=req.status==='approved';
   req.status='cancelled';
   req.cancelledBy=SESSION.nombre;
+  req.cancelledAt=new Date().toISOString();
   vd.usedDias=wasApproved?Math.max(0,(vd.usedDias||0)-req.dias):(vd.usedDias||0);
   setVacData(uid,vd);
-  // Return days AFTER setVacData so adjustVacSaldo reads updated requests
+  // La devolución lleva la llave 'canc_<solicitud>'. Aunque se den dos clics, o
+  // la cancele también el colaborador desde su pantalla, los días vuelven UNA vez.
   if(wasApproved){
-    adjustVacSaldo(uid,req.dias,'Cancelación por administrador');
+    await adjustVacSaldo(uid,req.dias,'Cancelación por administrador','canc_'+reqId,reqId);
   }
   const users=getUsers();
   const u=users.find(x=>x.id===uid);
@@ -7772,13 +7801,15 @@ async function saveVacEdit(){
   var fechaNac=document.getElementById('ve-fechaNac').value;
   var fechaIngreso=document.getElementById('ve-fechaIngreso').value;
   var diasAnuales=parseFloat(document.getElementById('ve-diasAnuales').value)||0;
-  var saldo=parseFloat(document.getElementById('ve-saldo').value)||0;
+  var saldoNuevo=parseFloat(document.getElementById('ve-saldo').value)||0;
   var sabadoLibre=document.getElementById('ve-sabadoLibre').value==='1';
   var puesto=document.getElementById('ve-puesto').value.trim();
+  // El saldo NO va en este payload: cambiarlo a mano se registra como un
+  // movimiento más del libro, con su motivo y quién lo hizo.
   var payload={
     uid:uid, sexo:sexo, cedula:cedula, fecha_nac:fechaNac,
     fecha_ingreso:fechaIngreso, dias_anuales:diasAnuales,
-    saldo:saldo, sabado_libre:sabadoLibre, updated_at:new Date().toISOString()
+    sabado_libre:sabadoLibre, updated_at:new Date().toISOString()
   };
   // ── SEXO: guardar en configuracion (independiente de vacaciones_saldo) ──
   if(!window._vacSexoCache) window._vacSexoCache={};
@@ -7828,13 +7859,21 @@ async function saveVacEdit(){
   if(confirmado!==sexo){
     console.error('saveVacEdit: verificación de sexo falló — esperado "'+sexo+'", guardado "'+confirmado+'"');
   }
-  // Actualizar cache con los datos reales guardados
+  // Actualizar cache con los datos reales guardados (sin tocar el saldo)
   if(!window._vacCache) window._vacCache={};
   window._vacCache[uid]=Object.assign(window._vacCache[uid]||{},{
     sexo:confirmado, cedula:cedula, fechaNac:fechaNac,
     fechaIngreso:fechaIngreso, diasAnuales:diasAnuales,
-    saldo:saldo, sabadoLibre:sabadoLibre
+    sabadoLibre:sabadoLibre
   });
+  // Si el superadmin cambió el saldo a mano, se registra como ajuste del libro
+  var _saldoActual=parseFloat((getVacData(uid)||{}).saldo||0);
+  var _deltaManual=parseFloat((saldoNuevo-_saldoActual).toFixed(1));
+  if(Math.abs(_deltaManual)>0.001){
+    await adjustVacSaldo(uid,_deltaManual,
+      'Ajuste manual del saldo por '+((SESSION&&SESSION.nombre)||'administración')
+      +' ('+_saldoActual.toFixed(1)+' → '+saldoNuevo.toFixed(1)+' días)');
+  }
   // Actualizar usuario
   if(ui>=0){
     users[ui].puesto=puesto;
