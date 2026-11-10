@@ -59,6 +59,7 @@ const TIPO_DOC = {
 // El tipo del documento AL QUE la nota se refiere.
 const TIPO_DOC_REF = {
   FE: 1, ND: 2, NC: 3, TE: 4,
+  REGIMEN_ESPECIAL: 14,   // comprobante aportado por contribuyente de régimen especial
   FEC_NC: 17,   // nota de crédito a factura electrónica de compra
   FEC_ND: 18,   // nota de débito a factura electrónica de compra
   OTRO: 99,
@@ -496,6 +497,25 @@ function tipoDocReferido(refTipo, tipoNota) {
   return TIPO_DOC_REF.FE;
 }
 
+// ── El documento de referencia de una factura de compra ─────────────────────
+// GTI rechaza la FEC sin nodo Referencia: «El nodo referencia es obligatorio
+// para la Factura Electrónica de Compra». El manual lo marca requerido en la
+// columna FEC, y es el único tipo donde además pide UsaClaveExterna, que existe
+// justamente para referirse a «un documento que no se encuentra en GTI» — el
+// recibo en papel del vendedor, que no emite comprobantes electrónicos.
+//
+// NumeroRef tiene que venir con forma de consecutivo de 20 dígitos, así que se
+// arma con el formato del manual: sucursal (3) + terminal (5) + tipo (2) +
+// número (10). El dato que el usuario reconoce —qué documento aportó el
+// vendedor— viaja en RazonNota, que admite 200 caracteres.
+function consecutivoExterno(doc, empresa) {
+  const pad = (v, n) => String(v).padStart(n, '0');
+  const suc = pad(ent(empresa && empresa.casa_matriz) || 1, 3);
+  const ter = pad(ent(empresa && empresa.punto_venta) || 1, 5);
+  const num = pad(ent(doc && doc.consecutivo) || 1, 10);
+  return suc + ter + String(TIPO_DOC.FEC).padStart(2, '0') + num;
+}
+
 // ── El documento completo ───────────────────────────────────────────────────
 function armar(doc, lineas, cliente, empresa, cred) {
   if (!lineas || !lineas.length) throw new Error('El documento no tiene líneas.');
@@ -674,6 +694,18 @@ function armar(doc, lineas, cliente, empresa, cred) {
       FechaRef: fechaGTI(doc.ref_fecha),
       RazonNota: razon,
     };
+  } else if (doc.tipo_doc === 'FEC') {
+    // La compra a un vendedor no inscrito: el documento referido es el que él
+    // entregó, que no existe en GTI.
+    documento.Referencia = {
+      TipoDocRef: TIPO_DOC_REF.REGIMEN_ESPECIAL,
+      NumeroRef: consecutivoExterno(doc, empresa),
+      AccionRef: ACCION_REF.otro_documento,
+      FechaRef: fechaGTI(doc.fecha),
+      RazonNota: txt(doc.ref_razon || doc.notas
+        || 'Compra a proveedor no inscrito ante Hacienda', 200),
+      UsaClaveExterna: true,
+    };
   } else if (doc.tipo_doc === 'NC' || doc.tipo_doc === 'ND') {
     throw new Error('Una nota de crédito o débito tiene que referirse a una factura emitida.');
   }
@@ -841,7 +873,7 @@ module.exports = {
   METODOS, TIPO_DOC, TIPO_DOC_REF, ACCION_REF, MOTIVOS_NOTA,
   COND_VENTA, MEDIO_PAGO, MONEDA, TARIFA, TARIFA_EXENTA, IMP_IVA,
   ESTADO_HACIENDA,
-  codigoReferencia, tipoDocReferido, receptorDeDoc, receptor,
+  codigoReferencia, tipoDocReferido, receptorDeDoc, receptor, consecutivoExterno,
   unidadCod, esServicio, red, fechaGTI,
   armar, leerEmision, leerEstado, leerPdf, normalizarEstado,
   simularEmision, simularEstado, simularXml, simularPdf,
