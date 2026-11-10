@@ -1930,7 +1930,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261109174635';
+var APP_BUILD='20261110162053';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -31292,6 +31292,34 @@ function _retomarSondeos(){
 // Se crea un documento nuevo (la factura) y la proforma queda intacta, ligada.
 // Así la proforma sigue sirviendo de historial y la factura es el documento
 // fiscal, que no se puede modificar después.
+// ── Aviso de documento con fecha vieja ──────────────────────────────────────
+// Hacienda rechaza un comprobante enviado fuera de plazo desde su fecha de
+// emisión: «El archivo XML fue enviado a la Dirección General de Tributación de
+// manera extemporánea» (error −16 de la resolución MH-DGT-RES-0027-2024). Pasó
+// con la FEC-1 el 10 de noviembre: se creó un día y salió al siguiente.
+//
+// Devuelve el texto del aviso, o cadena vacía si la fecha está al día.
+function _avisoFechaVieja(fecha){
+  if(!fecha) return '';
+  var f=String(fecha).slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(f)) return '';
+  var hoy=new Date(Date.now()-6*3600000).toISOString().slice(0,10);   // Costa Rica
+  if(f>=hoy) return '';
+  var dias=Math.round((Date.parse(hoy)-Date.parse(f))/86400000);
+  return '⚠ ESTE DOCUMENTO TIENE FECHA DEL '+f.split('-').reverse().join('/')
+    +(dias===1?', de ayer.':', hace '+dias+' días.')
+    +'\n\nHacienda puede rechazarlo por extemporáneo, porque exige que el '
+    +'comprobante se envíe dentro del plazo contado desde su fecha de emisión.\n\n'
+    +'Si lo rechaza, habrá que volver a crearlo con la fecha de hoy.\n\n';
+}
+
+// Pregunta antes de emitir cuando la fecha ya pasó. true = seguir adelante.
+function _confirmaFechaVieja(fecha){
+  var aviso=_avisoFechaVieja(fecha);
+  if(!aviso) return true;
+  return confirm(aviso+'¿Emitirlo de todas formas?');
+}
+
 async function emitirDesdeProforma(id){
   var prof=S.docs.find(function(x){ return x.id===id; });
   if(!prof){ _toast('No se encontró la proforma'); return; }
@@ -31314,6 +31342,7 @@ async function emitirDesdeProforma(id){
       +_mon(prof.total, prof.moneda)+'.\n\n'
       +'Una factura aceptada por Hacienda NO se puede modificar ni borrar: se corrige '
       +'con una nota de crédito.\n\n¿Continuar?')) return;
+  if(!_confirmaFechaVieja(prof.fecha)) return;
 
   var e=_emp();
   var fid=_id('fac');
@@ -32797,6 +32826,8 @@ async function emitirNota(){
   var t=totalesNota();
   var m=_motivo(b.tipo, b.motivo);
 
+  if(!_confirmaFechaVieja(b.fecha)) return;
+
   if(!confirm('Se va a emitir una '+tn.lbl.toLowerCase()+' por '+_mon(t.total, fac.moneda)
       +' sobre la factura '+(fac.consecutivo||'')+'.\n\n'
       +(m.todo?'La factura va a quedar ANULADA.\n\n':'')
@@ -33265,6 +33296,7 @@ async function emitirCompra(){
       +e.nombre_comercial+' asume el IVA de '+_mon(t.impuesto, b.moneda)+'.\n\n'
       +'Es un documento fiscal: una vez aceptado por Hacienda no se puede borrar, '
       +'se corrige con una nota de crédito.\n\n¿Continuar?')) return;
+  if(!_confirmaFechaVieja(b.fecha)) return;
 
   var id=_id('fec');
   var ahora=new Date().toISOString();
@@ -33657,6 +33689,7 @@ window.FACT={
   // Acceso al estado interno para las pruebas automatizadas. La aplicación no lo usa.
   __S:function(){ return S; },
   __sondeos:function(){ return Object.keys(_sondeos); },
+  __avisoFecha:_avisoFechaVieja,
   __pendientes:function(){ return _pendientesHacienda().map(function(d){ return d.id; }); }
 };
 
