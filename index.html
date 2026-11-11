@@ -1933,7 +1933,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261110110905';
+var APP_BUILD='20261111104321';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -3850,6 +3850,7 @@ function buildUserTabs(){
     {id:'radar',      label:'📡 Radar Comercial', optIn:true}, // requiere autorización EXPLÍCITA de superadmin (a diferencia de las demás pestañas)
     {id:'precios',    label:'📚 Precios e Info', optIn:true}, // oculta por defecto — superadmin decide quién la ve (solo documentos y listas publicadas)
     {id:'cxc',        label:'💰 Cuentas por cobrar', optIn:true}, // oculta por defecto — solo lectura para quien la reciba
+    {id:'facturacion',label:'🧾 Facturación', optIn:true}, // oculta por defecto — el superadmin la habilita y elige qué menús ve
   ];
   var visible=allTabs.filter(function(t){
     if(t.optIn) return perms[t.id]===true; // oculta por defecto — solo visible si superadmin la activó explícitamente
@@ -3885,6 +3886,8 @@ function switchUserTab(tab, btn){
     if(prm) prm.style.display='none';
     var cxm=document.getElementById('cxcUserModule');
     if(cxm) cxm.style.display='none';
+    var fam=document.getElementById('factUserModule');
+    if(fam) fam.style.display='none';
     if(um) um.style.display='none';
     if(vm) vm.style.display='none';
     if(fm) fm.style.display='none';
@@ -3926,6 +3929,20 @@ function switchUserTab(tab, btn){
     } else if(tab==='precios'){
       if(prm){ prm.style.cssText='display:flex;flex:1;width:100%'; }
       try{ initPreciosTab('preciosUserRoot'); }catch(e2){ console.error('initPreciosTab error:',e2); }
+    } else if(tab==='facturacion'){
+      // El módulo vive en #fact-root-admin. Para el usuario normal se monta ese
+      // mismo contenedor dentro de su propia vista (el panel de admin está oculto).
+      if(!fam && cxm && cxm.parentNode){
+        fam=document.createElement('div');
+        fam.id='factUserModule';
+        cxm.parentNode.insertBefore(fam, cxm.nextSibling);
+      }
+      if(fam){
+        fam.style.cssText='display:block;flex:1;min-height:calc(100vh - 60px);width:100%';
+        var fr=document.getElementById('fact-root-admin');
+        if(fr && fr.parentNode!==fam) fam.appendChild(fr);
+      }
+      try{ initFacturacion(); }catch(e2){ console.error('initFacturacion error:',e2); }
     }
   }catch(e){ console.error('switchUserTab error:',e); toast('Error al cambiar pestaña: '+e.message); }
 }
@@ -20266,7 +20283,30 @@ var USER_TAB_DEFS = [
   {id:'fibraplus',   label:'FibraPlus54'},
   {id:'radar',       label:'Radar Comercial'},
   {id:'cxc',         label:'Cuentas por cobrar (solo lectura)'},
+  {id:'facturacion', label:'Facturación'},
 ];
+// Los menús internos de Facturación. El superadmin decide, usuario por usuario,
+// cuáles ve cada quien. Se guardan en tabPerms.fact_subs = {proformas:true,…}.
+// «porDefecto» son los que quedan marcados al habilitar la pestaña.
+var FACT_SUB_DEFS = [
+  {id:'proformas', label:'Proformas',             porDefecto:true},
+  {id:'facturas',  label:'Facturas',              porDefecto:true},
+  {id:'compras',   label:'Compras',               porDefecto:false},
+  {id:'clientes',  label:'Clientes',              porDefecto:true},
+  {id:'catalogo',  label:'Catálogo',              porDefecto:true},
+  {id:'anexos',    label:'Anexos técnicos',       porDefecto:false},
+  {id:'config',    label:'Datos de la empresa',   porDefecto:false},
+];
+// ¿Puede este usuario ver ese menú de Facturación? El superadmin, siempre.
+// Un usuario con la pestaña habilitada antes de que existieran los menús
+// (sin fact_subs) conserva todo, para no quitarle nada de golpe.
+function factSubPermitida(sesion, sub){
+  if(!sesion) return false;
+  if(sesion.rol==='superadmin') return true;
+  var fs=(sesion.tabPerms||{}).fact_subs;
+  if(!fs) return true;
+  return fs[sub]===true;
+}
 var ADMIN_TAB_DEFS = [
   {id:'overview',       label:'Resumen'},
   {id:'proyectos',      label:'Proyectos'},
@@ -20331,7 +20371,24 @@ function renderUserTabPermsRow(userId){
   var targetIsAdmin=u.rol==='admin'||u.rol==='superadmin';
   var tabs=targetIsAdmin?ADMIN_TAB_DEFS:USER_TAB_DEFS;
 
-  return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:8px">'
+  // Menús de Facturación: aparecen debajo solo si la pestaña está habilitada.
+  // A un superadmin no se le restringen: siempre ve todo.
+  var subsHtml='';
+  if(perms.facturacion===true && u.rol!=='superadmin'){
+    var fs=perms.fact_subs||null;
+    subsHtml='<div style="margin-top:10px;padding-top:9px;border-top:1px dashed var(--border)">'
+      +'<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:7px">🧾 Menús de Facturación que puede ver</div>'
+      +'<div style="display:flex;flex-wrap:wrap;gap:6px 12px">'
+      +FACT_SUB_DEFS.map(function(f){
+        var on=fs?(fs[f.id]===true):true;
+        return '<label style="display:flex;align-items:center;gap:5px;font-size:11px;cursor:pointer">'
+          +'<input type="checkbox" class="fact-sub-chk" data-uid="'+userId+'" data-sub="'+f.id+'" '
+          +(on?'checked':'')+' onchange="onFactSubPermChange(this)"> '+f.label+'</label>';
+      }).join('')
+      +'</div></div>';
+  }
+
+  return '<div class="tab-perms-box" data-uid="'+userId+'" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:8px">'
     +'<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;margin-bottom:8px">Acceso a pestañas</div>'
     +'<div style="display:flex;flex-wrap:wrap;gap:6px">'
     +tabs.map(function(t){
@@ -20348,7 +20405,31 @@ function renderUserTabPermsRow(userId){
         +'</label>';
     }).join('')
     +'</div>'
+    +subsHtml
   +'</div>';
+}
+
+// Vuelve a dibujar el cuadro de permisos (para que aparezcan o se oculten los
+// menús de Facturación al marcar o desmarcar la pestaña).
+function _redibujaTabPerms(el, uid){
+  var box=el&&el.closest?el.closest('.tab-perms-box'):null;
+  if(box) box.outerHTML=renderUserTabPermsRow(uid);
+}
+
+function onFactSubPermChange(chk){
+  var uid=chk.dataset.uid, sub=chk.dataset.sub;
+  var perms=getUserTabPerms(uid);
+  var fs=perms.fact_subs;
+  if(!fs){
+    // Primera vez que se tocan: se parte de lo que se ve marcado en pantalla
+    fs={};
+    FACT_SUB_DEFS.forEach(function(f){ fs[f.id]=true; });
+  }
+  if(chk.checked) fs[sub]=true; else delete fs[sub];
+  perms.fact_subs=fs;
+  setUserTabPerms(uid, perms);
+  var def=FACT_SUB_DEFS.find(function(f){ return f.id===sub; })||{label:sub};
+  toast((chk.checked?'✅':'🚫')+' Facturación · '+def.label+' '+(chk.checked?'habilitado':'deshabilitado'));
 }
 
 function onTabPermChange(chk){
@@ -20367,8 +20448,15 @@ function onTabPermChange(chk){
     if(allowed){ delete perms[tab]; }
     else { perms[tab]=false; }
   }
+  // Al habilitar Facturación por primera vez quedan marcados los menús básicos;
+  // el superadmin ajusta el resto en la fila que aparece debajo.
+  if(tab==='facturacion' && allowed && !perms.fact_subs){
+    perms.fact_subs={};
+    FACT_SUB_DEFS.forEach(function(f){ if(f.porDefecto) perms.fact_subs[f.id]=true; });
+  }
   setUserTabPerms(uid, perms);
   toast((allowed?'✅':'🚫')+' Pestaña '+(allowed?'habilitada':'deshabilitada')+' para este usuario');
+  if(tab==='facturacion') _redibujaTabPerms(chk, uid);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -28250,6 +28338,7 @@ function _emp(){
 // se lee igual que en el resto del ERP, con la guarda SESSION&&SESSION.x
 function _esSA(){ return !!(SESSION && SESSION.rol==='superadmin'); }
 function _root(){ return document.getElementById('fact-root-admin'); }
+function _subOk(s){ return (typeof factSubPermitida==='function') ? factSubPermitida(SESSION, s) : true; }
 function _toast(m){ try{ toast(m); }catch(e){ console.log(m); } }
 
 // Errores de tabla ausente: mensaje claro en vez de fallo silencioso
@@ -28448,7 +28537,16 @@ function render(){
     ['catalogo','📦 Catálogo'],
     ['anexos','📎 Anexos técnicos'],
     ['config','⚙ Datos de la empresa'],
-  ];
+  ].filter(function(x){ return _subOk(x[0]); });
+  // Si el menú actual no está permitido para este usuario, se pasa al primero que sí
+  if(!_subOk(S.sub)){
+    if(!subs.length){
+      r.innerHTML='<div class="fx-wrap"><div class="fx-empty">Tiene habilitada la pestaña de Facturación, '
+        +'pero todavía no tiene ningún menú asignado.<br>Pídale al superadmin que le habilite los que necesita.</div></div>';
+      return;
+    }
+    S.sub=subs[0][0]; S.edit=null; S.ver=null;
+  }
   r.innerHTML=
     '<div class="fx-wrap">'
     +'<div class="fx-top">'
@@ -31748,6 +31846,7 @@ function accionesDoc(d){
     } else {
       out.push(_ic('🧾','Facturar: revisar qué falta y emitir','FACT.facturar(\''+id+'\')','k-ok'));
     }
+    out.push(_ic('📈','Pasar a Ventas','FACT.pasarAVentas(\''+id+'\')','k-ok'));
     out.push(_ic('🖨','Imprimir o guardar en PDF','FACT.imprimir(\''+id+'\')','k-ed'));
     out.push(_ic('⧉','Duplicar en una proforma nueva','FACT.duplicar(\''+id+'\')','k-ed'));
     out.push(_ic('🗑','Enviar a la papelera','FACT.aPapelera(\''+id+'\')','k-no'));
@@ -31776,6 +31875,7 @@ function accionesDoc(d){
     out.push(_ic('ND','Nota de débito: cobrar de más sobre esta factura',
       'FACT.nuevaNota(\''+id+'\',\'ND\')','k-av'));
   }
+  if(esFact) out.push(_ic('📈','Pasar a Ventas','FACT.pasarAVentas(\''+id+'\')','k-ok'));
   out.push(_ic('🕑','Bitácora: cada intento de emisión y quién lo pidió',
     'FACT.verBitacora(\''+id+'\')','k-ed'));
   out.push(_ic('🖨','Imprimir o guardar en PDF','FACT.imprimir(\''+id+'\')','k-ed'));
@@ -32250,6 +32350,17 @@ async function verFactura(id){
   S.adjuntos=[];
   S.sub='facturas';
   render();
+}
+
+// «Pasar a Ventas» desde la lista: hace lo mismo que abrir el documento y
+// pulsar el botón de adentro, en un solo clic. Se abre el documento primero
+// porque la ventana de Ventas trabaja sobre sus líneas.
+async function pasarAVentas(id){
+  var d=S.docs.find(function(x){ return x.id===id; });
+  if(!d){ _toast('No se encontró el documento'); return; }
+  if(d.tipo_doc==='proforma') await abrirProforma(id);
+  else await verFactura(id);
+  if(S.edit && S.edit.id===id) abrirExport();
 }
 
 function cerrarVista(){
@@ -33635,8 +33746,12 @@ function setEmpresa(id){
   render();
 }
 function setSub(s){
+  if(!_subOk(s)){ _toast('No tiene acceso a ese menú de Facturación'); return; }
   if(S.edit && S.dirty && !confirm('Hay cambios sin guardar en la proforma. ¿Salir?')) return;
-  if(s!=='proformas'){ S.edit=null; S.lineas=[]; S.adjuntos=[]; S.dirty=false; }
+  // «S.ver» significa que lo abierto es una factura en modo lectura. Al salir de
+  // ahí se suelta siempre: si no, al pasar a Proformas la factura emitida se
+  // abría en el editor de proformas como si se pudiera modificar.
+  if(s!=='proformas' || S.ver){ S.edit=null; S.lineas=[]; S.adjuntos=[]; S.dirty=false; }
   S.ver=null;
   if(s!=='catalogo') S.fCat='';
   if(s!=='clientes'){ S.fCli=''; S.fCliRevisar=false; S.pagCli=1; }
@@ -33696,7 +33811,7 @@ window.FACT={
   agregarItem:agregarItem, filtrarCatModal:filtrarCatModal,
   setLinea:setLinea, quitarLinea:quitarLinea,
   subirAdjunto:subirAdjunto, borrarAdjunto:borrarAdjunto,
-  abrirExport:abrirExport, expTogLinea:expTogLinea, expSetGrupo:expSetGrupo,
+  abrirExport:abrirExport, pasarAVentas:pasarAVentas, expTogLinea:expTogLinea, expSetGrupo:expSetGrupo,
   expSetCat:expSetCat, expSetSub:expSetSub, expPagoChange:expPagoChange,
   confirmarExport:confirmarExport,
   facturar:facturar, irACliente:irACliente,
