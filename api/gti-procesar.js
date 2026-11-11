@@ -147,7 +147,25 @@ async function emitir(t) {
     ? (await G.sbGet('fact_clientes', 'id=eq.' + doc.fact_cliente_id + '&limit=1'))[0]
     : null;
 
-  const cred = G.credenciales(doc.empresa_id, emp.gti_ambiente);
+  // Emitir es lo único que sale con el usuario de GTI de quien pulsó el botón:
+  // es lo que GTI registra como autor. Las consultas y descargas posteriores
+  // van con el usuario general, porque las hace el sistema y no una persona.
+  const cred = G.credenciales(doc.empresa_id, emp.gti_ambiente, t.usuario_id);
+
+  // Decisión de Kia (11/11/2026): quien no tenga su propio usuario de GTI NO
+  // emite. Nunca se usa el usuario general para emitir, porque en GTI quedaría
+  // a nombre de otra persona. El error es de configuración: no se reintenta
+  // solo; se corrige en Vercel y se pulsa ↻ en el documento.
+  if (cred.origen !== 'propia' && !G.SIMULADOR) {
+    const v = G.variablesDeUsuario(doc.empresa_id, t.usuario_id);
+    const quien = t.usuario_nombre || t.usuario_id || 'Este usuario';
+    const e = new Error(quien + ' no tiene usuario de GTI asignado, por eso no puede emitir. '
+      + (v ? 'El superadmin debe crear en Vercel las variables ' + v.usuario + ' y ' + v.clave + '.'
+           : 'El documento no trae el usuario del ERP que lo emitió.'));
+    e.configuracion = true;
+    throw e;
+  }
+
   const cuerpo = P.armar(doc, lineas, cli, emp, cred);
 
   await G.sbPatch('fact_docs', 'id=eq.' + t.doc_id, {
@@ -200,7 +218,8 @@ async function emitir(t) {
     usuario_id: t.usuario_id, usuario_nombre: t.usuario_nombre,
   })));
 
-  return { id: t.id, ok: true, clave: e.clave, consecutivo: e.consecutivo, estado: e.estado };
+  return { id: t.id, ok: true, clave: e.clave, consecutivo: e.consecutivo, estado: e.estado,
+    credencial: cred.origen, emitido_por: t.usuario_nombre || t.usuario_id || null };
 }
 
 // ── Consultar el estado ─────────────────────────────────────────────────────

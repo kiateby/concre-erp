@@ -22,6 +22,20 @@
 //   GTI_CLAVE_CONCRE        ••••••   ← Kia la saca del portal de GTI
 //   GTI_CUENTA_CONCRE       5662     (el «Nº de Cuenta» de la cuenta en GTI)
 //
+//   Un par MÁS por cada usuario del ERP que emite, para que en GTI quede
+//   registrado quién hizo cada documento (la cuenta es la misma para todos):
+//
+//   GTI_USUARIO_CONCRE_<ID DEL USUARIO EN EL ERP>   su usuario de GTI
+//   GTI_CLAVE_CONCRE_<ID DEL USUARIO EN EL ERP>     su clave de GTI
+//
+//   El nombre exacto de cada variable lo da /api/gti-probar-usuarios, que
+//   además prueba si cada usuario logra conectarse. Quien no tenga su par
+//   NO puede emitir. El usuario general de arriba queda solo para lo que
+//   hace el sistema: consultar el estado y bajar el XML y el PDF.
+//
+//   GTI_LLAVE_PRUEBA        una palabra cualquiera, inventada por Kia. Sin
+//                           ella /api/gti-probar-usuarios no contesta.
+//
 //   GTI_USUARIO_CONCREEQUIPOS / GTI_CLAVE_... / GTI_CUENTA_...   (Etapa 5)
 //   GTI_USUARIO_FIBRA        / GTI_CLAVE_... / GTI_CUENTA_...    (Etapa 5)
 //
@@ -110,15 +124,51 @@ async function sbSubir(bucket, ruta, contenido, tipo) {
 
 const SIMULADOR = process.env.GTI_SIMULADOR === '1';
 
-function credenciales(empresaId, ambiente) {
-  const suf = String(empresaId || 'concre').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const usuario = process.env['GTI_USUARIO_' + suf];
-  const clave = process.env['GTI_CLAVE_' + suf];
-  const cuenta = process.env['GTI_CUENTA_' + suf];
+// De un id cualquiera al trozo que cabe en el nombre de una variable.
+function sufijo(v) {
+  return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
 
+// Los nombres de las dos variables de un usuario del ERP. Los usa también
+// /api/gti-probar-usuarios para decirle a Kia exactamente qué crear.
+function variablesDeUsuario(empresaId, usuarioId) {
+  const suf = sufijo(empresaId || 'concre');
+  const su = sufijo(usuarioId);
+  if (!su) return null;
+  return { usuario: 'GTI_USUARIO_' + suf + '_' + su, clave: 'GTI_CLAVE_' + suf + '_' + su };
+}
+
+// «usuarioId» es el id del usuario del ERP que emite. Si tiene su propio par
+// de variables, el documento sale con SU usuario de GTI y así queda en el
+// registro de GTI. Si no tiene ninguna de las dos, se devuelve el general con
+// origen 'general': sirve para consultar, y gti-procesar se niega a EMITIR con
+// él. Si tiene solo una, es un error de configuración y se dice cuál falta.
+function credenciales(empresaId, ambiente, usuarioId) {
+  const suf = sufijo(empresaId || 'concre');
+  let usuario = process.env['GTI_USUARIO_' + suf];
+  let clave = process.env['GTI_CLAVE_' + suf];
+  const cuenta = process.env['GTI_CUENTA_' + suf];
+  let origen = 'general';
+
+  const propias = variablesDeUsuario(empresaId, usuarioId);
+  if (propias) {
+    const u = process.env[propias.usuario];
+    const c = process.env[propias.clave];
+    if (u && c) {
+      usuario = u; clave = c; origen = 'propia';
+    } else if (u || c) {
+      const e = new Error('Falta la variable de entorno en Vercel: '
+        + (u ? propias.clave : propias.usuario));
+      e.configuracion = true;
+      throw e;
+    }
+  }
+
+  // El par general se exige siempre, aunque el usuario tenga el suyo: después
+  // de emitir, el estado, el XML y el PDF se piden con el general.
   const faltan = [];
-  if (!usuario) faltan.push('GTI_USUARIO_' + suf);
-  if (!clave) faltan.push('GTI_CLAVE_' + suf);
+  if (!process.env['GTI_USUARIO_' + suf]) faltan.push('GTI_USUARIO_' + suf);
+  if (!process.env['GTI_CLAVE_' + suf]) faltan.push('GTI_CLAVE_' + suf);
   if (!cuenta) faltan.push('GTI_CUENTA_' + suf);
 
   const url = (ambiente === 'produccion')
@@ -132,7 +182,7 @@ function credenciales(empresaId, ambiente) {
     return {
       usuario: usuario || 'SIMULADO', clave: clave || 'SIMULADO',
       cuenta: cuenta || '5662', url: url || 'https://simulador.local',
-      ambiente: ambiente || 'pruebas', incompleta: faltan,
+      ambiente: ambiente || 'pruebas', incompleta: faltan, origen: origen,
     };
   }
 
@@ -141,7 +191,7 @@ function credenciales(empresaId, ambiente) {
     e.configuracion = true;
     throw e;
   }
-  return { usuario, clave, cuenta, url, ambiente: ambiente || 'pruebas' };
+  return { usuario, clave, cuenta, url, ambiente: ambiente || 'pruebas', origen: origen };
 }
 
 // Quita usuario y clave de cualquier objeto antes de guardarlo en la bitácora.
@@ -261,5 +311,5 @@ async function llamarGTI(cred, met, opciones) {
 module.exports = {
   SIMULADOR,
   sbGet, sbPatch, sbInsert, sbSubir,
-  credenciales, sinSecretos, llamarGTI, baseDocumentos,
+  credenciales, variablesDeUsuario, sinSecretos, llamarGTI, baseDocumentos,
 };
