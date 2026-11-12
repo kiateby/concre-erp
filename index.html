@@ -1941,7 +1941,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112110329';
+var APP_BUILD='20261112111203';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -28336,6 +28336,7 @@ var S = {
   nota: null,          // borrador de la nota de crédito o débito
   compra: null,        // borrador de la factura de compra
   ffBusca: '', ffDesde: '', ffHasta: '',   // buscador de la pestaña Facturas
+  ffTipo: 'todo',      // todo | FE | NC | ND | anul  (qué clase de documento se lista)
   fFacturadas: false,  // filtro "solo las proformas ya facturadas"
   // exportación a ventas
   expSel: {},          // lineaId -> true
@@ -31904,6 +31905,20 @@ function _fechaHora(iso){
 }
 
 // ── SUBPESTAÑA FACTURAS ─────────────────────────────────────────────────────
+// Qué clase de documento se quiere ver en la pestaña Facturas.
+//   «Anulaciones» junta las dos mitades de una anulación: la nota de crédito
+//   que anula y la factura que quedó anulada, para verlas una junto a la otra.
+var TIPOS_FAC=[['todo','Todo'],['FE','Facturas'],['NC','Notas de crédito'],['ND','Notas de débito'],['anul','Anulaciones']];
+function esDeTipoFac(d, tipo){
+  if(!tipo || tipo==='todo') return true;
+  if(tipo==='anul'){
+    if(d.tipo_doc==='NC') return d.ref_codigo==='anula';
+    if(d.tipo_doc==='FE') return estaAnulada(d);
+    return false;
+  }
+  return d.tipo_doc===tipo;
+}
+
 // Lo mismo que el buscador de proformas, más el consecutivo fiscal y la clave.
 function facturasFiltradas(){
   var docs=facturasEmpresa();
@@ -31920,6 +31935,7 @@ function facturasFiltradas(){
     return p;
   };
   var vis=docs.filter(function(d){
+    if(!esDeTipoFac(d, S.ffTipo)) return false;
     if(S.ffDesde && String(d.fecha||'') < S.ffDesde) return false;
     if(S.ffHasta && String(d.fecha||'') > S.ffHasta) return false;
     if(!q && !qDig) return true;
@@ -31936,7 +31952,12 @@ function facturasFiltradas(){
 function renderFacturas(b){
   var ff=facturasFiltradas();
   var todas=ff.todas, docs=ff.vis;
-  var hayFiltro=!!(S.ffBusca||S.ffDesde||S.ffHasta);
+  var hayFiltro=!!(S.ffBusca||S.ffDesde||S.ffHasta||(S.ffTipo && S.ffTipo!=='todo'));
+  var chipsTipo=TIPOS_FAC.map(function(t){
+    var n=todas.filter(function(d){ return esDeTipoFac(d, t[0]); }).length;
+    return '<button class="fx-b sm '+(S.ffTipo===t[0]?'':'gh')+'" onclick="FACT.setTipoFac(\''+t[0]+'\')">'
+      +t[1]+' <span style="opacity:.6">'+n+'</span></button>';
+  }).join('');
   _retomarSondeos();
   // El panel «Listo para facturar» ya no va aquí: con la facturación en
   // producción estorbaba en la lista. Quedó en «Datos de la empresa», solo
@@ -31951,6 +31972,10 @@ function renderFacturas(b){
         +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.refrescarFacturas()">'
           +'↻ Actualizar</button>'
       +'</div>'
+      // ── Qué clase de documento ──
+      +(todas.length
+        ? '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px">'+chipsTipo+'</div>'
+        : '')
       // ── Rango de fechas ──
       +(todas.length
         ? '<div style="display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">'
@@ -34065,7 +34090,8 @@ function setBuscaFac(v){
   if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
 }
 function setFechaFac(campo, v){ if(campo==='ffDesde'||campo==='ffHasta'){ S[campo]=v; renderBody(); } }
-function limpiarFac(){ S.ffBusca=''; S.ffDesde=''; S.ffHasta=''; renderBody(); }
+function limpiarFac(){ S.ffBusca=''; S.ffDesde=''; S.ffHasta=''; S.ffTipo='todo'; renderBody(); }
+function setTipoFac(t){ S.ffTipo=TIPOS_FAC.some(function(x){ return x[0]===t; })?t:'todo'; renderBody(); }
 function rangoFac(cual){
   var h0=new Date();
   var iso=function(d){ return d.getFullYear()+'-'+_pad(d.getMonth()+1)+'-'+_pad(d.getDate()); };
@@ -34121,7 +34147,7 @@ window.FACT={
   setLinea:setLinea, quitarLinea:quitarLinea,
   subirAdjunto:subirAdjunto, borrarAdjunto:borrarAdjunto,
   anularFactura:anularFactura, setBuscaFac:setBuscaFac, setFechaFac:setFechaFac,
-  limpiarFac:limpiarFac, rangoFac:rangoFac,
+  limpiarFac:limpiarFac, rangoFac:rangoFac, setTipoFac:setTipoFac,
   abrirExport:abrirExport, pasarAVentas:pasarAVentas, expTogLinea:expTogLinea, expSetGrupo:expSetGrupo,
   expSetCat:expSetCat, expSetSub:expSetSub, expPagoChange:expPagoChange,
   confirmarExport:confirmarExport,
