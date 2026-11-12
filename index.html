@@ -1982,7 +1982,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112120338';
+var APP_BUILD='20261112121546';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2114,7 +2114,11 @@ async function _pedirPase(cuerpo, token){
     var r=await fetch('/api/login',{method:'POST',headers:cab,body:JSON.stringify(cuerpo)});
     var j=null; try{ j=await r.json(); }catch(_){}
     if(r.status===200 && j && j.ok && j.token) return {estado:'ok', token:j.token, vence:j.vence};
-    if(r.status===401) return {estado:'rechazado', mensaje:(j&&j.error)||'Usuario o contraseña incorrectos'};
+    // 401 contraseña o usuario incorrectos (el mensaje trae los intentos que quedan)
+    // 403 usuario inactivo · 423 bloqueado por demasiados intentos
+    if(r.status===401 || r.status===403 || r.status===423){
+      return {estado:'rechazado', mensaje:(j&&j.error)||'Usuario o contraseña incorrectos'};
+    }
     return {estado:'no_disponible'};
   }catch(e){ return {estado:'no_disponible'}; }
 }
@@ -23936,7 +23940,9 @@ async function icActualizar(){
     var proxyUrl='https://hfgpnmayazytnjunjymi.supabase.co/functions/v1/anthropic-proxy';
     var response=await fetch(proxyUrl,{
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+SUPABASE_KEY},
+      // Va con el pase de sesión, no con la llave pública: así el servicio de IA
+      // puede exigir que quien llama sea un usuario del ERP.
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.__ERP_TOKEN||SUPABASE_KEY),'apikey':SUPABASE_KEY},
       body:JSON.stringify({
         model:'claude-sonnet-4-5',
         max_tokens:4000,
@@ -31670,7 +31676,10 @@ function badgeHac(d){
 // el Cron de Vercel la revisa igual, solo tarda más.
 async function _tocarPuente(){
   try{
-    var r=await fetch('/api/gti-procesar', {method:'POST'});
+    // El servicio ya no se deja llamar por cualquiera: va con el pase de sesión
+    var cab={};
+    if(window.__ERP_TOKEN) cab['Authorization']='Bearer '+window.__ERP_TOKEN;
+    var r=await fetch('/api/gti-procesar', {method:'POST', headers:cab});
     var j=await r.json().catch(function(){ return null; });
     if(j && j.simulador) window._factSimulador=true;
     return j;
@@ -34293,6 +34302,7 @@ window.FACT={
   motivoNoDevolver:motivoNoDevolver, candadoLinea:candadoLinea,
   // Acceso al estado interno para las pruebas automatizadas. La aplicación no lo usa.
   __S:function(){ return S; },
+  __tocar:function(){ return _tocarPuente(); },
   __sondeos:function(){ return Object.keys(_sondeos); },
   __avisoFecha:_avisoFechaVieja,
   __pendientes:function(){ return _pendientesHacienda().map(function(d){ return d.id; }); }
