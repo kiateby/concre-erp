@@ -33,6 +33,13 @@
 //   NO puede emitir. El usuario general de arriba queda solo para lo que
 //   hace el sistema: consultar el estado y bajar el XML y el PDF.
 //
+//   PRODUCCIÓN es otro GTI: otra cuenta y otros usuarios. Sus tres datos
+//   generales van aparte, con «_PRODUCCION» al final:
+//
+//   GTI_CUENTA_CONCRE_PRODUCCION    204407 (Información de la cuenta, en GTI)
+//   GTI_USUARIO_CONCRE_PRODUCCION   usuario real con que el sistema consulta
+//   GTI_CLAVE_CONCRE_PRODUCCION     su clave
+//
 //   GTI_LLAVE_PRUEBA        una palabra cualquiera, inventada por Kia. Sin
 //                           ella /api/gti-probar-usuarios no contesta.
 //
@@ -145,9 +152,17 @@ function variablesDeUsuario(empresaId, usuarioId) {
 // él. Si tiene solo una, es un error de configuración y se dice cuál falta.
 function credenciales(empresaId, ambiente, usuarioId) {
   const suf = sufijo(empresaId || 'concre');
-  let usuario = process.env['GTI_USUARIO_' + suf];
-  let clave = process.env['GTI_CLAVE_' + suf];
-  const cuenta = process.env['GTI_CUENTA_' + suf];
+  // Pruebas y producción son dos GTI distintos: otra cuenta (5662 en pruebas,
+  // 204407 en producción) y otros usuarios. Por eso en producción la cuenta y
+  // el usuario general se leen de variables con «_PRODUCCION» al final. Las de
+  // pruebas no se tocan, así se puede volver a probar sin reescribir nada.
+  const fin = (ambiente === 'produccion') ? '_PRODUCCION' : '';
+  const nomU = 'GTI_USUARIO_' + suf + fin;
+  const nomC = 'GTI_CLAVE_' + suf + fin;
+  const nomN = 'GTI_CUENTA_' + suf + fin;
+  let usuario = process.env[nomU];
+  let clave = process.env[nomC];
+  const cuenta = process.env[nomN];
   let origen = 'general';
 
   const propias = variablesDeUsuario(empresaId, usuarioId);
@@ -167,9 +182,9 @@ function credenciales(empresaId, ambiente, usuarioId) {
   // El par general se exige siempre, aunque el usuario tenga el suyo: después
   // de emitir, el estado, el XML y el PDF se piden con el general.
   const faltan = [];
-  if (!process.env['GTI_USUARIO_' + suf]) faltan.push('GTI_USUARIO_' + suf);
-  if (!process.env['GTI_CLAVE_' + suf]) faltan.push('GTI_CLAVE_' + suf);
-  if (!cuenta) faltan.push('GTI_CUENTA_' + suf);
+  if (!process.env[nomU]) faltan.push(nomU);
+  if (!process.env[nomC]) faltan.push(nomC);
+  if (!cuenta) faltan.push(nomN);
 
   const url = (ambiente === 'produccion')
     ? process.env.GTI_URL_PRODUCCION
