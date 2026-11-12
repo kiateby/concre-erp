@@ -199,6 +199,25 @@ function unidadCod(u) { return _unidadInfo(u).c; }
 // así es como la pide GTI.
 function esServicio(u) { return !!_unidadInfo(u).s; }
 
+// ¿Esta LÍNEA es un servicio? Lo decide el código CABYS, no la unidad.
+//
+// El manual de GTI dice que es por la unidad de medida, pero GTI no lo aplica
+// así. Comprobado en producción el 12/11/2026 con dos documentos de la misma
+// cuenta:
+//   · CABYS 1531002000000 (arena), unidad m²    → aceptado como MERCANCÍA
+//   · CABYS 5475000000000 (colocación de concreto), unidad «Unid» (mercancía
+//     según la tabla) → rechazado, código 52: «El (TotalServGravados) no se
+//     colocó… Monto Servicio Gravado incorrecto».
+// En el catálogo CABYS de Hacienda los códigos que empiezan con 0 a 4 son
+// bienes y los que empiezan con 5 a 9 son servicios; es la regla de la
+// versión 4.4. La unidad queda solo como respaldo si la línea no trae un
+// CABYS de 13 dígitos (caso que de todos modos no se deja emitir).
+function esServicioLinea(cabys, unidad) {
+  const c = String(cabys == null ? '' : cabys).replace(/\D/g, '');
+  if (c.length === 13) return c.charAt(0) >= '5';
+  return esServicio(unidad);
+}
+
 // ── Redondeo, como lo pide el manual ────────────────────────────────────────
 // Media unidad SUBE, y se redondea sobre la representación DECIMAL, no sobre
 // el binario: (2.675).toFixed(2) da 2.67 porque en binario 2.675 es
@@ -464,7 +483,7 @@ function linea(l, i, doc) {
 
   // Lo que sigue no viaja: son las cifras con que se arma Totales.
   o.__calc = {
-    servicio: esServicio(unid),
+    servicio: esServicioLinea(cabys, unid),
     montoTotal: montoTotal,
     descuento: descuento,
     neto: neto,
@@ -877,7 +896,7 @@ module.exports = {
   COND_VENTA, MEDIO_PAGO, MONEDA, TARIFA, TARIFA_EXENTA, IMP_IVA,
   ESTADO_HACIENDA,
   codigoReferencia, tipoDocReferido, receptorDeDoc, receptor, consecutivoExterno,
-  unidadCod, esServicio, red, fechaGTI,
+  unidadCod, esServicio, esServicioLinea, red, fechaGTI,
   armar, leerEmision, leerEstado, leerPdf, normalizarEstado,
   simularEmision, simularEstado, simularXml, simularPdf,
 };
