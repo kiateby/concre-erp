@@ -1941,7 +1941,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112101849';
+var APP_BUILD='20261112110329';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -28335,6 +28335,7 @@ var S = {
   ver: null,           // id del documento abierto en solo lectura (factura emitida)
   nota: null,          // borrador de la nota de crédito o débito
   compra: null,        // borrador de la factura de compra
+  ffBusca: '', ffDesde: '', ffHasta: '',   // buscador de la pestaña Facturas
   fFacturadas: false,  // filtro "solo las proformas ya facturadas"
   // exportación a ventas
   expSel: {},          // lineaId -> true
@@ -28579,6 +28580,7 @@ function inyectarCSS(){
     '#fact-root-admin .fx-ic.k-no:hover{background:rgba(227,24,55,.16)}',
     // Los que llevan letras en vez de dibujo (XML, PDF, NC, ND)
     '#fact-root-admin .fx-ic.txt{font-size:9.5px;font-weight:900;letter-spacing:.02em;width:37px}',
+    '#fact-root-admin .fx-ic.txt.lg{width:auto;padding:0 8px}',
     '#fact-root-admin .fx-acc{display:inline-flex;flex-wrap:wrap;justify-content:center;'
       +'max-width:186px}',
     '#fact-root-admin table.fx-t{width:100%;border-collapse:collapse;font-size:12px}',
@@ -28723,7 +28725,9 @@ function renderLista(b){
 
   var vis=docs.filter(function(d){
     if(S.fEstado!=='todas' && d.estado!==S.fEstado) return false;
-    if(S.fFacturadas && !d.factura_id) return false;
+    // Una proforma ya facturada sale de la lista normal: su lugar es la pestaña
+    // Facturas. No se pierde: el botón «Facturadas» las muestra aparte.
+    if(S.fFacturadas ? !d.factura_id : !!d.factura_id) return false;
     // Rango de fechas (cualquiera de los dos extremos puede ir solo)
     if(S.fDesde && String(d.fecha||'') < S.fDesde) return false;
     if(S.fHasta && String(d.fecha||'') > S.fHasta) return false;
@@ -28741,13 +28745,15 @@ function renderLista(b){
              .map(function(x){ return x.d; });
   }
 
+  // Los contadores van sobre lo que la lista muestra: sin facturar, o facturadas
+  var base=docs.filter(function(d){ return S.fFacturadas ? !!d.factura_id : !d.factura_id; });
   var cuenta={};
-  Object.keys(ESTADOS).forEach(function(k){ cuenta[k]=docs.filter(function(d){return d.estado===k;}).length; });
+  Object.keys(ESTADOS).forEach(function(k){ cuenta[k]=base.filter(function(d){return d.estado===k;}).length; });
 
   var nFact=docs.filter(function(d){ return !!d.factura_id; }).length;
 
   var chips=['todas'].concat(Object.keys(ESTADOS)).map(function(k){
-    var n=(k==='todas')?docs.length:cuenta[k];
+    var n=(k==='todas')?base.length:cuenta[k];
     var lbl=(k==='todas')?'Todas':ESTADOS[k].lbl;
     return '<button class="fx-b sm '+(S.fEstado===k?'':'gh')+'" onclick="FACT.setEstadoFiltro(\''+k+'\')">'
       +lbl+' <span style="opacity:.6">'+n+'</span></button>';
@@ -28755,7 +28761,7 @@ function renderLista(b){
   // Las ya facturadas: se pueden aislar para consultarlas, o dejarlas de lado
   +(nFact
     ? ' <button class="fx-b sm '+(S.fFacturadas?'':'gh')+'" onclick="FACT.togFacturadas()"'
-      +' title="Solo las proformas que ya se facturaron">🧾 Facturadas'
+      +' title="Las proformas que ya se facturaron. No salen en la lista normal; aquí se consultan.">🧾 Facturadas'
       +' <span style="opacity:.6">'+nFact+'</span></button>'
     : '');
 
@@ -28785,7 +28791,7 @@ function renderLista(b){
         : '')
       +((S.fDesde||S.fHasta||S.fBusca)
         ? '<span style="font-size:11px;color:var(--text3);margin-left:4px">'
-          +vis.length+' de '+docs.length
+          +vis.length+' de '+base.length
           +(S.fDesde||S.fHasta
             ? ' · '+(S.fDesde?'desde '+_fechaCorta(S.fDesde):'')
               +(S.fDesde&&S.fHasta?' ':'')+(S.fHasta?'hasta '+_fechaCorta(S.fHasta):'')
@@ -28991,11 +28997,11 @@ function renderEditor(b){
         +campo('Nombre / ubicación de la obra','<input class="fx-i" value="'+_esc(d.proyecto||'')+'" onchange="FACT.setDoc(\'proyecto\',this.value)">')
       +'</div>'
       +'<div style="margin-top:12px">'
-        +'<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Tipo de proyecto</div>'
+        +'<div style="font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Tipo de proyecto <span style="color:var(--red)">*</span></div>'
         +'<div style="font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.55">'
-          +'Solo informativo para esta pestaña. Define cuáles procedimientos técnicos se adjuntan al imprimir. Puede marcar varios.'
+          +'<b>Obligatorio: marque al menos uno.</b> Define cuáles procedimientos técnicos se adjuntan al imprimir. Puede marcar varios.'
         +'</div>'
-        +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+        +'<div id="fact-tipo-proy" style="display:flex;gap:16px;flex-wrap:wrap;border-radius:6px">'
         +S.anexos.filter(function(a){return a.activo!==false;}).map(function(a){
             var on=(d.tipo_proyecto||[]).indexOf(a.id)>=0;
             return '<label class="fx-chk"><input type="checkbox"'+(on?' checked':'')
@@ -29326,10 +29332,27 @@ function cerrarEditor(){
   renderBody();
 }
 
+// ¿Le falta el tipo de proyecto? Solo se exige si hay tipos para escoger.
+function faltaTipoProyecto(d){
+  var disp=S.anexos.filter(function(a){ return a.activo!==false; }).map(function(a){ return a.id; });
+  if(!disp.length) return false;
+  return !(d.tipo_proyecto||[]).some(function(t){ return disp.indexOf(t)>=0; });
+}
+
 async function guardarProforma(){
   var d=S.edit; if(!d) return;
   if(!String(d.cliente_nombre||'').trim()){ _toast('⚠ El nombre del cliente es obligatorio'); return; }
   if(!S.lineas.length){ _toast('⚠ Agregue al menos una línea'); return; }
+  // Tipo de proyecto: obligatorio marcar al menos uno (decisión de Kia, 12/11/2026)
+  if(faltaTipoProyecto(d)){
+    _toast('⚠ Marque el tipo de proyecto (al menos uno) antes de guardar');
+    var cajaTipo=document.getElementById('fact-tipo-proy');
+    if(cajaTipo){
+      cajaTipo.style.outline='2px solid var(--red)'; cajaTipo.style.outlineOffset='6px';
+      try{ cajaTipo.scrollIntoView({behavior:'smooth', block:'center'}); }catch(_){}
+    }
+    return;
+  }
 
   calcTotales();
 
@@ -29434,10 +29457,19 @@ async function duplicarProforma(id){
   nueva.exportada_ventas=false;
   nueva.usuario_id=(SESSION&&SESSION.id)||'';
   nueva.usuario_nombre=(SESSION&&SESSION.nombre)||'';
+  // Si el origen es una FACTURA, la copia es una PROFORMA nueva: no hereda nada
+  // fiscal (clave, consecutivo de Hacienda, XML, PDF, estado) ni queda ligada a
+  // la factura. Se abre en la pestaña Proformas y se edita como cualquier otra.
+  var deFactura=(d.tipo_doc!=='proforma');
+  nueva.tipo_doc='proforma';
+  ['clave','consecutivo_fiscal','gti_id','estado_hacienda','estado_hacienda_msg','xml_path','pdf_path',
+   'xml_resp_path','enviado_en','aceptado_en','proforma_origen_id','factura_id','ref_doc_id','ref_codigo',
+   'ref_razon','en_papelera'].forEach(function(k){ if(k in nueva) nueva[k]=(k==='en_papelera'?false:null); });
   S.edit=nueva;
   S.adjuntos=[];  // los adjuntos no se copian
   S.lineas=[];
-  renderBody();
+  if(deFactura){ S.ver=null; S.sub='proformas'; render(); }
+  else renderBody();
   try{
     var rl=await loadAllRowsEq('fact_lineas','doc_id',id,'orden');
     if(!rl.error){
@@ -29451,7 +29483,8 @@ async function duplicarProforma(id){
   }catch(e2){ console.warn(e2); }
   S.dirty=true;
   if(S.edit && S.edit.id===nueva.id) renderBody();
-  _toast('Copia creada — el número se asigna al guardar');
+  _toast(deFactura ? 'Proforma nueva creada a partir de la factura — el número se asigna al guardar'
+                   : 'Copia creada — el número se asigna al guardar');
 }
 
 async function aPapelera(id){
@@ -30734,7 +30767,8 @@ function renderConfig(b){
     ['correo','Correo'],['sitio_web','Sitio web'],['cuenta_bancaria','Cuenta bancaria'],
   ];
   b.innerHTML=
-    '<div class="fx-card">'
+    (_esSA()?cardPreparacion():'')
+    +'<div class="fx-card">'
       +'<div class="fx-h">Datos de '+_esc(e.nombre_comercial)+'</div>'
       +'<div style="font-size:11.5px;color:var(--text3);margin-bottom:12px;line-height:1.6">'
         +'Todo lo que se imprime en la proforma sale de aquí. Nada está fijo en el código.'
@@ -31870,21 +31904,75 @@ function _fechaHora(iso){
 }
 
 // ── SUBPESTAÑA FACTURAS ─────────────────────────────────────────────────────
-function renderFacturas(b){
+// Lo mismo que el buscador de proformas, más el consecutivo fiscal y la clave.
+function facturasFiltradas(){
   var docs=facturasEmpresa();
+  var q=_norm(S.ffBusca).trim();
+  var qDig=String(S.ffBusca||'').replace(/\D/g,'');
+  if(qDig.length<3) qDig='';
+  var pts=function(d){
+    var p=puntajeDoc(d, q, qDig);
+    if(qDig){
+      var fiscal=String(d.consecutivo_fiscal||''), clave=String(d.clave||'');
+      if(fiscal===qDig || clave===qDig) p=Math.max(p,100);
+      else if(fiscal.indexOf(qDig)>=0 || clave.indexOf(qDig)>=0) p=Math.max(p,58);
+    }
+    return p;
+  };
+  var vis=docs.filter(function(d){
+    if(S.ffDesde && String(d.fecha||'') < S.ffDesde) return false;
+    if(S.ffHasta && String(d.fecha||'') > S.ffHasta) return false;
+    if(!q && !qDig) return true;
+    return pts(d) > 0;
+  });
+  if(q || qDig){
+    vis=vis.map(function(d){ return {d:d, p:pts(d)}; })
+      .sort(function(a,c){ return c.p!==a.p ? c.p-a.p : String(c.d.fecha||'').localeCompare(String(a.d.fecha||'')); })
+      .map(function(x){ return x.d; });
+  }
+  return {todas:docs, vis:vis};
+}
+
+function renderFacturas(b){
+  var ff=facturasFiltradas();
+  var todas=ff.todas, docs=ff.vis;
+  var hayFiltro=!!(S.ffBusca||S.ffDesde||S.ffHasta);
   _retomarSondeos();
+  // El panel «Listo para facturar» ya no va aquí: con la facturación en
+  // producción estorbaba en la lista. Quedó en «Datos de la empresa», solo
+  // para el superadmin (decisión de Kia, 12/11/2026).
   b.innerHTML=
-    cardPreparacion()
-    +'<div class="fx-card">'
+    '<div class="fx-card">'
       +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'
         +'<div class="fx-h" style="margin:0">Facturas electrónicas</div>'
-        +'<span style="font-size:11px;color:var(--text3)">'+docs.length+'</span>'
+        +'<span style="font-size:11px;color:var(--text3)">'+todas.length+'</span>'
+        +'<input class="fx-i" style="max-width:300px" placeholder="Buscar factura por número, cédula o cliente…"'
+          +' value="'+_esc(S.ffBusca)+'" oninput="FACT.setBuscaFac(this.value)">'
         +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.refrescarFacturas()">'
           +'↻ Actualizar</button>'
       +'</div>'
+      // ── Rango de fechas ──
+      +(todas.length
+        ? '<div style="display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">'
+          +'<div class="fx-f"><label>Desde</label><input type="date" class="fx-i" style="width:auto"'
+            +' value="'+_esc(S.ffDesde)+'" onchange="FACT.setFechaFac(\'ffDesde\',this.value)"></div>'
+          +'<div class="fx-f"><label>Hasta</label><input type="date" class="fx-i" style="width:auto"'
+            +' value="'+_esc(S.ffHasta)+'" onchange="FACT.setFechaFac(\'ffHasta\',this.value)"></div>'
+          +[['hoy','Hoy'],['semana','Últimos 7 días'],['mes','Este mes'],['anio','Este año']]
+            .map(function(a){
+              return '<button class="fx-b sm gh" onclick="FACT.rangoFac(\''+a[0]+'\')">'+a[1]+'</button>';
+            }).join('')
+          +(hayFiltro
+            ? '<button class="fx-b sm sec" onclick="FACT.limpiarFac()">✕ Limpiar</button>'
+              +'<span style="font-size:11px;color:var(--text3);margin-left:4px">'+docs.length+' de '+todas.length+'</span>'
+            : '')
+          +'</div>'
+        : '')
       +(docs.length===0
-        ? '<div class="fx-empty">Todavía no se ha emitido ninguna factura.<br>'
-          +'Se emiten desde una proforma, con el botón 🧾 de su fila.</div>'
+        ? (todas.length
+          ? '<div class="fx-empty">Ninguna factura coincide con la búsqueda.</div>'
+          : '<div class="fx-empty">Todavía no se ha emitido ninguna factura.<br>'
+          +'Se emiten desde una proforma, con el botón 🧾 de su fila.</div>')
         : '<div class="fx-tbl-scroll"><table class="fx-t">'
           +'<thead><tr><th>Número</th><th>Fecha</th><th>Cliente</th>'
           +'<th class="fx-r">Total</th><th class="fx-c">Hacienda</th><th>Clave</th>'
@@ -32002,7 +32090,7 @@ function renderCompras(b){
 // Un botón de acción. El título es lo que se lee al pasar el puntero, y está
 // escrito en palabras, no en jerga.
 function _ic(icono, titulo, accion, clase){
-  return '<button class="fx-ic '+(clase||'k-ed')+(icono.length>2?' txt':'')+'"'
+  return '<button class="fx-ic '+(clase||'k-ed')+(icono.length>2?' txt':'')+(icono.length>4?' lg':'')+'"'
     +' title="'+_esc(titulo)+'" onclick="'+accion+'">'+icono+'</button>';
 }
 
@@ -32050,12 +32138,16 @@ function accionesDoc(d){
     out.push(_ic('↻','Volver a intentar la emisión','FACT.reintentar(\''+id+'\')','k-av'));
   }
   if(esFact && d.estado_hacienda==='aceptado' && !estaAnulada(d)){
+    out.push(_ic('Anular','Anular esta factura ante Hacienda (emite la nota de crédito por el total)',
+      'FACT.anularFactura(\''+id+'\')','k-no'));
     out.push(_ic('NC','Nota de crédito: rebajar o anular esta factura',
       'FACT.nuevaNota(\''+id+'\',\'NC\')','k-no'));
     out.push(_ic('ND','Nota de débito: cobrar de más sobre esta factura',
       'FACT.nuevaNota(\''+id+'\',\'ND\')','k-av'));
   }
   if(esFact) out.push(_ic('📈','Pasar a Ventas','FACT.pasarAVentas(\''+id+'\')','k-ok'));
+  if(esFact) out.push(_ic('⧉','Duplicar: crea una PROFORMA nueva con los datos y servicios de esta factura',
+    'FACT.duplicar(\''+id+'\')','k-ed'));
   out.push(_ic('🕑','Bitácora: cada intento de emisión y quién lo pidió',
     'FACT.verBitacora(\''+id+'\')','k-ed'));
   out.push(_ic('🖨','Imprimir o guardar en PDF','FACT.imprimir(\''+id+'\')','k-ed'));
@@ -32876,6 +32968,19 @@ async function nuevaNota(facId, tipo){
   pintarNota();
 }
 
+// «Anular», como el botón de GTI. Ante Hacienda una factura aceptada no se
+// borra ni se edita: se anula emitiendo una nota de crédito por el total, con
+// el código «anula el documento de referencia». Esto abre esa misma nota ya
+// armada y fija en ese motivo; solo falta escribir por qué y confirmar.
+async function anularFactura(facId){
+  await nuevaNota(facId, 'NC');
+  if(!S.nota || S.nota.facId!==facId) return;
+  S.nota.soloAnular=true;
+  S.nota.motivo='anula';
+  aplicarMotivo();
+  pintarNota();
+}
+
 function cerrarNota(){
   S.nota=null;
   cerrarModal('fact-nota-modal');
@@ -32996,13 +33101,19 @@ function pintarNota(){
 
   el.innerHTML=
     '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">'
-      +'<div class="fx-h" style="margin:0">'+tn.lbl+' sobre '+_esc(fac.consecutivo||'')+'</div>'
+      +'<div class="fx-h" style="margin:0">'
+        +(b.soloAnular ? 'Anular la factura '+_esc(fac.consecutivo||'')+' ante Hacienda'
+                       : tn.lbl+' sobre '+_esc(fac.consecutivo||''))+'</div>'
       +'<button class="fx-b sm gh" style="margin-left:auto" onclick="FACT.cerrarNota()">✕</button>'
     +'</div>'
 
     +'<div style="font-size:11.5px;color:var(--text3);line-height:1.65;margin-bottom:13px">'
-      +'Se emite un documento nuevo, con su propia clave, que se refiere a esa factura para '
-      +_esc(tn.verbo)+'. La factura original no se modifica: así lo exige Hacienda.'
+      +(b.soloAnular
+        ? 'La anulación se hace emitiendo una <b>nota de crédito por el total</b> de la factura, que va a '
+          +'Hacienda igual que una factura. La factura original no se borra ni se modifica: queda marcada '
+          +'como anulada cuando Hacienda acepte la nota. <b>No se puede deshacer.</b>'
+        : 'Se emite un documento nuevo, con su propia clave, que se refiere a esa factura para '
+          +_esc(tn.verbo)+'. La factura original no se modifica: así lo exige Hacienda.')
       +(yaCred>0
         ? '<br><b style="color:var(--amber)">Esa factura ya tiene '+_mon(yaCred,fac.moneda)
           +' acreditados</b> en notas anteriores.'
@@ -33011,14 +33122,16 @@ function pintarNota(){
 
     // ── Motivo ──
     +'<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">'
-      +campo('Motivo *','<select class="fx-i" onchange="FACT.setNota(\'motivo\',this.value)">'
+      +(b.soloAnular
+        ? campo('Motivo','<input class="fx-i" value="Anular la factura completa" disabled>')
+        : campo('Motivo *','<select class="fx-i" onchange="FACT.setNota(\'motivo\',this.value)">'
         +(MOTIVOS[b.tipo]||[]).map(function(x){
             return '<option value="'+x.v+'"'+(b.motivo===x.v?' selected':'')+'>'+_esc(x.lbl)+'</option>';
           }).join('')
-        +'</select>')
-      +campo('Detalle del motivo * (sale en el documento)',
+        +'</select>'))
+      +campo(b.soloAnular?'Por qué se anula * (sale en el documento)':'Detalle del motivo * (sale en el documento)',
         '<input class="fx-i" value="'+_esc(b.razon)+'" maxlength="180"'
-        +' placeholder="Ej.: se devolvieron 40 m² por defecto de acabado"'
+        +' placeholder="'+(b.soloAnular?'Ej.: se facturó por error al cliente equivocado':'Ej.: se devolvieron 40 m² por defecto de acabado')+'"'
         +' oninput="FACT.setNota(\'razon\',this.value)">')
     +'</div>'
     +'<div style="font-size:11px;color:var(--text3);margin-top:7px;line-height:1.6">'+_esc(m.ayuda)+'</div>'
@@ -33086,7 +33199,7 @@ function pintarNota(){
       +'<button class="fx-b sec" onclick="FACT.cerrarNota()">Cancelar</button>'
       +'<button class="fx-b" id="fact-nota-emitir" onclick="FACT.emitirNota()"'
         +(f.length?' disabled style="opacity:.45;cursor:not-allowed"':'')+'>'
-        +'Emitir '+_esc(tn.lbl.toLowerCase())+'</button>'
+        +(b.soloAnular?'Anular la factura ante Hacienda':'Emitir '+_esc(tn.lbl.toLowerCase()))+'</button>'
     +'</div>';
 }
 
@@ -33946,6 +34059,22 @@ function setBusca(v){
   var el=document.querySelector('#fact-body input[placeholder^="Buscar por n"]');
   if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
 }
+function setBuscaFac(v){
+  S.ffBusca=v; renderBody();
+  var el=document.querySelector('#fact-body input[placeholder^="Buscar factura"]');
+  if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+}
+function setFechaFac(campo, v){ if(campo==='ffDesde'||campo==='ffHasta'){ S[campo]=v; renderBody(); } }
+function limpiarFac(){ S.ffBusca=''; S.ffDesde=''; S.ffHasta=''; renderBody(); }
+function rangoFac(cual){
+  var h0=new Date();
+  var iso=function(d){ return d.getFullYear()+'-'+_pad(d.getMonth()+1)+'-'+_pad(d.getDate()); };
+  if(cual==='hoy'){ S.ffDesde=iso(h0); S.ffHasta=iso(h0); }
+  else if(cual==='semana'){ var d7=new Date(h0); d7.setDate(d7.getDate()-6); S.ffDesde=iso(d7); S.ffHasta=iso(h0); }
+  else if(cual==='mes'){ S.ffDesde=h0.getFullYear()+'-'+_pad(h0.getMonth()+1)+'-01'; S.ffHasta=iso(h0); }
+  else if(cual==='anio'){ S.ffDesde=h0.getFullYear()+'-01-01'; S.ffHasta=iso(h0); }
+  renderBody();
+}
 function setDesde(v){ S.fDesde=v; renderBody(); }
 function setHasta(v){ S.fHasta=v; renderBody(); }
 function limpiarFiltros(){ S.fBusca=''; S.fDesde=''; S.fHasta=''; renderBody(); }
@@ -33991,6 +34120,8 @@ window.FACT={
   agregarItem:agregarItem, filtrarCatModal:filtrarCatModal,
   setLinea:setLinea, quitarLinea:quitarLinea,
   subirAdjunto:subirAdjunto, borrarAdjunto:borrarAdjunto,
+  anularFactura:anularFactura, setBuscaFac:setBuscaFac, setFechaFac:setFechaFac,
+  limpiarFac:limpiarFac, rangoFac:rangoFac,
   abrirExport:abrirExport, pasarAVentas:pasarAVentas, expTogLinea:expTogLinea, expSetGrupo:expSetGrupo,
   expSetCat:expSetCat, expSetSub:expSetSub, expPagoChange:expPagoChange,
   confirmarExport:confirmarExport,
