@@ -1982,7 +1982,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112121546';
+var APP_BUILD='20261112123708';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -23885,6 +23885,39 @@ async function renderInteligenciaComercial(){
 }
 
 // ══ ACTUALIZAR — LLAMADA A CLAUDE API ══
+// Saca de una respuesta cortada o mal formada los proyectos que sí están
+// completos. Recorre el texto respetando comillas y llaves, y toma cada objeto
+// del arreglo «proyectos» que cierre bien y se pueda leer.
+function icRescatarProyectos(texto){
+  var out={proyectos:[], resumen:'', fuentes_consultadas:''};
+  var t=String(texto||'');
+  var k=t.indexOf('"proyectos"');
+  var ini=k>=0 ? t.indexOf('[', k) : -1;
+  if(ini<0) return out;
+  var nivel=0, enCadena=false, escape=false, desde=-1;
+  for(var i=ini+1;i<t.length;i++){
+    var c=t.charAt(i);
+    if(enCadena){
+      if(escape) escape=false;
+      else if(c==='\\') escape=true;
+      else if(c==='"') enCadena=false;
+      continue;
+    }
+    if(c==='"'){ enCadena=true; continue; }
+    if(c==='{'){ if(nivel===0) desde=i; nivel++; }
+    else if(c==='}'){
+      nivel--;
+      if(nivel===0 && desde>=0){
+        try{ var o=JSON.parse(t.slice(desde,i+1)); if(o && typeof o==='object') out.proyectos.push(o); }catch(_e){}
+        desde=-1;
+      }
+      if(nivel<0) break;
+    }
+    else if(c===']' && nivel===0) break;
+  }
+  return out;
+}
+
 async function icActualizar(){
   if(!SESSION||SESSION.rol!=='superadmin'){ toast('Solo superadmin puede actualizar'); return; }
 
@@ -23945,7 +23978,9 @@ async function icActualizar(){
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+(window.__ERP_TOKEN||SUPABASE_KEY),'apikey':SUPABASE_KEY},
       body:JSON.stringify({
         model:'claude-sonnet-4-5',
-        max_tokens:4000,
+        // 8000: con 4000 una búsqueda con muchos proyectos se cortaba a media
+        // respuesta y no se podía leer nada de ella.
+        max_tokens:8000,
         tools:[{type:'web_search_20250305',name:'web_search'}],
         messages:[{role:'user',content:prompt}]
       })
@@ -23965,7 +24000,18 @@ async function icActualizar(){
     var jsonStart=clean.indexOf('{');
     var jsonEnd=clean.lastIndexOf('}')+1;
     if(jsonStart<0) throw new Error('No se recibió JSON válido');
-    var parsed=JSON.parse(clean.slice(jsonStart,jsonEnd));
+    var parsed, respuestaParcial=false;
+    try{
+      parsed=JSON.parse(clean.slice(jsonStart,jsonEnd));
+    }catch(eJson){
+      // La respuesta llegó cortada o con un proyecto mal escrito. En vez de
+      // perder toda la búsqueda (que ya se pagó), se rescatan los proyectos
+      // que sí vinieron completos.
+      parsed=icRescatarProyectos(clean.slice(jsonStart));
+      respuestaParcial=true;
+      if(!parsed.proyectos.length) throw new Error('La respuesta de la IA llegó incompleta y no se pudo leer ningún proyecto. Intente de nuevo.');
+      console.warn('Radar: respuesta incompleta ('+(data.stop_reason||'?')+'); se rescataron '+parsed.proyectos.length+' proyectos.', eJson.message);
+    }
     var proyectos=parsed.proyectos||[];
     var resumen=parsed.resumen||'';
     var fuentesConsultadas=parsed.fuentes_consultadas||IC_FUENTES.join(', ');
@@ -24015,7 +24061,8 @@ async function icActualizar(){
       updated_at:new Date().toISOString()
     },{onConflict:'mes_key'});
 
-    toast('✅ '+newCount+' proyectos nuevos · '+updatedCount+' actualizados');
+    toast('✅ '+newCount+' proyectos nuevos · '+updatedCount+' actualizados'
+      +(respuestaParcial?' · ⚠ la respuesta llegó incompleta: puede faltar alguno':''));
     await renderInteligenciaComercial();
 
   } catch(err){
