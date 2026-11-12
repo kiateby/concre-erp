@@ -1393,7 +1393,15 @@ select{color:var(--text) !important}
 
 const SUPABASE_URL = 'https://hfgpnmayazytnjunjymi.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhmZ3BubWF5YXp5dG5qdW5qeW1pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0NDM5NjMsImV4cCI6MjA5NDAxOTk2M30.HQUndNKjlbLu907zGG50KmMfFHCHvb_pFYGwr9NBoRk';
-const DB = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// El pase de sesión. Lo entrega /api/login cuando el SERVIDOR comprueba la
+// contraseña, y es lo que la base de datos exige para dejar leer o escribir.
+// Vive solo en memoria: al cerrar o recargar la página hay que volver a entrar.
+// Sin pase, la conexión va con la llave pública de arriba, que por sí sola no
+// abre nada una vez puestos los candados.
+window.__ERP_TOKEN = null;
+const DB = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  accessToken: async function(){ return window.__ERP_TOKEN || SUPABASE_KEY; }
+});
 
 // ── Cache local para rendimiento ──
 var _cache = {};
@@ -1933,7 +1941,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261111104321';
+var APP_BUILD='20261112095110';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2051,11 +2059,83 @@ async function migratePasswordHashes(){
   }catch(e){ console.warn('migratePasswordHashes:', e); }
 }
 
+// ── SESIÓN VERIFICADA POR EL SERVIDOR ───────────────────────────────────────
+// Le pide el pase a /api/login. Tres desenlaces:
+//   'ok'            el servidor comprobó la contraseña y dio el pase
+//   'rechazado'     usuario o contraseña incorrectos: no se entra
+//   'no_disponible' el servicio no está montado o no hay red: se entra como
+//                   antes (sin pase) y se avisa. Con los candados puestos, ese
+//                   camino ya no abre nada.
+async function _pedirPase(cuerpo, token){
+  try{
+    var cab={'Content-Type':'application/json'};
+    if(token) cab['Authorization']='Bearer '+token;
+    var r=await fetch('/api/login',{method:'POST',headers:cab,body:JSON.stringify(cuerpo)});
+    var j=null; try{ j=await r.json(); }catch(_){}
+    if(r.status===200 && j && j.ok && j.token) return {estado:'ok', token:j.token, vence:j.vence};
+    if(r.status===401) return {estado:'rechazado', mensaje:(j&&j.error)||'Usuario o contraseña incorrectos'};
+    return {estado:'no_disponible'};
+  }catch(e){ return {estado:'no_disponible'}; }
+}
+
+// El pase dura 12 horas; se renueva solo cada media hora mientras la página
+// esté abierta. Si ya venció (el equipo durmió toda la noche), se pide entrar
+// de nuevo en lugar de dejar al usuario trabajando sobre errores.
+function _programarRenovacionPase(){
+  if(window._paseTimer) clearInterval(window._paseTimer);
+  window._paseTimer=setInterval(_renovarPase, 30*60*1000);
+}
+async function _renovarPase(){
+  if(!window.__ERP_TOKEN) return;
+  var r=await _pedirPase({renovar:true}, window.__ERP_TOKEN);
+  if(r.estado==='ok'){ window.__ERP_TOKEN=r.token; window.__ERP_TOKEN_VENCE=r.vence; return; }
+  if(r.estado==='rechazado'){
+    window.__ERP_TOKEN=null;
+    if(window._paseTimer){ clearInterval(window._paseTimer); window._paseTimer=null; }
+    alert('Su sesión venció. Vuelva a iniciar sesión para seguir trabajando.');
+    try{ doLogout(); }catch(e){ location.reload(); }
+  }
+}
+document.addEventListener('visibilitychange', function(){
+  // Al volver a la pestaña, si al pase le queda menos de una hora, se renueva ya
+  if(document.visibilityState==='visible' && window.__ERP_TOKEN
+     && (window.__ERP_TOKEN_VENCE||0)-Date.now() < 3600000) _renovarPase();
+});
+
 function doLogin(){
   const u=document.getElementById('loginUser').value.trim().toLowerCase();
   const p=document.getElementById('loginPass').value;
   const err=document.getElementById('loginError');
   if(err) err.style.display='none';
+  _pedirPase({usuario:u, clave:p}).then(async function(pase){
+    if(pase.estado==='rechazado'){
+      if(err){ err.style.display='block'; err.textContent='⚠ '+pase.mensaje; }
+      return;
+    }
+    window._sesionSinPase=false;
+    if(pase.estado==='ok'){
+      window.__ERP_TOKEN=pase.token; window.__ERP_TOKEN_VENCE=pase.vence;
+      // Antes de seguir se comprueba que la base acepta el pase. Si no lo
+      // acepta (mala configuración), se descarta y se entra como antes: es
+      // preferible avisar a dejar a todo el mundo sin poder trabajar.
+      try{
+        var prueba=await DB.from('usuarios').select('id').limit(1);
+        if(prueba.error) throw prueba.error;
+        _programarRenovacionPase();
+      }catch(e){
+        console.error('La base no aceptó el pase de sesión:', e);
+        window.__ERP_TOKEN=null; window._sesionSinPase=true;
+      }
+    } else {
+      window._sesionSinPase=true;
+    }
+    _loginLocal(u, p, err);
+  });
+}
+
+// El ingreso de siempre: carga los usuarios, confirma la contraseña y arranca
+// la aplicación. Con pase, esa lectura ya va autenticada.
+function _loginLocal(u, p, err){
   // Login against Supabase
   DB.from('usuarios').select('*').then(function(res){
     if(res.error||!res.data){
@@ -2096,6 +2176,9 @@ function doLogin(){
       loadAllDataFromDB().then(function(){
         document.getElementById('loginScreen').style.display='none';
         initApp();
+        if(window._sesionSinPase && location.protocol!=='file:'){
+          setTimeout(function(){ try{ toast('⚠ Sesión sin verificación del servidor. Avise al administrador.'); }catch(e){} }, 1500);
+        }
         // Migración retroactiva: recalcular ventas USD con IVA usando nueva lógica de 1 decimal
         setTimeout(migrateUsdVentasIva, 2000);
         // Migración de seguridad: cifrar contraseñas legacy en texto plano
@@ -3741,6 +3824,8 @@ function doLogout(){
   }
   // Clear all session state
   SESSION=null;
+  window.__ERP_TOKEN=null; window.__ERP_TOKEN_VENCE=0;
+  if(window._paseTimer){ clearInterval(window._paseTimer); window._paseTimer=null; }
   REG={}; DED={};
   window._usersCache=null; window._ventasCache={}; window._horasCache={};
   window._vacCache={}; window._fondosCache={}; window._gastosCache={};
