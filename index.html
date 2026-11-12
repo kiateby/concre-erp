@@ -1941,7 +1941,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112095110';
+var APP_BUILD='20261112100347';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2121,6 +2121,10 @@ function doLogin(){
       try{
         var prueba=await DB.from('usuarios').select('id').limit(1);
         if(prueba.error) throw prueba.error;
+        // Una base que no reconoce el pase no siempre da error: puede contestar
+        // «cero filas» (las reglas viejas solo le abren a la llave pública).
+        // Sin al menos un usuario a la vista, el pase no sirve.
+        if(!prueba.data || !prueba.data.length) throw new Error('La base no muestra usuarios con el pase: falta correr seguridad-1-preparar.sql');
         _programarRenovacionPase();
       }catch(e){
         console.error('La base no aceptó el pase de sesión:', e);
