@@ -16,7 +16,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="#E31837">
 <meta name="apple-mobile-web-app-title" content="CONCRE">
 <meta name="mobile-web-app-capable" content="yes">
-<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <title>CONCRE — Sistema de Gestión</title>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
@@ -1384,7 +1383,6 @@ select{color:var(--text) !important}
   }
 
 </style>
-<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <script>
 
 // ══════════════════════════════════════════════════════════════
@@ -1398,6 +1396,38 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 // Vive solo en memoria: al cerrar o recargar la página hay que volver a entrar.
 // Sin pase, la conexión va con la llave pública de arriba, que por sí sola no
 // abre nada una vez puestos los candados.
+// ── LIBRERÍAS PESADAS, SOLO CUANDO HACEN FALTA ──────────────────────────────
+// Plotly (gráficos de FibraPlus54, 3.6 MB) y JSZip (respaldo en ZIP) se bajaban
+// y se ejecutaban ANTES de que la pantalla de ingreso pudiera funcionar, aunque
+// casi nadie los usa en una sesión. Ahora se cargan la primera vez que se
+// necesitan; el resultado es el mismo, solo cambia el momento.
+var _libsCargando={};
+function _cargarLib(clave, url, lista){
+  if(lista()) return Promise.resolve(true);
+  if(_libsCargando[clave]) return _libsCargando[clave];
+  _libsCargando[clave]=new Promise(function(res, rej){
+    var sc=document.createElement('script');
+    sc.src=url; sc.async=true;
+    sc.onload=function(){ res(true); };
+    sc.onerror=function(){ delete _libsCargando[clave]; rej(new Error('No se pudo cargar '+clave+'. Revise la conexión a internet.')); };
+    document.head.appendChild(sc);
+  });
+  return _libsCargando[clave];
+}
+function cargarPlotly(){
+  return _cargarLib('Plotly','https://cdn.plot.ly/plotly-2.27.0.min.js',
+    function(){ return typeof Plotly!=='undefined' && typeof Plotly.newPlot==='function'; });
+}
+function cargarJSZip(){
+  return _cargarLib('JSZip','https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js',
+    function(){ return typeof JSZip!=='undefined'; });
+}
+// Un gráfico pedido antes de que Plotly esté listo se dibuja en cuanto llega.
+function _plotlyLuego(fn, args){
+  cargarPlotly().then(function(){ try{ fn.apply(null, args); }catch(e){ console.warn('gráfico:',e); } })
+    .catch(function(e){ console.warn(e.message||e); });
+}
+
 window.__ERP_TOKEN = null;
 const DB = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   accessToken: async function(){ return window.__ERP_TOKEN || SUPABASE_KEY; }
@@ -1941,7 +1971,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112111203';
+var APP_BUILD='20261112114803';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2096,6 +2126,13 @@ async function _renovarPase(){
     try{ doLogout(); }catch(e){ location.reload(); }
   }
 }
+// «Despertar» el servicio de ingreso mientras el usuario escribe su contraseña.
+// En Vercel una función que lleva rato sin usarse tarda más en la primera
+// llamada; esta consulta no manda datos ni cambia nada, solo la deja lista.
+if(location.protocol==='http:' || location.protocol==='https:'){
+  try{ fetch('/api/login',{method:'GET',cache:'no-store'}).catch(function(){}); }catch(e){}
+}
+
 document.addEventListener('visibilitychange', function(){
   // Al volver a la pestaña, si al pase le queda menos de una hora, se renueva ya
   if(document.visibilityState==='visible' && window.__ERP_TOKEN
@@ -2107,7 +2144,11 @@ function doLogin(){
   const p=document.getElementById('loginPass').value;
   const err=document.getElementById('loginError');
   if(err) err.style.display='none';
+  // Cronómetro del ingreso. Queda en la consola; con «?tiempos=1» al final de la
+  // dirección se muestra en pantalla al terminar, para medir sin herramientas.
+  var T0=Date.now(); window.__tiempos={}; window.__tiemposT0=T0;
   _pedirPase({usuario:u, clave:p}).then(async function(pase){
+    window.__tiempos.pase=Date.now()-T0;
     if(pase.estado==='rechazado'){
       if(err){ err.style.display='block'; err.textContent='⚠ '+pase.mensaje; }
       return;
@@ -2119,13 +2160,18 @@ function doLogin(){
       // acepta (mala configuración), se descarta y se entra como antes: es
       // preferible avisar a dejar a todo el mundo sin poder trabajar.
       try{
-        var prueba=await DB.from('usuarios').select('id').limit(1);
+        // Se trae la lista completa de una vez: sirve de comprobación del pase
+        // y es la misma que el ingreso necesita enseguida (antes se pedía dos veces).
+        var prueba=await DB.from('usuarios').select('*');
         if(prueba.error) throw prueba.error;
         // Una base que no reconoce el pase no siempre da error: puede contestar
         // «cero filas» (las reglas viejas solo le abren a la llave pública).
         // Sin al menos un usuario a la vista, el pase no sirve.
         if(!prueba.data || !prueba.data.length) throw new Error('La base no muestra usuarios con el pase: falta correr seguridad-1-preparar.sql');
         _programarRenovacionPase();
+        window.__tiempos.usuarios=Date.now()-T0;
+        _loginLocal(u, p, err, prueba.data);
+        return;
       }catch(e){
         console.error('La base no aceptó el pase de sesión:', e);
         window.__ERP_TOKEN=null; window._sesionSinPase=true;
@@ -2139,9 +2185,10 @@ function doLogin(){
 
 // El ingreso de siempre: carga los usuarios, confirma la contraseña y arranca
 // la aplicación. Con pase, esa lectura ya va autenticada.
-function _loginLocal(u, p, err){
-  // Login against Supabase
-  DB.from('usuarios').select('*').then(function(res){
+function _loginLocal(u, p, err, yaLeidos){
+  // Login against Supabase (o con la lista que ya trajo la comprobación del pase)
+  (yaLeidos ? Promise.resolve({data:yaLeidos, error:null})
+            : DB.from('usuarios').select('*')).then(function(res){
     if(res.error||!res.data){
       if(err){ err.style.display='block'; err.textContent='⚠ Error de conexión'; }
       return;
@@ -2178,8 +2225,22 @@ function _loginLocal(u, p, err){
       SESSION=dbRowToUser(candidate);
       // Load all data from Supabase before initializing app
       loadAllDataFromDB().then(function(){
+        var _tt=window.__tiempos||{}, _t0=window.__tiemposT0||Date.now();
+        _tt.datos=Date.now()-_t0;
         document.getElementById('loginScreen').style.display='none';
         initApp();
+        _tt.pantalla=Date.now()-_t0;
+        try{
+          var _u=_tt.usuarios||_tt.pase||0;
+          var _res='Ingreso en '+(_tt.pantalla/1000).toFixed(1)+' s — comprobar contraseña: '+((_tt.pase||0)/1000).toFixed(1)
+            +' s · leer usuarios: '+((_u-(_tt.pase||0))/1000).toFixed(1)
+            +' s · cargar datos: '+((_tt.datos-_u)/1000).toFixed(1)
+            +' s · armar pantalla: '+((_tt.pantalla-_tt.datos)/1000).toFixed(1)+' s';
+          console.log('⏱ '+_res);
+          if(/[?&]tiempos=1/.test(location.search)) alert(_res);
+        }catch(_e){}
+        // Plotly se va bajando en segundo plano, sin estorbar el arranque
+        setTimeout(function(){ try{ cargarPlotly().catch(function(){}); }catch(e){} }, 6000);
         if(window._sesionSinPase && location.protocol!=='file:'){
           setTimeout(function(){ try{ toast('⚠ Sesión sin verificación del servidor. Avise al administrador.'); }catch(e){} }, 1500);
         }
@@ -7480,7 +7541,9 @@ function vacUpdatePreview(){
   // Deshabilitar el botón solo si se superaría el límite de -10 días
   var sb=document.querySelector('button[onclick*="vacSubmitRequest"]');
   if(sb){
-    var canSubmit=(saldoActual-dias)>=-10;
+    // (decía «saldoActual», que no existe: la línea daba error y el botón nunca
+    //  se deshabilitaba. El límite igual lo hace cumplir vacSubmitRequest.)
+    var canSubmit=(saldo-dias)>=-10;
     sb.disabled=!canSubmit;
     sb.style.opacity=canSubmit?'1':'0.4';
     sb.style.cursor=canSubmit?'pointer':'not-allowed';
@@ -9178,9 +9241,9 @@ function exportFondosUser(){
     return `<div class="col-row${g.alerta?' alerta-row':''}${i%2?'':' alt'}">
       <span class="cr-label">${formatDate(parseDate(g.fecha))} · ${cat.icon} ${cat.label}</span>
       <span style="font-size:11px;color:#9a9b9d">${g.factura||''} ${g.proyecto||''}</span>
-      <span class="cr-value${alerta?' red':''}">${fmt(g.monto)}</span>
-      ${ppL?('<span style="font-size:10px;color:'+(alerta?'#E31837':'#9a9b9d')+'">'+ppL+'</span>'):''}
-      ${alerta?('<div style="font-size:11px;color:#E31837;margin-top:2px">⚠ '+(g.nota||'Sin nota')+'</div>'):''}
+      <span class="cr-value${g.alerta?' red':''}">${fmt(g.monto)}</span>
+      ${ppL?('<span style="font-size:10px;color:'+(g.alerta?'#E31837':'#9a9b9d')+'">'+ppL+'</span>'):''}
+      ${g.alerta?('<div style="font-size:11px;color:#E31837;margin-top:2px">⚠ '+(g.nota||'Sin nota')+'</div>'):''}
     </div>`;
   }).join('');
 
@@ -15275,7 +15338,8 @@ function selectSubAndPeriod(subId, periodKey){
   renderLiqSidebar();
   renderLiqPeriodPills();
   renderLiqProjects();
-  try{ renderLiqVentasRefFilter(); renderLiqVentasRef(); }catch(e){}
+  try{ if(typeof renderLiqVentasRefFilter==='function') renderLiqVentasRefFilter(); }catch(e){}
+  try{ renderLiqVentasRef(); }catch(e){}
   // Scroll to top of liq section
   var el = document.getElementById('sec-liquidaciones');
   if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
@@ -19507,6 +19571,9 @@ function exportCRMExcel(){
 
   // Use TAB as separator — works in ALL Excel versions/regions without delimiter issues
   var SEP='\t';
+  // Limpia tabuladores y saltos de línea para que cada dato quede en su celda.
+  // (Esta función llamaba a «esc» sin tenerla: la descarga fallaba siempre.)
+  function esc(v){ return String(v===null||v===undefined?'':v).replace(/\t/g,' ').replace(/\r?\n/g,' '); }
 
   // esc() defined below
 
@@ -21559,6 +21626,7 @@ async function generateGlobalZip(){
   await new Promise(function(r){ setTimeout(r, 100); });
 
   try{
+    try{ await cargarJSZip(); }catch(_e){}
     if(typeof JSZip === 'undefined'){
       throw new Error('Librería JSZip no disponible. Verifica tu conexión a internet e intenta de nuevo.');
     }
@@ -24604,7 +24672,7 @@ const _layout=(h=380,extra={})=>Object.assign({
 },extra);
 
 function plotStrain(r,fck,divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotStrain, arguments); return; }
   const s1=r.sr1,s4=r.sr4,fcd=0.85*fck;
   // Better strain diagram matching Python original
   const traces=[
@@ -24638,7 +24706,7 @@ function plotStrain(r,fck,divId){
 }
 
 function plotFrcCurve(dosis,divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotFrcCurve, arguments); return; }
   const cmod=[0.5,1.5,2.5,3.5];
   const fr=interpolarFrc(dosis);
   const traces=DOSIS_LIST.map(d=>{
@@ -24666,6 +24734,7 @@ function plotFrcCurve(dosis,divId){
 }
 
 function plotGauges(gaugeList,title,divId){
+  if(typeof Plotly==='undefined'&&gaugeList.length){ _plotlyLuego(plotGauges, arguments); return; }
   if(typeof Plotly==='undefined'||!gaugeList.length){const d=document.getElementById(divId);if(d)d.innerHTML='';return;}
   const cols=Math.min(gaugeList.length,4),rows=Math.ceil(gaugeList.length/cols);
   const traces=gaugeList.map((g,i)=>{
@@ -24690,7 +24759,7 @@ function plotGauges(gaugeList,title,divId){
 }
 
 function plotBarRatios(rowData,title,divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotBarRatios, arguments); return; }
   const labels=[],pcts=[],colors=[],texts=[],customs=[];
   rowData.forEach(({label,ratio,is_cap})=>{
     const pct=is_cap?(ratio>0?Math.min((1/ratio)*100,200):200):Math.min(ratio*100,200);
@@ -24720,7 +24789,7 @@ function plotBarRatios(rowData,title,divId){
 }
 
 function plotPuAl(r,inp,divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotPuAl, arguments); return; }
   const alR=Array.from({length:51},(_,i)=>i*0.005);
   const puI=[],puB=[];
   const Pu_i0=2*Math.PI*(r.Mr+r.Mn)/1000,Pu_e0=(Math.PI/2*(r.Mr+r.Mn)+2*r.Mn)/1000;
@@ -24754,7 +24823,7 @@ function plotPuAl(r,inp,divId){
 }
 
 function plotMomentos(r,inp,divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotMomentos, arguments); return; }
   // Todos los momentos en kN·m/m — unidades consistentes, valores positivos
   const Mn_kNm = r.Mn/1000;          // N·mm/mm → kN·m/m  (capacidad nominal concreto)
   const Mp_kNm = r.Mp/1000;          // N·mm/mm → kN·m/m  (aporte plástico fibra)
@@ -24829,7 +24898,7 @@ function plotMomentos(r,inp,divId){
 
 
 function plotRe3(r,divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotRe3, arguments); return; }
   // If combined with mesh: show Re3 equivalence (informative, neutral colors)
   // If fiber only: show Mn/Mu safety margin vs span - useful for engineer
   if(r.Mmalla>0){
@@ -25230,6 +25299,7 @@ async function exportPDF(mod, S, r) {
 
   // ── GENERAR GRÁFICAS ─────────────────────────────────────────────────────
   let imgStrain=null,imgFrc=null,imgBars=null,imgPuAl=null,imgPuDos=null,imgDefl=null;
+  try{ await cargarPlotly(); }catch(_e){ console.warn(_e.message||_e); }
   try{
     if(isCp){
       const d1=document.createElement('div');d1.style.cssText='position:fixed;left:-9999px;width:760px;height:400px;';document.body.appendChild(d1);
@@ -25601,7 +25671,7 @@ async function exportPDF(mod, S, r) {
 
 // ── GRÁFICA SECCIÓN TRANSVERSAL ───────────────────────────────────────────────
 function plotSeccion(r, h_cm, fck, tipo, divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotSeccion, arguments); return; }
   const h=h_cm*10;
   // Draw cross-section with stress blocks
   const shapes=[], annotations=[];
@@ -25648,7 +25718,7 @@ function plotSeccion(r, h_cm, fck, tipo, divId){
 
 // ── GRÁFICA SENSIBILIDAD Re3 vs DOSIS ────────────────────────────────────────
 function plotRe3Dosis(h_cm, fck, yc, divId, limit10=true){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotRe3Dosis, arguments); return; }
   const h=h_cm*10;
   const fctm=0.30*Math.pow(fck,2/3);
   const fctd_fl=(fctm/yc)*(1.6-h/1000);
@@ -25683,7 +25753,7 @@ function plotRe3Dosis(h_cm, fck, yc, divId, limit10=true){
 
 // ── GRÁFICA Mn/Mu vs ESPESOR (sensibilidad) ──────────────────────────────────
 function plotMnMuVsH(inp_ep, r_base, divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotMnMuVsH, arguments); return; }
   const hArr=[],mnmuArr=[];
   for(let h_cm=8;h_cm<=25;h_cm+=0.5){
     const h=h_cm*10;
@@ -25715,7 +25785,7 @@ function plotMnMuVsH(inp_ep, r_base, divId){
 
 // ── GRÁFICA DEFLEXIÓN vs VANO ─────────────────────────────────────────────────
 function plotDeflVano(inp_ep, r_base, divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotDeflVano, arguments); return; }
   const h=inp_ep.h_cm*10;
   const Ws=r_base.Ws;
   const Ecm=r_base.Ecm;
@@ -25743,7 +25813,7 @@ function plotDeflVano(inp_ep, r_base, divId){
 
 // ── GRÁFICA INTERACCIÓN BORDE vs INTERIOR (CP) ───────────────────────────────
 function plotPuDosisCP(r, inp, divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotPuDosisCP, arguments); return; }
   const h=inp.h_cm*10;
   const fctm=0.30*Math.pow(inp.fck,2/3);
   const fctd_fl=(fctm/inp.yc)*(1.6-h/1000);
@@ -25783,7 +25853,7 @@ function plotPuDosisCP(r, inp, divId){
 
 // ── GRÁFICA ANSI-DSI: Fibra vs Malla - Esfuerzo residual ────────────────
 function plotFibraVsMalla(r,inp,divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotFibraVsMalla, arguments); return; }
   // ── Valores ensayo UNI 14651 / EN 14651 para FibraPlus54 (PP macro sintética 54mm)
   // Fuente: datos de ensayo proporcionados por fabricante (ASTM A820 / ASTM C1609 equivalente)
   // Dosificación base: 2.5 kg/m³ — F1=0.85 MPa, F3=0.84 MPa, F4=0.85 MPa (CMOD 0.5/2.5/3.5 mm)
@@ -25887,7 +25957,7 @@ function plotFibraVsMalla(r,inp,divId){
 
 // ── GRÁFICA ANSI-DSI: Comparativa propiedades fibra vs malla ─────────────
 function plotRadarFibraMalla(r,inp,divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotRadarFibraMalla, arguments); return; }
   // Radar: compare fiber vs mesh on 6 axes
   // All values normalized 0-10 scale for visual comparison
   // Based on technical literature and standards
@@ -25918,7 +25988,7 @@ function plotRadarFibraMalla(r,inp,divId){
 
 // ── GRÁFICA ANSI-DSI: Cuantía dosificación ───────────────────────────────
 function plotCuantiaANSI(r,inp,divId){
-  if(typeof Plotly==='undefined')return;
+  if(typeof Plotly==='undefined'){ _plotlyLuego(plotCuantiaANSI, arguments); return; }
   const AS_TEMP=r.As_temp_ACI||225; // mm²/m
   const AS_MESH=212.18;
   const curDos=inp.dosis;
