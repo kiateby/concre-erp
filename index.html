@@ -1941,7 +1941,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112100347';
+var APP_BUILD='20261112101849';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -29838,6 +29838,94 @@ async function imprimirProforma(id){
   w.document.close();
 }
 
+// ── DESCARGAR LA PROFORMA COMO PDF ──────────────────────────────────────────
+// Un clic y baja el archivo: la proforma y, detrás, sus anexos técnicos. Es el
+// mismo documento que muestra «Ver», armado por la misma función (docHTML), así
+// que no pueden salir distintos.
+//
+// Se dibuja en un marco oculto para que sus estilos no toquen al ERP, y la
+// librería que lo convierte a PDF se carga solo la primera vez que se usa.
+var PDF_LIB='https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.2/dist/html2pdf.bundle.min.js';
+var PDF_CSS=[
+  'html,body{background:#fff!important;margin:0!important}',
+  '.barra-accion{display:none!important}',
+  // Una hoja carta/A4 a 96 puntos por pulgada mide 794 px de ancho
+  // El margen de arriba y de abajo lo pone el PDF en TODAS las páginas (también
+  // en las de continuación), por eso aquí la hoja solo conserva el de los lados.
+  '.hoja{width:794px!important;max-width:794px!important;margin:0!important;box-shadow:none!important;padding:2px 38px 2px!important}',
+  '.hoja+.hoja{page-break-before:always;break-before:page}',
+].join('');
+
+function _nombrePDF(d){
+  var cli=String(d.cliente_nombre||'').replace(/[\\/:*?"<>|]+/g,' ').replace(/\s+/g,' ').trim().slice(0,60);
+  return 'Proforma '+String(d.consecutivo||'').replace(/[\\/:*?"<>|]+/g,'-')+(cli?' - '+cli:'')+'.pdf';
+}
+
+var _pdfEnCurso=false;
+async function descargarPDF(id){
+  if(_pdfEnCurso){ _toast('Ya se está generando un PDF, espere un momento'); return; }
+  var d, lineas;
+  if(S.edit && S.edit.id===id){
+    if(S.dirty){ _toast('⚠ Guarde los cambios antes de descargar el PDF'); return; }
+    d=S.edit; lineas=S.lineas;
+  } else {
+    d=S.docs.find(function(x){ return x.id===id; });
+    if(!d){ _toast('No se encontró la proforma'); return; }
+    try{
+      var rl=await loadAllRowsEq('fact_lineas','doc_id',id,'orden');
+      lineas=(rl.error?[]:(rl.data||[]));
+    }catch(e0){ lineas=[]; }
+  }
+  if(!d.consecutivo){ _toast('⚠ Guarde la proforma antes de descargarla'); return; }
+
+  _pdfEnCurso=true;
+  _toast('⏳ Generando el PDF…');
+  var marco=null;
+  try{
+    var e=S.empresas.find(function(x){ return x.id===d.empresa_id; })||_emp();
+    marco=document.createElement('iframe');
+    marco.setAttribute('aria-hidden','true');
+    marco.style.cssText='position:fixed;left:-10000px;top:0;width:794px;height:1123px;border:0;opacity:0;pointer-events:none';
+    document.body.appendChild(marco);
+    var doc=marco.contentDocument;
+    doc.open(); doc.write(docHTML(d, lineas, e)); doc.close();
+    var st=doc.createElement('style'); st.textContent=PDF_CSS; doc.head.appendChild(st);
+
+    // La librería, dentro del marco
+    await new Promise(function(res, rej){
+      var sc=doc.createElement('script'); sc.src=PDF_LIB;
+      sc.onload=res; sc.onerror=function(){ rej(new Error('No se pudo cargar el generador de PDF. Revise la conexión.')); };
+      doc.head.appendChild(sc);
+    });
+    // Que el logo y las imágenes de los anexos estén cargadas antes de «fotografiar»
+    await Promise.all(Array.prototype.map.call(doc.images, function(im){
+      if(im.complete) return null;
+      return new Promise(function(r){ im.onload=im.onerror=r; });
+    }));
+
+    // Las opciones se arman DENTRO del marco: la librería revisa las listas con
+    // «instanceof Array», y una lista creada en la página de afuera no pasa esa
+    // revisión (cada ventana tiene su propio Array).
+    var opciones=marco.contentWindow.JSON.parse(JSON.stringify({
+      margin:[30,0,30,0],
+      filename:_nombrePDF(d),
+      image:{type:'jpeg', quality:0.96},
+      html2canvas:{scale:2, useCORS:true, backgroundColor:'#ffffff', windowWidth:794, logging:false},
+      jsPDF:{unit:'pt', format:'a4', orientation:'portrait'},
+      // Cada hoja empieza página nueva, y no se parte un renglón por la mitad
+      pagebreak:{mode:['css','legacy'], avoid:['tr','p','li','h2','h3','.bloque','.cierre','.pie','.pie-legal','.legal']}
+    }));
+    await marco.contentWindow.html2pdf().set(opciones).from(doc.body).save();
+    _toast('✅ PDF descargado');
+  }catch(err){
+    console.error('descargarPDF:',err);
+    _toast('⚠ No se pudo generar el PDF: '+(err.message||err));
+  }finally{
+    _pdfEnCurso=false;
+    if(marco && marco.parentNode) setTimeout(function(){ try{ marco.parentNode.removeChild(marco); }catch(_){} }, 1500);
+  }
+}
+
 function docHTML(d, lineas, e){
   var m=d.moneda;
   var anexos=(d.tipo_proyecto||[])
@@ -31929,14 +32017,17 @@ function accionesDoc(d){
 
   if(esProf){
     out.push(_ic('✏','Modificar la proforma','FACT.abrir(\''+id+'\')','k-ed'));
+    out.push(_ic('👁','Ver la proforma tal como la recibe el cliente (desde ahí también se imprime)',
+      'FACT.imprimir(\''+id+'\')','k-ver'));
+    out.push(_ic('PDF','Descargar el PDF completo, con sus anexos',
+      'FACT.descargarPDF(\''+id+'\')','k-ver'));
     if(d.factura_id){
-      out.push(_ic('👁','Ver la factura que salió de esta proforma',
-        'FACT.verFactura(\''+d.factura_id+'\')','k-ver'));
+      out.push(_ic('FE','Ver la factura que salió de esta proforma',
+        'FACT.verFactura(\''+d.factura_id+'\')','k-ok'));
     } else {
       out.push(_ic('🧾','Facturar: revisar qué falta y emitir','FACT.facturar(\''+id+'\')','k-ok'));
     }
     out.push(_ic('📈','Pasar a Ventas','FACT.pasarAVentas(\''+id+'\')','k-ok'));
-    out.push(_ic('🖨','Imprimir o guardar en PDF','FACT.imprimir(\''+id+'\')','k-ed'));
     out.push(_ic('⧉','Duplicar en una proforma nueva','FACT.duplicar(\''+id+'\')','k-ed'));
     out.push(_ic('🗑','Enviar a la papelera','FACT.aPapelera(\''+id+'\')','k-no'));
     return '<div class="fx-acc">'+out.join('')+'</div>';
@@ -33882,7 +33973,7 @@ window.FACT={
   rangoRapido:rangoRapido,
   nueva:nuevaProforma, abrir:abrirProforma, cerrarEditor:cerrarEditor,
   guardar:guardarProforma, duplicar:duplicarProforma, aPapelera:aPapelera,
-  imprimir:imprimirProforma,
+  imprimir:imprimirProforma, descargarPDF:descargarPDF,
   setDoc:setDoc, setMoneda:setMoneda, setIvaDoc:setIvaDoc,
   togOpcDoc:togOpcDoc, setProvDoc:setProvDoc,
   agregarCopiaDoc:agregarCopiaDoc, setCopiaDoc:setCopiaDoc,
