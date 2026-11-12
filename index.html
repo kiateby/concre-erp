@@ -1722,15 +1722,26 @@ async function loadAllDataFromDB(){
     // CRÍTICO: configuracion puede superar las 1000 filas (límite por defecto de
     // Supabase). Si se trunca, se pierden overrides como cc_pagado_admin_* y el
     // estado de pago vuelve a "pendiente" al recargar. Se pagina para traer TODO.
+    // Las páginas se piden de tres en tres A LA VEZ en lugar de una tras otra:
+    // con ~2000 filas eran tres viajes en fila y ahora es uno. Se ordena por
+    // clave para que las páginas no se traslapen ni se salten filas.
     var _loadAllConfig=async function(){
-      var all=[], from=0, size=1000;
-      for(var iPage=0; iPage<50; iPage++){
-        var r=await DB.from('configuracion').select('*').range(from, from+size-1);
-        if(r.error){ console.error('configuracion page error:',r.error); break; }
-        var rows=r.data||[];
-        all=all.concat(rows);
-        if(rows.length<size) break;
-        from+=size;
+      var all=[], from=0, size=1000, tanda=3, fin=false;
+      for(var iRonda=0; iRonda<17 && !fin; iRonda++){
+        var pedidos=[];
+        for(var k=0;k<tanda;k++){
+          pedidos.push(DB.from('configuracion').select('*').order('clave')
+            .range(from+k*size, from+(k+1)*size-1));
+        }
+        var res=await Promise.all(pedidos);
+        for(var j=0;j<res.length;j++){
+          var r=res[j];
+          if(r.error){ console.error('configuracion page error:',r.error); fin=true; break; }
+          var rows=r.data||[];
+          all=all.concat(rows);
+          if(rows.length<size){ fin=true; break; }
+        }
+        from+=tanda*size;
       }
       console.log('configuracion: '+all.length+' filas cargadas');
       return {data:all, error:null};
@@ -1878,7 +1889,7 @@ async function loadAllDataFromDB(){
     if(!crmL.error&&crmL.data){
       window._crmLinks=crmL.data;
       // Populate _crmLinksCache directly from Phase 1 data
-      window._crmLinksCache=crmL.data.map(function(row){
+      window._crmLinksCache=_crmDeBase(crmL.data).map(function(row){
         return {ventaId:row.venta_id,clienteId:row.cliente_id,
           contactoId:row.contacto_id,autoMatched:row.auto_matched};
       });
@@ -1971,7 +1982,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112114803';
+var APP_BUILD='20261112120338';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2287,7 +2298,7 @@ function startAutoRefresh(){
           }
         }),
         loadAllRows('crm_links').then(function(lkr){
-          if(!lkr.error&&lkr.data) window._crmLinksCache=lkr.data.map(function(row){
+          if(!lkr.error&&lkr.data) window._crmLinksCache=_crmDeBase(lkr.data).map(function(row){
             return {ventaId:row.venta_id,clienteId:row.cliente_id,
               contactoId:row.contacto_id,autoMatched:row.auto_matched};
           });
@@ -3894,7 +3905,7 @@ function doLogout(){
   REG={}; DED={};
   window._usersCache=null; window._ventasCache={}; window._horasCache={};
   window._vacCache={}; window._fondosCache={}; window._gastosCache={};
-  window._crmClientsCache=null; window._crmLinksCache=null;
+  window._crmClientsCache=null; window._crmLinksCache=null; window._crmLinksGuardados=null;
   window._trashCache=null; window._liqDataCache={}; window._liqSubsCache=null;
   window._catalogoCache=null; window._tiposProyCache=null;
   window._liqCostTypesCache=null; window._fondosLimCache=null;
@@ -18561,22 +18572,48 @@ function setCRMClients(d){
 function getCRMLinks(){
   return window._crmLinksCache||[];
 }
+// Lo que ya está guardado en la nube, vínculo por vínculo: venta → «cliente|contacto|auto».
+// Sirve para que setCRMLinks escriba SOLO lo que cambió. Antes reescribía todos
+// los vínculos en cada guardado; la tabla llegó a pesar 12 MB con 343 registros,
+// puro espacio muerto de versiones viejas.
+window._crmLinksGuardados=null;
+function _crmFirma(cliente, contacto, auto){ return String(cliente||'')+'|'+String(contacto||'')+'|'+(auto?'1':'0'); }
+// Se llama con las filas tal como vienen de la base; las devuelve sin tocarlas.
+function _crmDeBase(filas){
+  var m={};
+  (filas||[]).forEach(function(r){ m[r.venta_id]=_crmFirma(r.cliente_id, r.contacto_id, r.auto_matched); });
+  window._crmLinksGuardados=m;
+  return filas||[];
+}
 function setCRMLinks(d){
   _crmInvalidarCache();
   window._crmLinksCache=d;
   if(!d||!d.length) return;
   // Upsert by venta_id — safe, never wipes other users' links
-  var rows=d.map(function(l){
+  var todas=d.map(function(l){
     return {venta_id:l.ventaId,cliente_id:l.clienteId,
       contacto_id:l.contactoId||'',auto_matched:l.autoMatched||false};
   });
+  // Solo las nuevas o las que cambiaron. Si no se sabe qué hay guardado (no se
+  // llegó a leer la tabla), se escribe todo, como antes: nunca se deja de guardar.
+  var ya=window._crmLinksGuardados;
+  var rows=ya ? todas.filter(function(r){
+    return ya[r.venta_id]!==_crmFirma(r.cliente_id, r.contacto_id, r.auto_matched);
+  }) : todas;
+  if(!rows.length) return;
+  // Se anota como guardado solo cuando la nube confirma; si falla, se reintenta
+  // en el siguiente guardado.
+  var anotar=function(){
+    var m=window._crmLinksGuardados||(window._crmLinksGuardados={});
+    rows.forEach(function(r){ m[r.venta_id]=_crmFirma(r.cliente_id, r.contacto_id, r.auto_matched); });
+  };
   DB.from('crm_links').upsert(rows,{onConflict:'venta_id'}).then(function(r){
     if(r.error){
       // Fallback: insert ignoring conflicts
       DB.from('crm_links').insert(rows).then(function(r2){
-        if(r2.error) console.error('setCRMLinks:',r2.error);
+        if(r2.error) console.error('setCRMLinks:',r2.error); else anotar();
       });
-    }
+    } else anotar();
   });
 }
 async function loadCRMFromDB(){
@@ -18598,7 +18635,7 @@ async function loadCRMFromDB(){
     });
   }
   if(!c2.error&&c2.data){
-    window._crmLinksCache=c2.data.map(function(row){
+    window._crmLinksCache=_crmDeBase(c2.data).map(function(row){
       return {ventaId:row.venta_id,clienteId:row.cliente_id,
         contactoId:row.contacto_id,autoMatched:row.auto_matched};
     });
@@ -19463,6 +19500,13 @@ function confirmDeleteCRMClient(id){
     // 3. Remove from local cache
     window._crmClientsCache=(window._crmClientsCache||[]).filter(function(c){return c.id!==id;});
     window._crmLinksCache=(window._crmLinksCache||[]).filter(function(l){return l.clienteId!==id;});
+    // Los vínculos de ese cliente se borraron de la nube: se olvidan también
+    // aquí, para que si se vuelven a crear se guarden de nuevo.
+    if(window._crmLinksGuardados){
+      Object.keys(window._crmLinksGuardados).forEach(function(k){
+        if(String(window._crmLinksGuardados[k]).split('|')[0]===String(id)) delete window._crmLinksGuardados[k];
+      });
+    }
     // 4. Delete links from Supabase
     DB.from('crm_links').delete().eq('cliente_id',id).then(function(r2){
       if(r2.error) console.error('deleteCRMLinks:',r2.error);
