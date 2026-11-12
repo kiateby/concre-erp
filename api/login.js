@@ -28,28 +28,47 @@ const G = require('./_gti');
 
 const HORAS_DE_SESION = 12;
 
-const b64u = (buf) => Buffer.from(buf).toString('base64')
-  .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+const { firmar, verificar, portador } = require('./_sesion');
 
-function firmar(datos, secreto) {
-  const cabeza = b64u(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const cuerpo = b64u(JSON.stringify(datos));
-  const firma = b64u(crypto.createHmac('sha256', secreto).update(cabeza + '.' + cuerpo).digest());
-  return cabeza + '.' + cuerpo + '.' + firma;
+// ── Límite de intentos ──────────────────────────────────────────────────────
+// Cinco contraseñas equivocadas seguidas bloquean ese usuario 15 minutos. La
+// cuenta se lleva en la tabla login_intentos (no en memoria: cada llamada a
+// Vercel puede caer en un servidor distinto). Un ingreso correcto la borra.
+const MAX_INTENTOS = 5;
+const MINUTOS_BLOQUEO = 15;
+
+async function leerIntentos(usuario) {
+  try {
+    const f = (await G.sbGet('login_intentos', 'usuario=eq.' + encodeURIComponent(usuario) + '&limit=1'))[0];
+    if (!f) return { fallos: 0, hasta: 0, hay: true };
+    const hasta = f.bloqueado_hasta ? new Date(f.bloqueado_hasta).getTime() : 0;
+    // Un bloqueo ya cumplido deja la cuenta en cero
+    if (hasta && hasta <= Date.now()) return { fallos: 0, hasta: 0, hay: true };
+    return { fallos: Number(f.fallos) || 0, hasta: hasta, hay: true };
+  } catch (e) {
+    // Si la tabla todavía no existe, no se limita: es preferible a dejar a
+    // todos sin poder entrar por un SQL que falta.
+    return { fallos: 0, hasta: 0, hay: false };
+  }
 }
 
-function verificar(token, secreto) {
-  const p = String(token || '').split('.');
-  if (p.length !== 3) return null;
-  const esperada = b64u(crypto.createHmac('sha256', secreto).update(p[0] + '.' + p[1]).digest());
-  const a = Buffer.from(p[2]), b = Buffer.from(esperada);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  let datos;
-  try { datos = JSON.parse(Buffer.from(p[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')); }
-  catch (e) { return null; }
-  if (!datos || !datos.exp || datos.exp * 1000 < Date.now()) return null;
-  return datos;
+async function guardarIntentos(usuario, fallos, hasta) {
+  try {
+    const r = await fetch(process.env.SUPABASE_URL + '/rest/v1/login_intentos?on_conflict=usuario', {
+      method: 'POST',
+      headers: { 'apikey': process.env.SUPABASE_SERVICE_KEY,
+        'Authorization': 'Bearer ' + process.env.SUPABASE_SERVICE_KEY,
+        'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify([{ usuario: usuario, fallos: fallos,
+        bloqueado_hasta: hasta ? new Date(hasta).toISOString() : null,
+        ultimo_fallo: fallos ? new Date().toISOString() : null,
+        actualizado_en: new Date().toISOString() }]),
+    });
+    return r.ok;
+  } catch (e) { return false; }
 }
+
+const minutosQueFaltan = (hasta) => Math.max(1, Math.ceil((hasta - Date.now()) / 60000));
 
 // Supabase espera que «sub» sea un UUID. Los ids del ERP no lo son ('admin',
 // 'pablo'), así que se deriva uno fijo de cada id; el id real va en «erp_uid».
@@ -73,6 +92,12 @@ function claveCorrecta(clave, guardada) {
   }
   const a = Buffer.from(String(clave)), b = Buffer.from(guardada);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// «Activo» es el estado normal. Un usuario viejo sin ese dato cuenta como activo.
+function estaActivo(u) {
+  const e = String((u && u.estado) || 'activo').trim().toLowerCase();
+  return e === 'activo';
 }
 
 function pase(u, secreto) {
@@ -110,12 +135,14 @@ module.exports = async function handler(req, res) {
 
     // ── renovar un pase que todavía sirve ───────────────────────────────────
     if (c.renovar) {
-      const h = String((req.headers && (req.headers.authorization || req.headers.Authorization)) || '');
-      const datos = verificar(h.replace(/^Bearer\s+/i, ''), secreto);
+      const datos = verificar(portador(req), secreto);
       if (!datos || !datos.erp_uid) return res.status(401).json({ ok: false, error: 'La sesión venció.' });
       const u = (await G.sbGet('usuarios', 'id=eq.' + encodeURIComponent(datos.erp_uid)
         + '&select=id,rol,estado&limit=1'))[0];
       if (!u) return res.status(401).json({ ok: false, error: 'El usuario ya no existe.' });
+      // Un usuario desactivado pierde la sesión en la siguiente renovación
+      // (a más tardar media hora después de desactivarlo).
+      if (!estaActivo(u)) return res.status(401).json({ ok: false, error: 'El usuario fue desactivado.' });
       return res.status(200).json(pase(u, secreto));
     }
 
@@ -124,17 +151,47 @@ module.exports = async function handler(req, res) {
     const clave = String(c.clave == null ? '' : c.clave);
     if (!usuario || !clave) return res.status(400).json({ ok: false, error: 'Falta el usuario o la contraseña.' });
 
+    const llave = usuario.slice(0, 60);
+    const cuenta = await leerIntentos(llave);
+    if (cuenta.hasta > Date.now()) {
+      const min = minutosQueFaltan(cuenta.hasta);
+      return res.status(423).json({ ok: false, motivo: 'bloqueado', minutos: min,
+        error: 'Usuario bloqueado por demasiados intentos. Vuelva a intentar en ' + min
+          + (min === 1 ? ' minuto.' : ' minutos.') });
+    }
+
     const todos = await G.sbGet('usuarios', 'select=id,username,password,rol,estado');
     const u = todos.find(x => String(x.username || '').toLowerCase() === usuario);
-    if (!u) { await espera(600); return res.status(401).json({ ok: false, motivo: 'usuario', error: 'Usuario no encontrado' }); }
-    if (!claveCorrecta(clave, u.password)) {
+
+    if (!u || !claveCorrecta(clave, u.password)) {
       await espera(600);   // frena a quien prueba contraseñas una tras otra
-      return res.status(401).json({ ok: false, motivo: 'clave', error: 'Contraseña incorrecta' });
+      const base = u ? 'Contraseña incorrecta' : 'Usuario no encontrado';
+      if (!cuenta.hay) return res.status(401).json({ ok: false, motivo: u ? 'clave' : 'usuario', error: base });
+      const fallos = cuenta.fallos + 1;
+      if (fallos >= MAX_INTENTOS) {
+        const hasta = Date.now() + MINUTOS_BLOQUEO * 60000;
+        await guardarIntentos(llave, fallos, hasta);
+        return res.status(423).json({ ok: false, motivo: 'bloqueado', minutos: MINUTOS_BLOQUEO, restantes: 0,
+          error: base + '. Se agotaron los ' + MAX_INTENTOS + ' intentos: el usuario queda bloqueado '
+            + MINUTOS_BLOQUEO + ' minutos.' });
+      }
+      await guardarIntentos(llave, fallos, 0);
+      const quedan = MAX_INTENTOS - fallos;
+      return res.status(401).json({ ok: false, motivo: u ? 'clave' : 'usuario', restantes: quedan,
+        error: base + '. Le ' + (quedan === 1 ? 'queda 1 intento' : 'quedan ' + quedan + ' intentos')
+          + ' antes del bloqueo.' });
     }
+
+    // Contraseña correcta, pero el superadmin lo desactivó: no entra.
+    if (!estaActivo(u)) {
+      return res.status(403).json({ ok: false, motivo: 'inactivo',
+        error: 'Este usuario está inactivo. Consulte con el administrador.' });
+    }
+    if (cuenta.fallos) await guardarIntentos(llave, 0, 0);
     return res.status(200).json(pase(u, secreto));
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 };
 
-module.exports._interno = { firmar, verificar, claveCorrecta, uuidDe };
+module.exports._interno = { firmar, verificar, claveCorrecta, uuidDe, MAX_INTENTOS, MINUTOS_BLOQUEO };

@@ -20,6 +20,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 const G = require('./_gti');
+const S = require('./_sesion');
 const P = require('./_gti_payload');
 
 const BUCKET = 'fact-comprobantes';
@@ -47,6 +48,21 @@ module.exports = async function handler(req, res) {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
     return res.status(500).json({ ok: false,
       error: 'Faltan SUPABASE_URL o SUPABASE_SERVICE_KEY en Vercel.' });
+  }
+
+  // ── Quién puede llamar ────────────────────────────────────────────────────
+  // Solo dos: un usuario del ERP con su pase de sesión (el navegador, cuando
+  // empuja la cola) o el reloj externo con su llave. La llave del reloj vive en
+  // GTI_LLAVE_CRON; mientras esa variable no exista, el servicio sigue abierto
+  // como antes, para no detener la cola antes de que el reloj tenga su llave.
+  const llaveCron = process.env.GTI_LLAVE_CRON || '';
+  if (llaveCron) {
+    const dada = String((req.query && req.query.llave) || (req.headers && req.headers['x-llave']) || '');
+    const esReloj = S.igual(dada, llaveCron)
+      || (process.env.CRON_SECRET && S.igual(S.portador(req), process.env.CRON_SECRET));
+    if (!esReloj && !S.sesionDe(req)) {
+      return res.status(401).json({ ok: false, error: 'No autorizado.' });
+    }
   }
 
   const hechos = [];
