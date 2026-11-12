@@ -182,6 +182,20 @@ async function emitir(t) {
     http_status: r.status,
   });
 
+  // 401 = GTI no aceptó el usuario o la clave de quien emite. Reintentar no lo
+  // arregla y cada intento es un acceso fallido más contra esa cuenta de GTI,
+  // así que se detiene de una vez y se dice qué revisar.
+  if (r.status === 401) {
+    const v = G.variablesDeUsuario(doc.empresa_id, t.usuario_id);
+    const e401 = new Error('GTI no aceptó el usuario o la clave de '
+      + (t.usuario_nombre || t.usuario_id || 'quien emite') + ' en el ambiente de '
+      + (emp.gti_ambiente || 'pruebas') + '. '
+      + (v ? 'Revise en Vercel los valores de ' + v.usuario + ' y ' + v.clave
+            + ', y que ese usuario exista en ese ambiente de GTI.' : ''));
+    e401.configuracion = true;
+    throw e401;
+  }
+
   // GTI contesta 202 (Accepted), no 200: fetch lo da como ok, pero se deja
   // dicho acá para que no se «arregle» a 200 en el futuro.
   if (!r.ok) throw new Error(r.error || ('GTI respondió ' + r.status + ': ' +

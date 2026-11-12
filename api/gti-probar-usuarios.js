@@ -6,8 +6,8 @@
 //   · si ya están creadas;
 //   · y, si lo están, qué contestó GTI al consultar con ese usuario y clave.
 //
-// La prueba es una CONSULTA de estado (EstadoHacienda): no emite, no cambia
-// ni borra nada, ni en pruebas ni en producción.
+// La prueba llama a CargarDocumento con el cuerpo vacío: no hay documento que
+// emitir, así que no emite, no cambia ni borra nada. Ver «LA SONDA» abajo.
 //
 // Nunca imprime usuarios ni claves de GTI: solo el nombre de las variables.
 //
@@ -56,32 +56,53 @@ module.exports = async function handler(req, res) {
     const ambiente = (pedido === 'produccion' || pedido === 'pruebas')
       ? pedido : (emp.gti_ambiente || 'pruebas');
 
-    // Un consecutivo real de la empresa para preguntar por él. Si todavía no
-    // hay ninguno, se pregunta por uno que no existe: igual se ve si GTI dejó
-    // entrar al usuario o lo rechazó.
-    const ult = await G.sbGet('fact_docs', 'empresa_id=eq.' + encodeURIComponent(empresaId)
-      + '&consecutivo_fiscal=not.is.null&order=enviado_en.desc&limit=1');
-    const real = ult[0] && ult[0].consecutivo_fiscal;
-    const consecutivo = real || '00100001010000000000';
-
     const usuarios = await G.sbGet('usuarios', 'select=id,nombre,rol,estado&order=nombre.asc');
     const filas = [];
+
+    // LA SONDA. La primera versión consultaba EstadoHacienda y dio un falso
+    // «conectó»: GTI contesta esa consulta sin validar la clave del usuario
+    // (12/11/2026: Jose Pablo salió «SÍ» y al emitir GTI respondió 401).
+    //
+    // Ahora se llama al mismo método que emite, CargarDocumento, pero con el
+    // cuerpo VACÍO: sin documentos no hay nada que GTI pueda emitir. Lo que
+    // interesa es solo el código con que contesta:
+    //   401                    → GTI rechazó el usuario o la clave
+    //   cualquier otro código  → pasó la puerta (y se queja del cuerpo vacío)
+    // Para no suponer cómo contesta GTI, primero se manda la misma sonda con un
+    // usuario inventado: si esa NO da 401, la sonda no sirve para distinguir y
+    // se dice «no concluyente» en lugar de afirmar algo que no se sabe.
+    async function sonda(cred) {
+      const r = await G.llamarGTI(cred, P.METODOS.emitir, { cuerpo: {} });
+      return { http: r.status, texto: r.error || leer(r.datos) || 'sin mensaje' };
+    }
+
+    let control = null;
+    if (!G.SIMULADOR) {
+      const base = G.credenciales(empresaId, ambiente, null);
+      control = await sonda(Object.assign({}, base,
+        { usuario: 'usuario-inexistente-sonda-erp', clave: 'sonda' }));
+    }
+    const sondaSirve = !!control && control.http === 401;
 
     async function probar(usuarioId) {
       let cred;
       try { cred = G.credenciales(empresaId, ambiente, usuarioId); }
-      catch (e) { return { conecto: false, respuesta: String(e.message || e) }; }
-      if (G.SIMULADOR) return { conecto: null, respuesta: 'GTI_SIMULADOR está activo: no se llamó a GTI.' };
-      const r = await G.llamarGTI(cred, P.METODOS.estado, { consecutivo: consecutivo });
-      return {
-        conecto: !!r.ok,
-        http: r.status,
-        respuesta: r.ok ? 'GTI aceptó el usuario y la clave.'
-                        : (r.error || leer(r.datos) || 'sin mensaje'),
-      };
+      catch (e) { return { conecto: 'NO', respuesta: String(e.message || e) }; }
+      if (G.SIMULADOR) return { conecto: 'simulador', respuesta: 'GTI_SIMULADOR está activo: no se llamó a GTI.' };
+      const r = await sonda(cred);
+      if (r.http === 401) {
+        return { conecto: 'NO', http: 401,
+          respuesta: 'GTI rechazó el usuario o la clave en ' + ambiente + ': ' + r.texto };
+      }
+      if (!sondaSirve) {
+        return { conecto: 'no concluyente', http: r.http,
+          respuesta: 'GTI no distingue usuarios en esta prueba; solo emitiendo se sabrá. Contestó: ' + r.texto };
+      }
+      return { conecto: 'SÍ', http: r.http,
+        respuesta: 'GTI aceptó el usuario y la clave (y, como se esperaba, objetó el cuerpo vacío: ' + r.texto + ')' };
     }
 
-    // El usuario general, como referencia de qué contesta GTI cuando todo está bien
+    // El usuario general, como referencia
     const general = await probar(null);
 
     for (const u of usuarios) {
@@ -101,7 +122,7 @@ module.exports = async function handler(req, res) {
       };
       if (tieneU && tieneC) {
         const p = await probar(u.id);
-        fila.conecto = p.conecto === null ? 'simulador' : (p.conecto ? 'SÍ' : 'NO');
+        fila.conecto = p.conecto;
         if (p.http !== undefined) fila.http = p.http;
         fila.respuesta_de_gti = p.respuesta;
       }
@@ -111,11 +132,11 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       ambiente: ambiente,
-      nota: 'Prueba de solo consulta: no emite ni cambia nada.'
-        + (real ? '' : ' Todavía no hay documentos emitidos; se consultó un consecutivo inexistente,'
-          + ' así que compare cada respuesta con la del usuario general.'),
+      nota: 'No emite nada: se llama a GTI con el cuerpo vacío y solo se mira si acepta al usuario.',
+      control_con_usuario_inventado: control
+        ? { http: control.http, sirve_la_prueba: sondaSirve ? 'sí' : 'no' } : null,
       usuario_general: {
-        conecto: general.conecto === null ? 'simulador' : (general.conecto ? 'SÍ' : 'NO'),
+        conecto: general.conecto,
         http: general.http, respuesta_de_gti: general.respuesta,
       },
       usuarios: filas,
