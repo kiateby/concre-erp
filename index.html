@@ -1545,16 +1545,44 @@ function getUsers(){
   // Returns cached users (loaded async at startup)
   return window._usersCache || [];
 }
+// La fila de un usuario tal como va a la base (SIN contraseña).
+function _usuarioFila(user){
+  return {
+    id:user.id, username:user.username,
+    nombre:user.nombre, rol:user.rol, salario:user.salario||0,
+    email:user.email||'', puesto:user.puesto||'',
+    comis_type:user.comisType||'mensual', estado:user.estado||'activo',
+    tab_perms:user.tabPerms||null, ccss_solo_q1:user.ccssSoloQ1||false
+  };
+}
+// Se llama cada vez que la lista de usuarios se lee de la base: recuerda cómo
+// está cada fila para que setUsers escriba solo las que de verdad cambiaron.
+function _usuariosDeBase(lista){
+  var f={};
+  (lista||[]).forEach(function(u){ f[u.id]=JSON.stringify(_usuarioFila(u)); });
+  window._usersFirmas=f;
+  return lista;
+}
+// Guarda usuarios. Antes reescribía TODAS las filas, con la contraseña incluida,
+// cada vez que se tocaba un solo dato: eso podía deshacer un cambio hecho desde
+// otra computadora. Ahora:
+//  · solo se escribe la fila que cambió;
+//  · la contraseña viaja únicamente cuando se acaba de escribir una nueva
+//    (user._claveNueva) y no se queda en la memoria del navegador.
 function setUsers(u){
   window._usersCache=u;
+  var firmas=window._usersFirmas||(window._usersFirmas={});
   u.forEach(function(user){
-    DB.from('usuarios').upsert({
-      id:user.id, username:user.username, password:user.password,
-      nombre:user.nombre, rol:user.rol, salario:user.salario||0,
-      email:user.email||'', puesto:user.puesto||'',
-      comis_type:user.comisType||'mensual', estado:user.estado||'activo',
-      tab_perms:user.tabPerms||null, ccss_solo_q1:user.ccssSoloQ1||false, updated_at:new Date().toISOString()
-    },{onConflict:'id'}).then(function(r){ if(r.error) console.error('setUsers:',r.error); });
+    var fila=_usuarioFila(user), firma=JSON.stringify(fila);
+    var clave=user._claveNueva||'';
+    if(firmas[user.id]===firma && !clave) return;
+    delete user._claveNueva;
+    if(clave) fila.password=clave;
+    fila.updated_at=new Date().toISOString();
+    firmas[user.id]=firma;
+    DB.from('usuarios').upsert(fila,{onConflict:'id'}).then(function(r){
+      if(r.error){ console.error('setUsers:',r.error); delete firmas[user.id]; }
+    });
   });
 }
 // defaultUsers() eliminado por auditoría de seguridad — contenía credencial
@@ -1769,7 +1797,7 @@ async function loadAllDataFromDB(){
     var proysR=phase1[6];
     window._proyectosCache=(!proysR.error&&proysR.data)?proysR.data:[];
 
-    if(!users.error&&users.data) window._usersCache=users.data.map(dbRowToUser);
+    if(!users.error&&users.data) window._usersCache=_usuariosDeBase(users.data.map(dbRowToUser));
 
     if(!configs.error&&configs.data){
       // NO reiniciar _pagadoAdminOverrides ni _depositoOverrides: ya vienen cargados
@@ -1982,7 +2010,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112123708';
+var APP_BUILD='20261112125310';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2209,7 +2237,7 @@ function _loginLocal(u, p, err, yaLeidos){
       return;
     }
     var all=res.data;
-    window._usersCache=all.map(dbRowToUser);
+    window._usersCache=_usuariosDeBase(all.map(dbRowToUser));
     var candidate=all.find(function(x){ return x.username.toLowerCase()===u; });
     if(!candidate){
       if(err){ err.style.display='block'; err.textContent='⚠ Usuario no encontrado'; }
@@ -2220,13 +2248,19 @@ function _loginLocal(u, p, err, yaLeidos){
       if(err){ err.style.display='block'; err.textContent='⚠ Este navegador no soporta el cifrado requerido. Use Chrome o Safari actualizado.'; }
       return;
     }
-    verifyPassword(p, candidate.password).then(function(ok){
+    // Con pase (yaLeidos), la contraseña YA la comprobó el servidor: el navegador
+    // no la vuelve a comparar — ni puede, porque su cifrado ya no sale de la base.
+    if(!yaLeidos && !candidate.password){
+      if(err){ err.style.display='block'; err.textContent='⚠ No se pudo comprobar la contraseña con el servidor. Revise la conexión y vuelva a intentar.'; }
+      return;
+    }
+    (yaLeidos ? Promise.resolve(true) : verifyPassword(p, candidate.password)).then(function(ok){
       if(!ok){
         if(err){ err.style.display='block'; err.textContent='⚠ Contraseña incorrecta'; }
         return;
       }
       // Auto-upgrade: si la contraseña estaba en texto plano, cifrarla ahora
-      if(!isHashedPassword(candidate.password) && window.crypto && crypto.subtle){
+      if(candidate.password && !isHashedPassword(candidate.password) && window.crypto && crypto.subtle){
         hashPassword(p).then(function(h){
           DB.from('usuarios').update({password:h, updated_at:new Date().toISOString()}).eq('id',candidate.id).then(function(r2){
             if(!r2.error){
@@ -2288,7 +2322,7 @@ function startAutoRefresh(){
       var _jobs=[
         reloadNotifications(SESSION.id).then(function(){ try{renderNotifBell();}catch(e){} }),
         DB.from('usuarios').select('*').order('nombre').then(function(ur){
-          if(!ur.error&&ur.data) window._usersCache=ur.data.map(dbRowToUser);
+          if(!ur.error&&ur.data) window._usersCache=_usuariosDeBase(ur.data.map(dbRowToUser));
         }),
         loadAllRows('crm_clientes','nombre_empresa').then(function(cr){
           if(!cr.error&&cr.data&&cr.data.length>0){
@@ -4475,7 +4509,7 @@ function openUserModal(userId=null){
     var cpWrap2=document.getElementById('fPass-current');
     var cpVal=document.getElementById('fPass-current-val');
     if(cpWrap2) cpWrap2.style.display='block';
-    if(cpVal){ cpVal.textContent='••••••••'; cpVal.dataset.pass=isHashedPassword(u.password)?'🔒 Cifrada — escriba una nueva para cambiarla':(u.password||''); cpVal.dataset.visible='0'; }
+    if(cpVal){ cpVal.textContent='••••••••'; cpVal.dataset.pass='🔒 Cifrada — escriba una nueva para cambiarla'; cpVal.dataset.visible='0'; }
     var cpEye=document.getElementById('fPass-current-eye'); if(cpEye) cpEye.textContent='👁';
   }
   document.getElementById('userModal').classList.remove('hidden');
@@ -4534,6 +4568,7 @@ function saveUser(){
   if(editingUserIdx===null){
     const exists=users.find(u=>u.username===username);
     if(exists){alert('Ya existe un usuario con ese nombre de usuario');return;}
+    if(!pass||pass.length<6){alert('La contraseña es requerida (mínimo 6 caracteres)');return;}
   } else {
     const uChk=users.find(x=>x.id===editingUserIdx);
     if(!uChk){ alert('Usuario no encontrado — recarga la página e intenta de nuevo'); return; }
@@ -4546,14 +4581,14 @@ function saveUser(){
   // Guardar con contraseña cifrada (SHA-256 + salt)
   var _finishSaveUser=function(passToStore){
     if(editingUserIdx===null){
-      users.push({id:username,username,password:passToStore,nombre,rol,salario,email,puesto,comisType,estado,ccssSoloQ1});
+      users.push({id:username,username,_claveNueva:passToStore,nombre,rol,salario,email,puesto,comisType,estado,ccssSoloQ1});
     } else {
       const u=users.find(x=>x.id===editingUserIdx);
       if(!u) return;
       u.nombre=nombre;u.username=username;u.rol=rol;u.salario=salario;
       u.email=email;u.puesto=puesto;u.comisType=comisType;u.estado=estado;
       u.ccssSoloQ1=ccssSoloQ1;
-      if(pass&&pass.length>=6)u.password=passToStore;
+      if(pass&&pass.length>=6)u._claveNueva=passToStore;
     }
     setUsers(users);
     closeModal();buildUsersTable();buildAdminOverview();buildAgGlobal();populateAdminSelectors();
