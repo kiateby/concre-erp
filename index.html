@@ -1569,6 +1569,20 @@ function _usuariosDeBase(lista){
 //  · solo se escribe la fila que cambió;
 //  · la contraseña viaja únicamente cuando se acaba de escribir una nueva
 //    (user._claveNueva) y no se queda en la memoria del navegador.
+// Lee la lista de usuarios. Desde la etapa B de seguridad, la tabla solo le
+// muestra a cada quien su propia fila (los admin ven todas); los nombres y
+// roles de los demás —sin salarios ajenos— llegan por la función de la base.
+// Si esa función todavía no existe (SQL sin correr) se lee la tabla como antes.
+async function _leerUsuarios(){
+  try{
+    var r=await DB.rpc('erp_usuarios_lista');
+    if(r && !r.error && Array.isArray(r.data) && r.data.length){
+      r.data.sort(function(a,b){ return String(a.nombre||'').localeCompare(String(b.nombre||'')); });
+      return {data:r.data, error:null};
+    }
+  }catch(e){}
+  return await DB.from('usuarios').select('*').order('nombre');
+}
 function setUsers(u){
   window._usersCache=u;
   var firmas=window._usersFirmas||(window._usersFirmas={});
@@ -1782,7 +1796,7 @@ async function loadAllDataFromDB(){
     // Se agrega AL FINAL del arreglo a propósito, para no correr los índices
     // phase1[0]..phase1[6] que se leen justo abajo.
     var phase1=await Promise.all([
-      DB.from('usuarios').select('*').order('nombre'),
+      _leerUsuarios(),
       _loadAllConfig(),
       DB.from('liq_subcontratistas').select('*'),
       loadAllRows('crm_clientes','nombre_empresa'),
@@ -2010,7 +2024,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261112125310';
+var APP_BUILD='20261113120500';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -2205,7 +2219,7 @@ function doLogin(){
       try{
         // Se trae la lista completa de una vez: sirve de comprobación del pase
         // y es la misma que el ingreso necesita enseguida (antes se pedía dos veces).
-        var prueba=await DB.from('usuarios').select('*');
+        var prueba=await _leerUsuarios();
         if(prueba.error) throw prueba.error;
         // Una base que no reconoce el pase no siempre da error: puede contestar
         // «cero filas» (las reglas viejas solo le abren a la llave pública).
@@ -2321,7 +2335,7 @@ function startAutoRefresh(){
       var _isAdm=(SESSION.rol==='admin'||SESSION.rol==='superadmin');
       var _jobs=[
         reloadNotifications(SESSION.id).then(function(){ try{renderNotifBell();}catch(e){} }),
-        DB.from('usuarios').select('*').order('nombre').then(function(ur){
+        _leerUsuarios().then(function(ur){
           if(!ur.error&&ur.data) window._usersCache=_usuariosDeBase(ur.data.map(dbRowToUser));
         }),
         loadAllRows('crm_clientes','nombre_empresa').then(function(cr){
