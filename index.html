@@ -2024,7 +2024,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261113120500';
+var APP_BUILD='20261113125500';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -20339,13 +20339,27 @@ function renderPreciosDocs(body){
         +'<span style="font-size:26px">'+ico+'</span>'
         +'<div style="flex:1;min-width:0"><div style="font-weight:800;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escHtml(doc.nombre)+'">'+escHtml(doc.nombre)+'</div>'
         +'<div style="font-size:9px;color:var(--text3)">'+(doc.size?(Math.round(doc.size/1024)+' KB · '):'')+formatDate(parseDate((doc.uploadedAt||'').split('T')[0]))+'</div></div>'
-        +'<a href="'+doc.url+'" target="_blank" style="background:var(--blue);color:#fff;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;text-decoration:none">Ver</a>'
+        +'<button data-ruta="'+escHtml(doc.path||'')+'" data-url="'+escHtml(doc.url||'')+'" onclick="abrirDocumento(this.dataset.ruta,this.dataset.url)" style="background:var(--blue);color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">Ver</button>'
         +(isSA?'<button onclick="borrarPreciosDoc('+i+')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px">🗑</button>':'')
         +'</div>';
     });
     html+='</div>';
   }
   body.innerHTML=html;
+}
+// Abre un archivo del almacén «documentos» con un enlace que vence en 5 minutos
+// (el almacén es privado). Si no se conoce la ruta, usa la dirección guardada.
+async function abrirDocumento(ruta, url){
+  try{
+    if(!ruta && url){ var m=/\/documentos\/([^?#]+)/.exec(String(url)); if(m) ruta=decodeURIComponent(m[1]); }
+    if(ruta){
+      var r=await DB.storage.from('documentos').createSignedUrl(ruta, 300);
+      if(!r.error&&r.data&&r.data.signedUrl){ window.open(r.data.signedUrl,'_blank'); return; }
+      toast('⚠ No se pudo abrir el archivo'+((r.error&&r.error.message)?': '+r.error.message:''));
+      return;
+    }
+    if(url) window.open(url,'_blank');
+  }catch(e){ toast('⚠ No se pudo abrir el archivo: '+(e.message||e)); }
 }
 async function subirPreciosDoc(){
   var inp=document.getElementById('precios-doc-file');
@@ -22076,6 +22090,62 @@ function invNextMovNum(itemId){
   return prefix+'-'+invPad(maxNum+1,3);
 }
 
+// ══ FOTOS: ENLACES QUE VENCEN ══
+// El almacén de fotos es privado. En inv_items.foto_url se sigue guardando la
+// dirección de siempre (sirve de identificador de la foto), pero lo que se
+// muestra es un enlace firmado que vence a los 7 días. Esos enlaces se guardan
+// en la tabla inv_fotos_enlaces para que TODOS usen el mismo durante la semana:
+// así el navegador conserva las fotos en su caché y no las vuelve a bajar en
+// cada ingreso. Si la tabla aún no existe, se muestran las direcciones de antes.
+var INV_FOTOS_DIAS=7;
+window._invFotosFirmadas=window._invFotosFirmadas||{};
+function _invFotoRuta(url){
+  var m=/\/inventario-fotos\/([^?#]+)/.exec(String(url||''));
+  if(!m) return '';
+  try{ return decodeURIComponent(m[1]); }catch(e){ return m[1]; }
+}
+function _invFotoFirmaValida(u){
+  return typeof u==='string' && u.indexOf(SUPABASE_URL+'/storage/v1/object/sign/inventario-fotos/')===0;
+}
+// Lo que va en el src de la imagen
+function invFoto(url){
+  var ruta=_invFotoRuta(url);
+  var f=ruta&&window._invFotosFirmadas[ruta];
+  return (f&&_invFotoFirmaValida(f.url))?f.url:(url||'');
+}
+async function _invFirmarFotos(rutas){
+  try{
+    var mapa=window._invFotosFirmadas;
+    var r=await loadAllRows('inv_fotos_enlaces');
+    if(r.error) return;                       // falta el SQL: se queda como antes
+    (r.data||[]).forEach(function(x){ if(_invFotoFirmaValida(x.url)) mapa[x.ruta]={url:x.url,vence:new Date(x.vence).getTime()}; });
+    if(!rutas){
+      rutas=[];
+      (window._invItems||[]).forEach(function(i){ var p=_invFotoRuta(i.foto_url); if(p&&rutas.indexOf(p)<0) rutas.push(p); });
+    }
+    // Se renuevan las que faltan o vencen en menos de 2 días
+    var limite=Date.now()+2*86400000;
+    var faltan=rutas.filter(function(p){ return !mapa[p]||!(mapa[p].vence>limite); });
+    for(var i=0;i<faltan.length;i+=100){
+      var lote=faltan.slice(i,i+100);
+      var s=await DB.storage.from('inventario-fotos').createSignedUrls(lote, INV_FOTOS_DIAS*86400);
+      if(s.error||!s.data) continue;
+      var vence=new Date(Date.now()+INV_FOTOS_DIAS*86400000).toISOString();
+      var filas=[];
+      s.data.forEach(function(d,k){
+        var ruta=d.path||lote[k];
+        if(d.error||!_invFotoFirmaValida(d.signedUrl)) return;
+        mapa[ruta]={url:d.signedUrl,vence:new Date(vence).getTime()};
+        filas.push({ruta:ruta,url:d.signedUrl,vence:vence,actualizado_en:new Date().toISOString()});
+      });
+      if(filas.length){
+        var g=await DB.from('inv_fotos_enlaces').upsert(filas,{onConflict:'ruta'});
+        if(g.error) console.warn('inv_fotos_enlaces:',g.error);
+      }
+    }
+  }catch(e){ console.warn('_invFirmarFotos:',e); }
+}
+
 // ══ DB LOADERS ══
 async function loadInvFromDB(){
   // Cargar items — tabla principal
@@ -22115,6 +22185,9 @@ async function loadInvFromDB(){
       r5.data.forEach(function(p){ window._invPermisos[p.uid]=p.nivel; });
     }
   }catch(e){}
+
+  // Enlaces firmados de las fotos (ver _invFirmarFotos)
+  await _invFirmarFotos();
 }
 
 // ══ INIT ══
@@ -22242,8 +22315,11 @@ function invHandlePhoto(input){
             if(!res.error){
               var pub=DB.storage.from('inventario-fotos').getPublicUrl(fname);
               if(pub&&pub.data&&pub.data.publicUrl){
+                // Se guarda la dirección de siempre como identificador; la vista
+                // previa sigue usando la imagen local (el almacén es privado).
                 if(fotoInp) fotoInp.value=pub.data.publicUrl;
-                if(prev) prev.innerHTML='<img src="'+pub.data.publicUrl+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--green);margin-top:4px">✅ Subida a la nube</div>';
+                if(prev) prev.innerHTML='<img src="'+dataUrl+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain"><div style="font-size:10px;color:var(--green);margin-top:4px">✅ Subida a la nube</div>';
+                _invFirmarFotos([fname]);
               }
             }
           });
@@ -22939,7 +23015,7 @@ function _renderInvItems(type, searchQ, allItemsArg){
       }
       html+='<div onclick="openInvItemDetail(\''+item.id+'\')" style="background:var(--surface);border:1.5px solid '+(bajoMin?'rgba(227,24,55,.4)':'var(--border)')+';border-radius:10px;padding:14px;cursor:pointer;transition:box-shadow .15s" onmouseover="this.style.boxShadow=\'0 2px 12px rgba(0,0,0,.1)\'" onmouseout="this.style.boxShadow=\'none\'">';
       if(item.foto_url){
-        html+='<div style="width:100%;height:100px;background:var(--surface2);border-radius:7px;margin-bottom:10px;overflow:hidden"><img src="'+item.foto_url+'" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>';
+        html+='<div style="width:100%;height:100px;background:var(--surface2);border-radius:7px;margin-bottom:10px;overflow:hidden"><img loading="lazy" src="'+invFoto(item.foto_url)+'" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>';
       } else {
         html+='<div style="width:100%;height:60px;background:var(--surface2);border-radius:7px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;font-size:24px">'+(type==='inventario'?'📦':'🔧')+'</div>';
       }
@@ -22979,7 +23055,7 @@ async function openInvItemDetail(itemId){
   var html='<div style="margin-bottom:12px"><button onclick="renderInvList(\''+item.type+'\')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:13px">← Volver</button></div>';
   html+='<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px">';
   html+='<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">';
-  if(item.foto_url) html+='<img src="'+item.foto_url+'" style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">';
+  if(item.foto_url) html+='<img src="'+invFoto(item.foto_url)+'" style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">';
   html+='<div style="flex:1;min-width:180px">';
   html+='<div style="font-family:var(--cond);font-size:22px;font-weight:900">'+item.nombre+'</div>';
   html+='<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Código: '+item.codigo+'</div>';
@@ -23039,7 +23115,7 @@ function renderFibraLotes(item){
 
   var html='<div style="margin-bottom:12px"><button onclick="renderInvList(\'inventario\')" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:13px">← Volver</button></div>';
   html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;flex-wrap:wrap">';
-  if(item.foto_url) html+='<img src="'+item.foto_url+'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">';
+  if(item.foto_url) html+='<img src="'+invFoto(item.foto_url)+'" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">';
   html+='<div style="flex:1">';
   html+='<div style="font-family:var(--cond);font-size:20px;font-weight:900">'+item.nombre+'</div>';
   html+='<div style="font-size:12px;color:var(--text3)">Selecciona un lote para registrar movimientos</div>';
@@ -23227,7 +23303,7 @@ function duplicarInvItem(itemId, type){
     if(fotoEl) fotoEl.value=orig.foto_url||'';
     var prev=document.getElementById('iim-foto-preview');
     if(prev&&orig.foto_url){
-      prev.innerHTML='<img src="'+orig.foto_url+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain">'
+      prev.innerHTML='<img src="'+invFoto(orig.foto_url)+'" style="max-height:80px;max-width:100%;border-radius:6px;object-fit:contain">'
         +'<div style="font-size:10px;color:var(--text3);margin-top:4px">Foto copiada — clic para cambiar</div>';
     }
     // Aviso e indicación de qué falta
@@ -30004,7 +30080,7 @@ function renderAdjuntos(){
     return '<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;margin-bottom:5px;background:var(--surface2)">'
       +'<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_esc(a.nombre)+'</div>'
       +'<div style="font-size:9.5px;color:var(--text3)">'+(a.tamano?Math.round(a.tamano/1024)+' KB':'')+'</div></div>'
-      +(a.url?'<a href="'+_esc(a.url)+'" target="_blank" class="fx-b sm sec" style="text-decoration:none">Ver</a> ':'')
+      +((a.ruta||a.url)?'<button class="fx-b sm sec" data-ruta="'+_esc(a.ruta||'')+'" data-url="'+_esc(a.url||'')+'" onclick="abrirDocumento(this.dataset.ruta,this.dataset.url)">Ver</button> ':'')
       +'<button class="fx-b sm gh" style="color:var(--red)" onclick="FACT.borrarAdjunto(\''+a.id+'\')">🗑</button>'
       +'</div>';
   }).join('');
