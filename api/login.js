@@ -68,6 +68,19 @@ async function guardarIntentos(usuario, fallos, hasta) {
   } catch (e) { return false; }
 }
 
+// Dónde está la contraseña (cifrada) de un usuario. Desde la etapa A de
+// seguridad vive en «usuarios_claves», una tabla que solo este servidor puede
+// leer. Si esa tabla todavía no existe (SQL sin correr) o el usuario no tiene
+// fila allí, se usa la columna de siempre: así el orden de instalación no deja
+// a nadie afuera.
+async function claveGuardada(u) {
+  try {
+    const f = (await G.sbGet('usuarios_claves', 'id=eq.' + encodeURIComponent(u.id) + '&select=password&limit=1'))[0];
+    if (f && f.password) return f.password;
+  } catch (e) { /* la tabla no existe todavía */ }
+  return u.password || '';
+}
+
 const minutosQueFaltan = (hasta) => Math.max(1, Math.ceil((hasta - Date.now()) / 60000));
 
 // Supabase espera que «sub» sea un UUID. Los ids del ERP no lo son ('admin',
@@ -162,8 +175,9 @@ module.exports = async function handler(req, res) {
 
     const todos = await G.sbGet('usuarios', 'select=id,username,password,rol,estado');
     const u = todos.find(x => String(x.username || '').toLowerCase() === usuario);
+    const guardada = u ? await claveGuardada(u) : '';
 
-    if (!u || !claveCorrecta(clave, u.password)) {
+    if (!u || !claveCorrecta(clave, guardada)) {
       await espera(600);   // frena a quien prueba contraseñas una tras otra
       const base = u ? 'Contraseña incorrecta' : 'Usuario no encontrado';
       if (!cuenta.hay) return res.status(401).json({ ok: false, motivo: u ? 'clave' : 'usuario', error: base });
