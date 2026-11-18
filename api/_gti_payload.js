@@ -322,7 +322,34 @@ function receptorDeDoc(doc) {
   };
 }
 
-function receptor(cli, doc) {
+// ── Correos de copia ──────────────────────────────────────────────────
+// GTI limita Copia a 200 caracteres, con «;» y sin espacios. Si todo no cabe,
+// se dejan afuera DIRECCIONES ENTERAS (nunca se corta una a la mitad: iría a un
+// destino equivocado). El orden es el de prioridad: primero los internos.
+const RE_CORREO = /^[a-zA-Z0-9_\-.~]{1,}@[a-zA-Z0-9_\-.~]{2,}\.[a-zA-Z]{2,10}$/;
+function armarCopia(principal, internos, cortesia) {
+  const vistos = new Set();
+  const p = txt(principal).toLowerCase();
+  if (p) vistos.add(p);                  // el del cliente ya va en «Correo»
+  const out = [];
+  let largo = 0;
+  const todos = [].concat(Array.isArray(internos) ? internos : [],
+                          Array.isArray(cortesia) ? cortesia : []);
+  for (const x of todos) {
+    const c = txt(x);
+    const k = c.toLowerCase();
+    if (!c || vistos.has(k)) continue;
+    vistos.add(k);
+    if (!RE_CORREO.test(c) || /\.\.|\.-|-\.|@\.|\.@/.test(c)) continue;
+    const nuevo = largo + (out.length ? 1 : 0) + c.length;
+    if (nuevo > 200) continue;
+    out.push(c);
+    largo = nuevo;
+  }
+  return out.join(';');
+}
+
+function receptor(cli, doc, extraCopia) {
   if (!cli) throw new Error('El documento no tiene cliente de facturación ligado.');
   const esCompra = doc && doc.tipo_doc === 'FEC';
 
@@ -364,9 +391,13 @@ function receptor(cli, doc) {
   }
 
   // Copia es una CADENA con los correos separados por «;», no un arreglo.
-  const copia = (Array.isArray(cli.correos_copia) ? cli.correos_copia : [])
-    .map(x => txt(x)).filter(Boolean);
-  if (copia.length) r.Copia = copia.join(';').slice(0, 200);
+  // Va: el correo fijo de facturación de la empresa, el de quien emite y los
+  // de cortesía del cliente (en ese orden de prioridad). Una FEC no lleva
+  // copias: su «receptor» es el vendedor y el comprobante no se le manda.
+  if (!esCompra) {
+    const c = armarCopia(correo, extraCopia, cli.correos_copia);
+    if (c) r.Copia = c;
+  }
 
   const tel = ent(cli.telefono);
   if (tel) {
@@ -539,7 +570,7 @@ function consecutivoExterno(doc, empresa) {
 }
 
 // ── El documento completo ───────────────────────────────────────────────────
-function armar(doc, lineas, cliente, empresa, cred) {
+function armar(doc, lineas, cliente, empresa, cred, extras) {
   if (!lineas || !lineas.length) throw new Error('El documento no tiene líneas.');
 
   const det = lineas.slice()
@@ -685,7 +716,7 @@ function armar(doc, lineas, cliente, empresa, cred) {
 
   // El Receptor va DENTRO del encabezado, no al lado.
   Encabezado.Receptor = (doc.tipo_doc === 'FEC') ? receptor(receptorDeDoc(doc), doc)
-                                                 : receptor(cliente, doc);
+                                                 : receptor(cliente, doc, extras && extras.copia);
 
   // ── La forma del cuerpo ──
   // La raíz lleva NumCuenta y un arreglo Documentos; el comprobante va adentro.
@@ -895,7 +926,7 @@ module.exports = {
   METODOS, TIPO_DOC, TIPO_DOC_REF, ACCION_REF, MOTIVOS_NOTA,
   COND_VENTA, MEDIO_PAGO, MONEDA, TARIFA, TARIFA_EXENTA, IMP_IVA,
   ESTADO_HACIENDA,
-  codigoReferencia, tipoDocReferido, receptorDeDoc, receptor, consecutivoExterno,
+  codigoReferencia, tipoDocReferido, receptorDeDoc, receptor, armarCopia, consecutivoExterno,
   unidadCod, esServicio, esServicioLinea, red, fechaGTI,
   armar, leerEmision, leerEstado, leerPdf, normalizarEstado,
   simularEmision, simularEstado, simularXml, simularPdf,

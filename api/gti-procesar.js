@@ -139,6 +139,31 @@ async function fallar(t, e) {
   return { id: t.id, ok: false, error: msg, reintenta: reintentar };
 }
 
+// ── Correos internos que reciben copia de cada comprobante ──────────────────
+// 1) El correo de facturación de la empresa. Se puede cambiar sin tocar código
+//    con la variable GTI_CORREO_COPIA_<EMPRESA> (uno o varios, separados por
+//    «;» o coma). Si no existe, CONCRE usa factura@concrecr.com.
+// 2) El correo en el ERP de la persona que emitió.
+async function correosInternos(empresaId, usuarioId) {
+  const out = [];
+  try {
+    const emp = String(empresaId || 'concre');
+    const env = process.env['GTI_CORREO_COPIA_' + emp.toUpperCase().replace(/[^A-Z0-9]/g, '')];
+    const fijo = env != null && String(env).trim() !== ''
+      ? String(env).split(/[;,]/)
+      : (emp.toLowerCase() === 'concre' ? ['factura@concrecr.com'] : []);
+    for (const x of fijo) if (String(x).trim()) out.push(String(x).trim());
+  } catch (e) { /* sin copia fija */ }
+  try {
+    if (usuarioId) {
+      const u = (await G.sbGet('usuarios', 'id=eq.' + encodeURIComponent(usuarioId)
+        + '&select=email&limit=1'))[0];
+      if (u && String(u.email || '').trim()) out.push(String(u.email).trim());
+    }
+  } catch (e) { /* sin el correo de quien emite */ }
+  return out;
+}
+
 // ── Emitir ──────────────────────────────────────────────────────────────────
 async function emitir(t) {
   const doc = (await G.sbGet('fact_docs', 'id=eq.' + t.doc_id + '&limit=1'))[0];
@@ -182,7 +207,12 @@ async function emitir(t) {
     throw e;
   }
 
-  const cuerpo = P.armar(doc, lineas, cli, emp, cred);
+  // Copias internas del comprobante: el correo de facturación de la empresa y
+  // el de quien emite. Si no se pueden averiguar, el documento sale igual:
+  // una copia faltante nunca debe frenar una factura ante Hacienda.
+  const copiaInterna = await correosInternos(doc.empresa_id, t.usuario_id);
+
+  const cuerpo = P.armar(doc, lineas, cli, emp, cred, { copia: copiaInterna });
 
   await G.sbPatch('fact_docs', 'id=eq.' + t.doc_id, {
     estado_hacienda: 'enviando', enviado_en: new Date().toISOString(),
