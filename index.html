@@ -2024,7 +2024,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261118120000';
+var APP_BUILD='20261118190000';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -11920,15 +11920,18 @@ function renderAdminVentasTable(){
     var pagoAdminLabel=v.tipoPago==='CONTADO'
       ?'<span class="v-badge contado">Contado</span>'
       :'<span class="v-badge credito">Crédito '+(v.plazoCredito>0?v.plazoCredito+'d':'')+'</span>';
-    var stickyBg = v.pagadoAdmin
+    var _inc=(v.estado==='incompleta');   // viene de Facturación y falta completarla en Ventas
+    var stickyBg = _inc
+      ? 'linear-gradient(rgba(227,24,55,.10),rgba(227,24,55,.10)),var(--surface)'
+      : v.pagadoAdmin
       ? 'linear-gradient(rgba(26,158,92,.08),rgba(26,158,92,.08)),var(--surface)'
       : v.esTercero
         ? 'linear-gradient(rgba(217,119,6,.06),rgba(217,119,6,.06)),var(--surface)'
         : 'var(--surface)';
-    return '<tr style="'+(v.pagadoAdmin?'background:rgba(26,158,92,.06)':v.esTercero?'background:rgba(217,119,6,.04)':'')+'">'
+    return '<tr style="'+(_inc?'background:rgba(227,24,55,.07);box-shadow:inset 3px 0 0 var(--red);color:var(--red)':v.pagadoAdmin?'background:rgba(26,158,92,.06)':v.esTercero?'background:rgba(217,119,6,.04)':'')+'">'
       +'<td style="position:sticky;left:0;z-index:2;background:'+stickyBg+';min-width:130px;white-space:nowrap"><strong>'+escHtml(v.uname)+'</strong></td>'
       +'<td style="position:sticky;left:130px;z-index:2;background:'+stickyBg+';min-width:90px;font-size:11px;color:var(--text3);white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
-      +'<td style="position:sticky;left:220px;z-index:2;background:'+stickyBg+';min-width:140px;white-space:nowrap"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+escHtml(p.nombre)+'</span></td>'
+      +'<td style="position:sticky;left:220px;z-index:2;background:'+stickyBg+';min-width:140px;white-space:nowrap"><span class="v-cat '+(TIPO_COLORS[p.tipo||'otros'])+'">'+escHtml(p.nombre)+'</span>'+(_inc?' <span style="font-size:9px;font-weight:800;color:var(--red);background:rgba(227,24,55,.12);padding:1px 5px;border-radius:4px">⚠ POR COMPLETAR</span>':'')+'</td>'
       +'<td style="position:sticky;left:360px;z-index:2;background:'+stickyBg+';min-width:140px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(v.cliente)+'</td>'
       +'<td style="position:sticky;left:500px;z-index:2;background:'+stickyBg+';min-width:80px;font-size:11px;color:var(--text3);box-shadow:2px 0 5px rgba(0,0,0,.10)">'+escHtml(v.factura||'—')+'</td>'
       +'<td style="font-size:11px;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+(v.proyecto?escHtml(v.proyecto):'')+'">'+(v.proyecto?escHtml(v.proyecto):'—')+'</td>'
@@ -17187,10 +17190,10 @@ function renderAdminOwnVentas(){
       // algunos de esos campos podían venir vacíos y marcaba como incompletas
       // ventas que ya habían sido completadas correctamente.
       var isIncompleta=(v.estado==='incompleta');
-      return '<tr style="'+(isIncompleta?'background:rgba(234,88,12,.06);':'')+'">'
+      return '<tr style="'+(isIncompleta?'background:rgba(227,24,55,.07);box-shadow:inset 3px 0 0 var(--red);':'')+'">'
         +'<td style="font-size:11px;white-space:nowrap">'+formatDate(parseDate(v.fecha))+'</td>'
         +'<td><span class="v-cat '+(TIPO_COLORS[p.tipo]||'vc-otros')+'">'+(escHtml(p.nombre||'—'))+'</span>'
-          +(isIncompleta?' <span style="font-size:9px;font-weight:800;color:#ea580c;background:rgba(234,88,12,.12);padding:1px 5px;border-radius:4px;margin-left:4px">⚠ INCOMPLETA</span>':'')
+          +(isIncompleta?' <span style="font-size:9px;font-weight:800;color:var(--red);background:rgba(227,24,55,.12);padding:1px 5px;border-radius:4px;margin-left:4px">⚠ INCOMPLETA</span>':'')
         +'</td>'
         +'<td>'+(escHtml(v.cliente||'<em style="color:var(--text3)">Sin cliente</em>'))+'</td>'
         +'<td style="text-align:center;font-family:var(--cond)">'+(v.cantidad||'—')+'</td>'
@@ -28674,6 +28677,58 @@ function _norm(t){
   try{ s=s.normalize('NFD').replace(/[\u0300-\u036f]/g,''); }catch(e){}
   return s;
 }
+// Búsqueda por mejor coincidencia. Devuelve 0 si no coincide y un puntaje
+// mayor mientras mejor coincida. Cada palabra escrita debe encontrarse (en
+// cualquier orden) en el texto: como palabra completa, como inicio de palabra,
+// dentro de una palabra, o con un error de tecleo (una letra mal, de más o de
+// menos; dos si la palabra es larga).
+function _dist(a,b,max){
+  if(Math.abs(a.length-b.length)>max) return max+1;
+  var prev=[],i,j;
+  for(j=0;j<=b.length;j++) prev[j]=j;
+  for(i=1;i<=a.length;i++){
+    var cur=[i], menor=i;
+    for(j=1;j<=b.length;j++){
+      var v=Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+(a.charAt(i-1)===b.charAt(j-1)?0:1));
+      cur[j]=v; if(v<menor) menor=v;
+    }
+    if(menor>max) return max+1;
+    prev=cur;
+  }
+  return prev[b.length];
+}
+function _fuzzy(texto, consulta){
+  var q=_norm(consulta).trim();
+  if(!q) return 1;
+  var t=_norm(texto);
+  var pals=t.split(/[^a-z0-9ñ.]+/).filter(Boolean);
+  var toks=q.split(/\s+/).filter(Boolean);
+  var total=0;
+  for(var k=0;k<toks.length;k++){
+    var w=toks[k], mejor=0;
+    if(t.indexOf(w)>=0){
+      mejor=3;
+      for(var i=0;i<pals.length;i++){
+        if(pals[i]===w){ mejor=10; break; }
+        if(pals[i].indexOf(w)===0) mejor=Math.max(mejor,7);
+      }
+    } else if(w.length>=3 && !/\d/.test(w)){   // en números (CABYS, códigos) no se perdona ningún error
+      var tol=w.length>=7?2:(w.length>=4?1:0);
+      if(tol){
+        for(var j=0;j<pals.length;j++){
+          var p=pals[j];
+          var d1=_dist(w,p,tol);
+          var d2=p.length>w.length?_dist(w,p.slice(0,w.length),tol):tol+1;  // inicio de palabra con error
+          var d=Math.min(d1,d2);
+          if(d<=tol) mejor=Math.max(mejor, 5-d*1.5);
+        }
+      }
+    }
+    if(!mejor) return 0;
+    total+=mejor;
+  }
+  return total;
+}
 function _hoy(){ var d=new Date(); return d.getFullYear()+'-'+_pad(d.getMonth()+1)+'-'+_pad(d.getDate()); }
 function _sumaDias(iso, dias){
   var p=String(iso||'').split('-');
@@ -28837,6 +28892,9 @@ function inyectarCSS(){
     '#fact-root-admin .fx-f label{font-size:10px;font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.05em}',
     '#fact-root-admin .fx-i{background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:12.5px;font-family:inherit;width:100%;box-sizing:border-box}',
     '#fact-root-admin .fx-i:focus{outline:none;border-color:var(--red)}',
+    // Campos numéricos sin flechas (confunden): se escribe el número directo.
+    'input[type=number].fx-i::-webkit-outer-spin-button,input[type=number].fx-i::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}',
+    'input[type=number].fx-i{-moz-appearance:textfield;appearance:textfield}',
     '#fact-root-admin textarea.fx-i{resize:vertical;min-height:58px;line-height:1.5}',
     '#fact-root-admin .fx-b{background:var(--red);color:#fff;border:none;border-radius:7px;padding:8px 15px;font-weight:800;font-size:12px;cursor:pointer;font-family:inherit}',
     '#fact-root-admin .fx-b.sec{background:var(--surface2);color:var(--text);border:1px solid var(--border)}',
@@ -28910,6 +28968,26 @@ function inyectarCSS(){
     '#fact-root-admin .fx-tbl-scroll{overflow-x:auto}}',
   ].join('\n');
   document.head.appendChild(st);
+  // Al hacer clic en un campo numérico se selecciona todo el contenido, para
+  // reescribir encima sin borrar a mano. Un solo oyente para todo el módulo.
+  if(!window._factSelFoco){
+    window._factSelFoco=true;
+    document.addEventListener('focusin',function(ev){
+      var t=ev.target;
+      if(!t||t.tagName!=='INPUT'||!/(^|\s)fx-i(\s|$)/.test(t.className||'')) return;
+      var im=(t.getAttribute('inputmode')||'');
+      if(t.type!=='number'&&im!=='decimal'&&im!=='numeric') return;
+      try{ t.select(); }catch(e){}
+    });
+    // El mouseup que sigue al clic deselecciona en algunos navegadores.
+    document.addEventListener('mouseup',function(ev){
+      var t=ev.target;
+      if(t&&t.tagName==='INPUT'&&/(^|\s)fx-i(\s|$)/.test(t.className||'')
+         &&(t.type==='number'||/^(decimal|numeric)$/.test(t.getAttribute('inputmode')||''))
+         &&t._factRecienFoco){ ev.preventDefault(); t._factRecienFoco=false; }
+    },true);
+    document.addEventListener('focusin',function(ev){ var t=ev.target; if(t&&t.tagName==='INPUT'){ t._factRecienFoco=true; setTimeout(function(){ t._factRecienFoco=false; },400); } },true);
+  }
 }
 
 // ── Cascarón: selector de empresa + subpestañas ─────────────────────────────
@@ -29222,6 +29300,9 @@ function renderEditor(b){
         +campo('Cédula','<input class="fx-i" value="'+_esc(d.cliente_identificacion||'')+'" onchange="FACT.setDoc(\'cliente_identificacion\',this.value)">')
         +campo('Contacto','<input class="fx-i" value="'+_esc(d.contacto_nombre||'')+'" onchange="FACT.setDoc(\'contacto_nombre\',this.value)">')
       +'</div>'
+      // Correos de cortesía: siempre a la vista, para no mandar el comprobante
+      // a un lugar equivocado. Quedan guardados en la ficha del cliente.
+      +'<div id="fact-doc-copias" style="margin-top:12px">'+copiasDoc()+'</div>'
       +((d.fact_cliente_id||d.cliente_id)
         ? '<div style="margin-top:9px;font-size:11px;font-weight:700;color:var(--green)">'
           +(d.fact_cliente_id?'✓ Cliente de facturación':'')
@@ -29269,9 +29350,6 @@ function renderEditor(b){
             +'<div style="height:10px"></div>'
             +campo('Otras señales','<input class="fx-i" value="'+_esc(d.cliente_otras_senales||'')+'"'
               +' onchange="FACT.setDoc(\'cliente_otras_senales\',this.value)">')
-            +'<div style="height:11px"></div>'
-            +'<div class="fx-f"><label>Correos en copia</label><div id="fact-doc-copias">'
-              +copiasDoc()+'</div></div>'
             +(d.fact_cliente_id
               ? '<div style="margin-top:13px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">'
                 +'<button class="fx-b sm" onclick="FACT.guardarOpcAlCliente()">'
@@ -29313,7 +29391,6 @@ function renderEditor(b){
       +'<div class="fx-h">Líneas</div>'
       +'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
         +'<button class="fx-b sm" onclick="FACT.agregarDeCatalogo()">+ Desde el catálogo</button>'
-        +'<button class="fx-b sm sec" onclick="FACT.agregarLibre()">+ Línea libre</button>'
       +'</div>'
       +'<div id="fact-lineas"></div>'
     +'</div>'
@@ -29377,15 +29454,151 @@ function _opcLlenos(d){
   return n;
 }
 
+// ── Correos de cortesía ─────────────────────────────────────────────
+// Reciben el XML y el PDF de la factura además del correo principal del
+// cliente. Se ven siempre, se pueden quitar y agregar, y lo que se deje queda
+// guardado en la ficha del cliente para la próxima vez.
+var _RE_MAIL=/^[a-zA-Z0-9_\-.~]+@[a-zA-Z0-9_\-.~]{2,}\.[a-zA-Z]{2,10}$/;
+function _mailOk(x){
+  x=String(x||'').trim();
+  return _RE_MAIL.test(x) && !/\.\.|\.-|-\.|@\.|\.@/.test(x);
+}
+function _copiasLimpias(lista, principal){
+  var vistos={}, out=[];
+  var p=String(principal||'').trim().toLowerCase();
+  if(p) vistos[p]=1;
+  (lista||[]).forEach(function(x){
+    var c=String(x||'').trim(), k=c.toLowerCase();
+    if(!c || vistos[k] || !_mailOk(c)) return;
+    vistos[k]=1; out.push(c);
+  });
+  return out;
+}
+// HTML del editor. «lista» son los correos, «pref» el prefijo de las funciones
+// que lo manejan (Doc = la proforma abierta, Fac = la ventana de Facturar).
+function _copiasAviso(lista){
+  var raros=(lista||[]).filter(function(c){ return String(c||'').trim() && !_mailOk(c); }).length;
+  var largo=_copiasLimpias(lista).join(';').length;
+  return (raros?'<div style="font-size:11px;color:var(--red);margin-top:6px">⚠ Hay '+raros+' correo(s) con forma inválida: no se guardan ni se envían.</div>':'')
+    +(largo>140?'<div style="font-size:11px;color:var(--amber,#d97706);margin-top:6px">⚠ Son muchos correos: GTI acepta 200 caracteres en total '
+      +'y parte se reserva para los correos internos. Si no caben todos, los últimos se omiten.</div>':'');
+}
+// Solo se cambia el aviso, no el bloque entero: repintar los botones en medio de
+// un clic haría perder ese clic.
+function _copiasPintarAviso(pref, lista){
+  var el=document.getElementById('fact-copias-aviso-'+pref); if(el) el.innerHTML=_copiasAviso(lista);
+}
+function _copiasHtml(lista, pref, nota){
+  return '<div class="fx-f"><label>Correos de cortesía (también reciben el XML y el PDF)</label>'
+    +((lista||[]).length
+      ? (lista||[]).map(function(c,i){
+          var mal=String(c||'').trim() && !_mailOk(c);
+          return '<div style="display:flex;gap:6px;margin-bottom:5px">'
+            +'<input class="fx-i" type="email" value="'+_esc(c)+'" placeholder="correo@ejemplo.com"'
+            +(mal?' style="border-color:var(--red)"':'')
+            +' oninput="FACT.set'+pref+'('+i+',this.value)" onchange="FACT.fijar'+pref+'('+i+',this)">'
+            +'<button class="fx-b sm gh" style="color:var(--red)" title="Quitar este correo" '
+            +'onclick="FACT.quitar'+pref+'('+i+')">✕</button></div>';
+        }).join('')
+      : '<div style="font-size:11.5px;color:var(--text3);margin-bottom:6px">Ninguno: el comprobante solo irá al correo del cliente.</div>')
+    +'<div><button class="fx-b sm gh" onclick="FACT.agregar'+pref+'()">+ Agregar correo de cortesía</button></div>'
+    +'<div id="fact-copias-aviso-'+pref+'">'+_copiasAviso(lista)+'</div>'
+    +'<div style="font-size:10.5px;color:var(--text3);margin-top:6px;line-height:1.55">'+(nota||'')+'</div>'
+    +'</div>';
+}
 function copiasDoc(){
-  var cc=S.edit.cliente_correos_copia||[];
-  return cc.map(function(c,i){
-      return '<div style="display:flex;gap:6px;margin-bottom:5px">'
-        +'<input class="fx-i" type="email" value="'+_esc(c)+'" oninput="FACT.setCopiaDoc('+i+',this.value)">'
-        +'<button class="fx-b sm gh" style="color:var(--red)" onclick="FACT.quitarCopiaDoc('+i+')">✕</button>'
-        +'</div>';
-    }).join('')
-    +'<button class="fx-b sm gh" onclick="FACT.agregarCopiaDoc()">+ Agregar correo</button>';
+  var d=S.edit||{};
+  var nota=d.fact_cliente_id
+    ? 'Se guardan en la ficha del cliente y salen solos en sus próximas facturas. Además, cada factura se copia '
+      +'al correo de facturación de la empresa y al de quien la emite.'
+    : 'Cliente libre: estos correos valen solo para este documento. Para que queden guardados, escoja al cliente de la lista de Clientes.';
+  return _copiasHtml(d.cliente_correos_copia||[], 'CopiaDoc', nota);
+}
+
+// Guarda en la ficha del cliente la lista limpia (válidos, sin repetir).
+async function _guardarCopiasEnFicha(clienteId, lista){
+  var c=S.clientes.find(function(x){ return x.id===clienteId; });
+  if(!c) return false;
+  var limpia=_copiasLimpias(lista, c.correo);
+  var antes=JSON.stringify(c.correos_copia||[]);
+  if(JSON.stringify(limpia)===antes) return true;
+  try{
+    var r=await DB.from('fact_clientes').update({
+      correos_copia:limpia, actualizado_en:new Date().toISOString() }).eq('id',c.id);
+    if(r.error) throw r.error;
+    c.correos_copia=limpia;
+    _toast('✅ Correos de cortesía guardados en la ficha de '+c.nombre);
+    return true;
+  }catch(e){
+    console.error('_guardarCopiasEnFicha:',e);
+    _toast(_errTabla(e,'fact_clientes'));
+    return false;
+  }
+}
+function _pintarCopiasDoc(){ var el=document.getElementById('fact-doc-copias'); if(el) el.innerHTML=copiasDoc(); }
+function agregarCopiaDoc(){
+  S.edit.cliente_correos_copia=(S.edit.cliente_correos_copia||[]).concat(['']);
+  S.dirty=true;
+  _pintarCopiasDoc();
+}
+function setCopiaDoc(i,v){ S.edit.cliente_correos_copia[i]=v; S.dirty=true; }
+// Al terminar de escribir un correo (sale del campo): se revisa y se guarda.
+async function fijarCopiaDoc(i, el){
+  var d=S.edit, lista=d.cliente_correos_copia||[];
+  var v=String(lista[i]||'').trim();
+  lista[i]=v;
+  if(el){ el.value=v; el.style.borderColor=(v&&!_mailOk(v))?'var(--red)':''; }
+  if(v && !_mailOk(v)) _toast('⚠ «'+v+'» no parece un correo válido');
+  else if(v && v.toLowerCase()===String(d.cliente_correo||'').trim().toLowerCase())
+    _toast('Ese ya es el correo principal del cliente');
+  d.cliente_correos_copia=lista;
+  if(d.fact_cliente_id) await _guardarCopiasEnFicha(d.fact_cliente_id, lista);
+  _copiasPintarAviso('CopiaDoc', lista);
+}
+async function quitarCopiaDoc(i){
+  var d=S.edit;
+  d.cliente_correos_copia.splice(i,1);
+  S.dirty=true;
+  if(d.fact_cliente_id) await _guardarCopiasEnFicha(d.fact_cliente_id, d.cliente_correos_copia);
+  _pintarCopiasDoc();
+}
+
+// ── Lo mismo, dentro de la ventana de Facturar ──
+// Es el último lugar donde se ve a dónde va el comprobante antes de emitirlo.
+function _facCli(){ return S.facCliId ? S.clientes.find(function(x){ return x.id===S.facCliId; }) : null; }
+function copiasFac(){
+  var c=_facCli(); if(!c) return '';
+  var yo=(typeof SESSION!=='undefined'&&SESSION&&SESSION.email)?SESSION.email:'';
+  return '<div class="fx-card" style="margin-bottom:12px">'
+    +'<div class="fx-h">A dónde va el comprobante</div>'
+    +'<div style="font-size:12px;line-height:1.7;margin-bottom:10px">'
+      +'<b>Cliente:</b> '+(c.correo?_esc(c.correo):'<span style="color:var(--red)">sin correo</span>')
+    +'</div>'
+    +_copiasHtml(S.facCopias||[], 'CopiaFac',
+        'Cada cambio queda guardado en la ficha del cliente. Además se copia automáticamente al correo '
+        +'de facturación de la empresa'+(yo?' y al suyo ('+_esc(yo)+')':' y al de quien emite')+'.')
+    +'</div>';
+}
+function _pintarCopiasFac(){ var el=document.getElementById('fact-fac-copias'); if(el) el.innerHTML=copiasFac(); }
+function agregarCopiaFac(){ S.facCopias=(S.facCopias||[]).concat(['']); _pintarCopiasFac(); }
+function setCopiaFac(i,v){ S.facCopias[i]=v; }
+async function fijarCopiaFac(i, el){
+  var c=_facCli(); if(!c) return;
+  var v=String(S.facCopias[i]||'').trim(); S.facCopias[i]=v;
+  if(el){ el.value=v; el.style.borderColor=(v&&!_mailOk(v))?'var(--red)':''; }
+  if(v && !_mailOk(v)) _toast('⚠ «'+v+'» no parece un correo válido');
+  else if(v && v.toLowerCase()===String(c.correo||'').trim().toLowerCase())
+    _toast('Ese ya es el correo principal del cliente');
+  await _guardarCopiasEnFicha(c.id, S.facCopias);
+  if(S.edit && S.edit.fact_cliente_id===c.id) S.edit.cliente_correos_copia=(c.correos_copia||[]).slice();
+  _copiasPintarAviso('CopiaFac', S.facCopias);
+}
+async function quitarCopiaFac(i){
+  var c=_facCli(); if(!c) return;
+  S.facCopias.splice(i,1);
+  await _guardarCopiasEnFicha(c.id, S.facCopias);
+  if(S.edit && S.edit.fact_cliente_id===c.id) S.edit.cliente_correos_copia=(c.correos_copia||[]).slice();
+  _pintarCopiasFac();
 }
 
 function togOpcDoc(){ S.docOpc=!S.docOpc; renderBody(); }
@@ -29394,17 +29607,6 @@ function setProvDoc(v){
   var p=PROVINCIAS.find(function(x){ return x.v===v; });
   S.edit.cliente_provincia_nombre=p?p.lbl:'';
   S.dirty=true;
-}
-function agregarCopiaDoc(){
-  S.edit.cliente_correos_copia=(S.edit.cliente_correos_copia||[]).concat(['']);
-  S.dirty=true;
-  var el=document.getElementById('fact-doc-copias'); if(el) el.innerHTML=copiasDoc();
-}
-function setCopiaDoc(i,v){ S.edit.cliente_correos_copia[i]=v; S.dirty=true; }
-function quitarCopiaDoc(i){
-  S.edit.cliente_correos_copia.splice(i,1);
-  S.dirty=true;
-  var el=document.getElementById('fact-doc-copias'); if(el) el.innerHTML=copiasDoc();
 }
 
 // Sube al cliente los opcionales que se llenaron en la proforma.
@@ -29481,7 +29683,7 @@ function renderLineas(){
   var el=document.getElementById('fact-lineas'); if(!el) return;
   var d=S.edit;
   if(!S.lineas.length){
-    el.innerHTML='<div class="fx-empty" style="padding:22px">Sin líneas todavía. Agregue una desde el catálogo o como línea libre.</div>';
+    el.innerHTML='<div class="fx-empty" style="padding:22px">Sin líneas todavía. Agregue una desde el catálogo.</div>';
     return;
   }
   el.innerHTML='<div class="fx-tbl-scroll"><table class="fx-t">'
@@ -29969,14 +30171,22 @@ function agregarDeCatalogo(){
 function listaCatModal(grupos, filtro){
   var f=_norm(filtro).trim();
   var out='';
-  Object.keys(grupos).sort().forEach(function(g){
-    var its=grupos[g].filter(function(c){
-      if(!f) return true;
-      return _norm(String(c.descripcion||'')+' '+String(c.codigo||'')+' '+String(c.cabys||'')+' '+g).indexOf(f)>=0;
-    });
-    if(!its.length) return;
+  // Con texto escrito se ordena por mejor coincidencia: los grupos con el
+  // mejor resultado primero, y dentro de cada grupo el mejor primero.
+  var bloques=Object.keys(grupos).map(function(g){
+    var its=grupos[g].map(function(c){
+      return { c:c, p: f ? _fuzzy(String(c.descripcion||'')+' '+String(c.codigo||'')+' '+String(c.cabys||'')+' '+g+' '+String(c.detalle||''), f) : 1 };
+    }).filter(function(x){ return x.p>0; });
+    if(f) its.sort(function(a,b){ return b.p-a.p; });
+    return { g:g, its:its, mejor: its.length?its[0].p:0 };
+  }).filter(function(b){ return b.its.length; });
+  if(f) bloques.sort(function(a,b){ return b.mejor-a.mejor || a.g.localeCompare(b.g); });
+  else  bloques.sort(function(a,b){ return a.g.localeCompare(b.g); });
+  bloques.forEach(function(bl){
+    var g=bl.g;
     out+='<div style="font-size:9.5px;font-weight:900;color:var(--text3);text-transform:uppercase;letter-spacing:.07em;margin:12px 0 5px">'+_esc(g)+'</div>';
-    out+=its.map(function(c){
+    out+=bl.its.map(function(x){
+      var c=x.c;
       return '<div onclick="FACT.agregarItem(\''+c.id+'\')" style="display:flex;gap:10px;align-items:center;padding:7px 10px;border:1px solid var(--border);border-radius:7px;margin-bottom:4px;cursor:pointer;background:var(--surface2)">'
         +'<div style="flex:1;min-width:0"><div style="font-weight:700;font-size:12px">'+_esc(c.descripcion)+'</div>'
         +'<div style="font-size:9.5px;color:var(--text3)">'+_esc(c.codigo||'')
@@ -30590,7 +30800,7 @@ function renderExport(){
         +campo('Forma de pago','<select class="fx-i" id="fact-exp-pago" onchange="FACT.expPagoChange(this.value)">'
           +'<option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select>')
         +'<div id="fact-exp-credito"></div>'
-        +campo('N.º de factura (opcional)','<input class="fx-i" id="fact-exp-factura" placeholder="Si ya se facturó">')
+        +campo('N.º de '+(d.tipo_doc==='proforma'?'proforma':'factura'),'<input class="fx-i" id="fact-exp-factura" value="'+_esc(d.consecutivo||'')+'" placeholder="'+_esc(d.consecutivo||'')+'">')
         +campo('Fecha de la venta','<input type="date" class="fx-i" id="fact-exp-fecha" value="'+_esc(_hoy())+'">')
       +'</div>'
       +'<div style="font-size:11px;color:var(--text3);margin-top:9px;line-height:1.55">'
@@ -30658,7 +30868,10 @@ async function confirmarExport(){
   var pago=(document.getElementById('fact-exp-pago')||{}).value||'CONTADO';
   var plazo=_n((document.getElementById('fact-exp-plazo')||{}).value||0);
   if(pago==='CREDITO' && plazo<=0){ _toast('⚠ El plazo del crédito debe ser mayor a 0'); return; }
-  var factura=String((document.getElementById('fact-exp-factura')||{}).value||'').trim();
+  // El número de la línea de Ventas es el del documento de donde sale (proforma
+  // o factura). Si el campo se dejó vacío, se usa igual el del documento.
+  var factura=String((document.getElementById('fact-exp-factura')||{}).value||'').trim()
+    ||String(d.consecutivo||'').trim();
   var fecha=String((document.getElementById('fact-exp-fecha')||{}).value||_hoy());
 
   var uid=d.usuario_id||(SESSION&&SESSION.id);
@@ -30718,7 +30931,9 @@ async function confirmarExport(){
       usd:(d.moneda==='USD'?sub:0),
       tcUsed:(d.moneda==='USD'?_n(d.tipo_cambio):0),
       notas:notas.slice(0,500),
-      estado:'activa',
+      // «incompleta» = sale en rojo en Ventas hasta que se complete y guarde
+      // (comisión, plazo, mínimo, etc.). Al guardarla desde Ventas pasa a «activa».
+      estado:'incompleta',
       tieneInsumos:false, insDesc:'', insMontoNum:0,
       tieneMinimo:false, minimoArea:0,
       tienePendiente:false, pendMonto:0, pendCancelado:'no',
@@ -30767,7 +30982,7 @@ async function confirmarExport(){
   }catch(e){ console.error('marcar exportadas:',e); _toast('⚠ Las ventas se crearon, pero no se pudo marcar la proforma: '+((e&&e.message)||e)); }
 
   cerrarModal('fact-exp-modal');
-  _toast('✅ '+creadas.length+' venta(s) creada(s) en Ventas — '+(d.usuario_nombre||uid));
+  _toast('✅ '+creadas.length+' venta(s) creada(s) en Ventas — '+(d.usuario_nombre||uid)+'. Salen en rojo hasta completarlas en Ventas.');
   // Refrescar Ventas si está a la vista, sin forzar cambio de pestaña
   try{ if(typeof renderVentasUser==='function') renderVentasUser(); }catch(e){}
   try{ if(typeof initAdminVentas==='function' && document.getElementById('sec-ventas')
@@ -30782,10 +30997,12 @@ function renderCatalogo(b){
   var todos=catEmpresa();
   // Buscador: filtra por código, descripción, CABYS o grupo
   var q=_norm(S.fCat).trim();
-  var items=!q?todos:todos.filter(function(c){
-    return _norm(String(c.codigo||'')+' '+String(c.descripcion||'')+' '+String(c.cabys||'')
-      +' '+String(c.grupo||'')+' '+String(c.detalle||'')).indexOf(q)>=0;
-  });
+  var items=!q?todos:todos.map(function(c){
+    return { c:c, p:_fuzzy(String(c.codigo||'')+' '+String(c.descripcion||'')+' '+String(c.cabys||'')
+      +' '+String(c.grupo||'')+' '+String(c.detalle||''), q) };
+  }).filter(function(x){ return x.p>0; })
+    .sort(function(a,b){ return b.p-a.p; })
+    .map(function(x){ return x.c; });
   var grupos={};
   items.forEach(function(c){ var g=c.grupo||'Sin grupo'; (grupos[g]=grupos[g]||[]).push(c); });
   var cats=getCatalogo();
@@ -31687,6 +31904,8 @@ async function facturar(id){
 
   var r=revisarParaFacturar(d, lineas);
   var listo=r.faltas.length===0;
+  S.facCliId=r.cliente?r.cliente.id:null;
+  S.facCopias=r.cliente?(r.cliente.correos_copia||[]).slice():[];
 
   var ov=document.createElement('div');
   ov.className='fx-ov'; ov.id='fact-fac-modal';
@@ -31749,6 +31968,9 @@ async function facturar(id){
         +r.avisos.map(function(a){ return '<li>'+_esc(a)+'</li>'; }).join('')
         +'</ul></div>'
       : '')
+
+    // A dónde va el comprobante: correo del cliente y correos de cortesía
+    +'<div id="fact-fac-copias">'+copiasFac()+'</div>'
 
     // Qué va a pasar cuando se conecte
     +'<div class="fx-card" style="margin-bottom:12px">'
@@ -34429,7 +34651,8 @@ window.FACT={
   imprimir:imprimirProforma, descargarPDF:descargarPDF,
   setDoc:setDoc, setMoneda:setMoneda, setIvaDoc:setIvaDoc,
   togOpcDoc:togOpcDoc, setProvDoc:setProvDoc,
-  agregarCopiaDoc:agregarCopiaDoc, setCopiaDoc:setCopiaDoc,
+  agregarCopiaDoc:agregarCopiaDoc, setCopiaDoc:setCopiaDoc, fijarCopiaDoc:fijarCopiaDoc,
+  agregarCopiaFac:agregarCopiaFac, setCopiaFac:setCopiaFac, fijarCopiaFac:fijarCopiaFac, quitarCopiaFac:quitarCopiaFac,
   quitarCopiaDoc:quitarCopiaDoc, guardarOpcAlCliente:guardarOpcAlCliente,
   toggleTipo:toggleTipo, setEstado:setEstadoDoc,
   buscarCliente:buscarCliente, elegirCliente:elegirCliente,
