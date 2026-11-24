@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261124193000';
+var APP_BUILD='20261124203000';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -35918,10 +35918,11 @@ function recomendar(ctx) {
 
   // ── 5. Planicidad ──────────────────────────────────────────────────────────
   const g5 = { id: 'ffl', titulo: 'Planicidad (FF / FL)', filas: [] };
-  function ffl(k, nota) { const c = FFFL[k]; return fila('FF / FL mínimo global', c.ff + ' / ' + c.fl + ' (' + c.nombre.toLowerCase() + ')', 'ACI 302.1R (tabla de planicidad)', 'V',
+  const TXT_FF = (ff, motivo) => 'ATENCIÓN · Planicidad fuera del alcance de CONCRE: ' + motivo + ' CONCRE ejecuta hasta FF 35 / FL 25; una losa con una planicidad superior (' + ff + ') no la podría colocar CONCRE sin valorarla antes. Avise al cliente y consulte antes de ofrecerla.';
+  function ffl(k, nota) { const c = FFFL[k]; if (c.ff > 35 || c.fl > 25) avisos.push(TXT_FF('FF ' + c.ff + ' / FL ' + c.fl, 'la planicidad recomendada para este uso es FF ' + c.ff + ' / FL ' + c.fl + '.')); return fila('FF / FL mínimo global', c.ff + ' / ' + c.fl + ' (' + c.nombre.toLowerCase() + ')', 'ACI 302.1R (tabla de planicidad)', 'V',
     'Mínimo local: ' + c.ffl + ' / ' + c.fll + ' (60 % del global). Medición ASTM E1155 dentro de 72 horas.' + (nota ? ' ' + nota : '')); }
   if (u.id === 'cancha') g5.filas.push(fila('Planicidad', 'La define el piso deportivo. FIBA: 5 mm bajo regla de 3 m', 'FIBA', 'V'));
-  else if (t.vna || alturaRack > 8) g5.filas.push(fila('Planicidad', 'No use FF/FL global. Racks de más de 8 m o pasillo muy angosto: movimiento definido TR34 (DM3 hasta 8 m, DM2 de 8 a 13 m, DM1 sobre 13 m) y ficha del fabricante del equipo', 'TR34', 'S'));
+  else if (t.vna || alturaRack > 8) { avisos.push(TXT_FF('movimiento definido TR34 DM1–DM3, por encima de FF 35 / FL 25', (t.vna ? 'pasillo muy angosto (VNA)' : 'racks de más de 8 m') + ': la planicidad se define por movimiento (TR34 DM1–DM3), no por FF/FL.')); g5.filas.push(fila('Alcance de CONCRE', 'FUERA DEL ALCANCE: se ejecuta hasta FF 35 / FL 25; este piso pide una planicidad superior y debe valorarse antes de ofrecerlo', 'Criterio CONCRE', 'E')); g5.filas.push(fila('Planicidad', 'No use FF/FL global. Racks de más de 8 m o pasillo muy angosto: movimiento definido TR34 (DM3 hasta 8 m, DM2 de 8 a 13 m, DM1 sobre 13 m) y ficha del fabricante del equipo', 'TR34', 'S')); }
   else if (u.id === 'camara_fria') g5.filas.push(fila('Planicidad', 'A definir con TR34 / ACI 117 según el tránsito; no hay dato verificado', 'TR34 / ACI 117', 'E'));
   else if (u.id === 'bodega_almacen' || (u.id === 'bodega_alquiler' && o.racks)) g5.filas.push(ffl('plana', 'Racks hasta 8 m con montacargas.'));
   else if (u.id === 'bodega_produccion') g5.filas.push(ffl(t.mont ? 'plana' : 'moderada'));
@@ -36556,7 +36557,7 @@ function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos) {
   function costo(A, ultima) {
     let c = 3000;                                                // cada jornada extra cuesta un poco
     if (A < DIA_MIN) c += (DIA_MIN - A) * (DIA_MIN - A) * (ultima ? 0.4 : 1);
-    else if (A > DIA_MAX) c += 3 * (A - DIA_MAX) * (A - DIA_MAX);
+    else if (A > DIA_MAX) c += 0.5 * (A - DIA_MAX) * (A - DIA_MAX);   // pasarse de 900 cuesta menos que dejar un día con un solo paño pequeño
     else c += 0.02 * (A - (DIA_MIN + DIA_MAX) / 2) * (A - (DIA_MIN + DIA_MAX) / 2);
     return c;
   }
@@ -36662,6 +36663,9 @@ function calcularMacro(inp) {
   if (dosisManual && Math.abs(inp.dosisUsar - dm.dosis) > 1e-6) avisos.push('La dosis de fibra se ajustó de ' + fm(inp.dosisUsar, 2) + ' a ' + fm(dm.dosis, 1) + ' kg/m³: la fibra se dosifica en pasos de 0,5 kg/m³ (media bolsa de 1 kg por m³ de concreto).');
   if (dm.excede) avisos.push('Las cargas piden más de ' + DOSIS_MAX + ' kg/m³ de Fibra Plus 54 mm; la tabla de la fibra llega a ese valor. Aumente el espesor o revise las cargas.');
   const Ltecho = techoSistema(S.id, dm.dosis);
+  { const ffc = claseFF(inp);
+    if (ffc.fuera) avisos.push('ATENCIÓN · Planicidad fuera del alcance de CONCRE: racks de más de 8 m piden un piso de movimiento definido (TR34 DM1–DM3), con una planicidad superior a FF ' + CONCRE_FF + ' / FL ' + CONCRE_FL + '. CONCRE ejecuta hasta FF ' + CONCRE_FF + ' / FL ' + CONCRE_FL + ': esta losa no la podría colocar CONCRE sin valorarla antes. Avise al cliente y consulte antes de ofrecerla.');
+    else if (ffc.cls.ff > CONCRE_FF || ffc.cls.fl > CONCRE_FL) avisos.push('ATENCIÓN · Planicidad fuera del alcance de CONCRE: la planicidad recomendada (FF ' + ffc.cls.ff + ' / FL ' + ffc.cls.fl + ') supera FF ' + CONCRE_FF + ' / FL ' + CONCRE_FL + '. Esta losa no la podría colocar CONCRE sin valorarla antes.'); }
   [['ejesX', inp.Lx, 'vertical', 'ancho'], ['ejesY', inp.Ly, 'horizontal', 'largo']].forEach(function (q) {
     const l = [0].concat((inp[q[0]] || []).filter(function (v) { return v > 0.01 && v < q[1] - 0.01; }).sort(function (x, y) { return x - y; }), [q[1]]);
     for (let k = 1; k < l.length; k++) if (l[k] - l[k - 1] < 1) { avisos.push('Hay un eje ' + q[2] + ' a solo ' + fm(r2(l[k] - l[k - 1]), 2) + ' m del ' + (k === l.length - 1 ? 'borde' : 'eje anterior') + ' (en ' + fm(l[k - 1], 2) + ' m). Deja un tramo casi sin ancho y cambia el tamaño de los paños y de las jornadas. Si la nave debería medir ' + fm(l[k - 1], 1) + ' m, corrija el ' + q[3] + '; si no, quite ese eje.'); break; }
