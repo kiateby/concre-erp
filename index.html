@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261124110000';
+var APP_BUILD='20261124150000';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -36284,6 +36284,9 @@ const L_ESPESOR_GRANDE = 20;  // m
 const DOSIS_MIN = 2.3;        // kg/m³ · límite inferior de la tabla EN 14651 de Fibra Plus 54 mm
 const ASPECTO_MAX = 1.5;      // ACI 302.1R / TR34
 const DOSIS_MAX = 6.0;        // kg/m³ · límite de la tabla EN 14651 de Fibra Plus 54 mm
+const DIA_MIN = 700, DIA_MAX = 900;   // m² · jornada de colado objetivo (criterio de CONCRE)
+const APERTURA_ASERRADA = 3;  // mm · movimiento máximo que admite una junta aserrada con dovelas, sin perfil de acero (criterio de CONCRE; juntas de poco movimiento: 1–3 mm)
+const ACCESOS = ['y1', 'y0', 'x1', 'x0'];   // lado de la nave por donde entra el camión mezclador
 const T_ROMBO = 0.15;         // m · holgura libre mínima alrededor de la columna para colar y vibrar el rombo (criterio CONCRE)
 
 // Sistemas de control de retracción (lo que se le pide a la mezcla además de la fibra)
@@ -36311,6 +36314,8 @@ const METODOS = {
 
 // Junta blindada: descripción genérica (sin marcas ni proveedores) para el informe.
 const JUNTA_BLINDADA = {
+  nombre: 'Junta blindada de movimiento libre',
+  nombre_en: 'En la normativa (TR34) es la «junta de movimiento libre» con protección de arista; en inglés se pide como «armoured joint» o «free-movement joint with arris protection».',
   que_es: 'Perfil de acero que protege el borde del concreto en cada junta de construcción (por eso «blindada»). Lleva anclajes al concreto y dovelas (o placas) con vaina que transfieren la carga de un paño al otro y dejan que la junta se abra cuando la losa se retrae. Reemplaza al corte aserrado: la losa no se asierra, solo se junta en estos puntos.',
   propuesta: 'Perfil de acero con placa superior sinusoidal (en forma de onda) y dovelas con vaina. La onda hace que la rueda cruce sin golpe desde cualquier dirección; es la opción recomendada para montacargas.',
   alternativa: 'Perfil de acero recto (ángulo) con dovelas o placas deslizantes. Se puede fabricar en un taller de acero a partir del detalle D1. Solo donde el tránsito no cruza la junta de frente; confirmar rigidez y anclaje.'
@@ -36401,7 +36406,14 @@ function particionFija(ejes, total, pos, Lmax) {
 
 // ── distribución de juntas en la nave (X e Y), con relación de aspecto ≤ 1.5 y área diaria ──
 function distribuir(inp, Lmax, aDia) {
-  const lim = Math.min(Lmax, Math.sqrt(ASPECTO_MAX * aDia));
+  // Primero se intenta que ningún paño pase de ~900 m² (lado ≤ 30 m); si los ejes no lo permiten, que quepa en la colada de un día;
+  // y si tampoco, se usa la distancia máxima y el aviso de área lo dice.
+  const limBase = Math.min(Lmax, Math.sqrt(ASPECTO_MAX * aDia));
+  const intentos = [Math.min(limBase, Math.sqrt(DIA_MAX)), Math.min(limBase, Math.sqrt(aDia))];
+  for (let k = 0; k < intentos.length; k++) { const r = distribuirCon(inp, Lmax, aDia, intentos[k]); if (r.px.ok && r.py.ok) return r; }
+  return distribuirCon(inp, Lmax, aDia, limBase);
+}
+function distribuirCon(inp, Lmax, aDia, lim) {
   let capX = lim, capY = lim, px, py, it;
   const fijoX = Array.isArray(inp.juntasX), fijoY = Array.isArray(inp.juntasY);
   let prev = null;
@@ -36433,11 +36445,55 @@ function armarPanos(px, py, h_cm, dosis) {
   return { xs: xs, ys: ys, panos: panos };
 }
 
-// Secuencia de colado: tablero de ajedrez (paños alternos primero, intermedios después)
-function secuencia(panos, nx) {
-  const a = [], b = [];
-  panos.forEach(function (p) { ((p.i + p.j) % 2 === 0 ? a : b).push(p); });
-  let k = 0; a.forEach(function (p) { p.orden = ++k; p.fase = 1; }); b.forEach(function (p) { p.orden = ++k; p.fase = 2; });
+// Secuencia de colado para DESCARGA DIRECTA del camión mezclador (sin bomba):
+//   · se cuela en franjas, del fondo de la nave hacia la entrada de camiones, para que el camión siempre llegue
+//     por la base preparada que aún no se ha colado (nunca por tablero de ajedrez);
+//   · los paños contiguos se agrupan en jornadas (una por día) de ~700–900 m², sin pasar de la colada máxima del día.
+// acceso: lado de la nave por donde entra el camión ('y1' = extremo y = Ly, 'y0' = y = 0, 'x1' = x = Lx, 'x0' = x = 0).
+function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis) {
+  acceso = ACCESOS.indexOf(acceso) >= 0 ? acceso : 'y1';
+  const porFilas = (acceso === 'y1' || acceso === 'y0');        // las franjas son filas (y) si el camión entra por un extremo en Y
+  const nl = porFilas ? ny : nx;
+  let lineas = [];
+  for (let l = 0; l < nl; l++) lineas.push(panos.filter(function (p) { return (porFilas ? p.j : p.i) === l; }).sort(function (a, b) { return porFilas ? a.i - b.i : a.j - b.j; }));
+  if (acceso === 'y0' || acceso === 'x0') lineas.reverse();      // el fondo es el lado opuesto a la entrada
+  const seq = [], finFranja = [];
+  lineas.forEach(function (ln, k) {                              // zigzag: cada franja empieza donde terminó la anterior
+    (k % 2 ? ln.slice().reverse() : ln).forEach(function (p, q, arr) { p.franja = k + 1; seq.push(p); finFranja.push(q === arr.length - 1); });
+  });
+  const m = seq.length, pre = [0];
+  seq.forEach(function (p) { pre.push(pre[pre.length - 1] + p.area); });
+  // partición en jornadas (programación dinámica): cada jornada = paños consecutivos del recorrido
+  function costo(A, cortaFranja, ultima) {
+    let c = 3000;                                                // cada jornada extra cuesta un poco
+    if (A < DIA_MIN) c += (DIA_MIN - A) * (DIA_MIN - A) * (ultima ? 0.4 : 1);
+    else if (A > DIA_MAX) c += 3 * (A - DIA_MAX) * (A - DIA_MAX);
+    else c += 0.02 * (A - (DIA_MIN + DIA_MAX) / 2) * (A - (DIA_MIN + DIA_MAX) / 2);
+    if (cortaFranja) c += 12000;                                 // preferir terminar la jornada al final de una franja
+    return c;
+  }
+  const best = new Array(m + 1), prev = new Array(m + 1);
+  best[0] = 0;
+  for (let j = 1; j <= m; j++) {
+    best[j] = Infinity;
+    for (let i = j - 1; i >= 0; i--) {
+      const A = pre[j] - pre[i];
+      if (A > aDia * 1.0001 && j - i > 1) continue;              // no cabe en un día (salvo un paño solo, que se avisa aparte)
+      const c = best[i] + costo(A, j < m && !finFranja[j - 1], j === m) + (A > aDia * 1.0001 ? 1e7 : 0);
+      if (c < best[j]) { best[j] = c; prev[j] = i; }
+    }
+  }
+  const cortes = []; for (let j = m; j > 0; j = prev[j]) cortes.unshift([prev[j], j]);
+  const dias = cortes.map(function (c, d) {
+    const ps = seq.slice(c[0], c[1]);
+    const A = ps.reduce(function (a, p) { return a + p.area; }, 0), vol = A * h_cm / 100;
+    ps.forEach(function (p) { p.dia = d + 1; });
+    return { dia: d + 1, panos: ps.map(function (p) { return p.n; }), nPanos: ps.length, area: r2(A), vol_m3: r2(vol), fibra_kg: Math.ceil(vol * dosis * 1.03 - 1e-9),
+      franjas: ps.map(function (p) { return p.franja; }).filter(function (v, k, a) { return a.indexOf(v) === k; }),
+      dentro: A >= DIA_MIN - 1e-6 && A <= DIA_MAX + 1e-6 };
+  });
+  seq.forEach(function (p, k) { p.orden = k + 1; });
+  return { dias: dias, acceso: acceso, franjas: nl, seq: seq.map(function (p) { return p.n; }) };
 }
 
 // ── columnas y rombos ────────────────────────────────────────────────────────
@@ -36531,8 +36587,9 @@ function calcularMacro(inp) {
   // 6. Distribución de juntas (solo sobre ejes)
   const dist = distribuir(inp, Lmax, MT.a_dia);
   const g = armarPanos(dist.px, dist.py, h, dm.dosis);
-  secuencia(g.panos);
   const panos = g.panos;
+  const area0 = inp.Lx * inp.Ly;
+  const sec = secuencia(panos, dist.px.segs.length, dist.py.segs.length, inp.acceso, MT.a_dia, h, dm.dosis);
   const nJx = dist.px.cortes.length, nJy = dist.py.cortes.length;
   const largoJuntas = nJx * inp.Ly + nJy * inp.Lx;
   const maxA = Math.max.apply(null, panos.map(function (p) { return p.area; }));
@@ -36553,6 +36610,14 @@ function calcularMacro(inp) {
   if (maxA > MT.a_dia * 1.0001) avisos.push('Un paño de ' + fm(maxA, 0) + ' m² supera el área que se puede colar en un día (' + fm(MT.a_dia, 0) + ' m²); ajuste ejes o juntas para partirlo.');
   paso('Distribución de juntas en la nave', 'Las juntas van solo sobre ejes principales: se eligen los ejes que dejan paños ≤ L_máx, con relación de aspecto ≤ 1.5 y área ≤ la colada de un día', 'Nave ' + fm(inp.Lx, 1) + ' × ' + fm(inp.Ly, 1) + ' m · colada máxima ' + fm(MT.a_dia, 0) + ' m²' + (manualJ ? ' · posiciones ajustadas por el usuario sobre ejes' : ''),
     (nJx + nJy) + ' juntas (' + nJx + ' verticales, ' + nJy + ' horizontales) · ' + panos.length + ' paños · mayor ' + fm(maxL, 1) + ' m', 'ACI 302.1R (aspecto); TR34 (colada de gran área)');
+  const diasA = sec.dias.map(function (d) { return d.area; });
+  const minDia = Math.min.apply(null, diasA), maxDia = Math.max.apply(null, diasA);
+  const diaTxt = Math.round(minDia) === Math.round(maxDia) ? fm(minDia, 0) + ' m²' : fm(minDia, 0) + ' a ' + fm(maxDia, 0) + ' m²';
+  const fuera = sec.dias.filter(function (d, k) { return !d.dentro && !(k === sec.dias.length - 1 && d.area < DIA_MIN) && !(sec.dias.length === 1 && d.area < DIA_MIN); });
+  if (fuera.length) avisos.push('Las jornadas de colado ' + fuera.map(function (d) { return d.dia + ' (' + fm(d.area, 0) + ' m²)'; }).join(', ') + ' quedan fuera de ' + DIA_MIN + '–' + DIA_MAX + ' m² por el tamaño de los paños entre ejes. Para acercarlas, mueva alguna junta a otro eje en el plano.');
+  paso('Secuencia y jornadas de colado', 'Descarga directa del camión mezclador: franjas del fondo hacia la entrada; paños contiguos agrupados en jornadas de ' + DIA_MIN + '–' + DIA_MAX + ' m² (máx. ' + fm(MT.a_dia, 0) + ' m² por día)',
+    sec.franjas + ' franjas · ' + panos.length + ' paños · ' + fm(area0, 0) + ' m² en total',
+    sec.dias.length + ' jornada(s) · ' + diaTxt + ' por día · ' + sec.dias.map(function (d) { return 'día ' + d.dia + ': ' + fm(d.area, 0) + ' m²'; }).join(' · '), 'Criterio de CONCRE; ACI 302.1R (colada de gran área); TR34');
 
   // 7. Transferencia de carga en la junta (placas efectivas 0.9ℓ a cada lado, máx. 50 %)
   const ell_m = (inp.ell_mm || 0) / 1000;
@@ -36581,7 +36646,7 @@ function calcularMacro(inp) {
     juntas_m: largoJuntas, perimetro_m: perim, pe_m2: area * S.capas * 1.10, rombos: cols.length, barras_esquina: vertices * 2, vol_rombos_m3: vol_rombos };
 
   // ── Recomendaciones agrupadas ──────────────────────────────────────────────
-  const grupos = recomendaciones(inp, S, MT, { h: h, dm: dm, Lmax: Lmax, maxL: maxL, aperturaMax: aperturaMax, Q_req: Q_req, cols: cols, nInt: nInt, nBor: nBor, nEsq: nEsq, nJx: nJx, nJy: nJy, panos: panos, perim: perim, mu: mu });
+  const grupos = recomendaciones(inp, S, MT, { h: h, dm: dm, Lmax: Lmax, maxL: maxL, aperturaMax: aperturaMax, Q_req: Q_req, cols: cols, nInt: nInt, nBor: nBor, nEsq: nEsq, nJx: nJx, nJy: nJy, panos: panos, perim: perim, mu: mu, dias: sec.dias, franjas: sec.franjas, minDia: minDia, maxDia: maxDia, diaTxt: diaTxt, aDia: MT.a_dia, aperturaMax: aperturaMax });
 
   return {
     in: { Lx: inp.Lx, Ly: inp.Ly, aperturaAdm: APERTURA_ADM, colX: inp.colX || 0.40, colY: inp.colY || 0.40, pesado: !!inp.pesado, capJunta_kNm: inp.capJunta_kNm || 0, fc: inp.fc },
@@ -36591,7 +36656,7 @@ function calcularMacro(inp) {
     f_req: f_req, f_disp: f_disp, okArrastre: okArrastre, mu: mu,
     px: dist.px, py: dist.py, xs: g.xs, ys: g.ys, panos: panos, nJx: nJx, nJy: nJy, cols: cols, nInt: nInt, nBor: nBor, nEsq: nEsq,
     okEjes: okEjes, okLong: okEjes && maxL <= Lmax + 1e-6 && maxA <= MT.a_dia * 1.0001, sugerencia: sugerencia, juntasManual: manualJ,
-    maxAsp: maxAsp, maxA: maxA, cant: cant, grupos: grupos, avisos: avisos, pasos: pasos,
+    maxAsp: maxAsp, maxA: maxA, dias: sec.dias, diaObj: [DIA_MIN, DIA_MAX], acceso: sec.acceso, franjas: sec.franjas, diaMin: minDia, diaMax: maxDia, diaTxt: diaTxt, cant: cant, grupos: grupos, avisos: avisos, pasos: pasos,
     comparacion: ['fibra', 'sra', 'comp'].map(function (id) { return compararSistema(inp, id); })
   };
 }
@@ -36673,16 +36738,23 @@ function recomendaciones(inp, S, MT, c) {
   g4.filas.push(fila('Transferencia de carga necesaria', fm(c.Q_req, 1) + ' kN por metro de junta a 20 mm de apertura (≈ 0.5·Pd / 1.8ℓ)', 'TR34 4ª ed.', 'D', inp.capJunta_kNm > 0 ? 'Capacidad ingresada: ' + fm(inp.capJunta_kNm, 1) + ' kN/m.' : 'Compare con la capacidad de la junta a 20 mm de apertura. Con esa apertura no cuenta la trabazón del agregado.'));
   g4.filas.push(fila('Dovelas', 'Placas o dovelas con vaina que permitan el movimiento horizontal; no continuar barras corrugadas a través de la junta', 'TR34 3ª ed. §8.8; ACI 302.1R', 'V'));
   g4.filas.push(fila('Cruces de juntas', 'En los cruces el perfil de acero queda discontinuo para permitir la retracción; la junta nueva a ≥ 1.5 m de otra paralela', 'TR34 3ª ed. §8.9; ACI 302.1R', 'V'));
-  g4.filas.push(fila('Secuencia de colado', 'Paños alternos en tablero (fase 1: ' + c.panos.filter(function (p) { return p.fase === 1; }).length + ' paños; fase 2: ' + c.panos.filter(function (p) { return p.fase === 2; }).length + '); intermedios después de ≥ 7 días', 'Criterio CONCRE; ACI 223 (retracción compensada: ≥ 70 % de la expansión antes de colar contiguos)', 'E', 'La separación de 7 días la confirma el ingeniero según la mezcla.'));
+  g4.filas.push(fila('Secuencia de colado', 'Descarga directa del camión mezclador (sin bomba): se cuela en franjas del fondo de la nave hacia la entrada de camiones, nunca en tablero de ajedrez. ' + c.dias.length + ' jornada(s), una por día, de ' + c.diaTxt + ' (objetivo ' + DIA_MIN + '–' + DIA_MAX + ' m²; máximo ' + fm(c.aDia, 0) + ' m² por día)', 'Criterio de CONCRE; ACI 302.1R (colada de gran área)', 'E', 'Cada jornada cuela paños contiguos contra la junta blindada del día anterior. El intervalo mínimo entre colados contiguos (sobre todo con retracción compensada, ACI 223) lo confirma el ingeniero según la mezcla.'));
+  g4.filas.push(fila('Entrada del camión mezclador', 'Dejar libre por el lado de la entrada un camino de la base preparada de al menos 4 m de ancho hasta el frente del colado; el camión avanza hacia atrás sobre la zona aún sin colar y descarga frente a él. No se cruza con camiones la losa recién colada', 'Criterio de CONCRE', 'E', 'Si el camino cruza la membrana, protegerla con tablones o láminas y revisarla antes de colar. Con otra entrada de camiones se cambia el sentido del colado en el programa.'));
   g4.filas.push(fila('Sello', 'Fondo de junta y sello flexible de poliuretano al inicio, lo más tarde posible; cambiar a semirrígido cuando la apertura se haya estabilizado (monitoreo mensual durante 18 meses)', 'TR34 (sellado de juntas); ACI 302.1R', 'S'));
   G.push(g4);
 
   // Junta blindada: qué es y qué pedir
   const g4b = { id: 'junta_blindada', titulo: 'Junta blindada: cuál es y qué pedir', filas: [] };
+  g4b.filas.push(fila('Nombre de la junta', JUNTA_BLINDADA.nombre + '. ' + JUNTA_BLINDADA.nombre_en + ' Al cotizar se pide por ese nombre, indicando la apertura de diseño y la capacidad de transferencia.', 'TR34 (junta de movimiento libre; protección de arista)', 'S'));
   g4b.filas.push(fila('Qué es', JUNTA_BLINDADA.que_es, 'TR34 3ª ed. §8.8–8.9; ACI 302.1R', 'S'));
   g4b.filas.push(fila('Junta propuesta', JUNTA_BLINDADA.propuesta, 'TR34 3ª ed. §8.9', 'S', 'Ver el detalle D1 en la hoja 2.'));
   g4b.filas.push(fila('Alternativa', JUNTA_BLINDADA.alternativa, 'TR34 3ª ed. §8.9', 'E'));
   g4b.filas.push(fila('Qué pedir al cotizar o fabricar', 'Altura del perfil: ' + fm(Math.max(h - 2.5, 10), 1) + ' cm (o la comercial inmediata inferior al espesor de ' + fm(h, 1) + ' cm) · longitud total ≈ ' + fm(largoJ, 0) + ' m · apertura de diseño 20 mm · capacidad de transferencia ≥ ' + fm(c.Q_req, 1) + ' kN/m a esa apertura · dovelas con vaina · anclajes al concreto · protección contra la corrosión', 'TR34 3ª ed. §8.9', 'D', 'Pida la ficha técnica con la capacidad a la apertura de diseño y compárela con la requerida.'));
+  const Lase = APERTURA_ASERRADA / (S.eps / 1000);
+  g4b.filas.push(fila('¿Existe una opción sin blindaje?', c.aperturaMax <= APERTURA_ASERRADA + 1e-6
+    ? 'Sí: en esta nave los paños son pequeños y la apertura esperada es de ' + fm(c.aperturaMax, 1) + ' mm (≤ ' + APERTURA_ASERRADA + ' mm). Una junta aserrada con dovelas redondas con vaina, sin perfil de acero, es técnicamente posible y más económica. Pero entonces la losa es una losa con juntas de contracción, no una macro-losa sin cortes.'
+    : 'No para una macro-losa: con la apertura esperada de ' + fm(c.aperturaMax, 1) + ' mm (más de ' + APERTURA_ASERRADA + ' mm) el borde de concreto sin perfil de acero se descantilla con las ruedas, y unas dovelas solas no transfieren bien la carga con la junta abierta. Una junta sin blindaje (aserrada con dovelas, o de construcción con encofrado y dovelas) solo sirve si la apertura es ≤ ' + APERTURA_ASERRADA + ' mm, es decir, paños de hasta ' + fm(Lase, 0) + ' m con este sistema. Eso ya es una losa con juntas de contracción, no una macro-losa.',
+    'Criterio de CONCRE; TR34 (protección de arista)', 'E', 'Lo que sí puede variar es el tipo de junta blindada: sinusoidal (más suave para montacargas) o de perfil recto (más económica). El límite de ' + APERTURA_ASERRADA + ' mm es un criterio de CONCRE para juntas de poco movimiento; confírmelo con el ingeniero.'));
   g4b.filas.push(fila('Dónde conseguirla', 'En el mercado nacional o por importación, con fabricantes especializados en juntas para pisos industriales. La alternativa recta puede fabricarse en un taller de acero según el detalle D1.', 'Criterio de CONCRE', 'E', 'CONCRE no vende estas juntas. Confirme el modelo y la capacidad con la ficha del proveedor.'));
   G.push(g4b);
 
@@ -36711,7 +36783,7 @@ function recomendaciones(inp, S, MT, c) {
   return G;
 }
 
-const API = { SISTEMAS: SISTEMAS, METODOS: METODOS, JUNTA_BLINDADA: JUNTA_BLINDADA, DOSIS_MIN: DOSIS_MIN, DOSIS_MAX: DOSIS_MAX, particionFija: particionFija, ESTADO_TXT: ESTADO_TXT, FFFL: FFFL, L_TOPE: L_TOPE, APERTURA_ADM: APERTURA_ADM, T_ROMBO: T_ROMBO,
+const API = { DIA_MIN: DIA_MIN, DIA_MAX: DIA_MAX, APERTURA_ASERRADA: APERTURA_ASERRADA, ACCESOS: ACCESOS, secuencia: secuencia, SISTEMAS: SISTEMAS, METODOS: METODOS, JUNTA_BLINDADA: JUNTA_BLINDADA, DOSIS_MIN: DOSIS_MIN, DOSIS_MAX: DOSIS_MAX, particionFija: particionFija, ESTADO_TXT: ESTADO_TXT, FFFL: FFFL, L_TOPE: L_TOPE, APERTURA_ADM: APERTURA_ADM, T_ROMBO: T_ROMBO,
   CONCRE_FF: CONCRE_FF, CONCRE_FL: CONCRE_FL, H_MIN_MACRO: H_MIN_MACRO, dosisMacro: dosisMacro, techoSistema: techoSistema, particion1D: particion1D, distribuir: distribuir,
   armarPanos: armarPanos, columnas: columnas, validar: validar, calcularMacro: calcularMacro, compararSistema: compararSistema, claseFF: claseFF };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
@@ -36730,6 +36802,10 @@ root.MACRO_MOTOR = API;
 'use strict';
 
 var ROJO = '#C8102E', GR = '#3D3D3D', GR2 = '#8b8b8b', AZ = '#1565c0';
+var COLN = '#0b2d5b', VERDE = '#2e7d32', VERDE_F = 'rgba(46,125,50,.16)';   // columna (azul marino) y rombo (verde): distintos del rojo de las juntas
+var DIA_COL = ['#f1f1f1', '#dbe8f6', '#fbeecf'];                            // color alterno de las jornadas de colado
+function colDia(d) { return DIA_COL[((d || 1) - 1) % DIA_COL.length]; }
+function rotada(Lx, Ly) { return (Ly / Lx) > 1.25 * (196 / 306); }   // la planta se gira 90° si la nave es muy alta
 var W = 432, H = 279;   // lámina en mm (Tabloide 17 × 11 pulg)
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -36755,7 +36831,7 @@ function lamina1(ctx) {
   var M = ctx.M, S = ctx.S, R = ctx.R, o = [];
   var Lx = M.in.Lx, Ly = M.in.Ly;
   var ax = { x0: 8, y0: 8, w: 306, h: 196 };            // zona de dibujo
-  var rotar = (Ly / Lx) > 1.25 * (ax.h / ax.w);          // planta girada 90° si la nave es muy alta
+  var rotar = rotada(Lx, Ly);                             // planta girada 90° si la nave es muy alta
   var Wm = rotar ? Ly : Lx, Hm = rotar ? Lx : Ly;
   var m = 24;                                            // margen para cotas y burbujas
   var s = Math.min((ax.w - 2 * m) / Wm, (ax.h - 2 * m - 6) / Hm);
@@ -36768,18 +36844,20 @@ function lamina1(ctx) {
   // paños
   var colsP = M.cols.map(function (c) { return U(c.x, c.y); });
   function libre(cx, cy, bw, bh) { return !colsP.some(function (q) { return q[0] > cx - bw / 2 - 2.5 && q[0] < cx + bw / 2 + 2.5 && q[1] > cy - bh / 2 - 2.5 && q[1] < cy + bh / 2 + 2.5; }); }
+  var dm = {}; (M.dias || []).forEach(function (d) { dm[d.dia] = d; });
   M.panos.forEach(function (p) {
     var a = U(p.x0, p.y0), b = U(p.x1, p.y1), x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]), w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1]);
-    o.push(Rc(x, y, w, h, p.fase === 1 ? '#f3f3f3' : '#e4eef8', '#bbb', 0.15));
+    o.push(Rc(x, y, w, h, colDia(p.dia), '#bbb', 0.15));
     if (Math.min(w, h) > 24) {
       var cand = [[.5, .5], [.25, .3], [.75, .3], [.25, .7], [.75, .7], [.5, .25], [.5, .75]], cx = x + w / 2, cy = y + h / 2;
       for (var ci = 0; ci < cand.length; ci++) { var tx = x + w * cand[ci][0], ty = y + h * cand[ci][1]; if (libre(tx, ty, 34, 13)) { cx = tx; cy = ty; break; } }
-      var H1 = { s: 4, b: 1, f: GR, halo: 1 }, H2 = { s: 2.7, f: '#555', halo: 1 }, H3 = { s: 2.5, f: p.fase === 1 ? '#666' : AZ, halo: 1 };
+      var H1 = { s: 4, b: 1, f: GR, halo: 1 }, H2 = { s: 2.7, f: '#555', halo: 1 }, H3 = { s: 2.7, b: 1, f: COLN, halo: 1 };
       o.push(T(cx, cy - 2.2, 'P-' + p.n, H1));
       o.push(T(cx, cy + 1.6, fmt(p.w, 1) + ' × ' + fmt(p.l, 1) + ' m · ' + fmt(p.area, 0) + ' m²', H2));
-      o.push(T(cx, cy + 5.2, 'Colada ' + p.orden + ' · fase ' + p.fase, H3));
+      o.push(T(cx, cy + 5.4, 'Día ' + p.dia + (dm[p.dia] ? ' · ' + fmt(dm[p.dia].area, 0) + ' m²' : ''), H3));
     } else if (Math.min(w, h) > 9) {
       o.push(T(x + w / 2, y + h / 2 + 1, 'P-' + p.n, { s: 3, b: 1, halo: 1 }));
+      o.push(T(x + w / 2, y + h / 2 + 4.6, 'Día ' + p.dia, { s: 2.4, b: 1, f: COLN, halo: 1 }));
     }
   });
   // ejes principales
@@ -36806,9 +36884,9 @@ function lamina1(ctx) {
   M.cols.forEach(function (c) {
     var p = U(c.x, c.y), rr = Math.max(c.r * s, 2.0);
     var pts = [[p[0], p[1] - rr], [p[0] + rr, p[1]], [p[0], p[1] + rr], [p[0] - rr, p[1]]];
-    o.push(Pg(pts, 'rgba(200,16,46,.08)', ROJO, 0.2, '1 0.6'));
-    var q = Math.max(Math.max(c.cx, c.cy) * s, 1.4);
-    o.push(Rc(p[0] - q / 2, p[1] - q / 2, q, q, GR, GR, 0.1));
+    o.push(Pg(pts, VERDE_F, VERDE, 0.3, '1.2 0.7'));
+    var q = Math.max(Math.max(c.cx, c.cy) * s, 2.2);
+    o.push(Rc(p[0] - q / 2, p[1] - q / 2, q, q, COLN, '#fff', 0.2));
   });
   // juntas de construcción (perfil blindado)
   var jn = 0, jl = [];
@@ -36823,6 +36901,21 @@ function lamina1(ctx) {
       Ln(a[0], a[1], b[0], b[1], ROJO, 1.0) + Ln(a[0], a[1], b[0], b[1], '#fff', 0.25) +
       '<rect x="' + r(lx - 4) + '" y="' + r(ly - 2.1) + '" width="8" height="4.2" fill="#fff" stroke="' + ROJO + '" stroke-width="0.25"/>' + T(lx, ly + 1, 'J-' + j.n, { s: 2.7, b: 1, f: ROJO }) + '</g>');
   });
+  // entrada del camión mezclador (flecha fuera de la nave, apuntando hacia adentro) y fondo (inicio del colado): entre dos ejes, donde no hay burbujas ni juntas
+  (function () {
+    var ac = M.acceso || 'y1', alo = (ac === 'y1' || ac === 'y0') ? exs : eys, g0 = 0, g1 = 0;
+    for (var q = 1; q < alo.length; q++) if (alo[q] - alo[q - 1] > g1 - g0) { g0 = alo[q - 1]; g1 = alo[q]; }
+    var gc = (g0 + g1) / 2, bor = { y1: [gc, Ly], y0: [gc, 0], x1: [Lx, gc], x0: [0, gc] }[ac], ent = { y1: [0, -1], y0: [0, 1], x1: [-1, 0], x0: [1, 0] }[ac];
+    var P0 = U(bor[0], bor[1]), P1 = U(bor[0] + ent[0], bor[1] + ent[1]), dx = P1[0] - P0[0], dy = P1[1] - P0[1], nn = Math.sqrt(dx * dx + dy * dy) || 1; dx /= nn; dy /= nn;
+    function Q(a, b) { return [P0[0] + dx * a - dy * b, P0[1] + dy * a + dx * b]; }     // a: hacia adentro de la nave (negativo = afuera); b: lateral
+    o.push(Pg([Q(-10, -1.4), Q(-4, -1.4), Q(-4, -3.2), Q(1.2, 0), Q(-4, 3.2), Q(-4, 1.4), Q(-10, 1.4)], COLN, '#fff', 0.25));
+    var vertical = Math.abs(dy) > Math.abs(dx), tq = Q(-6.5, 0);
+    o.push(vertical ? T(tq[0] + 4.6, tq[1] + 0.9, 'ENTRADA', { s: 2.5, b: 1, f: COLN, a: 'start' }) : T(tq[0], tq[1] - 3.4, 'ENTRADA', { s: 2.5, b: 1, f: COLN }));
+    var fon = { y1: [gc, 0], y0: [gc, Ly], x1: [0, gc], x0: [Lx, gc] }[ac], F0 = U(fon[0], fon[1]), F1 = U(fon[0] - ent[0], fon[1] - ent[1]), fx = F1[0] - F0[0], fy = F1[1] - F0[1], fn = Math.sqrt(fx * fx + fy * fy) || 1; fx /= fn; fy /= fn;
+    var fv = Math.abs(fy) > Math.abs(fx), fp = [F0[0] + fx * 5.2, F0[1] + fy * 5.2];
+    o.push(fv ? T(fp[0] + 4.6, fp[1] + 0.9, 'FONDO', { s: 2.5, b: 1, f: COLN, a: 'start' }) : T(fp[0], fp[1] - 0.2 + (fy < 0 ? 0 : 0), 'FONDO', { s: 2.5, b: 1, f: COLN }));
+  })();
+  M.cols.forEach(function (c) { var p = U(c.x, c.y), q = Math.max(Math.max(c.cx, c.cy) * s, 2.2); o.push('<rect x="' + r(p[0] - q / 2) + '" y="' + r(p[1] - q / 2) + '" width="' + r(q) + '" height="' + r(q) + '" fill="' + COLN + '" stroke="#fff" stroke-width="0.25" pointer-events="none"/>'); });
   // posiciones posibles de las juntas (solo sobre ejes) para poder arrastrarlas: [posición en m, coordenada en pantalla]
   var cand = { v: exs.slice(1, -1).map(function (x) { return [x, r(rotar ? U(x, 0)[1] : U(x, 0)[0])]; }), h: eys.slice(1, -1).map(function (y) { return [y, r(rotar ? U(0, y)[0] : U(0, y)[1])]; }) };
   var attrs = ' data-cand="' + esc(JSON.stringify(cand)) + '"';
@@ -36851,25 +36944,38 @@ function lamina1(ctx) {
   var lx = 12, ly = 214;
   o.push(Rc(lx - 3, ly - 4.5, 92, 56, '#fff', GR2, 0.2));
   o.push(T(lx, ly, 'SIMBOLOGÍA', { s: 2.6, a: 'start', b: 1 }));
-  o.push(Ln(lx, ly + 4.5, lx + 10, ly + 4.5, ROJO, 1.0) + T(lx + 12, ly + 5.4, 'Junta de construcción blindada (J)', { s: 2.4, a: 'start' }));
+  o.push(Ln(lx, ly + 4.5, lx + 10, ly + 4.5, ROJO, 1.0) + T(lx + 12, ly + 5.4, 'Junta blindada de movimiento libre (J)', { s: 2.4, a: 'start' }));
   o.push(Ln(lx, ly + 9.5, lx + 10, ly + 9.5, '#7a7a7a', 0.2, '3 1 0.6 1') + T(lx + 12, ly + 10.4, 'Eje principal', { s: 2.4, a: 'start' }));
-  o.push(Rc(lx + 3.5, ly + 12.5, 3, 3, GR, GR, 0.1) + Pg([[lx + 5, ly + 11.4], [lx + 8, ly + 14], [lx + 5, ly + 16.6], [lx + 2, ly + 14]], 'rgba(200,16,46,.08)', ROJO, 0.2, '1 0.6') + T(lx + 12, ly + 15.2, 'Columna y rombo (colado posterior)', { s: 2.4, a: 'start' }));
-  o.push(Rc(lx, ly + 18.5, 4, 3, '#f3f3f3', '#999', 0.15) + Rc(lx + 5, ly + 18.5, 4, 3, '#e4eef8', '#999', 0.15) + T(lx + 12, ly + 21, 'Paño: fase 1 / fase 2 de colado', { s: 2.4, a: 'start' }));
-  o.push(T(lx, ly + 27, 'No hay cortes aserrados de contracción.', { s: 2.5, a: 'start', b: 1 }));
-  var bx = lx, by = ly + 36;
+  o.push(Rc(lx + 3, ly + 12, 4, 4, COLN, '#fff', 0.2) + T(lx + 12, ly + 15.2, 'Columna', { s: 2.4, a: 'start' }));
+  o.push(Pg([[lx + 5, ly + 17], [lx + 8.2, ly + 20.2], [lx + 5, ly + 23.4], [lx + 1.8, ly + 20.2]], VERDE_F, VERDE, 0.3, '1.2 0.7') + T(lx + 12, ly + 20.6, 'Rombo de la columna (colado posterior)', { s: 2.4, a: 'start' }));
+  o.push(Rc(lx, ly + 25, 4, 3, DIA_COL[0], '#999', 0.15) + Rc(lx + 5, ly + 25, 4, 3, DIA_COL[1], '#999', 0.15) + Rc(lx + 10, ly + 25, 4, 3, DIA_COL[2], '#999', 0.15) + T(lx + 17, ly + 27.2, 'Jornada de colado (un día; el color alterna)', { s: 2.4, a: 'start' }));
+  o.push(Pg([[lx, ly + 31.2], [lx + 6, ly + 31.2], [lx + 6, ly + 30], [lx + 10, ly + 32], [lx + 6, ly + 34], [lx + 6, ly + 32.8], [lx, ly + 32.8]], COLN, COLN, 0.1) + T(lx + 12, ly + 33, 'Entrada del camión mezclador', { s: 2.4, a: 'start' }));
+  o.push(T(lx, ly + 38.5, 'No hay cortes aserrados de contracción.', { s: 2.5, a: 'start', b: 1 }));
+  var bx = lx, by = ly + 44.5;
   o.push(Ln(bx, by, bx + 10 * s, by, GR, 0.6) + Ln(bx, by - 1.5, bx, by + 1.5, GR, 0.3) + Ln(bx + 10 * s, by - 1.5, bx + 10 * s, by + 1.5, GR, 0.3) + T(bx + 10 * s + 3, by + 0.9, '10 m', { s: 2.5, a: 'start' }));
-  o.push(T(bx, by + 6, 'Escala aprox. 1:' + esc1 + ' en Tabloide 11×17' + (rotar ? ' · planta girada 90°' : ''), { s: 2.3, a: 'start', f: '#666' }));
+  o.push(T(bx, by + 5, 'Escala aprox. 1:' + esc1 + ' en Tabloide 11×17' + (rotar ? ' · planta girada 90°' : ''), { s: 2.3, a: 'start', f: '#666' }));
   // notas generales (a la derecha de la leyenda, con salto de línea)
   var notas = [
     '1. Predimensionamiento de CONCRE (BORRADOR): no es un plano constructivo ni sustituye el diseño y la firma del ingeniero responsable (CFIA).',
-    '2. Las únicas juntas son las de construcción blindadas (J) y van siempre sobre ejes principales. No se aserran cortes de contracción: la retracción la controlan la fibra, la mezcla y el reductor de fricción.',
-    '3. Las juntas blindadas se anclan y se les cuela el concreto contra ellas; modelo y capacidad según la ficha del proveedor, para una apertura de hasta ' + M.in.aperturaAdm + ' mm.',
-    '4. Los rombos de las columnas se dejan sin colar hasta que la losa complete su retracción inicial (≥ 28 días) y se rellenan con concreto de retracción compensada.',
-    '5. Colar en el orden indicado: primero los paños de fase 1 y los de fase 2 después de ≥ 7 días. Curado inmediato. Distancias en metros.'
+    '2. Las únicas juntas son las blindadas de movimiento libre (J) y van siempre sobre ejes principales. No se aserran cortes de contracción: la retracción la controlan la fibra, la mezcla y el reductor de fricción.',
+    '3. Junta blindada: modelo y capacidad según la ficha del proveedor, para una apertura de hasta ' + M.in.aperturaAdm + ' mm. Los rombos de las columnas se cuelan después (≥ 28 días) con concreto de retracción compensada.',
+    '4. Colado con descarga directa del camión mezclador: del fondo hacia la entrada, una jornada por día (objetivo ' + fmt(M.diaObj[0], 0) + '–' + fmt(M.diaObj[1], 0) + ' m²), sin tablero de ajedrez. Curado inmediato. Medidas en metros.'
   ];
   var ny = 214;
   o.push(T(108, ny, 'NOTAS GENERALES', { s: 2.6, a: 'start', b: 1 }));
-  notas.forEach(function (t) { envolver(t, 122).forEach(function (ln, k) { ny += 4.4; o.push(T(108 + (k ? 3 : 0), ny, ln, { s: 2.4, a: 'start', f: '#444' })); }); });
+  notas.forEach(function (t) { envolver(t, 92).forEach(function (ln, k) { ny += 4.3; o.push(T(108 + (k ? 3 : 0), ny, ln, { s: 2.4, a: 'start', f: '#444' })); }); });
+  // jornadas de colado (de la primera a la última)
+  var tx = 233, ty = 214, dias = M.dias || [];
+  o.push(T(tx, ty, 'JORNADAS DE COLADO · del fondo a la entrada', { s: 2.6, a: 'start', b: 1 }));
+  o.push(T(tx, ty + 4.4, 'Día', { s: 2.2, a: 'start', f: '#777' }) + T(tx + 10, ty + 4.4, 'Paños', { s: 2.2, a: 'start', f: '#777' }) + T(tx + 62, ty + 4.4, 'm²', { s: 2.2, a: 'end', f: '#777' }) + T(tx + 80, ty + 4.4, 'm³', { s: 2.2, a: 'end', f: '#777' }));
+  var maxF = 9, yy = ty + 4.4;
+  dias.slice(0, dias.length > maxF ? maxF - 1 : maxF).forEach(function (d) {
+    yy += 4.2;
+    var lp = d.panos.length > 4 ? 'P-' + d.panos[0] + ' a P-' + d.panos[d.panos.length - 1] + ' (' + d.panos.length + ')' : d.panos.map(function (n) { return 'P-' + n; }).join(', ');
+    o.push(Rc(tx - 1, yy - 2.6, 80 + 1, 3.6, colDia(d.dia), 'none', 0) + T(tx, yy, String(d.dia), { s: 2.4, a: 'start', b: 1, f: COLN }) + T(tx + 10, yy, lp, { s: 2.3, a: 'start' }) + T(tx + 62, yy, fmt(d.area, 0), { s: 2.4, a: 'end', b: 1 }) + T(tx + 80, yy, fmt(d.vol_m3, 0), { s: 2.4, a: 'end' }));
+  });
+  if (dias.length > maxF) { yy += 4.2; o.push(T(tx, yy, '… y ' + (dias.length - maxF + 1) + ' jornadas más hasta el día ' + dias.length + ' (ver el informe)', { s: 2.3, a: 'start', f: '#555' })); }
+  yy += 4.6; o.push(Ln(tx, yy - 3, tx + 80, yy - 3, GR2, 0.2) + T(tx, yy, dias.length + ' jornada(s)', { s: 2.4, a: 'start', b: 1 }) + T(tx + 62, yy, fmt(M.cant.area, 0), { s: 2.4, a: 'end', b: 1 }) + T(tx + 80, yy, fmt(M.cant.vol_m3, 0), { s: 2.4, a: 'end', b: 1 }));
   // ── columna derecha: rótulo y cuadros ──
   o.push(rotulo(ctx, 1));
   return svgHoja(o.join(''), attrs);
@@ -36891,7 +36997,7 @@ function rotulo(ctx, hoja) {
     o.push(T(x + 2, 65.5, 'DATOS DE DISEÑO', { s: 2.8, a: 'start', b: 1, f: ROJO }));
     var rows = [['Uso', R.u.nombre], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²'], ['Espesor / resistencia', fmt(M.h, 1) + ' cm · ' + M.resTxt], ['Fibra Plus 54 mm', fmt(M.dosis, 1) + ' kg/m³ · ' + fmt(M.cant.fibra_kg, 0) + ' kg'],
       ['Sistema', M.sistema.corto], ['Retracción neta', M.sistema.eps + ' µε (' + fmt(M.sistema.eps / 1000, 2) + ' mm/m)'], ['Distancia máx. juntas', fmt(M.Lmax, 1) + ' m'], ['Apertura esperada', fmt(M.aperturaMax, 1) + ' mm (límite ' + M.in.aperturaAdm + ')'],
-      ['Fricción y vapor', '2 capas polietileno ' + (M.in.pesado ? '15' : '10') + ' + 12 mil'], ['Planicidad', M.ffTxt], ['Juntas', 'sobre ejes principales']];
+      ['Fricción y vapor', '2 capas polietileno ' + (M.in.pesado ? '15' : '10') + ' + 12 mil'], ['Planicidad', M.ffTxt], ['Juntas', 'sobre ejes principales'], ['Colado', (M.dias || []).length + ' jornadas · ' + M.diaTxt + ' por día']];
     rows.forEach(function (d, i) { var y = 70.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 32, y, String(d[1]).slice(0, 40), { s: 2.5, a: 'start', b: 1 })); });
     o.push(Ln(x, 126, x + w, 126, GR, 0.3));
     o.push(T(x + 2, 130.5, 'CUADRO DE JUNTAS', { s: 2.8, a: 'start', b: 1, f: ROJO }));
@@ -36988,8 +37094,8 @@ function dRomboPlanta(M) {
   var c = M.cols[0] || { cx: 0.4, cy: 0.4, r: 0.61, lado: 0.87 }, k = 34, cx0 = 50.5, cy0 = 40, o = [];
   var rr = c.r * k, q = c.cx * k;
   o.push(Ln(cx0 - 46, cy0, cx0 + 46, cy0, '#7a7a7a', 0.2, '3 1 0.6 1') + Ln(cx0, cy0 - 33, cx0, cy0 + 33, '#7a7a7a', 0.2, '3 1 0.6 1'));
-  o.push(Pg([[cx0, cy0 - rr], [cx0 + rr, cy0], [cx0, cy0 + rr], [cx0 - rr, cy0]], 'rgba(200,16,46,.10)', ROJO, 0.5));
-  o.push(Rc(cx0 - q / 2 - 1.5, cy0 - q / 2 - 1.5, q + 3, q + 3, '#fff3b0', '#a98100', 0.2) + Rc(cx0 - q / 2, cy0 - q / 2, q, q, GR, GR, 0.2) + T(cx0, cy0 + 0.9, 'COL.', { s: 2.2, f: '#fff', b: 1 }));
+  o.push(Pg([[cx0, cy0 - rr], [cx0 + rr, cy0], [cx0, cy0 + rr], [cx0 - rr, cy0]], VERDE_F, VERDE, 0.6, '2 1'));
+  o.push(Rc(cx0 - q / 2 - 1.5, cy0 - q / 2 - 1.5, q + 3, q + 3, '#fff3b0', '#a98100', 0.2) + Rc(cx0 - q / 2, cy0 - q / 2, q, q, COLN, COLN, 0.2) + T(cx0, cy0 + 0.9, 'COL.', { s: 2.2, f: '#fff', b: 1 }));
   var bl = 1.2 * k / 2;
   [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) { [0.05, 0.20].forEach(function (off) {
     var px = cx0 + d[0] * (rr + off * k), py = cy0 + d[1] * (rr + off * k);
@@ -37009,7 +37115,7 @@ function dRomboCorte(M) {
   o.push(Ln(6, y0, 95, y0, AZ, 0.5) + Ln(6, y0 - 0.8, 95, y0 - 0.8, AZ, 0.5));
   o.push(Rc(6, yt, 24, tt, '#d8d8d8', GR, 0.3) + Rc(71, yt, 24, tt, '#d8d8d8', GR, 0.3));
   o.push(Rc(30, yt, 41, tt, '#bfe3c0', GR, 0.3) + T(50.5, yt + 6, 'relleno del rombo', { s: 2.2, f: '#2e5e30', b: 1 }) + T(50.5, yt + 9, '(colado posterior)', { s: 2.1, f: '#2e5e30' }));
-  o.push(Rc(40, 12, 21, 59, GR, GR, 0.2) + T(50.5, 44, 'COLUMNA', { s: 2.3, f: '#fff', b: 1 }));
+  o.push(Rc(40, 12, 21, 59, COLN, COLN, 0.2) + T(50.5, 44, 'COLUMNA', { s: 2.3, f: '#fff', b: 1 }));
   o.push(Rc(38, yt, 2, tt, '#fff3b0', '#a98100', 0.2) + Rc(61, yt, 2, tt, '#fff3b0', '#a98100', 0.2));
   o.push(Rc(29.4, yt - 0.2, 1.2, 2.4, '#f4c542', '#a98100', 0.1) + Rc(70.4, yt - 0.2, 1.2, 2.4, '#f4c542', '#a98100', 0.1));
   o.push(T(18, yt + 13, 'Losa', { s: 2.4, f: '#555' }) + T(83, yt + 13, 'Losa', { s: 2.4, f: '#555' }));
@@ -37032,12 +37138,29 @@ function dSeccionTipo(M) {
   return o.join('');
 }
 function dSecuencia(M) {
-  var o = [], Lx = M.in.Lx, Ly = M.in.Ly, aw = 88, ah = 58, s = Math.min(aw / Lx, ah / Ly), ox = 6 + (aw - Lx * s) / 2, oy = 8;
-  M.panos.forEach(function (p) { var x = ox + p.x0 * s, y = oy + p.y0 * s, w = p.w * s, h = p.l * s; o.push(Rc(x, y, w, h, p.fase === 1 ? '#f3f3f3' : '#cfe0f3', GR, 0.2)); if (Math.min(w, h) > 5) o.push(T(x + w / 2, y + h / 2 + 1.2, String(p.orden), { s: Math.min(4, Math.min(w, h) / 3), b: 1, f: p.fase === 1 ? '#555' : AZ })); });
-  var yy = oy + Ly * s;
-  o.push(titD('Secuencia de colado (número = orden)'));
-  o.push(Rc(8, 82, 5, 3, '#f3f3f3', GR, 0.2) + T(15, 84.4, 'Fase 1', { s: 2.3, a: 'start' }) + Rc(32, 82, 5, 3, '#cfe0f3', GR, 0.2) + T(39, 84.4, 'Fase 2 (≥ 7 días después de la fase 1)', { s: 2.3, a: 'start' }));
-  o.push(notasD(['Paños alternos en tablero: cada paño de fase 1 se retrae libre antes de colar los vecinos.', 'Con retracción compensada, esperar ≥ 70 % de la expansión antes de colar paños contiguos (ACI 223).', 'Una colada por día: cada paño se cuela completo en una jornada (el mayor mide ' + fmt(M.maxA, 0) + ' m²).'], 91));
+  var o = [], Lx = M.in.Lx, Ly = M.in.Ly, aw = 88, ah = 50, rot = rotada(Lx, Ly), Wm = rot ? Ly : Lx, Hm = rot ? Lx : Ly, s = Math.min(aw / Wm, ah / Hm), ox = 6 + (aw - Wm * s) / 2, oy = 5;
+  function V(x, y) { return rot ? [ox + y * s, oy + (Lx - x) * s] : [ox + x * s, oy + y * s]; }
+  M.panos.forEach(function (p) {
+    var a = V(p.x0, p.y0), b = V(p.x1, p.y1), x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]), w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1]);
+    o.push(Rc(x, y, w, h, colDia(p.dia), GR, 0.2));
+    if (Math.min(w, h) > 4.5) o.push(T(x + w / 2, y + h / 2 + 1.3, String(p.dia), { s: Math.min(4.2, Math.min(w, h) / 2.6), b: 1, f: COLN }));
+  });
+  // flecha del camión: entra por el lado de acceso y el colado avanza hacia él
+  var ac = M.acceso || 'y1', ent = { y1: [0, -1], y0: [0, 1], x1: [-1, 0], x0: [1, 0] }[ac], bor = { y1: [Lx / 2, Ly], y0: [Lx / 2, 0], x1: [Lx, Ly / 2], x0: [0, Ly / 2] }[ac];
+  var P0 = V(bor[0], bor[1]), P1 = V(bor[0] + ent[0], bor[1] + ent[1]), dx = P1[0] - P0[0], dy = P1[1] - P0[1], nn = Math.sqrt(dx * dx + dy * dy) || 1; dx /= nn; dy /= nn;
+  function Q(a, b) { return [P0[0] + dx * a - dy * b, P0[1] + dy * a + dx * b]; }
+  o.push(Pg([Q(-8, -1), Q(-3, -1), Q(-3, -2.4), Q(1, 0), Q(-3, 2.4), Q(-3, 1), Q(-8, 1)], COLN, '#fff', 0.2));
+  o.push(T(6 + aw / 2, 67, 'Secuencia de colado (número = día)', { s: 2.6, b: 1 }));
+  var y0 = 71.5, dias = M.dias || [], maxF = 6;
+  o.push(T(8, y0, 'Día', { s: 2.1, a: 'start', f: '#777' }) + T(17, y0, 'Paños', { s: 2.1, a: 'start', f: '#777' }) + T(70, y0, 'm²', { s: 2.1, a: 'end', f: '#777' }) + T(86, y0, 'm³', { s: 2.1, a: 'end', f: '#777' }));
+  var yy = y0;
+  dias.slice(0, dias.length > maxF ? maxF - 1 : maxF).forEach(function (d) {
+    yy += 3.3;
+    var lp = d.panos.length > 4 ? 'P-' + d.panos[0] + ' a P-' + d.panos[d.panos.length - 1] : d.panos.map(function (n) { return 'P-' + n; }).join(', ');
+    o.push(Rc(7, yy - 2.3, 81, 3, colDia(d.dia), 'none', 0) + T(8, yy, String(d.dia), { s: 2.3, a: 'start', b: 1, f: COLN }) + T(17, yy, lp, { s: 2.2, a: 'start' }) + T(70, yy, fmt(d.area, 0), { s: 2.3, a: 'end', b: 1 }) + T(86, yy, fmt(d.vol_m3, 0), { s: 2.3, a: 'end' }));
+  });
+  if (dias.length > maxF) { yy += 3.3; o.push(T(8, yy, '… y ' + (dias.length - maxF + 1) + ' jornadas más (ver el informe)', { s: 2.2, a: 'start', f: '#555' })); }
+  o.push(notasD(['Descarga directa del camión (sin bomba): del fondo hacia la entrada; no hay tablero de ajedrez.', 'Cada jornada une paños contiguos de ' + fmt(M.diaObj[0], 0) + '–' + fmt(M.diaObj[1], 0) + ' m² y se cuela contra la junta del día anterior.', 'Dejar libre un camino de ≥ 4 m para el camión.'], yy + 5));
   return o.join('');
 }
 
@@ -37052,7 +37175,7 @@ function lamina2(ctx) {
   o.push(celda(2, 0, 'D3', 'Columna: planta del rombo', dRomboPlanta(M), 'NTS'));
   o.push(celda(0, 1, 'D4', 'Columna: corte del rombo', dRomboCorte(M), 'NTS'));
   o.push(celda(1, 1, 'D5', 'Sección tipo de la losa', dSeccionTipo(M), 'NTS'));
-  o.push(celda(2, 1, 'D6', 'Secuencia de colado', dSecuencia(M), 'sobre la planta'));
+  o.push(celda(2, 1, 'D6', 'Secuencia de colado', dSecuencia(M), 'esquema'));
   o.push(rotulo(ctx, 2));
   return svgHoja(o.join(''));
 }
@@ -37089,7 +37212,8 @@ function informe(ctx) {
     '<div class="kpi"><b>' + esc(M.resCorto) + '</b><span>Resistencia · kg/cm²</span></div>' +
     '<div class="kpi"><b>' + fmt(M.dosis, 1) + ' kg/m³</b><span>Fibra Plus 54 mm</span></div>' +
     '<div class="kpi"><b>' + fmt(M.Lmax, 1) + ' m</b><span>Distancia máx. entre juntas</span></div>' +
-    '<div class="kpi"><b>' + (M.nJx + M.nJy) + '</b><span>Juntas blindadas (' + fmt(M.cant.juntas_m, 0) + ' m)</span></div></div>' +
+    '<div class="kpi"><b>' + (M.nJx + M.nJy) + '</b><span>Juntas blindadas (' + fmt(M.cant.juntas_m, 0) + ' m)</span></div>' +
+    '<div class="kpi"><b>' + M.dias.length + '</b><span>Jornadas de colado (' + M.diaTxt + ' por día)</span></div></div>' +
     '<p class="p">Sistema: <b>' + esc(M.sistema.nombre) + '</b>. Retracción neta de diseño ' + M.sistema.eps + ' µε; apertura esperada de las juntas ' + fmt(M.aperturaMax, 1) + ' mm (límite ' + M.in.aperturaAdm + ' mm). Paños: ' + M.panos.length + ', el mayor de ' + fmt(M.maxL, 1) + ' m. Todas las juntas van sobre ejes principales.</p>' +
     '<p class="p"><b>Capas bajo la losa:</b> reductor de fricción de 2 capas de polietileno de 12 mil y barrera de vapor clase A de ' + (M.in.pesado ? '15' : '10') + ' mil (la capa inferior de la barrera hace también de fricción). Detalle en «Reductor de fricción y barrera de vapor».</p>'));
   if (M.avisos.length) o.push(seccion('Avisos', '<ul class="av">' + M.avisos.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'));
@@ -37097,9 +37221,16 @@ function informe(ctx) {
   o.push(seccion('Qué lograría cada sistema en esta nave', tabla(['Sistema', 'Dosis', 'Distancia máx.', 'Juntas', 'Paños', 'Apertura'], M.comparacion.map(function (c) {
     return [(c.id === M.sistema.id ? '<b>' + esc(c.nombre) + ' ◄</b>' : esc(c.nombre)) + (c.especial ? ' <span class="n">(requiere estudio)</span>' : '') + (c.ok === false ? ' <span class="n">(con estos ejes no alcanza: falta algún eje)</span>' : ''), fmt(c.dosis, 1) + ' kg/m³', fmt(c.Lmax, 1) + ' m', c.juntas, c.panos, fmt(c.apertura, 1) + ' mm'];
   })) + '<p class="n">Mientras más control de retracción tenga la mezcla, mayor la distancia entre juntas y menos juntas blindadas. Respaldo: TR34 4ª ed. (tope de 35 m) y literatura técnica sobre macro-losas con fibra sintética.</p>'));
+  // secuencia y jornadas de colado
+  o.push(seccion('Secuencia y jornadas de colado', '<p class="p">Colado con <b>descarga directa del camión mezclador</b> (sin bomba): se cuela en franjas, <b>del fondo de la nave hacia la entrada de camiones</b>, para que el camión llegue siempre por la base preparada que aún no se ha colado. No se usa tablero de ajedrez. Los paños contiguos se agrupan en <b>' + M.dias.length + ' jornada(s)</b>, una por día, de ' + M.diaTxt + ' (objetivo ' + M.diaObj[0] + '–' + M.diaObj[1] + ' m² por día).</p>' +
+    tabla(['Día', 'Paños', 'Área', 'Concreto', 'Fibra Plus 54 mm', 'Dentro del objetivo'], M.dias.map(function (d) {
+      return ['<b>' + d.dia + '</b>', d.panos.map(function (n) { return 'P-' + n; }).join(', '), fmt(d.area, 0) + ' m²', fmt(d.vol_m3, 1) + ' m³', fmt(d.fibra_kg, 0) + ' kg', d.dentro ? 'Sí' : 'No (' + (d.area < M.diaObj[0] ? 'menor' : 'mayor') + ')'];
+    }), ['8%', '36%', '12%', '14%', '16%', '14%']) +
+    '<p class="n">Cada jornada se cuela contra la junta blindada del día anterior. Dejar libre por el lado de la entrada un camino de al menos 4 m de ancho hasta el frente del colado; si cruza la membrana, protegerla con tablones o láminas. El intervalo mínimo entre colados contiguos lo confirma el ingeniero según la mezcla (con retracción compensada, ACI 223). Las jornadas fuera del objetivo dependen de la separación de los ejes: se acercan moviendo una junta a otro eje en el plano.</p>'));
   // datos de entrada
   o.push(seccion('Datos de entrada', tabla(['Dato', 'Valor'], [
     ['Uso', esc(u.nombre)], ['Suelo de apoyo', esc(R.k.nota) + ' <b>k = ' + fmt(R.k.k, 2) + ' kg/cm³</b>'],     ['Espesor y fibra', M.hFijo || M.dosisManual ? 'Definidos por el usuario y verificados con las cargas' + (M.rec ? ' (recomendado por el programa: ' + fmt(M.rec.h, 1) + ' cm · ' + fmt(M.rec.dosis, 1) + ' kg/m³)' : '') : 'Recomendados por el programa'],
+    ['Colado', 'Descarga directa del camión, del fondo hacia la entrada (flecha en el plano); jornadas de ' + M.diaObj[0] + '–' + M.diaObj[1] + ' m²'],
     ['Posición de las juntas', M.juntasManual ? 'Ajustada por el usuario (siempre sobre ejes)' : 'Automática, sobre ejes principales'],
     ['Ejes principales', 'Verticales: ' + (M.ejesTxtX) + ' · Horizontales: ' + (M.ejesTxtY)], ['Columnas', fmt(M.in.colX, 2) + ' × ' + fmt(M.in.colY, 2) + ' m · ' + M.cols.length + ' (interiores ' + M.nInt + ', borde ' + M.nBor + ', esquina ' + M.nEsq + ')'],
     ['Piso sensible a la humedad', S.pisoSensible ? 'Sí' : 'No'], ['Capacidad de la junta (ficha)', M.in.capJunta_kNm > 0 ? fmt(M.in.capJunta_kNm, 1) + ' kN/m' : 'No ingresada: confirmar con el proveedor']], ['34%', '66%'])));
@@ -37156,7 +37287,7 @@ function html(ctx) {
     '<div class="informe"><table class="pg"><tbody><tr><td>' + informe(ctx) + '</td></tr></tbody><tfoot><tr><td><div class="pie"><b>CONCRE</b> · ' + esc(ref) + ' · ' + esc(DESCARGO_CORTO) + '</div></td></tr></tfoot></table></div></body></html>';
 }
 
-var API = { html: html, lamina1: lamina1, lamina2: lamina2, DESCARGO: DESCARGO, NO_REVISA: NO_REVISA };
+var API = { rotada: rotada, html: html, lamina1: lamina1, lamina2: lamina2, DESCARGO: DESCARGO, NO_REVISA: NO_REVISA };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 root.MACRO_INF = API;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -37266,12 +37397,12 @@ function nuevoEstado() {
     panelLx: '', panelLy: '',
     borde: 15, esq: 15, nu: 0.20,
     criterio: 'mayor', mr: 'aci318',
-    macro: false, mLx: '', mLy: '', mEjesX: [], mEjesY: [], mSinCol: [], mSistema: 'sra', mMetodo: 'laser', mCols: 'todas', mColX: 0.4, mColY: 0.4, mCapJunta: '', mPesado: false, mMont: true, mAuto: true, mH: '', mDosis: '', mVista: 'fc', mJuntasX: null, mJuntasY: null, /* MACRO:ESTADO */
+    macro: false, mLx: '', mLy: '', mEjesX: [], mEjesY: [], mSinCol: [], mSistema: 'sra', mMetodo: 'laser', mCols: 'todas', mColX: 0.4, mColY: 0.4, mCapJunta: '', mPesado: false, mMont: true, mAuto: true, mH: '', mDosis: '', mVista: 'fc', mJuntasX: null, mJuntasY: null, mAcceso: 'abajo', /* MACRO:ESTADO */
     res: null
   };
 }
 
-var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr', 'macro', 'mLx', 'mLy', 'mEjesX', 'mEjesY', 'mSinCol', 'mSistema', 'mMetodo', 'mCols', 'mColX', 'mColY', 'mCapJunta', 'mPesado', 'mMont', 'mAuto', 'mH', 'mDosis', 'mVista', 'mJuntasX', 'mJuntasY'];
+var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr', 'macro', 'mLx', 'mLy', 'mEjesX', 'mEjesY', 'mSinCol', 'mSistema', 'mMetodo', 'mCols', 'mColX', 'mColY', 'mCapJunta', 'mPesado', 'mMont', 'mAuto', 'mH', 'mDosis', 'mVista', 'mJuntasX', 'mJuntasY', 'mAcceso'];
 function serializar(S) { var e = {}; CAMPOS_ESTADO.forEach(function (k) { e[k] = clone(S[k]); }); return e; }
 function nuevoId() { return 'lo_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function refLocal() {
@@ -38023,7 +38154,8 @@ function pintarMacroCaja(S, box) {
   bx.appendChild(gr);
 
   var go = el('div', { class: 'ls-grid' });
-  go.appendChild(campo('Método de colocación', selBox([{ v: 'laser', l: 'Regla láser (laser screed) · hasta 2 000 m² por día' }, { v: 'vibratoria', l: 'Colocación manual (regla vibratoria) · hasta 1 000 m² por día' }], S.mMetodo, function (v) { S.mMetodo = v; }), 'Decide el área máxima de cada paño: debe poder colarse en un día. El informe no indica el método: solo la planicidad.'));
+  go.appendChild(campo('Método de colocación', selBox([{ v: 'laser', l: 'Regla láser (laser screed) · hasta 2 000 m² por día' }, { v: 'vibratoria', l: 'Colocación manual (regla vibratoria) · hasta 1 000 m² por día' }], S.mMetodo, function (v) { S.mMetodo = v; }), 'Decide lo máximo que se puede colar en un día; las jornadas se arman de 700 a 900 m² sin pasar de ese máximo. El informe no indica el método: solo la planicidad.'));
+  go.appendChild(campo('Entrada del camión mezclador', selBox(ENTRADAS, S.mAcceso || 'abajo', function (v) { S.mAcceso = v; }), 'Lado del dibujo por donde entra el camión (descarga directa, sin bomba). El colado empieza en el fondo, el lado opuesto, y avanza hacia la entrada en jornadas de 700 a 900 m². Se puede cambiar después en el resultado.'));
   go.appendChild(campo('Capacidad de la junta del proveedor (kN/m) — opcional', inpNum(S.mCapJunta, function (v) { S.mCapJunta = v; }), 'Si ya tiene la ficha técnica de la junta a 20 mm de apertura, escríbala y el programa la compara con la requerida'));
   var ckP = el('input', { type: 'checkbox' }); ckP.checked = !!S.mPesado; ckP.addEventListener('change', function () { S.mPesado = ckP.checked; });
   go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Membrana más gruesa']), el('label', { class: 'ls-chk' }, [ckP, 'Equipo pesado sobre la membrana o base de piedra angular (15 mil)'])]));
@@ -38135,7 +38267,8 @@ function calcularMacroUI(S, R) {
     resTipo: mr ? 'mr' : 'fc', resTxt: mr ? 'MR ' + fmt(R.MR, 1) + ' kg/cm²' : 'f’c ' + R.rec.fc + ' kg/cm²', resCorto: mr ? 'MR ' + fmt(R.MR, 1) : 'f’c ' + R.rec.fc,
     dosisCargas: d.dosis_rec, ell_mm: ev2.props.ell, Pd_kN: Pd,
     uso: S.usoId, o: S.o, clima: S.clima, pisoSensible: !!S.pisoSensible, pesado: !!S.mPesado, montacargas: !!S.mMont, capJunta_kNm: num(S.mCapJunta, 0), fR: M.interpolarFrc(dosis),
-    juntasX: Array.isArray(S.mJuntasX) ? S.mJuntasX.slice() : null, juntasY: Array.isArray(S.mJuntasY) ? S.mJuntasY.slice() : null };
+    juntasX: Array.isArray(S.mJuntasX) ? S.mJuntasX.slice() : null, juntasY: Array.isArray(S.mJuntasY) ? S.mJuntasY.slice() : null,
+    acceso: accesoNave(S, Lx, Ly) };
   var res = MM.calcularMacro(inp);
   if (res.error) return { error: res.error };
   res.rec = rec;
@@ -38151,6 +38284,13 @@ function calcularMacroUI(S, R) {
   if (S.clima && S.clima !== 'interior') res.avisos.push('La macro-losa se piensa para interior cubierto. Con sol, lluvia, zona costera o frío el movimiento térmico y de humedad cambia la apertura de las juntas: requiere un estudio específico del ingeniero.');
   if (!okCh) res.avisos.push('Alguna carga no cumple con el espesor y la dosis finales de la macro-losa (ver «Verificación por carga»).');
   return { M: res, ev: ev2, inp: inp, cumple: okCh && res.okArrastre && res.okLong && res.hOk };
+}
+
+var ENTRADAS = [{ v: 'abajo', l: 'Por abajo del dibujo' }, { v: 'arriba', l: 'Por arriba del dibujo' }, { v: 'izq', l: 'Por la izquierda del dibujo' }, { v: 'der', l: 'Por la derecha del dibujo' }];
+// lado de la nave (en sus propios ejes) que corresponde al lado del dibujo; la planta se gira 90° cuando la nave es muy alta
+function accesoNave(S, Lx, Ly) {
+  var a = S.mAcceso || 'abajo', rot = MINF.rotada(Lx, Ly);
+  return (rot ? { abajo: 'x0', arriba: 'x1', izq: 'y0', der: 'y1' } : { abajo: 'y1', arriba: 'y0', izq: 'x0', der: 'x1' })[a] || 'y1';
 }
 
 // ── resultados (en el paso 4) ────────────────────────────────────────────────
@@ -38215,6 +38355,7 @@ function pintarMacroResultados(S, box, ir, nuevo) {
   kpi(fmt(X.dosis, 1) + ' kg/m³', 'Fibra Plus 54 mm', fmt(X.cant.fibra_kg, 0) + ' kg · ' + X.cant.sacos10 + ' sacos de 10 kg + ' + X.cant.bolsas1 + ' bolsas de 1 kg');
   kpi(fmt(X.Lmax, 1) + ' m', 'Distancia máxima entre juntas', X.panos.length + ' paños · el mayor de ' + fmt(X.maxL, 1) + ' m');
   kpi(String(X.nJx + X.nJy), 'Juntas de construcción blindadas', fmt(X.cant.juntas_m, 0) + ' m de junta · sobre ejes');
+  kpi(String(X.dias.length), 'Jornadas de colado (una por día)', X.diaTxt + ' por día');
   box.appendChild(k);
   if (X.hFijo || X.dosisManual) box.appendChild(el('div', { class: 'ls-info' }, ['Espesor y fibra definidos por usted: cumplen la verificación por carga, el mínimo de macro-losa y el arrastre. Recomendado por el programa: ' + fmt(X.rec.h, 1) + ' cm · ' + fmt(X.rec.dosis, 1) + ' kg/m³.']));
   box.appendChild(el('div', { class: 'ls-info', html: '<b>Sistema:</b> ' + esc(X.sistema.nombre) + '. Retracción neta de diseño ' + X.sistema.eps + ' µε (' + fmt(X.sistema.eps / 1000, 2) + ' mm/m); apertura esperada de las juntas <b>' + fmt(X.aperturaMax, 1) + ' mm</b> (límite ' + X.in.aperturaAdm + ' mm). <b>No se asierran cortes de contracción.</b>' }));
@@ -38234,7 +38375,10 @@ function pintarMacroResultados(S, box, ir, nuevo) {
   var plano = el('div', { class: 'mc-plano', html: MINF.lamina1(ctx) });
   bp.appendChild(plano);
   activarArrastreJuntas(S, plano, X, ir);
-  bp.appendChild(el('div', { class: 'ls-nota' }, ['Las juntas (rojas, J-1, J-2…) van solo sobre ejes. Para cambiar una de lugar, arrástrela hasta otro eje: el programa recalcula los paños y los avisos. El PDF trae esta hoja y la de detalles en Tabloide 11×17 pulg, más el informe en hojas carta A4.']));
+  bp.appendChild(el('div', { class: 'ls-nota' }, ['Las juntas (rojas, J-1, J-2…) van solo sobre ejes. Para cambiar una de lugar, arrástrela hasta otro eje: el programa recalcula los paños, las jornadas y los avisos. Las columnas son azul marino y sus rombos verdes. El colado es con descarga directa del camión: empieza en el fondo y avanza hacia la flecha de entrada, una jornada por día. El PDF trae esta hoja y la de detalles en Tabloide 11×17 pulg, más el informe en hojas carta A4.']));
+  var be = el('div', { class: 'ls-nav' }, [el('span', { class: 'ls-nota' }, ['Entrada del camión mezclador:'])]);
+  ENTRADAS.forEach(function (e) { be.appendChild(el('button', { class: 'ls-btn sm' + ((S.mAcceso || 'abajo') === e.v ? '' : ' sec'), onclick: function () { S.mAcceso = e.v; var y = window.pageYOffset; S.res = calcular(S); ir(3); try { window.scrollTo(0, y); } catch (x) {} } }, [e.l])); });
+  bp.appendChild(be);
   if (X.juntasManual) bp.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () { S.mJuntasX = null; S.mJuntasY = null; var y = window.pageYOffset; S.res = calcular(S); ir(3); try { window.scrollTo(0, y); } catch (x) {} } }, ['Volver a juntas automáticas']));
   box.appendChild(bp);
   var bd = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Detalles constructivos'])]);
