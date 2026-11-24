@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261124170000';
+var APP_BUILD='20261124184500';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -36459,6 +36459,41 @@ function distribuir(inp, Lmax, aDia, ctx) {
   return { px: mejor.px, py: mejor.py, lim: Lmax };
 }
 
+// ¿Se podrían usar menos juntas con más fibra? Con los ejes dados, busca el paño más corto que reduce el número de juntas y
+// la dosis que lo permite (techo del sistema ≥ ese paño). Solo sugiere: la dosis la decide el usuario.
+function dosisParaLongitud(sis, L) {
+  const t = sis.techo;
+  if (L <= t[1]) return t[0];
+  const d = t[0] + (L - t[1]) / (t[3] - t[1]) * (t[2] - t[0]);
+  return Math.ceil(d * 10 - 1e-9) / 10;
+}
+function sugerirFibra(inp, S, aDia, ctx, Lmax, nHoy, Ljunta, dmDosis) {
+  const Lcap = Math.min(Ljunta, L_TOPE, techoSistema(S.id, DOSIS_MAX));
+  if (Lcap <= Lmax + 1e-6 || nHoy < 1) return null;
+  const listas = [[0], [0]];
+  [[inp.ejesX, inp.Lx], [inp.ejesY, inp.Ly]].forEach(function (par, q) {
+    const b = particion1D(par[0], par[1], Lmax); if (!b.ok) return;
+    for (let k = 1; k <= 4 && b.cortes.length - k >= 0; k++) {
+      const ps = particionesExactas(par[0], par[1], Infinity, b.cortes.length - k, 200);
+      if (ps.length) listas[q].push(Math.min.apply(null, ps.map(function (z) { return Math.max.apply(null, z.segs); })));
+    }
+  });
+  const cand = {};
+  listas[0].forEach(function (lx) { listas[1].forEach(function (ly) { const L = r2(Math.max(lx, ly)); if (L > Lmax + 1e-6 && L <= Lcap + 1e-6) cand[L] = true; }); });
+  const Ls = Object.keys(cand).map(Number).sort(function (a, b) { return a - b; });
+  let mejor = null;
+  Ls.forEach(function (L) {
+    const d = distribuir(Object.assign({}, inp, { juntasX: null, juntasY: null }), L, aDia, ctx);
+    if (!(d.px.ok && d.py.ok)) return;
+    const n = d.px.cortes.length + d.py.cortes.length, Lr = Math.max.apply(null, d.px.segs.concat(d.py.segs));
+    if (n < nHoy && (!mejor || n < mejor.n)) mejor = { n: n, L: r1(Lr), Lreal: Lr };
+  });
+  if (!mejor) return null;
+  const dosis = Math.max(dosisParaLongitud(S, mejor.Lreal), dmDosis);
+  if (dosis > DOSIS_MAX + 1e-9 || techoSistema(S.id, dosis) < mejor.Lreal - 1e-6) return null;
+  return { juntas: mejor.n, juntasHoy: nHoy, L: mejor.L, dosis: dosis };
+}
+
 // ── armado de paños a partir de las particiones ──────────────────────────────
 function armarPanos(px, py, h_cm, dosis) {
   const xs = [0]; px.segs.forEach(function (s) { xs.push(r2(xs[xs.length - 1] + s)); });
@@ -36645,6 +36680,14 @@ function calcularMacro(inp) {
   const maxA = Math.max.apply(null, panos.map(function (p) { return p.area; }));
   const maxAsp = Math.max.apply(null, panos.map(function (p) { return p.aspecto; }));
   const maxL = Math.max.apply(null, panos.map(function (p) { return Math.max(p.w, p.l); }));
+  let sugFibra = null;
+  if (!(dist.px.manual || dist.py.manual) && dist.px.ok && dist.py.ok) {
+    sugFibra = sugerirFibra(inp, S, MT.a_dia, { acceso: inp.acceso, h: h, dosis: dm.dosis }, Lmax, dist.px.cortes.length + dist.py.cortes.length, Ljunta, dm.dosis);
+    if (sugFibra) {
+      sugFibra.extraKg = Math.max(0, Math.ceil(inp.Lx * inp.Ly * h / 100 * (sugFibra.dosis - dm.dosis) * 1.03 - 1e-9));
+      avisos.push('Con estos ejes se usan ' + sugFibra.juntasHoy + ' juntas blindadas porque la distancia máxima con ' + fm(dm.dosis, 1) + ' kg/m³ de fibra es ' + fm(r1(Lmax), 1) + ' m (el ' + fm(r1(SISTEMAS[S.id].techo[3]), 0) + ' m del sistema pide ' + fm(SISTEMAS[S.id].techo[2], 1) + ' kg/m³). Con ' + fm(sugFibra.dosis, 1) + ' kg/m³ (≈ ' + fm(sugFibra.extraKg, 0) + ' kg más de fibra en total) los paños pueden llegar a ' + fm(sugFibra.L, 1) + ' m y bastan ' + sugFibra.juntas + ' juntas. El ingeniero debe confirmar esa dosis.');
+    }
+  }
   const manualJ = !!(dist.px.manual || dist.py.manual);
   const okEjes = !!(dist.px.ok && dist.py.ok);
   const sugerencia = { x: dist.px.ok ? [] : dist.px.sug, y: dist.py.ok ? [] : dist.py.sug };
@@ -36704,7 +36747,7 @@ function calcularMacro(inp) {
     f_req: f_req, f_disp: f_disp, okArrastre: okArrastre, mu: mu,
     px: dist.px, py: dist.py, xs: g.xs, ys: g.ys, panos: panos, nJx: nJx, nJy: nJy, cols: cols, nInt: nInt, nBor: nBor, nEsq: nEsq,
     okEjes: okEjes, okLong: okEjes && maxL <= Lmax + 1e-6 && maxA <= MT.a_dia * 1.0001, sugerencia: sugerencia, juntasManual: manualJ,
-    maxAsp: maxAsp, maxA: maxA, dias: sec.dias, diaObj: [DIA_MIN, DIA_MAX], acceso: sec.acceso, franjas: sec.franjas, diaMin: minDia, diaMax: maxDia, diaTxt: diaTxt, cant: cant, grupos: grupos, avisos: avisos, pasos: pasos,
+    maxAsp: maxAsp, maxA: maxA, dias: sec.dias, diaObj: [DIA_MIN, DIA_MAX], acceso: sec.acceso, franjas: sec.franjas, diaMin: minDia, diaMax: maxDia, diaTxt: diaTxt, cant: cant, grupos: grupos, avisos: avisos, pasos: pasos, sugFibra: sugFibra,
     comparacion: ['fibra', 'sra', 'comp'].map(function (id) { return compararSistema(inp, id); })
   };
 }
@@ -36832,7 +36875,7 @@ function recomendaciones(inp, S, MT, c) {
 }
 
 const API = { DIA_MIN: DIA_MIN, DIA_MAX: DIA_MAX, APERTURA_ASERRADA: APERTURA_ASERRADA, ACCESOS: ACCESOS, secuencia: secuencia, SISTEMAS: SISTEMAS, METODOS: METODOS, JUNTA_BLINDADA: JUNTA_BLINDADA, DOSIS_MIN: DOSIS_MIN, DOSIS_MAX: DOSIS_MAX, particionFija: particionFija, ESTADO_TXT: ESTADO_TXT, FFFL: FFFL, L_TOPE: L_TOPE, APERTURA_ADM: APERTURA_ADM, T_ROMBO: T_ROMBO,
-  CONCRE_FF: CONCRE_FF, CONCRE_FL: CONCRE_FL, H_MIN_MACRO: H_MIN_MACRO, dosisMacro: dosisMacro, techoSistema: techoSistema, particion1D: particion1D, distribuir: distribuir,
+  CONCRE_FF: CONCRE_FF, CONCRE_FL: CONCRE_FL, H_MIN_MACRO: H_MIN_MACRO, dosisMacro: dosisMacro, techoSistema: techoSistema, particion1D: particion1D, distribuir: distribuir, sugerirFibra: sugerirFibra,
   armarPanos: armarPanos, columnas: columnas, validar: validar, calcularMacro: calcularMacro, compararSistema: compararSistema, claseFF: claseFF };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 root.MACRO_MOTOR = API;
@@ -38063,6 +38106,8 @@ var USOS_MACRO = ['taller_industrial', 'bodega_almacen', 'bodega_produccion', 'b
 var MACRO_CSS = [
   '.ls .mc-bar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}',
   '.ls .mc-bar button.on{background:#C8102E;color:#fff;border-color:#C8102E}',
+  '.ls .mc-ent{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0;padding:8px;border:1px solid #0b2d5b;border-radius:8px;background:#f1f5fb}',
+  '.ls .mc-ent button.on{background:#0b2d5b;color:#fff;border-color:#0b2d5b}',
   '.ls .mc-hint{font-size:calc(12px*var(--fs,1));color:#666;margin:4px 0 6px}',
   '.ls .mc-svg{width:100%;height:auto;background:#fff;border:1px solid #ddd;border-radius:8px;touch-action:none;user-select:none}',
   '.ls .mc-chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}',
@@ -38142,11 +38187,24 @@ function pintarMacroCaja(S, box) {
   // lienzo
   bx.appendChild(el('div', { class: 'mc-sub' }, ['Dibujo rápido (opcional)']));
   var modo = 'mover';
+  // ENTRADA DEL CAMIÓN: se marca en el dibujo, antes de colocar ejes y columnas, porque de ella depende el orden del colado y toda la logística
+  var filaEnt = el('div', { class: 'mc-ent' });
+  var btEnt = {};
+  filaEnt.appendChild(el('b', {}, ['1. ¿Por dónde entra el camión mezclador? ']));
+  ENTRADAS.forEach(function (e) {
+    var b = el('button', { class: 'ls-btn sec sm', onclick: function () { S.mAcceso = e.v; marcarEnt(); redibujar(); } }, [e.l.replace(' del dibujo', '')]);
+    btEnt[e.v] = b; filaEnt.appendChild(b);
+  });
+  filaEnt.appendChild(el('span', { class: 'mc-hint' }, [' También puede hacer clic en un lado de la nave con la herramienta «➜ Entrada del camión». El colado empieza en el lado opuesto (el fondo) y avanza hacia la entrada.']));
+  function marcarEnt() { Object.keys(btEnt).forEach(function (k) { btEnt[k].className = 'ls-btn sec sm' + ((S.mAcceso || 'abajo') === k ? ' on' : ''); }); }
+  marcarEnt();
+  bx.appendChild(filaEnt);
+  bx.appendChild(el('div', { class: 'mc-sub' }, ['2. Ejes y columnas']));
   var bar = el('div', { class: 'mc-bar' });
   var hint = el('div', { class: 'mc-hint' });
-  var HINTS = { mover: 'Arrastre el círculo de un eje para moverlo. Doble clic (o doble toque) sobre el círculo lo borra.', addV: 'Haga clic dentro de la nave donde va un eje vertical nuevo.', addH: 'Haga clic dentro de la nave donde va un eje horizontal nuevo.', cols: 'Haga clic en un cruce de ejes para quitar o poner la columna.' };
+  var HINTS = { mover: 'Arrastre el círculo de un eje para moverlo. Doble clic (o doble toque) sobre el círculo lo borra.', addV: 'Haga clic dentro de la nave donde va un eje vertical nuevo.', addH: 'Haga clic dentro de la nave donde va un eje horizontal nuevo.', cols: 'Haga clic en un cruce de ejes para quitar o poner la columna.', entrada: 'Haga clic en el lado de la nave por donde entra el camión mezclador. La flecha se pasa a ese lado y el colado empieza en el lado opuesto (el fondo) y avanza hacia la entrada.' };
   var botones = {};
-  [['mover', '✋ Mover ejes'], ['addV', '＋ Eje vertical'], ['addH', '＋ Eje horizontal'], ['cols', '▣ Quitar / poner columnas']].forEach(function (m) {
+  [['mover', '✋ Mover ejes'], ['addV', '＋ Eje vertical'], ['addH', '＋ Eje horizontal'], ['cols', '▣ Quitar / poner columnas'], ['entrada', '➜ Entrada del camión']].forEach(function (m) {
     var b = el('button', { class: 'ls-btn sec sm', onclick: function () { modo = m[0]; marcar(); } }, [m[1]]);
     botones[m[0]] = b; bar.appendChild(b);
   });
@@ -38164,7 +38222,7 @@ function pintarMacroCaja(S, box) {
     (S.mEjesX || []).forEach(function (v, i) { chips.appendChild(el('span', { class: 'mc-chip' }, ['Eje ' + letraEje(i + 1) + ' · ' + fmt(v, 2) + ' m', el('button', { title: 'Quitar', onclick: function () { S.mEjesX.splice(i, 1); sincronizar(); redibujar(); } }, ['✕'])])); });
     (S.mEjesY || []).forEach(function (v, i) { chips.appendChild(el('span', { class: 'mc-chip' }, ['Eje ' + (i + 2) + ' · ' + fmt(v, 2) + ' m', el('button', { title: 'Quitar', onclick: function () { S.mEjesY.splice(i, 1); sincronizar(); redibujar(); } }, ['✕'])])); });
   }
-  function redibujar() { holder.innerHTML = ''; var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0); if (!(Lx > 0 && Ly > 0)) { holder.appendChild(el('div', { class: 'ls-warn' }, ['Escriba el largo y el ancho de la nave para ver el dibujo.'])); chips.innerHTML = ''; return; } dibujarLienzo(S, holder, function () { return modo; }, function () { sincronizar(); listaChips(); }); listaChips(); }
+  function redibujar() { holder.innerHTML = ''; var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0); if (!(Lx > 0 && Ly > 0)) { holder.appendChild(el('div', { class: 'ls-warn' }, ['Escriba el largo y el ancho de la nave para ver el dibujo.'])); chips.innerHTML = ''; return; } dibujarLienzo(S, holder, function () { return modo; }, function () { sincronizar(); listaChips(); }, function () { marcarEnt(); }); listaChips(); }
 
   // columnas
   bx.appendChild(el('div', { class: 'mc-sub' }, ['Columnas']));
@@ -38178,7 +38236,7 @@ function pintarMacroCaja(S, box) {
   bx.appendChild(el('div', { class: 'mc-sub' }, ['Sistema de control de retracción']));
   bx.appendChild(el('p', { class: 'ls-p' }, ['Entre más control de retracción tenga la mezcla, mayor la distancia entre juntas y menos juntas blindadas (que son lo más caro). En el resultado verá lo que lograría cada sistema en su nave.']));
   var cs = el('div', { class: 'mc-sis' });
-  var DESCS = { fibra: 'Fibra Plus 54 mm y mezcla de baja retracción. Es lo más sencillo; paños más cortos (≈ 8 a 15 m).', sra: 'Fibra más reductor de retracción (SRA). Paños de ≈ 15 a 24 m.', comp: 'Fibra más concreto de retracción compensada. Paños de hasta ≈ 35 m. Requiere estudio y confirmar el aditivo expansivo en Costa Rica.' };
+  var DESCS = { fibra: 'Fibra Plus 54 mm y mezcla de baja retracción. Es lo más sencillo; paños más cortos: ≈ 8 m con 3 kg/m³ de fibra y hasta ≈ 15 m con 5 kg/m³.', sra: 'Fibra más reductor de retracción (SRA). Paños de ≈ 15 m con 3 kg/m³ de fibra y hasta ≈ 24 m con 5,3 kg/m³ (más fibra, paños más largos y menos juntas).', comp: 'Fibra más concreto de retracción compensada. Paños de ≈ 20 m con 3 kg/m³ de fibra y hasta ≈ 35 m con 5 kg/m³. Requiere estudio y confirmar el aditivo expansivo en Costa Rica.' };
   ['fibra', 'sra', 'comp'].forEach(function (id) {
     var s = MM.SISTEMAS[id];
     var it = el('div', { class: 'it' + (S.mSistema === id ? ' on' : '') }, [el('b', {}, [s.corto + (id === 'sra' ? ' (recomendado)' : '')]), el('div', { class: 'd' }, [DESCS[id]])]);
@@ -38214,7 +38272,6 @@ function pintarMacroCaja(S, box) {
 
   var go = el('div', { class: 'ls-grid' });
   go.appendChild(campo('Método de colocación', selBox([{ v: 'laser', l: 'Regla láser (laser screed) · hasta 2 000 m² por día' }, { v: 'vibratoria', l: 'Colocación manual (regla vibratoria) · hasta 1 000 m² por día' }], S.mMetodo, function (v) { S.mMetodo = v; }), 'Decide lo máximo que se puede colar en un día; las jornadas se arman de 700 a 900 m² sin pasar de ese máximo. El informe no indica el método: solo la planicidad.'));
-  go.appendChild(campo('Entrada del camión mezclador', selBox(ENTRADAS, S.mAcceso || 'abajo', function (v) { S.mAcceso = v; }), 'Lado del dibujo por donde entra el camión (descarga directa, sin bomba). El colado empieza en el fondo, el lado opuesto, y avanza hacia la entrada en jornadas de 700 a 900 m². Se puede cambiar después en el resultado.'));
   go.appendChild(campo('Capacidad de la junta del proveedor (kN/m) — opcional', inpNum(S.mCapJunta, function (v) { S.mCapJunta = v; }), 'Si ya tiene la ficha técnica de la junta a 20 mm de apertura, escríbala y el programa la compara con la requerida'));
   var ckP = el('input', { type: 'checkbox' }); ckP.checked = !!S.mPesado; ckP.addEventListener('change', function () { S.mPesado = ckP.checked; });
   go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Membrana más gruesa']), el('label', { class: 'ls-chk' }, [ckP, 'Equipo pesado sobre la membrana o base de piedra angular (15 mil)'])]));
@@ -38229,7 +38286,7 @@ function pintarMacroCaja(S, box) {
 }
 
 // ── lienzo SVG ───────────────────────────────────────────────────────────────
-function dibujarLienzo(S, holder, getModo, alCambiar) {
+function dibujarLienzo(S, holder, getModo, alCambiar, alEntrada) {
   var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0);
   var W = 820, m = 38, s = Math.min((W - 2 * m) / Lx, 430 / Ly), Wn = Lx * s, Hn = Ly * s, H = Hn + 2 * m;
   var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -38265,6 +38322,19 @@ function dibujarLienzo(S, holder, getModo, alCambiar) {
       var c = hayColumna(n), q = Math.max(4, (num(S.mColX, 0.4) * s)), cx = X(n.x), cy = Y(n.y);
       o.push('<rect data-n="' + n.key + '" x="' + (cx - Math.max(q, 7) / 2) + '" y="' + (cy - Math.max(q, 7) / 2) + '" width="' + Math.max(q, 7) + '" height="' + Math.max(q, 7) + '" fill="' + (c ? '#3D3D3D' : '#fff') + '" stroke="#3D3D3D" stroke-width="1" ' + (c ? '' : 'stroke-dasharray="2 2" ') + 'style="cursor:' + (getModo() === 'cols' ? 'pointer' : 'default') + '"/>');
     });
+    // entrada del camión mezclador: flecha fuera de la nave (en el vano más ancho, al 30 %) y «FONDO» en el lado opuesto
+    var ns = accesoNave(S, Lx, Ly), horiz = (ns === 'y1' || ns === 'y0'), lista = horiz ? ex : ey, g0 = 0, g1 = 0;
+    for (var q = 1; q < lista.length; q++) if (lista[q] - lista[q - 1] > g1 - g0) { g0 = lista[q - 1]; g1 = lista[q]; }
+    var gp = g0 + (g1 - g0) * 0.35, NAV = '#0b2d5b', ar;
+    if (ns === 'y1') ar = { x: X(gp), y: m + Hn, dx: 0, dy: -1 }; else if (ns === 'y0') ar = { x: X(gp), y: m, dx: 0, dy: 1 }; else if (ns === 'x0') ar = { x: m, y: Y(gp), dx: 1, dy: 0 }; else ar = { x: m + Wn, y: Y(gp), dx: -1, dy: 0 };
+    function Qa(a, b) { return [ar.x + ar.dx * a - ar.dy * b, ar.y + ar.dy * a + ar.dx * b]; }
+    var pts = [Qa(-34, -6), Qa(-12, -6), Qa(-12, -10), Qa(2, 0), Qa(-12, 10), Qa(-12, 6), Qa(-34, 6)].map(function (v) { return v[0].toFixed(1) + ',' + v[1].toFixed(1); }).join(' ');
+    o.push('<polygon points="' + pts + '" fill="' + NAV + '" stroke="#fff" stroke-width="1" pointer-events="none"/>');
+    var HALO = ' font-size="12" font-weight="700" fill="' + NAV + '" font-family="Arial" stroke="#f6f6f6" stroke-width="4" paint-order="stroke" pointer-events="none"';
+    var izqE = X(gp) < m + Wn / 2, tE = ns === 'y1' ? [X(gp) + (izqE ? -14 : 14), m + Hn - 16, izqE ? 'start' : 'end'] : ns === 'y0' ? [X(gp) + (izqE ? -14 : 14), m + 24, izqE ? 'start' : 'end'] : ns === 'x0' ? [m + 10, Y(gp) + 4, 'start'] : [m + Wn - 10, Y(gp) + 4, 'end'];
+    var tF = ns === 'y1' ? [m + Wn / 2, m + 24, 'middle'] : ns === 'y0' ? [m + Wn / 2, m + Hn - 16, 'middle'] : ns === 'x0' ? [m + Wn - 10, m + Hn / 2, 'end'] : [m + 10, m + Hn / 2, 'start'];
+    o.push('<text x="' + tE[0] + '" y="' + tE[1] + '" text-anchor="' + tE[2] + '"' + HALO + '>ENTRADA DE CAMIONES</text>');
+    o.push('<text x="' + tF[0] + '" y="' + tF[1] + '" text-anchor="' + tF[2] + '"' + HALO + '>FONDO (aquí empieza el colado)</text>');
     o.push('<text x="' + (m + Wn / 2) + '" y="' + (H - 8) + '" font-size="11" fill="#888" text-anchor="middle" font-family="Arial">Nave ' + fmt(Lx, 1) + ' × ' + fmt(Ly, 1) + ' m</text>');
     svg.innerHTML = o.join('');
   }
@@ -38278,6 +38348,13 @@ function dibujarLienzo(S, holder, getModo, alCambiar) {
     var t = e.target, k = t.getAttribute && t.getAttribute('data-k'), n = t.getAttribute && t.getAttribute('data-n'), md = getModo(), p = pos(e);
     S.mEjesX = S.mEjesX || []; S.mEjesY = S.mEjesY || [];
     if (md === 'mover' && k) { drag = { t: k[0], i: +k.slice(1) }; try { svg.setPointerCapture(e.pointerId); } catch (x) {} e.preventDefault(); return; }
+    if (md === 'entrada') {
+      var fxn = (p.x - m) / s, fyn = (p.y - m) / s, dd = { y0: fyn, y1: Ly - fyn, x0: fxn, x1: Lx - fxn }, mejor = 'y1';
+      Object.keys(dd).forEach(function (k2) { if (dd[k2] < dd[mejor]) mejor = k2; });
+      var rotE = MINF.rotada(Lx, Ly);
+      S.mAcceso = (rotE ? { x0: 'abajo', x1: 'arriba', y0: 'izq', y1: 'der' } : { y1: 'abajo', y0: 'arriba', x0: 'izq', x1: 'der' })[mejor];
+      pintar(); if (alEntrada) alEntrada(); return;
+    }
     if (md === 'cols' && n) { S.mSinCol = S.mSinCol || []; var ix = S.mSinCol.indexOf(n); if (ix >= 0) S.mSinCol.splice(ix, 1); else S.mSinCol.push(n); pintar(); return; }
     if (md === 'addV') { var vx = (p.x - m) / s; if (vx > 0.4 && vx < Lx - 0.4) { S.mEjesX.push(snap(vx, Lx)); limpiar(); pintar(); alCambiar(); } return; }
     if (md === 'addH') { var vy = (p.y - m) / s; if (vy > 0.4 && vy < Ly - 0.4) { S.mEjesY.push(snap(vy, Ly)); limpiar(); pintar(); alCambiar(); } return; }
@@ -38420,6 +38497,12 @@ function pintarMacroResultados(S, box, ir, nuevo) {
   box.appendChild(el('div', { class: 'ls-info', html: '<b>Sistema:</b> ' + esc(X.sistema.nombre) + '. Retracción neta de diseño ' + X.sistema.eps + ' µε (' + fmt(X.sistema.eps / 1000, 2) + ' mm/m); apertura esperada de las juntas <b>' + fmt(X.aperturaMax, 1) + ' mm</b> (límite ' + X.in.aperturaAdm + ' mm). <b>No se asierran cortes de contracción.</b>' }));
   box.appendChild(el('div', { class: 'ls-info', html: '<b>Reductor de fricción:</b> 2 capas de polietileno de 12 mil entre la base y la losa. <b>Barrera de vapor:</b> clase A de ' + (X.in.pesado ? '15' : '10') + ' mil' + (S.pisoSensible ? ' (obligatoria: piso sensible a la humedad)' : ' (recomendada)') + '; es la capa inferior. Detalle más abajo, en «Reductor de fricción y barrera de vapor».' }));
   X.avisos.forEach(function (a) { box.appendChild(el('div', { class: 'ls-warn' }, [a])); });
+  if (X.sugFibra && !X.hFijo && !X.dosisManual) {
+    box.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () {
+      S.mH = X.h; S.mDosis = X.sugFibra.dosis; S.mAuto = false; S.mJuntasX = null; S.mJuntasY = null;
+      S.res = calcular(S); ir(3);
+    } }, ['Usar ' + fmt(X.sugFibra.dosis, 1) + ' kg/m³ de fibra (' + X.sugFibra.juntas + ' juntas en vez de ' + X.sugFibra.juntasHoy + ') y recalcular']));
+  }
   if (!X.okEjes && X.sugerencia && (X.sugerencia.x.length || X.sugerencia.y.length)) {
     box.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () {
       S.mEjesX = unirEjes(S.mEjesX, X.sugerencia.x); S.mEjesY = unirEjes(S.mEjesY, X.sugerencia.y); S.mJuntasX = null; S.mJuntasY = null;
