@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261119140000';
+var APP_BUILD='20261120100000';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -36253,6 +36253,847 @@ if (typeof module !== 'undefined' && module.exports) module.exports = API;
 root.LOSAS_NUBE = API;
 })(typeof window !== 'undefined' ? window : globalThis);
 
+/* MACRO:MOTOR:INICIO */
+// ══════════════════════════════════════════════════════════════════════════════
+// CONCRE · Diseño de losas — MACRO-LOSAS · MOTOR
+// Módulo puro (sin DOM): corre en el navegador (window.MACRO_MOTOR) y en Node.
+//
+// Una macro-losa NO tiene cortes de contracción aserrados: las únicas juntas son las de
+// construcción (blindadas), donde termina cada colada. La distancia entre juntas la fija
+// la mecánica de la losa (retracción, fricción, fibra, apertura de la junta) y el
+// rendimiento de colada; no el ancho de una franja.
+//
+// Etiquetas de cada dato (igual que el resto del programa):
+//   V verificado en norma · S fuente secundaria (fabricante, universidad, artículo)
+//   D derivado por fórmula · E criterio de CONCRE (no es cita de norma)
+// Cada regla lleva el nombre de la norma o fuente; el detalle está en
+// claude/macrolosas-investigacion-2026-11-20.md del proyecto.
+// ══════════════════════════════════════════════════════════════════════════════
+(function (root) {
+'use strict';
+
+// ── Constantes de diseño ─────────────────────────────────────────────────────
+const L_TOPE = 35;            // m · TR34 4ª ed. (coladas hasta ~35 m sin juntas aserradas) — fuente secundaria
+const APERTURA_ADM = 20;      // mm · TR34 (3ª ed. §8.10.3 «las juntas abrirán hasta 20 mm»; 4ª ed. ~18 mm); ficha Permaban a 20 mm
+const GAMMA_C = 24;           // kN/m³ concreto
+const H_MIN_MACRO = 15;       // cm · TR34 4ª ed. espesor mínimo de diseño
+const H_MIN_MACRO_GRANDE = 17;// cm · macro-paños > 20 m (BLK CR, espesor desde 170 mm) — fabricante
+const L_ESPESOR_GRANDE = 20;  // m
+const ASPECTO_MAX = 1.5;      // ACI 302.1R / TR34
+const DOSIS_MAX = 6.0;        // kg/m³ · límite de la tabla EN 14651 de Fibra Plus 54 mm
+const T_ROMBO = 0.15;         // m · holgura libre mínima alrededor de la columna para colar y vibrar el rombo (criterio CONCRE)
+
+// Sistemas de control de retracción (lo que se le pide a la mezcla además de la fibra)
+//   eps: retracción neta que abre las juntas (µε).  Base 500 µε = 0.5 mm/m (TR34 4ª ed. vía MGSI; PiSA midió 480–500).
+//   SRA reduce 25–50 % (TR34 3ª ed. §11.3.5): se toma 25 %.  Compensada: expansión mínima 0.03 % (BLK CR).
+const SISTEMAS = {
+  fibra: { id: 'fibra', nombre: 'Fibra Plus 54 mm y mezcla de baja retracción', corto: 'Solo fibra', eps: 500, dosisBase: 5.0, mu: 0.5, capas: 2,
+    techo: [3, 8, 5, 15], fuente: 'Pombo, Rev. Hormigón 2023: macrofibra sintética 3–5 kg/m³ → 8–15 m', estado: 'S',
+    mezcla: 'Relación a/c ≤ 0.50; revenimiento 150 ± 25 mm con aditivo; retracción libre máx. 600 µε (ASTM C157).' },
+  sra:   { id: 'sra', nombre: 'Fibra Plus 54 mm + reductor de retracción (SRA)', corto: 'Fibra + SRA', eps: 375, dosisBase: 4.5, mu: 0.5, capas: 2,
+    techo: [3, 15, 5.3, 24], fuente: 'Pombo 2023 (15–20 m con retracción controlada) y obra PiSA, Jalisco (paños de 20 × 24 m, 5.3 kg/m³, SRA, doble polietileno)', estado: 'S',
+    mezcla: 'SRA tipo S (ASTM C494), p. ej. SikaControl NS: 2–7 % del peso del cementante (Sika Costa Rica); a/c ≤ 0.50; retracción libre máx. 450 µε (ASTM C157).' },
+  comp:  { id: 'comp', nombre: 'Fibra Plus 54 mm + concreto de retracción compensada', corto: 'Fibra + compensada', eps: 200, dosisBase: 4.5, mu: 0.5, capas: 2,
+    techo: [3, 20, 5, 35], fuente: 'Pombo 2023 (15–20 m sintética + compensada) y BLK CR / ICCYC 2025 (macro-paños de 35 × 35 a 42 × 42 m, fabricante); tope TR34 4ª ed. 35 m', estado: 'S',
+    mezcla: 'Aditivo expansivo (ACI 223) con expansión mínima 0.03 %; refuerzo en el tercio superior según ACI 223; a/c ≤ 0.50. Confirmar el suministro del expansivo en Costa Rica.',
+    especial: true },
+};
+
+// Método de colocación → rendimiento diario (área de una colada)
+const METODOS = {
+  laser: { id: 'laser', nombre: 'Regla láser (laser screed)', a_dia: 1000, a_max: 2000, fuente: 'Concrete Society y TR34: 1 000 a 2 000 m²/día; se recomienda ~1 000', estado: 'S' },
+  vibratoria: { id: 'vibratoria', nombre: 'Regla vibratoria / colocación manual', a_dia: 400, a_max: 600, fuente: 'Criterio CONCRE (no hay cifra en norma)', estado: 'E' },
+};
+
+// Juntas blindadas que se consiguen en Costa Rica (el ingeniero confirma modelo y capacidad con el proveedor)
+const JUNTAS = [
+  { id: 'sinusoidal_placa', nombre: 'Junta armada sinusoidal con placa superior y dovelas', prov: 'RR Construcción (Costa Rica); BLK CR «Cosinus Slide» (sistema Seamless Floor)',
+    uso: 'Recomendada: el perfil sinusoidal evita el golpe de las ruedas y permite cruzar en cualquier dirección.', estado: 'S' },
+  { id: 'sinusoidal_anclaje', nombre: 'Junta armada sinusoidal con anclaje y dovelas', prov: 'RR Construcción (Costa Rica)',
+    uso: 'Alternativa con anclajes; mismo uso.', estado: 'S' },
+  { id: 'perfil_recto', nombre: 'Perfil de acero recto (ángulo) con dovelas o placas', prov: 'Renteco, Promatco u otro proveedor / fabricación propia',
+    uso: 'Solo donde el tránsito no cruza la junta de frente; confirmar rigidez y anclaje (TR34 3ª ed. §8.9).', estado: 'E' },
+  { id: 'permaban', nombre: 'Permaban (Signature, Eclipse, Wave, SignatureSlide)', prov: 'Importada (RCR Flooring Products)',
+    uso: 'SignatureSlide (doble placa sin hueco) para aperturas grandes; ficha con cargas a 20 mm de apertura.', estado: 'S' },
+];
+
+const ESTADO_TXT = { V: 'verificado en norma', S: 'fuente secundaria', D: 'derivado por fórmula', E: 'criterio de CONCRE' };
+
+// ── utilidades ───────────────────────────────────────────────────────────────
+function r1(x) { return Math.round(x * 10) / 10; }
+function r2(x) { return Math.round(x * 100) / 100; }
+function interp(d, t) { // t = [d1, L1, d2, L2]
+  if (d <= t[0]) return t[1]; if (d >= t[2]) return t[3];
+  return t[1] + (d - t[0]) / (t[2] - t[0]) * (t[3] - t[1]);
+}
+function fila(t, v, norma, estado, nota) { return { t: t, v: v, norma: norma || '', estado: estado || 'E', nota: nota || '' }; }
+function fm(n, d) { return (Math.round(n * Math.pow(10, d || 0)) / Math.pow(10, d || 0)).toString().replace('.', ','); }
+
+// ── dosis y techo por sistema ────────────────────────────────────────────────
+// Dosis de macro-losa = mayor entre la que piden las cargas y la base del sistema (las fuentes parten de 3–5 kg/m³).
+function dosisMacro(sistemaId, dosisCargas) {
+  const s = SISTEMAS[sistemaId];
+  const d = Math.max(dosisCargas || 0, s.dosisBase);
+  return { dosis: Math.min(d, DOSIS_MAX), excede: d > DOSIS_MAX + 1e-9, deCargas: (dosisCargas || 0) >= s.dosisBase };
+}
+function techoSistema(sistemaId, dosis) { return interp(dosis, SISTEMAS[sistemaId].techo); }
+
+// ── partición 1D: dónde caen las juntas a lo largo de una dirección ───────────
+// posiciones = ejes principales dentro de (0, total); Lmax = distancia máxima entre juntas.
+// Minimiza el número de juntas y, a igual número, la colada más larga; prefiere juntas sobre ejes.
+function particion1D(ejes, total, Lmax) {
+  if (!(total > 0)) return { cortes: [], segs: [] };
+  if (total <= Lmax + 1e-9) return { cortes: [], segs: [total] };
+  const PASO = 0.5;
+  const setEjes = {}; (ejes || []).forEach(function (x) { setEjes[r2(x)] = true; });
+  const mapa = {}; mapa[0] = true; mapa[r2(total)] = true;
+  for (let x = PASO; x < total - 1e-9; x += PASO) mapa[r2(x)] = true;
+  Object.keys(setEjes).forEach(function (k) { const x = +k; if (x > 0.5 && x < total - 0.5) mapa[r2(x)] = true; });
+  const Q = Object.keys(mapa).map(Number).sort(function (a, b) { return a - b; }).map(function (p) { return { p: p, eje: !!setEjes[p] || p === 0 || Math.abs(p - total) < 1e-6 }; });
+  const m = Q.length, best = new Array(m);
+  best[0] = { n: 0, mx: 0, ne: 0, prev: -1 };
+  for (let j = 1; j < m; j++) {
+    for (let i = 0; i < j; i++) {
+      if (!best[i]) continue;
+      const seg = Q[j].p - Q[i].p;
+      if (seg > Lmax + 1e-9) continue;
+      const c = { n: best[i].n + (j < m - 1 ? 1 : 0), mx: Math.max(best[i].mx, seg), ne: best[i].ne + (j < m - 1 && Q[j].eje ? 1 : 0), prev: i };
+      const b = best[j];
+      // primero menos juntas; luego la colada más larga lo más corta posible (paños parejos); luego más juntas sobre ejes
+      if (!b || c.n < b.n || (c.n === b.n && (c.mx < b.mx - 1e-9 || (Math.abs(c.mx - b.mx) < 1e-9 && c.ne > b.ne)))) best[j] = c;
+    }
+  }
+  const cortes = []; let j = m - 1; const pts = [Q[m - 1].p];
+  while (best[j] && best[j].prev >= 0) { j = best[j].prev; if (j > 0) cortes.unshift({ pos: Q[j].p, enEje: Q[j].eje }); pts.unshift(Q[j].p); }
+  const segs = []; for (let i = 1; i < pts.length; i++) segs.push(r2(pts[i] - pts[i - 1]));
+  return { cortes: cortes, segs: segs };
+}
+
+// ── distribución de juntas en la nave (X e Y), con relación de aspecto ≤ 1.5 y área diaria ──
+function distribuir(inp, Lmax, aDia) {
+  const lim = Math.min(Lmax, Math.sqrt(ASPECTO_MAX * aDia));
+  let capX = lim, capY = lim, px, py, it;
+  for (it = 0; it < 8; it++) {
+    px = particion1D(inp.ejesX, inp.Lx, capX); py = particion1D(inp.ejesY, inp.Ly, capY);
+    const wmax = Math.max.apply(null, px.segs), wmin = Math.min.apply(null, px.segs), hmax = Math.max.apply(null, py.segs), hmin = Math.min.apply(null, py.segs);
+    let cambio = false;
+    if (wmax / hmin > ASPECTO_MAX + 1e-6 && hmin * ASPECTO_MAX < capX - 1e-6 && hmin * ASPECTO_MAX >= 6) { capX = hmin * ASPECTO_MAX; cambio = true; }
+    if (hmax / wmin > ASPECTO_MAX + 1e-6 && wmin * ASPECTO_MAX < capY - 1e-6 && wmin * ASPECTO_MAX >= 6) { capY = wmin * ASPECTO_MAX; cambio = true; }
+    if (!cambio) break;
+  }
+  return { px: px, py: py, lim: lim };
+}
+
+// ── armado de paños a partir de las particiones ──────────────────────────────
+function armarPanos(px, py, h_cm, dosis) {
+  const xs = [0]; px.segs.forEach(function (s) { xs.push(r2(xs[xs.length - 1] + s)); });
+  const ys = [0]; py.segs.forEach(function (s) { ys.push(r2(ys[ys.length - 1] + s)); });
+  const panos = []; let n = 0;
+  for (let j = 0; j < py.segs.length; j++) for (let i = 0; i < px.segs.length; i++) {
+    const w = px.segs[i], l = py.segs[j], A = w * l, vol = A * h_cm / 100;
+    n++;
+    panos.push({ n: n, i: i, j: j, x0: xs[i], x1: xs[i + 1], y0: ys[j], y1: ys[j + 1], w: w, l: l, area: A, aspecto: Math.max(w, l) / Math.min(w, l), vol: vol, fibra_kg: Math.ceil(vol * dosis * 1.03 - 1e-9) });
+  }
+  return { xs: xs, ys: ys, panos: panos };
+}
+
+// Secuencia de colado: tablero de ajedrez (paños alternos primero, intermedios después)
+function secuencia(panos, nx) {
+  const a = [], b = [];
+  panos.forEach(function (p) { ((p.i + p.j) % 2 === 0 ? a : b).push(p); });
+  let k = 0; a.forEach(function (p) { p.orden = ++k; p.fase = 1; }); b.forEach(function (p) { p.orden = ++k; p.fase = 2; });
+}
+
+// ── columnas y rombos ────────────────────────────────────────────────────────
+function columnas(inp, xs, ys) {
+  const ex = [0].concat((inp.ejesX || []).filter(function (x) { return x > 0.01 && x < inp.Lx - 0.01; }).sort(function (a, b) { return a - b; }), [inp.Lx]);
+  const ey = [0].concat((inp.ejesY || []).filter(function (y) { return y > 0.01 && y < inp.Ly - 0.01; }).sort(function (a, b) { return a - b; }), [inp.Ly]);
+  const cx = inp.colX || 0.40, cy = inp.colY || 0.40;
+  const out = [];
+  if (inp.columnasModo === 'ninguna') return out;
+  ex.forEach(function (x, i) { ey.forEach(function (y, j) {
+    const bx = (i === 0 || i === ex.length - 1), by = (j === 0 || j === ey.length - 1);
+    const perim = bx || by;
+    if (inp.columnasModo === 'perimetro' && !perim) return;
+    if (inp.columnasModo === 'interior' && perim) return;
+    const key = x + ',' + y;
+    if (inp.sinColumna && inp.sinColumna.indexOf(key) >= 0) return;
+    const tipo = (bx && by) ? 'esquina' : perim ? 'borde' : 'interior';
+    const r = (cx + cy) / 2 + Math.SQRT2 * T_ROMBO;
+    out.push({ x: x, y: y, tipo: tipo, cx: cx, cy: cy, r: r2(r), lado: r2(r * Math.SQRT2), area_rombo: tipo === 'interior' ? 2 * r * r : tipo === 'borde' ? r * r : r * r / 2,
+      vertices: tipo === 'interior' ? 4 : tipo === 'borde' ? 3 : 2 });
+  }); });
+  return out;
+}
+
+// ── validación de la entrada ─────────────────────────────────────────────────
+function validar(inp) {
+  const e = [];
+  if (!(inp.Lx > 0 && inp.Ly > 0)) e.push('Indique el largo y el ancho de la nave.');
+  if (inp.Lx > 400 || inp.Ly > 400) e.push('La nave supera 400 m por lado: revise las dimensiones.');
+  (inp.ejesX || []).concat(inp.ejesY || []).forEach(function (x) { if (!(x >= 0)) e.push('Hay un eje con distancia negativa o vacía.'); });
+  (inp.ejesX || []).forEach(function (x) { if (x > inp.Lx + 1e-6) e.push('Un eje vertical está fuera de la nave (' + fm(x, 2) + ' m > ' + fm(inp.Lx, 2) + ' m).'); });
+  (inp.ejesY || []).forEach(function (y) { if (y > inp.Ly + 1e-6) e.push('Un eje horizontal está fuera de la nave (' + fm(y, 2) + ' m > ' + fm(inp.Ly, 2) + ' m).'); });
+  return e;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CÁLCULO DE LA MACRO-LOSA
+//  inp: { Lx, Ly (m), ejesX[], ejesY[] (m desde el borde), sistema, metodo, columnasModo, colX, colY (m),
+//         h_cm, fc, dosisCargas, ell_mm, Pd_kN (rueda o apoyo de diseño ya con γF), uso, o, clima, pisoSensible,
+//         capJunta_kNm (opcional, de la ficha del proveedor), junta (id), pesado (equipo pesado/base angular) }
+// ══════════════════════════════════════════════════════════════════════════════
+function calcularMacro(inp) {
+  const errs = validar(inp);
+  if (errs.length) return { error: errs.join(' ') };
+  const S = SISTEMAS[inp.sistema] || SISTEMAS.sra, MT = METODOS[inp.metodo] || METODOS.laser;
+  const pasos = []; const paso = function (titulo, formula, valores, resultado, norma) { pasos.push({ titulo: titulo, formula: formula, valores: valores, resultado: resultado, norma: norma }); };
+  const avisos = [];
+
+  // 1. Dosis y techo del sistema
+  const dm = dosisMacro(S.id, inp.dosisCargas);
+  if (dm.excede) avisos.push('Las cargas piden más de ' + DOSIS_MAX + ' kg/m³ de Fibra Plus 54 mm; la tabla de la fibra llega a ese valor. Aumente el espesor o revise las cargas.');
+  const Ltecho = techoSistema(S.id, dm.dosis);
+  paso('Dosis de fibra de la macro-losa', 'dosis = máx(dosis por cargas ; dosis base del sistema)', 'cargas = ' + fm(inp.dosisCargas || 0, 1) + ' · base ' + S.corto + ' = ' + S.dosisBase + ' kg/m³', fm(dm.dosis, 1) + ' kg/m³', 'Pombo 2023 · BLK CR/ICCYC 2025 · FORTA (fuentes secundarias)');
+  paso('Techo de distancia entre juntas por sistema', 'L_techo = interpolación entre los valores de la fuente según la dosis', S.fuente, fm(Ltecho, 1) + ' m', 'Fuentes secundarias (no hay norma única para fibra sintética)');
+
+  // 2. Apertura de junta
+  const Ljunta = APERTURA_ADM / (S.eps / 1000);
+  paso('Apertura de la junta de construcción', 'Δ = ε_neta · L  ⇒  L_junta = Δ_adm / ε_neta', 'Δ_adm = ' + APERTURA_ADM + ' mm · ε_neta = ' + S.eps + ' µε (' + fm(S.eps / 1000, 3) + ' mm/m)', 'L_junta = ' + fm(Ljunta, 1) + ' m', 'TR34 3ª ed. §8.10.3 (hasta 20 mm); 4ª ed. ≈ 0.5 mm/m');
+
+  // 3. Espesor mínimo de macro-losa
+  const hMin = Ltecho > L_ESPESOR_GRANDE ? H_MIN_MACRO_GRANDE : H_MIN_MACRO;
+  const h = Math.max(inp.h_cm || 0, hMin);
+  if (h > (inp.h_cm || 0) + 1e-9) avisos.push('El espesor por cargas (' + fm(inp.h_cm, 1) + ' cm) se sube a ' + fm(h, 1) + ' cm por ser macro-losa (mínimo TR34 4ª ed.: 15 cm; paños mayores de 20 m: 17 cm).');
+  paso('Espesor mínimo de macro-losa', 'h = máx(h por cargas ; ' + H_MIN_MACRO + ' cm ; ' + H_MIN_MACRO_GRANDE + ' cm si L > ' + L_ESPESOR_GRANDE + ' m)', 'h cargas = ' + fm(inp.h_cm, 1) + ' cm', fm(h, 1) + ' cm', 'TR34 4ª ed.; BLK CR (desde 170 mm)');
+
+  // 4. Longitud máxima de colada
+  const Lmax = Math.max(4, Math.min(Ltecho, Ljunta, L_TOPE));
+  paso('Distancia máxima entre juntas de construcción', 'L_máx = mín(L_techo ; L_junta ; ' + L_TOPE + ' m)', 'L_techo ' + fm(Ltecho, 1) + ' · L_junta ' + fm(Ljunta, 1) + ' · tope ' + L_TOPE, fm(r1(Lmax), 1) + ' m', 'TR34 4ª ed. (tope 35 m)');
+  if (Ltecho > 24 && S.especial) avisos.push('Con paños de más de 24 m el respaldo es de fabricantes y de la literatura, no de una norma: requiere estudio específico del ingeniero, prueba de la mezcla, ensayo de la fibra (EN 14651) y monitoreo de las aperturas.');
+
+  // 5. Comprobación de arrastre (fibra frente a fricción)
+  const fr = inp.fR || [0, 0, 0, 0];
+  const sr1 = 0.45 * fr[0], sr4 = 0.37 * fr[3], fres = Math.min(sr1, sr4);
+  const mu = S.mu, Lcheq = Math.min(Lmax, L_TOPE);
+  const f_req = mu * (GAMMA_C / 1000) * Lcheq / 2; // MPa
+  const gR = 1.5, f_disp = fres / gR;
+  const okArrastre = f_disp >= f_req;
+  paso('Arrastre sobre la membrana (fibra frente a fricción)', 'f_req = μ·γc·L / 2 ≤ σres / γ  (σres = mín(0.45·fR1 ; 0.37·fR4))', 'μ = ' + mu + ' · γc = 24 kN/m³ · L = ' + fm(Lcheq, 1) + ' m · σres = ' + fm(fres, 3) + ' MPa · γ = ' + gR,
+    'f_req = ' + fm(f_req, 3) + ' MPa · disponible ' + fm(f_disp, 3) + ' MPa · ' + (okArrastre ? 'cumple' : 'NO cumple'), 'ACI 360R (arrastre de la subrasante); EN 14651; TR34 4ª ed.');
+  if (!okArrastre) avisos.push('La fibra no alcanza a resistir el arrastre sobre la membrana con este paño: aumente la dosis o reduzca la distancia entre juntas.');
+
+  // 6. Distribución de juntas
+  const dist = distribuir(inp, Lmax, MT.a_dia);
+  const g = armarPanos(dist.px, dist.py, h, dm.dosis);
+  secuencia(g.panos);
+  const panos = g.panos;
+  const nJx = dist.px.cortes.length, nJy = dist.py.cortes.length;
+  const largoJuntas = nJx * inp.Ly + nJy * inp.Lx;
+  const maxA = Math.max.apply(null, panos.map(function (p) { return p.area; }));
+  const maxAsp = Math.max.apply(null, panos.map(function (p) { return p.aspecto; }));
+  const maxL = Math.max.apply(null, panos.map(function (p) { return Math.max(p.w, p.l); }));
+  if (maxAsp > ASPECTO_MAX + 1e-6) avisos.push('Algún paño tiene relación de aspecto ' + fm(maxAsp, 2) + ' (> 1,5). Ajuste los ejes para equilibrar los paños.');
+  if (maxA > MT.a_dia * 1.0001) avisos.push('Un paño de ' + fm(maxA, 0) + ' m² supera el rendimiento diario recomendado (' + fm(MT.a_dia, 0) + ' m²): no se podría colar en un solo día; ajuste ejes o método.');
+  const noEje = dist.px.cortes.concat(dist.py.cortes).filter(function (c) { return !c.enEje; }).length;
+  if (noEje) avisos.push(noEje + ' junta(s) caen entre ejes de columnas (no sobre un eje) para dejar la menor cantidad de juntas con paños parejos.');
+  paso('Distribución de juntas en la nave', 'Se eligen los ejes que dejan paños ≤ L_máx, con relación de aspecto ≤ 1.5 y área ≤ rendimiento diario', 'Nave ' + fm(inp.Lx, 1) + ' × ' + fm(inp.Ly, 1) + ' m · método ' + MT.nombre,
+    (nJx + nJy) + ' juntas (' + nJx + ' verticales, ' + nJy + ' horizontales) · ' + panos.length + ' paños · mayor ' + fm(maxL, 1) + ' m', 'ACI 302.1R (aspecto); TR34 (colada de gran área)');
+
+  // 7. Transferencia de carga en la junta (placas efectivas 0.9ℓ a cada lado, máx. 50 %)
+  const ell_m = (inp.ell_mm || 0) / 1000;
+  const Q_req = (inp.Pd_kN > 0 && ell_m > 0) ? 0.5 * inp.Pd_kN / (1.8 * ell_m) : 0;
+  paso('Transferencia de carga requerida en la junta', 'Q_req = 0.5·Pd / (1.8·ℓ)  (transferencia ≤ 50 %; zona efectiva 0.9ℓ a cada lado)', 'Pd = ' + fm(inp.Pd_kN || 0, 1) + ' kN · ℓ = ' + fm(ell_m, 2) + ' m', fm(Q_req, 1) + ' kN por metro de junta, a ' + APERTURA_ADM + ' mm de apertura', 'TR34 4ª ed. (fuente secundaria: MGSI)');
+  let juntaOk = null;
+  if (inp.capJunta_kNm > 0) { juntaOk = inp.capJunta_kNm >= Q_req * 1.0; if (!juntaOk) avisos.push('La capacidad de la junta ingresada (' + fm(inp.capJunta_kNm, 1) + ' kN/m) es menor que la requerida (' + fm(Q_req, 1) + ' kN/m).'); }
+
+  // 8. Retracción y apertura esperada
+  const aperturaMax = (S.eps / 1000) * maxL;
+  paso('Apertura esperada de las juntas', 'Δ = ε_neta · L', 'ε_neta = ' + S.eps + ' µε · L = ' + fm(maxL, 1) + ' m', fm(aperturaMax, 1) + ' mm (límite ' + APERTURA_ADM + ' mm)', 'TR34');
+  if (aperturaMax > APERTURA_ADM + 1e-6) avisos.push('La apertura esperada (' + fm(aperturaMax, 1) + ' mm) supera ' + APERTURA_ADM + ' mm.');
+
+  // 9. Columnas y rombos
+  const cols = columnas(inp, g.xs, g.ys);
+  const nInt = cols.filter(function (c) { return c.tipo === 'interior'; }).length, nBor = cols.filter(function (c) { return c.tipo === 'borde'; }).length, nEsq = cols.filter(function (c) { return c.tipo === 'esquina'; }).length;
+  const vertices = cols.reduce(function (a, c) { return a + c.vertices; }, 0);
+  const vol_rombos = cols.reduce(function (a, c) { return a + (c.area_rombo - (c.tipo === 'interior' ? c.cx * c.cy : c.tipo === 'borde' ? c.cx * c.cy / 2 : c.cx * c.cy / 4)) * h / 100; }, 0);
+
+  // 10. Cantidades
+  const area = inp.Lx * inp.Ly;
+  const vol = area * h / 100;
+  const fibra_kg = Math.ceil(vol * dm.dosis * 1.03 - 1e-9); // 3 % de desperdicio, igual que LOSAS_MOTOR.cantidadFibra
+  const perim = 2 * (inp.Lx + inp.Ly);
+  const cant = { area: area, vol_m3: vol, fibra_kg: fibra_kg, sacos10: Math.floor(fibra_kg / 10), bolsas1: fibra_kg - Math.floor(fibra_kg / 10) * 10,
+    juntas_m: largoJuntas, perimetro_m: perim, pe_m2: area * S.capas * 1.10, rombos: cols.length, barras_esquina: vertices * 2, vol_rombos_m3: vol_rombos };
+
+  // ── Recomendaciones agrupadas ──────────────────────────────────────────────
+  const grupos = recomendaciones(inp, S, MT, { h: h, dm: dm, Lmax: Lmax, maxL: maxL, aperturaMax: aperturaMax, Q_req: Q_req, cols: cols, nInt: nInt, nBor: nBor, nEsq: nEsq, nJx: nJx, nJy: nJy, panos: panos, perim: perim, mu: mu });
+
+  return {
+    in: { Lx: inp.Lx, Ly: inp.Ly, aperturaAdm: APERTURA_ADM, colX: inp.colX || 0.40, colY: inp.colY || 0.40, pesado: !!inp.pesado, capJunta_kNm: inp.capJunta_kNm || 0, fc: inp.fc },
+    ffTxt: ffTexto(inp), juntasCat: JUNTAS, fcTxt: String(inp.fc || ''),
+    ejesTxtX: listaEjes(inp.ejesX, inp.Lx), ejesTxtY: listaEjes(inp.ejesY, inp.Ly),
+    sistema: S, metodo: MT, dosis: dm.dosis, h: h, Ltecho: Ltecho, Ljunta: Ljunta, Lmax: Lmax, maxL: maxL, aperturaMax: aperturaMax, Q_req: Q_req, juntaOk: juntaOk,
+    f_req: f_req, f_disp: f_disp, okArrastre: okArrastre, mu: mu,
+    px: dist.px, py: dist.py, xs: g.xs, ys: g.ys, panos: panos, nJx: nJx, nJy: nJy, cols: cols, nInt: nInt, nBor: nBor, nEsq: nEsq,
+    maxAsp: maxAsp, maxA: maxA, cant: cant, grupos: grupos, avisos: avisos, pasos: pasos,
+    comparacion: ['fibra', 'sra', 'comp'].map(function (id) { return compararSistema(inp, id); })
+  };
+}
+
+function listaEjes(arr, total) {
+  const a = (arr || []).filter(function (v) { return v > 0.01 && v < total - 0.01; }).sort(function (x, y) { return x - y; });
+  return a.length ? a.map(fm2).join(' · ') + ' m' : 'solo los bordes';
+}
+function fm2(v) { return fm(v, 2); }
+function ffTexto(inp) {
+  const ff = claseFF(inp);
+  if (ff.fuera) return 'fuera de alcance (racks > 8 m)';
+  return 'FF ' + ff.cls.ff + ' / FL ' + ff.cls.fl + ' (' + ff.cls.nombre.toLowerCase() + ')';
+}
+
+// Qué lograría cada sistema en esta nave (para que el usuario compare)
+function compararSistema(inp, id) {
+  const S = SISTEMAS[id], MT = METODOS[inp.metodo] || METODOS.laser;
+  const dm = dosisMacro(id, inp.dosisCargas), tecno = techoSistema(id, dm.dosis);
+  const L = Math.max(4, Math.min(tecno, APERTURA_ADM / (S.eps / 1000), L_TOPE));
+  const d = distribuir(inp, L, MT.a_dia);
+  const mL = Math.max.apply(null, d.px.segs.concat(d.py.segs));
+  return { id: id, nombre: S.corto, dosis: dm.dosis, Lmax: r1(L), maxL: r1(mL), juntas: d.px.cortes.length + d.py.cortes.length, panos: d.px.segs.length * d.py.segs.length, apertura: r1(S.eps / 1000 * mL), eps: S.eps, especial: !!S.especial };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RECOMENDACIONES CONSTRUCTIVAS (mismo formato de grupos/filas que LOSAS_REC)
+// ══════════════════════════════════════════════════════════════════════════════
+const FFFL = {
+  moderada: { nombre: 'Moderadamente plana', ff: 25, fl: 20, ffl: 15, fll: 12 },
+  plana: { nombre: 'Plana', ff: 35, fl: 25, ffl: 21, fll: 15 },
+};
+const CONCRE_FF = 35, CONCRE_FL = 25;
+
+function claseFF(inp) {
+  const o = inp.o || {}, id = inp.uso;
+  const alto = (+o.altura || 0) > 8 && (id === 'bodega_almacen' || (id === 'bodega_alquiler' && o.racks));
+  if (alto) return { fuera: true, cls: null };
+  if (id === 'bodega_almacen' || (id === 'bodega_alquiler' && o.racks)) return { cls: FFFL.plana, nota: 'Racks hasta 8 m con montacargas.' };
+  if (id === 'bodega_produccion') return { cls: inp.montacargas ? FFFL.plana : FFFL.moderada };
+  return { cls: FFFL.moderada };
+}
+
+function recomendaciones(inp, S, MT, c) {
+  const G = [], h = c.h, hmm = Math.round(h * 10);
+  const sens = !!inp.pisoSensible, pesado = !!inp.pesado;
+  // Base y subrasante
+  const g1 = { id: 'base', titulo: 'Base y sub-base', filas: [] };
+  g1.filas.push(fila('Base granular', 'Material bien graduado, espesor mínimo 20 cm (20–25 cm), compactado y cerrado con material fino (blinding) para no rasgar la membrana', 'TR34 (sub-base 200–250 mm)', 'S', 'Compactación y ensayos de densidad según el estudio de suelos; criterio de CONCRE.'));
+  g1.filas.push(fila('Planicidad de la base', 'Tolerancia +0 / −25 mm respecto al nivel de proyecto; sin escalones, rodadas ni piedras sueltas', 'TR34 (sub-base); Dramix', 'S', 'La macro-losa desliza sobre la base: una base irregular genera restricción y fisuras. Revise con malla láser antes de colocar la membrana.'));
+  g1.filas.push(fila('Elementos dentro de la losa', 'Sin estacas de nivel, tubos ni pasos que atraviesen la losa; los pasos de instalaciones van con relleno compresible o fuera de la zona', 'ACI 360R (evitar conectar la losa a otros elementos)', 'V'));
+  G.push(g1);
+
+  // Membranas
+  const g2 = { id: 'membrana', titulo: 'Barrera de fricción y barrera de vapor', filas: [] };
+  g2.filas.push(fila('Barrera de fricción (deslizamiento)', '2 capas de polietileno de 12 mil (≈ 300 µm, calibre 1200), sin arrugas, traslapes de 30 cm sin pegar, traslapes de la capa superior desfasados de los de la inferior', 'TR34 3ª ed. §6.5 (1200 gauge, traslape ≥ 300 mm); FORTA; PiSA', 'S', 'Coeficiente de fricción de diseño μ = ' + c.mu + ' (BLK CR 0.5 con plástico ≥ 12 mil; FORTA 0.3 con dos láminas; una sola lámina 0.8). Se toma el valor más conservador.'));
+  if (sens) g2.filas.push(fila('Barrera de vapor', 'OBLIGATORIA: la capa inferior es clase A (ASTM E1745) de ' + (pesado ? '15' : '10') + ' mil, permeancia ≤ 0.1 perm, con cinta en traslapes de 15 cm y penetraciones selladas', 'ACI 302.1R', 'V', 'Piso sensible a la humedad. La capa superior sigue siendo la de fricción.'));
+  else g2.filas.push(fila('Barrera de vapor', 'Recomendada: la capa inferior clase A (ASTM E1745) de ' + (pesado ? '15' : '10') + ' mil; la segunda capa de 12 mil completa la fricción', 'ACI 302.1R', 'V', 'Mínimo 10 mil; 15 mil si hay equipo pesado sobre la barrera o base angular.'));
+  g2.filas.push(fila('Espesor y capas en resumen', pesado ? '2 capas · inferior clase A 15 mil + superior 12 mil' : '2 capas · inferior clase A 10 mil + superior 12 mil', 'ACI 302.1R; TR34', 'S'));
+  g2.filas.push(fila('Colar sobre la membrana', 'El concreto se coloca directo sobre la membrana (sin capa de arena): curado inmediato y mezcla con poco sangrado para evitar fisura plástica y alabeo', 'ACI 302.1R', 'S'));
+  G.push(g2);
+
+  // Concreto
+  const g3 = { id: 'concreto', titulo: 'Concreto y fibra', filas: [] };
+  g3.filas.push(fila('Resistencia', 'f’c ' + inp.fc + ' kg/cm² · espesor ' + fm(h, 1) + ' cm', 'ACI 318 / TR34', 'D'));
+  g3.filas.push(fila('Fibra Plus 54 mm', fm(c.dm.dosis, 1) + ' kg/m³ (mínimo del sistema ' + S.dosisBase + ' kg/m³)', 'EN 14651; Pombo 2023; BLK CR/ICCYC 2025', 'D', 'Los valores fR1–fR4 son los de la tabla de Fibra Plus 54 mm de la calculadora de fibra. Confirmar con ensayo de viga (EN 14651 / ASTM C1609) de la mezcla real.'));
+  g3.filas.push(fila('Control de retracción', S.mezcla, S.id === 'sra' ? 'TR34 3ª ed. §11.3.5; Sika CR' : S.id === 'comp' ? 'ACI 223' : 'ASTM C157', 'S'));
+  g3.filas.push(fila('Colocación y clima', 'Temperatura del concreto ≤ 30–32 °C al colar; fraguado de 6 a 8 h (ASTM C1702)', 'ACI 305R', 'S', 'En clima cálido, colar de noche o temprano.'));
+  g3.filas.push(fila('Curado', 'Compuesto de curado inmediato tras el acabado y curado húmedo mínimo 7 días; no retirar la protección en 3 días', 'ACI 308; TR34 (curado)', 'S', 'El curado es lo que más reduce la retracción diferencial.'));
+  G.push(g3);
+
+  // Juntas
+  const g4 = { id: 'juntas', titulo: 'Juntas de construcción blindadas', filas: [] };
+  g4.filas.push(fila('Distancia entre juntas', 'Máximo ' + fm(r1(c.Lmax), 1) + ' m en cada sentido; en esta nave: ' + c.nJx + ' junta(s) verticales y ' + c.nJy + ' horizontales', 'TR34 4ª ed.; ACI 302.1R (aspecto ≤ 1.5)', 'S', 'La distancia sale de la mecánica (apertura, fibra, retracción), no del ancho del paño.'));
+  g4.filas.push(fila('Cortes aserrados de contracción', 'NO se aserran: la macro-losa no lleva juntas de contracción; las fisuras de retracción quedan distribuidas y finas (objetivo ≤ 0.3 mm)', 'TR34 4ª ed. (no recomienda aserrar pisos de solo fibra sin transferencia)', 'S', 'Referencias: BLK CR fisuras 0.1–0.3 mm; PiSA 0.275 mm calculado.'));
+  g4.filas.push(fila('Tipo de junta', JUNTAS[0].nombre + ' (modelo y capacidad se confirman con la ficha del proveedor)', 'TR34 3ª ed. §8.9', 'S', 'Opciones locales: ' + JUNTAS.map(function (j) { return j.prov.split(';')[0]; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(' · ') + '. Con aperturas cercanas a 20 mm, preferir perfil con placa deslizante (tipo SignatureSlide).'));
+  g4.filas.push(fila('Altura del perfil', 'Igual al espesor de la losa: ' + fm(h, 1) + ' cm (perfil de ' + fm(Math.max(h - 2.5, 10), 1) + ' cm o el comercial inmediato)', 'Permaban Signature (alturas 125–200 mm para losas de 150–220 mm)', 'S', 'Pida la altura que el proveedor tenga para ese espesor.'));
+  g4.filas.push(fila('Transferencia de carga necesaria', fm(c.Q_req, 1) + ' kN por metro de junta a 20 mm de apertura (≈ 0.5·Pd / 1.8ℓ)', 'TR34 4ª ed. (vía MGSI)', 'D', inp.capJunta_kNm > 0 ? 'Capacidad ingresada: ' + fm(inp.capJunta_kNm, 1) + ' kN/m.' : 'Compare con la tabla de cargas del proveedor a 20 mm de apertura. Con esa apertura no cuenta la trabazón del agregado.'));
+  g4.filas.push(fila('Dovelas', 'Placas o dovelas con vaina que permitan el movimiento horizontal; no continuar barras corrugadas a través de la junta', 'TR34 3ª ed. §8.8; ACI 302.1R', 'V'));
+  g4.filas.push(fila('Cruces de juntas', 'En los cruces el perfil de acero queda discontinuo para permitir la retracción; la junta nueva a ≥ 1.5 m de otra paralela', 'TR34 3ª ed. §8.9; ACI 302.1R', 'V'));
+  g4.filas.push(fila('Secuencia de colado', 'Paños alternos en tablero (fase 1: ' + c.panos.filter(function (p) { return p.fase === 1; }).length + ' paños; fase 2: ' + c.panos.filter(function (p) { return p.fase === 2; }).length + '); intermedios después de ≥ 7 días', 'Criterio CONCRE; ACI 223 (retracción compensada: ≥ 70 % de la expansión antes de colar contiguos)', 'E', 'La separación de 7 días la confirma el ingeniero según la mezcla.'));
+  g4.filas.push(fila('Sello', 'Fondo de junta y sello flexible (poliuretano) al inicio, lo más tarde posible; cambiar a semirrígido cuando la apertura se haya estabilizado (monitoreo mensual durante 18 meses)', 'TR34 (sellado de juntas); Face Consultants', 'S', 'Productos locales: Maxiflex 40 (poliuretano), Maxistik 510 (epóxico flexible) y backer rod (INTACO).'));
+  G.push(g4);
+
+  // Columnas y muros
+  const g5 = { id: 'columnas', titulo: 'Columnas, muros y esquinas', filas: [] };
+  g5.filas.push(fila('Aislamiento de columnas', 'Rombo (cuadrado girado 45°) con los vértices sobre los ejes y las juntas; lado ' + (c.cols[0] ? fm(c.cols[0].lado, 2) + ' m' : '—') + ' para columna de ' + fm(inp.colX || 0.4, 2) + ' × ' + fm(inp.colY || 0.4, 2) + ' m (holgura de ' + fm(T_ROMBO * 100, 0) + ' cm)', 'ACI 302.1R / CIP 6; TR34 3ª ed. §8.6', 'S', 'La columna queda envuelta en relleno compresible de 10–20 mm en todo el espesor.'));
+  g5.filas.push(fila('Colado del rombo', 'Se cuela DESPUÉS: dejar el hueco libre hasta que la losa haya completado su retracción inicial (mínimo 28 días) y antes de cargar con racks; usar concreto o mortero de retracción compensada o con SRA, del mismo f’c', 'CIP 6 (hueco libre hasta que endurezca la losa); criterio CONCRE', 'E', 'El plazo de 28 días es criterio de CONCRE; el ingeniero puede ampliarlo.'));
+  g5.filas.push(fila('Refuerzo en las esquinas del rombo', '2 barras Ø12 mm (#4) de 1.20 m por vértice, perpendiculares a la fisura esperada, a 5 cm y 20 cm del vértice y 5 cm bajo la superficie; el relleno del rombo lleva varilla Ø10 mm @ 20 cm en ambos sentidos', 'ACI 360R (barras diagonales en esquinas, detalle conceptual); TR34 3ª ed. §8.10.1 (sin diámetro ni largo)', 'E', 'Ninguna norma fija diámetro ni largo: es criterio de diseño que el ingeniero debe confirmar.'));
+  g5.filas.push(fila('Columnas de borde y de esquina', 'Medio rombo (columna en el muro) y cuarto de rombo (esquina)', 'Práctica (Canzac, CIP 6)', 'S'));
+  g5.filas.push(fila('Aislamiento de muros', 'Plancha de espuma de polietileno de celda cerrada (o poliestireno de alta densidad) de ' + (c.aperturaMax / 2 + 6 > 15 ? '20' : c.aperturaMax / 2 + 6 > 12 ? '15' : '12') + ' mm, en todo el espesor de la losa, sin doblar en esquinas; sello flexible encima', 'TR34 3ª ed. §8.6 (10–20 mm); ACI 302.1R (espuma de celda cerrada)', 'S', 'Movimiento esperado contra el muro ≈ ' + fm(S.eps / 1000 * c.maxL / 2, 1) + ' mm por la mitad del paño.'));
+  g5.filas.push(fila('Esquinas entrantes', 'Evitar paños en L o T; si hay una esquina entrante, 2 barras Ø12 mm de 1.20 m en diagonal a 5 cm bajo la superficie', 'ACI 302.1R; TR34 3ª ed. §8.10.1', 'E', 'La nave rectangular no tiene esquinas entrantes.'));
+  g5.filas.push(fila('Bases de maquinaria, fosas y drenajes', 'Aislar con relleno compresible igual que las columnas; pasos de tubería con camisa', 'TR34 3ª ed. §8.6; ACI 360R', 'V'));
+  G.push(g5);
+
+  // Planicidad
+  const g6 = { id: 'ffl', titulo: 'Planicidad (FF / FL)', filas: [] };
+  const ff = claseFF(inp);
+  if (ff.fuera) {
+    g6.filas.push(fila('Planicidad', 'Racks de más de 8 m: piso de movimiento definido (TR34 DM1–DM3), con FF/FL superiores a lo que ejecuta CONCRE', 'TR34', 'S', 'FUERA DEL ALCANCE de CONCRE: se ejecuta hasta FF ' + CONCRE_FF + ' / FL ' + CONCRE_FL + '.'));
+  } else {
+    g6.filas.push(fila('FF / FL mínimo global', ff.cls.ff + ' / ' + ff.cls.fl + ' (' + ff.cls.nombre.toLowerCase() + ')', 'ACI 302.1R', 'V', 'Mínimo local ' + ff.cls.ffl + ' / ' + ff.cls.fll + '. Medición ASTM E1155 dentro de 72 horas. ' + (ff.nota || '')));
+    g6.filas.push(fila('Alcance de CONCRE', 'Se ejecuta hasta FF ' + CONCRE_FF + ' / FL ' + CONCRE_FL + '; la planicidad pedida ' + (ff.cls.ff <= CONCRE_FF && ff.cls.fl <= CONCRE_FL ? 'está dentro de ese alcance' : 'está FUERA de ese alcance'), 'Criterio CONCRE', 'E', 'No se recomienda FF 50 o más salvo que el cliente lo pida.'));
+  }
+  g6.filas.push(fila('Alabeo de bordes', 'Los paños grandes se levantan en los bordes y esquinas: curado inmediato, mezcla de baja retracción y espesor ≥ ' + fm(c.h, 0) + ' cm; medir niveles a los 28 días', 'TR34; FORTA (paños de 11.6 × 13 m sin alabeo apreciable con macrofibra)', 'S'));
+  G.push(g6);
+  return G;
+}
+
+const API = { SISTEMAS: SISTEMAS, METODOS: METODOS, JUNTAS: JUNTAS, ESTADO_TXT: ESTADO_TXT, FFFL: FFFL, L_TOPE: L_TOPE, APERTURA_ADM: APERTURA_ADM, T_ROMBO: T_ROMBO,
+  CONCRE_FF: CONCRE_FF, CONCRE_FL: CONCRE_FL, H_MIN_MACRO: H_MIN_MACRO, dosisMacro: dosisMacro, techoSistema: techoSistema, particion1D: particion1D, distribuir: distribuir,
+  armarPanos: armarPanos, columnas: columnas, validar: validar, calcularMacro: calcularMacro, compararSistema: compararSistema, claseFF: claseFF };
+if (typeof module !== 'undefined' && module.exports) module.exports = API;
+root.MACRO_MOTOR = API;
+})(typeof window !== 'undefined' ? window : globalThis);
+/* MACRO:MOTOR:FIN */
+
+/* MACRO:INFORME:INICIO */
+// ══════════════════════════════════════════════════════════════════════════════
+// CONCRE · Diseño de losas — MACRO-LOSAS · PLANO E INFORME (HTML imprimible / PDF)
+// Devuelve un documento HTML completo: 2 láminas tipo plano en Tabloide 11×17 pulg horizontal
+// (planta de juntas y distribución; detalles) y después el informe en hojas A4.
+// No calcula nada: dibuja y escribe lo que ya calculó MACRO_MOTOR.
+// ══════════════════════════════════════════════════════════════════════════════
+(function (root) {
+'use strict';
+
+var ROJO = '#C8102E', GR = '#3D3D3D', GR2 = '#8b8b8b', AZ = '#1565c0';
+var W = 432, H = 279;   // lámina en mm (Tabloide 17 × 11 pulg)
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function fmt(n, d) { if (typeof n !== 'number' || !isFinite(n)) return '—'; d = d == null ? 1 : d; return n.toLocaleString('es-CR', { minimumFractionDigits: 0, maximumFractionDigits: d }); }
+function T(x, y, s, o) {
+  o = o || {};
+  return '<text x="' + r(x) + '" y="' + r(y) + '" font-family="Arial,sans-serif" font-size="' + (o.s || 2.6) + '" fill="' + (o.f || GR) + '"' + (o.b ? ' font-weight="700"' : '') +
+    ' text-anchor="' + (o.a || 'middle') + '"' + (o.halo ? ' stroke="#fff" stroke-width="1.1" paint-order="stroke" stroke-linejoin="round"' : '') + (o.rot ? ' transform="rotate(' + o.rot + ' ' + r(x) + ' ' + r(y) + ')"' : '') + '>' + esc(s) + '</text>';
+}
+function r(n) { return Math.round(n * 100) / 100; }
+function Ln(x1, y1, x2, y2, c, w, dash) { return '<line x1="' + r(x1) + '" y1="' + r(y1) + '" x2="' + r(x2) + '" y2="' + r(y2) + '" stroke="' + (c || GR) + '" stroke-width="' + (w || 0.25) + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/>'; }
+function Rc(x, y, w, h, fill, st, sw, dash) { return '<rect x="' + r(x) + '" y="' + r(y) + '" width="' + r(w) + '" height="' + r(h) + '" fill="' + (fill || 'none') + '" stroke="' + (st || 'none') + '" stroke-width="' + (sw || 0.25) + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/>'; }
+function Pg(pts, fill, st, sw, dash) { return '<polygon points="' + pts.map(function (p) { return r(p[0]) + ',' + r(p[1]); }).join(' ') + '" fill="' + (fill || 'none') + '" stroke="' + (st || 'none') + '" stroke-width="' + (sw || 0.25) + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/>'; }
+function envolver(t, n) { var w = t.split(' '), out = [], cur = ''; w.forEach(function (x) { if ((cur + ' ' + x).trim().length > n) { out.push(cur); cur = x; } else cur = (cur + ' ' + x).trim(); }); if (cur) out.push(cur); return out; }
+function letra(i) { var s = ''; i = Math.floor(i); do { s = String.fromCharCode(65 + i % 26) + s; i = Math.floor(i / 26) - 1; } while (i >= 0); return s; }
+
+// cota lineal (horizontal o vertical) con texto
+function cotaH(x1, x2, y, txt, up) { var d = up ? -1 : 1; return Ln(x1, y, x2, y, GR2, 0.2) + Ln(x1, y - 1.2, x1, y + 1.2, GR2, 0.2) + Ln(x2, y - 1.2, x2, y + 1.2, GR2, 0.2) + T((x1 + x2) / 2, y + (up ? -0.8 : 3), txt, { s: 2.3, f: '#555' }); }
+function cotaV(y1, y2, x, txt, izq) { return Ln(x, y1, x, y2, GR2, 0.2) + Ln(x - 1.2, y1, x + 1.2, y1, GR2, 0.2) + Ln(x - 1.2, y2, x + 1.2, y2, GR2, 0.2) + T(x + (izq ? -1 : 1), (y1 + y2) / 2, txt, { s: 2.3, f: '#555', a: izq ? 'end' : 'start', rot: 0 }).replace('text-anchor="' + (izq ? 'end' : 'start') + '"', 'text-anchor="middle"').replace(/<text x="[^"]*" y="[^"]*"/, '<text x="' + r(x + (izq ? -1.2 : 1.2)) + '" y="' + r((y1 + y2) / 2) + '" transform="rotate(-90 ' + r(x + (izq ? -1.2 : 1.2)) + ' ' + r((y1 + y2) / 2) + ')"'); }
+
+// ═══════════ LÁMINA 1: PLANTA ═══════════════════════════════════════════════
+function lamina1(ctx) {
+  var M = ctx.M, S = ctx.S, R = ctx.R, o = [];
+  var Lx = M.in.Lx, Ly = M.in.Ly;
+  var ax = { x0: 8, y0: 8, w: 306, h: 196 };            // zona de dibujo
+  var rotar = (Ly / Lx) > 1.25 * (ax.h / ax.w);          // planta girada 90° si la nave es muy alta
+  var Wm = rotar ? Ly : Lx, Hm = rotar ? Lx : Ly;
+  var m = 24;                                            // margen para cotas y burbujas
+  var s = Math.min((ax.w - 2 * m) / Wm, (ax.h - 2 * m - 6) / Hm);
+  var ox = ax.x0 + (ax.w - Wm * s) / 2, oy = ax.y0 + m + 2 + ((ax.h - 2 * m - 6) - Hm * s) / 2;
+  function U(x, y) { return rotar ? [ox + y * s, oy + (Lx - x) * s] : [ox + x * s, oy + y * s]; }
+  var esc1 = Math.round(1000 / s);                       // escala 1:esc1 (1 m = s mm)
+  // marco
+  o.push(Rc(4, 4, W - 8, H - 8, 'none', GR, 0.6));
+  o.push(Rc(ax.x0 - 2, ax.y0 - 2, ax.w + 4, ax.h + 4, 'none', GR2, 0.2));
+  // paños
+  var colsP = M.cols.map(function (c) { return U(c.x, c.y); });
+  function libre(cx, cy, bw, bh) { return !colsP.some(function (q) { return q[0] > cx - bw / 2 - 2.5 && q[0] < cx + bw / 2 + 2.5 && q[1] > cy - bh / 2 - 2.5 && q[1] < cy + bh / 2 + 2.5; }); }
+  M.panos.forEach(function (p) {
+    var a = U(p.x0, p.y0), b = U(p.x1, p.y1), x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]), w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1]);
+    o.push(Rc(x, y, w, h, p.fase === 1 ? '#f3f3f3' : '#e4eef8', '#bbb', 0.15));
+    if (Math.min(w, h) > 24) {
+      var cand = [[.5, .5], [.25, .3], [.75, .3], [.25, .7], [.75, .7], [.5, .25], [.5, .75]], cx = x + w / 2, cy = y + h / 2;
+      for (var ci = 0; ci < cand.length; ci++) { var tx = x + w * cand[ci][0], ty = y + h * cand[ci][1]; if (libre(tx, ty, 34, 13)) { cx = tx; cy = ty; break; } }
+      var H1 = { s: 4, b: 1, f: GR, halo: 1 }, H2 = { s: 2.7, f: '#555', halo: 1 }, H3 = { s: 2.5, f: p.fase === 1 ? '#666' : AZ, halo: 1 };
+      o.push(T(cx, cy - 2.2, 'P-' + p.n, H1));
+      o.push(T(cx, cy + 1.6, fmt(p.w, 1) + ' × ' + fmt(p.l, 1) + ' m · ' + fmt(p.area, 0) + ' m²', H2));
+      o.push(T(cx, cy + 5.2, 'Colada ' + p.orden + ' · fase ' + p.fase, H3));
+    } else if (Math.min(w, h) > 9) {
+      o.push(T(x + w / 2, y + h / 2 + 1, 'P-' + p.n, { s: 3, b: 1, halo: 1 }));
+    }
+  });
+  // ejes principales
+  var exs = [0].concat((S.ejesX || []).filter(function (v) { return v > 0.01 && v < Lx - 0.01; }), [Lx]);
+  var eys = [0].concat((S.ejesY || []).filter(function (v) { return v > 0.01 && v < Ly - 0.01; }), [Ly]);
+  exs.forEach(function (x, i) {
+    var a = U(x, 0), b = U(x, Ly), ext = 6;
+    var dir = rotar ? [1, 0] : [0, 1];
+    var p1 = [a[0] - dir[0] * ext, a[1] - dir[1] * ext], p2 = [b[0] + dir[0] * ext, b[1] + dir[1] * ext];
+    if (rotar) { p1 = [a[0] - ext, a[1]]; p2 = [b[0] + ext, b[1]]; a = U(x, 0); b = U(x, Ly); p1 = [Math.min(a[0], b[0]) - ext, a[1]]; p2 = [Math.max(a[0], b[0]) + ext, a[1]]; }
+    o.push(Ln(p1[0], p1[1], p2[0], p2[1], '#7a7a7a', 0.2, '3 1 0.6 1'));
+    [p1, p2].forEach(function (q) { var bx = rotar ? (q === p1 ? q[0] - 2.8 : q[0] + 2.8) : q[0], by = rotar ? q[1] : (q === p1 ? q[1] - 2.8 : q[1] + 2.8); o.push('<circle cx="' + r(bx) + '" cy="' + r(by) + '" r="2.6" fill="#fff" stroke="#555" stroke-width="0.25"/>' + T(bx, by + 1, letra(i), { s: 2.8, b: 1 })); });
+  });
+  eys.forEach(function (y, j) {
+    var a = U(0, y), b = U(Lx, y), ext = 6;
+    var p1, p2;
+    if (rotar) { p1 = [a[0], Math.min(a[1], b[1]) - ext]; p2 = [a[0], Math.max(a[1], b[1]) + ext]; o.push(Ln(p1[0], p1[1], p2[0], p2[1], '#7a7a7a', 0.2, '3 1 0.6 1')); [p1, p2].forEach(function (q) { var by = q === p1 ? q[1] - 2.8 : q[1] + 2.8; o.push('<circle cx="' + r(q[0]) + '" cy="' + r(by) + '" r="2.6" fill="#fff" stroke="#555" stroke-width="0.25"/>' + T(q[0], by + 1, String(j + 1), { s: 2.8, b: 1 })); }); }
+    else { p1 = [Math.min(a[0], b[0]) - ext, a[1]]; p2 = [Math.max(a[0], b[0]) + ext, a[1]]; o.push(Ln(p1[0], p1[1], p2[0], p2[1], '#7a7a7a', 0.2, '3 1 0.6 1')); [p1, p2].forEach(function (q) { var bx = q === p1 ? q[0] - 2.8 : q[0] + 2.8; o.push('<circle cx="' + r(bx) + '" cy="' + r(q[1]) + '" r="2.6" fill="#fff" stroke="#555" stroke-width="0.25"/>' + T(bx, q[1] + 1, String(j + 1), { s: 2.8, b: 1 })); }); }
+  });
+  // contorno de la nave (muros)
+  var c0 = U(0, 0), c1 = U(Lx, Ly);
+  o.push(Rc(Math.min(c0[0], c1[0]), Math.min(c0[1], c1[1]), Math.abs(c1[0] - c0[0]), Math.abs(c1[1] - c0[1]), 'none', GR, 0.7));
+  // juntas de construcción (perfil blindado)
+  var jn = 0, jl = [];
+  M.px.cortes.forEach(function (c) { jn++; jl.push({ n: jn, x: c.pos, v: true, eje: c.enEje }); });
+  M.py.cortes.forEach(function (c) { jn++; jl.push({ n: jn, y: c.pos, v: false, eje: c.enEje }); });
+  jl.forEach(function (j) {
+    var a = j.v ? U(j.x, 0) : U(0, j.y), b = j.v ? U(j.x, Ly) : U(Lx, j.y);
+    o.push(Ln(a[0], a[1], b[0], b[1], ROJO, 1.0) + Ln(a[0], a[1], b[0], b[1], '#fff', 0.25));
+    var mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, lx = a[0] + (b[0] - a[0]) * 0.06, ly = a[1] + (b[1] - a[1]) * 0.06;
+    o.push('<rect x="' + r(lx - 4) + '" y="' + r(ly - 2.1) + '" width="8" height="4.2" fill="#fff" stroke="' + ROJO + '" stroke-width="0.25"/>' + T(lx, ly + 1, 'J-' + j.n, { s: 2.7, b: 1, f: ROJO }));
+  });
+  // columnas y rombos
+  M.cols.forEach(function (c) {
+    var p = U(c.x, c.y), rr = Math.max(c.r * s, 2.0);
+    var pts = [[p[0], p[1] - rr], [p[0] + rr, p[1]], [p[0], p[1] + rr], [p[0] - rr, p[1]]];
+    o.push(Pg(pts, 'rgba(200,16,46,.08)', ROJO, 0.2, '1 0.6'));
+    var q = Math.max(Math.max(c.cx, c.cy) * s, 1.4);
+    o.push(Rc(p[0] - q / 2, p[1] - q / 2, q, q, GR, GR, 0.1));
+  });
+  // cotas: ejes (arriba / izquierda) y juntas (abajo / derecha)
+  var topY = Math.min(U(0, 0)[1], U(Lx, Ly)[1]) - 14, botY = Math.max(U(0, 0)[1], U(Lx, Ly)[1]) + 12;
+  var lefX = Math.min(U(0, 0)[0], U(Lx, Ly)[0]) - 14, rigX = Math.max(U(0, 0)[0], U(Lx, Ly)[0]) + 12;
+  var gxs = [0].concat(M.px.cortes.map(function (c) { return c.pos; }), [Lx]), gys = [0].concat(M.py.cortes.map(function (c) { return c.pos; }), [Ly]);
+  function cotasEje(arr, horiz, pos, izq) { for (var i = 1; i < arr.length; i++) { var d = arr[i] - arr[i - 1]; if (horiz) { var a = U(arr[i - 1], 0), b = U(arr[i], 0); if (!rotar) o.push(cotaH(a[0], b[0], pos, fmt(d, 2), true)); } } }
+  if (!rotar) {
+    for (var i = 1; i < exs.length; i++) o.push(cotaH(U(exs[i - 1], 0)[0], U(exs[i], 0)[0], topY, fmt(exs[i] - exs[i - 1], 2), true));
+    for (var k = 1; k < gxs.length; k++) o.push(cotaH(U(gxs[k - 1], 0)[0], U(gxs[k], 0)[0], botY, fmt(gxs[k] - gxs[k - 1], 2) + ' m', false));
+    for (var j2 = 1; j2 < eys.length; j2++) o.push(cotaV(U(0, eys[j2 - 1])[1], U(0, eys[j2])[1], lefX, fmt(eys[j2] - eys[j2 - 1], 2), true));
+    for (var m2 = 1; m2 < gys.length; m2++) o.push(cotaV(U(0, gys[m2 - 1])[1], U(0, gys[m2])[1], rigX, fmt(gys[m2] - gys[m2 - 1], 2) + ' m', false));
+    o.push(T(U(0, 0)[0], topY - 5, 'Distancia entre ejes (m)', { s: 2.5, a: 'start', f: '#555' }));
+    o.push(T(U(0, 0)[0], botY + 8, 'Distancia entre juntas de construcción (m)', { s: 2.5, a: 'start', f: ROJO }));
+  } else {
+    // planta girada: ejes en X van en vertical
+    for (var i4 = 1; i4 < exs.length; i4++) o.push(cotaV(U(exs[i4], 0)[1], U(exs[i4 - 1], 0)[1], lefX, fmt(exs[i4] - exs[i4 - 1], 2), true));
+    for (var k4 = 1; k4 < gxs.length; k4++) o.push(cotaV(U(gxs[k4], 0)[1], U(gxs[k4 - 1], 0)[1], rigX, fmt(gxs[k4] - gxs[k4 - 1], 2) + ' m', false));
+    for (var i3 = 1; i3 < eys.length; i3++) o.push(cotaH(U(0, eys[i3 - 1])[0], U(0, eys[i3])[0], topY, fmt(eys[i3] - eys[i3 - 1], 2), true));
+    for (var k3 = 1; k3 < gys.length; k3++) o.push(cotaH(U(0, gys[k3 - 1])[0], U(0, gys[k3])[0], botY, fmt(gys[k3] - gys[k3 - 1], 2) + ' m', false));
+    o.push(T(U(0, 0)[0], topY - 5, 'Distancia entre ejes (m)', { s: 2.5, a: 'start', f: '#555' }));
+    o.push(T(U(0, 0)[0], botY + 8, 'Distancia entre juntas de construcción (m)', { s: 2.5, a: 'start', f: ROJO }));
+  }
+  // leyenda + escala (bajo el dibujo, a la izquierda)
+  var lx = 12, ly = 214;
+  o.push(Rc(lx - 3, ly - 4.5, 92, 56, '#fff', GR2, 0.2));
+  o.push(T(lx, ly, 'SIMBOLOGÍA', { s: 2.6, a: 'start', b: 1 }));
+  o.push(Ln(lx, ly + 4.5, lx + 10, ly + 4.5, ROJO, 1.0) + T(lx + 12, ly + 5.4, 'Junta de construcción blindada (J)', { s: 2.4, a: 'start' }));
+  o.push(Ln(lx, ly + 9.5, lx + 10, ly + 9.5, '#7a7a7a', 0.2, '3 1 0.6 1') + T(lx + 12, ly + 10.4, 'Eje principal', { s: 2.4, a: 'start' }));
+  o.push(Rc(lx + 3.5, ly + 12.5, 3, 3, GR, GR, 0.1) + Pg([[lx + 5, ly + 11.4], [lx + 8, ly + 14], [lx + 5, ly + 16.6], [lx + 2, ly + 14]], 'rgba(200,16,46,.08)', ROJO, 0.2, '1 0.6') + T(lx + 12, ly + 15.2, 'Columna y rombo (colado posterior)', { s: 2.4, a: 'start' }));
+  o.push(Rc(lx, ly + 18.5, 4, 3, '#f3f3f3', '#999', 0.15) + Rc(lx + 5, ly + 18.5, 4, 3, '#e4eef8', '#999', 0.15) + T(lx + 12, ly + 21, 'Paño: fase 1 / fase 2 de colado', { s: 2.4, a: 'start' }));
+  o.push(T(lx, ly + 27, 'No hay cortes aserrados de contracción.', { s: 2.5, a: 'start', b: 1 }));
+  var bx = lx, by = ly + 36;
+  o.push(Ln(bx, by, bx + 10 * s, by, GR, 0.6) + Ln(bx, by - 1.5, bx, by + 1.5, GR, 0.3) + Ln(bx + 10 * s, by - 1.5, bx + 10 * s, by + 1.5, GR, 0.3) + T(bx + 10 * s + 3, by + 0.9, '10 m', { s: 2.5, a: 'start' }));
+  o.push(T(bx, by + 6, 'Escala aprox. 1:' + esc1 + ' en Tabloide 11×17' + (rotar ? ' · planta girada 90°' : ''), { s: 2.3, a: 'start', f: '#666' }));
+  // notas generales (a la derecha de la leyenda, con salto de línea)
+  var notas = [
+    '1. Predimensionamiento de CONCRE (BORRADOR): no es un plano constructivo ni sustituye el diseño y la firma del ingeniero responsable (CFIA).',
+    '2. Las únicas juntas son las de construcción blindadas (J). No se aserran cortes de contracción: la retracción la controlan la fibra, la mezcla y la barrera de fricción.',
+    '3. Las juntas blindadas se anclan y se les cuela el concreto contra ellas; modelo y capacidad según la ficha del proveedor, para una apertura de hasta ' + M.in.aperturaAdm + ' mm.',
+    '4. Los rombos de las columnas se dejan sin colar hasta que la losa complete su retracción inicial (≥ 28 días) y se rellenan con concreto de retracción compensada.',
+    '5. Colar en el orden indicado: primero los paños de fase 1 y los de fase 2 después de ≥ 7 días. Curado inmediato. Distancias en metros.'
+  ];
+  var ny = 214;
+  o.push(T(108, ny, 'NOTAS GENERALES', { s: 2.6, a: 'start', b: 1 }));
+  notas.forEach(function (t) { envolver(t, 122).forEach(function (ln, k) { ny += 4.4; o.push(T(108 + (k ? 3 : 0), ny, ln, { s: 2.4, a: 'start', f: '#444' })); }); });
+  // ── columna derecha: rótulo y cuadros ──
+  o.push(rotulo(ctx, 1));
+  return svgHoja(o.join(''));
+}
+
+function rotulo(ctx, hoja) {
+  var M = ctx.M, S = ctx.S, R = ctx.R, o = [], x = 318, w = 106;
+  o.push(Rc(x, 8, w, 263, 'none', GR, 0.4));
+  // logo y título
+  if (ctx.logo) o.push('<image href="data:image/png;base64,' + ctx.logo + '" x="' + (x + 3) + '" y="10" width="34" height="14" preserveAspectRatio="xMinYMid meet"/>'); else o.push(T(x + 4, 20, 'CONCRE', { s: 8, a: 'start', b: 1, f: ROJO }));
+  o.push(T(x + 40, 14.5, 'MACRO-LOSA', { s: 4.4, a: 'start', b: 1 }));
+  o.push(T(x + 40, 19.5, hoja === 1 ? 'Planta de juntas y distribución' : 'Detalles constructivos', { s: 2.8, a: 'start', f: '#555' }));
+  o.push(T(x + 40, 23.5, 'Hoja ' + hoja + ' de 2', { s: 2.6, a: 'start', f: '#555' }));
+  o.push(Ln(x, 27, x + w, 27, GR, 0.3));
+  var datos = [['Proyecto', S.proy.nombre || '—'], ['Cliente', S.proy.cliente || '—'], ['Ubicación', S.proy.ubicacion || '—'], ['Referencia', ctx.ref || 'SIN GUARDAR'], ['Fecha', ctx.fecha || ''], ['Elaborado por', ctx.autor || 'CONCRE']];
+  datos.forEach(function (d, i) { var y = 31 + i * 5.2; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 24, y, String(d[1]).slice(0, 34), { s: 2.7, a: 'start', b: 1 })); });
+  o.push(Ln(x, 61, x + w, 61, GR, 0.3));
+  if (hoja === 1) {
+    o.push(T(x + 2, 65.5, 'DATOS DE DISEÑO', { s: 2.8, a: 'start', b: 1, f: ROJO }));
+    var rows = [['Uso', R.u.nombre], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²'], ['Espesor / f’c', fmt(M.h, 1) + ' cm · ' + R.rec.fc + ' kg/cm²'], ['Fibra Plus 54 mm', fmt(M.dosis, 1) + ' kg/m³ · ' + fmt(M.cant.fibra_kg, 0) + ' kg'],
+      ['Sistema', M.sistema.corto], ['Retracción neta', M.sistema.eps + ' µε (' + fmt(M.sistema.eps / 1000, 2) + ' mm/m)'], ['Distancia máx. juntas', fmt(M.Lmax, 1) + ' m'], ['Apertura esperada', fmt(M.aperturaMax, 1) + ' mm (límite ' + M.in.aperturaAdm + ')'],
+      ['Membrana', '2 capas polietileno ' + (M.in.pesado ? '15' : '10') + ' + 12 mil'], ['Planicidad', M.ffTxt], ['Colocación', M.metodo.nombre]];
+    rows.forEach(function (d, i) { var y = 70.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 32, y, String(d[1]).slice(0, 40), { s: 2.5, a: 'start', b: 1 })); });
+    o.push(Ln(x, 126, x + w, 126, GR, 0.3));
+    o.push(T(x + 2, 130.5, 'CUADRO DE JUNTAS', { s: 2.8, a: 'start', b: 1, f: ROJO }));
+    var cj = [['Tipo', 'Descripción', 'Cant.'],
+      ['J', 'Construcción blindada: ' + M.nJx + ' vert. + ' + M.nJy + ' horiz.', fmt(M.cant.juntas_m, 0) + ' m'],
+      ['A', 'Aislamiento de muros (espuma)', fmt(M.cant.perimetro_m, 0) + ' m'],
+      ['R', 'Rombo de columna (colado posterior)', M.cant.rombos + ' u'],
+      ['—', 'Cortes aserrados de contracción', 'ninguno']];
+    cj.forEach(function (d, i) { var y = 135.5 + i * 4.9; var b = i === 0; o.push(T(x + 2, y, d[0], { s: 2.5, a: 'start', b: 1 }) + T(x + 9, y, d[1], { s: 2.4, a: 'start', b: b }) + T(x + w - 2, y, d[2], { s: 2.5, a: 'end', b: 1 })); });
+    o.push(Ln(x, 161, x + w, 161, GR, 0.3));
+    o.push(T(x + 2, 165.5, 'CANTIDADES', { s: 2.8, a: 'start', b: 1, f: ROJO }));
+    var ct = [['Concreto', fmt(M.cant.vol_m3, 0) + ' m³ (+ rombos ' + fmt(M.cant.vol_rombos_m3, 1) + ' m³)'], ['Fibra Plus 54 mm', fmt(M.cant.fibra_kg, 0) + ' kg · ' + M.cant.sacos10 + ' sacos de 10 kg' + (M.cant.bolsas1 ? ' + ' + M.cant.bolsas1 + ' bolsas de 1 kg' : '')], ['Polietileno (2 capas, +10 %)', fmt(M.cant.pe_m2, 0) + ' m²'], ['Barras en rombos Ø12 × 1.20 m', M.cant.barras_esquina + ' u'], ['Paños / colada diaria', M.panos.length + ' paños · ≤ ' + fmt(M.metodo.a_dia, 0) + ' m²/día']];
+    ct.forEach(function (d, i) { var y = 170.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 40, y, d[1].slice(0, 40), { s: 2.4, a: 'start', b: 1 })); });
+    o.push(Ln(x, 196, x + w, 196, GR, 0.3));
+    o.push(T(x + 2, 200.5, 'CHEQUEOS DEL SISTEMA', { s: 2.8, a: 'start', b: 1, f: ROJO }));
+    var ck = [['Arrastre fibra / fricción', M.okArrastre ? 'cumple' : 'NO cumple', M.okArrastre], ['Apertura de juntas ≤ ' + M.in.aperturaAdm + ' mm', M.aperturaMax <= M.in.aperturaAdm + 1e-6 ? 'cumple' : 'NO cumple', M.aperturaMax <= M.in.aperturaAdm + 1e-6], ['Aspecto de paños ≤ 1.5', M.maxAsp <= 1.5 + 1e-6 ? 'cumple (' + fmt(M.maxAsp, 2) + ')' : 'NO cumple (' + fmt(M.maxAsp, 2) + ')', M.maxAsp <= 1.5 + 1e-6], ['Transferencia en junta', fmt(M.Q_req, 1) + ' kN/m a 20 mm', true]];
+    ck.forEach(function (d, i) { var y = 205.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.4, a: 'start' }) + T(x + w - 2, y, d[1], { s: 2.5, a: 'end', b: 1, f: d[2] ? '#2e7d32' : '#c62828' })); });
+  } else {
+    o.push(T(x + 2, 65.5, 'NOTAS DE LOS DETALLES', { s: 2.8, a: 'start', b: 1, f: ROJO }));
+    ['Detalles esquemáticos, sin escala (NTS).', 'Las medidas con letra cursiva dependen del', 'proveedor o del ingeniero responsable.', 'Perfil de junta, anclajes y dovelas: según ficha', 'técnica del proveedor local (RR Construcción,', 'BLK CR u otro) a la apertura de diseño.', 'Refuerzo de rombos: criterio de CONCRE;', 'ninguna norma fija diámetro ni largo.'].forEach(function (t, i) { o.push(T(x + 2, 71 + i * 4.2, t, { s: 2.4, a: 'start', f: '#444' })); });
+  }
+  // firmas
+  o.push(Ln(x, 228, x + w, 228, GR, 0.3));
+  o.push(Rc(x + 2, 231, 58, 8, '#fff7f8', ROJO, 0.3) + T(x + 31, 236.5, 'BORRADOR · NO PARA CONSTRUCCIÓN', { s: 2.5, b: 1, f: ROJO }));
+  o.push(T(x + 2, 246, 'Elaboró: CONCRE', { s: 2.5, a: 'start' }));
+  o.push(Ln(x + 2, 258, x + w - 2, 258, GR, 0.25) + T(x + 2, 262, 'Revisó y firma: ingeniero responsable (CFIA)', { s: 2.4, a: 'start', f: '#555' }));
+  o.push(T(x + 2, 267, 'Nombre / N.º de colegiado / Fecha:', { s: 2.3, a: 'start', f: '#777' }));
+  return o.join('');
+}
+
+function svgHoja(inner) {
+  return '<svg class="hoja" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">' + Rc(0, 0, W, H, '#fff', 'none', 0) + inner + '</svg>';
+}
+
+// ═══════════ LÁMINA 2: DETALLES ═════════════════════════════════════════════
+function celda(ix, iy, num, titulo, cuerpo, sub) {
+  var x = 8 + ix * 103, y = 8 + iy * 128;   // 3 columnas de 103 mm en el área 8..317
+  return '<g transform="translate(' + x + ' ' + y + ')">' + Rc(0, 0, 101, 124, '#fff', GR2, 0.2) +
+    '<rect x="0" y="0" width="101" height="7" fill="' + GR + '"/>' + T(3, 4.9, num + ' · ' + titulo, { s: 3, a: 'start', b: 1, f: '#fff' }) +
+    (sub ? T(98, 4.9, sub, { s: 2.3, a: 'end', f: '#ddd' }) : '') + '<g transform="translate(0 7)">' + cuerpo + '</g></g>';
+}
+function rayado(x, y, w, h, id) { return Rc(x, y, w, h, 'url(#' + (id || 'rayas') + ')', GR2, 0.2); }
+// globo numerado y leyenda de los globos
+function bal(x, y, n, tx, ty) { var l = (tx != null) ? Ln(x, y, tx, ty, '#555', 0.2) : ''; return l + '<circle cx="' + r(x) + '" cy="' + r(y) + '" r="2.2" fill="#fff" stroke="' + ROJO + '" stroke-width="0.3"/>' + T(x, y + 0.85, String(n), { s: 2.5, b: 1, f: ROJO }); }
+function leyenda(items, y0) {
+  var o = [], y = y0;
+  items.forEach(function (t, i) {
+    var ls = envolver(t, 76);
+    o.push('<circle cx="6.2" cy="' + r(y - 0.9) + '" r="1.6" fill="#fff" stroke="' + ROJO + '" stroke-width="0.25"/>' + T(6.2, y - 0.1, String(i + 1), { s: 2, b: 1, f: ROJO }));
+    ls.forEach(function (ln, k) { o.push(T(10, y, ln, { s: 2.25, a: 'start', f: '#333' })); y += 3.3; });
+    y += 0.5;
+  });
+  return { svg: o.join(''), y: y };
+}
+function notasD(lines, y0) { var o = [], y = y0; lines.forEach(function (t) { envolver(t, 84).forEach(function (ln, k) { o.push(T(4 + (k ? 2.5 : 0), y, (k ? '' : '• ') + ln, { s: 2.2, a: 'start', f: '#555' })); y += 3.2; }); }); return o.join(''); }
+function titD(t) { return T(50.5, 78, t, { s: 2.6, b: 1 }); }
+
+function dJunta(M) {
+  var o = [], tt = 26, yb = 60.2, yt = yb - tt, A = M.in.aperturaAdm;
+  o.push(rayado(6, 61.4, 89, 10, 'grava'));
+  o.push(Ln(6, 61, 95, 61, AZ, 0.5) + Ln(6, 60.2, 95, 60.2, AZ, 0.5));
+  o.push(Rc(6, yt, 36, tt, '#d8d8d8', GR, 0.3) + Rc(59, yt, 36, tt, '#d8d8d8', GR, 0.3));
+  o.push(T(24, yt + tt / 2 - 5, 'Paño A', { s: 2.5, f: '#555' }) + T(77, yt + tt / 2 - 5, 'Paño B', { s: 2.5, f: '#555' }) + T(24, yt + tt / 2 - 1.8, 'h = ' + fmt(M.h, 1) + ' cm', { s: 2.3, f: '#555' }) + T(77, yt + tt / 2 - 1.8, 'h = ' + fmt(M.h, 1) + ' cm', { s: 2.3, f: '#555' }));
+  // perfiles de acero (placas verticales) y anclajes en el concreto
+  o.push(Rc(42, yt, 1.6, tt, GR, GR, 0.1) + Rc(57.4, yt, 1.6, tt, GR, GR, 0.1));
+  [0.3, 0.7].forEach(function (f) { o.push(Ln(42, yt + tt * f, 32, yt + tt * f, GR, 0.5) + Ln(59, yt + tt * f, 69, yt + tt * f, GR, 0.5)); });
+  // dovela y vaina
+  o.push(Rc(30, yt + tt / 2 - 0.8, 40, 1.6, '#777', GR, 0.15) + Rc(50.5, yt + tt / 2 - 1.8, 19.5, 3.6, 'none', AZ, 0.3, '1 0.6'));
+  // placa superior sinusoidal
+  o.push('<path d="M40 ' + yt + ' q2.4 -2.6 5 0 t5 0 t5 0 t5 0" fill="none" stroke="' + ROJO + '" stroke-width="0.9"/>');
+  // sello y fondo de junta
+  o.push(Rc(43.6, yt + 3.2, 13.8, 2.4, '#f4c542', '#a98100', 0.15) + '<circle cx="50.5" cy="' + r(yt + 8.8) + '" r="2" fill="#9ccc65" stroke="#558b2f" stroke-width="0.2"/>');
+  // apertura
+  o.push(Ln(43.6, 22, 57.4, 22, ROJO, 0.3) + Ln(43.6, 20.2, 43.6, 23.8, ROJO, 0.3) + Ln(57.4, 20.2, 57.4, 23.8, ROJO, 0.3) + T(50.5, 18, 'apertura de diseño hasta ' + A + ' mm', { s: 2.4, b: 1, f: ROJO }));
+  o.push(bal(20, 12, 1, 42.8, yt + 14) + bal(36, 30, 2, 46, yt - 1) + bal(78, 49, 3, 66, yt + tt / 2) + bal(85, 12, 4, 54, yt + 4.4) + bal(14, 49, 5, 34, yt + tt * 0.7));
+  o.push(titD('Sección de la junta de construcción'));
+  var L = leyenda(['Perfil de acero armado: dos placas verticales unidas con remaches frágiles', 'Placa superior sinusoidal (rueda cruza sin golpe)', 'Dovela con vaina: permite abrir y transfiere carga', 'Sello flexible y fondo de junta (backer rod)', 'Anclajes en el concreto'], 84);
+  o.push(L.svg + notasD(['Sin barra corrugada a través de la junta. Modelo y capacidad según ficha del proveedor a ' + A + ' mm. Transferencia requerida ≈ ' + fmt(M.Q_req, 1) + ' kN/m.'], L.y + 1));
+  return o.join('');
+}
+function dMuro(M) {
+  var o = [], tt = 26, yb = 60.2, yt = yb - tt;
+  o.push(Rc(6, 8, 14, 64, '#cfcfcf', GR, 0.3) + rayado(6, 8, 14, 64, 'ladrillo'));
+  o.push(rayado(6, 61.4, 89, 10, 'grava'));
+  o.push(Ln(20, 61, 95, 61, AZ, 0.5) + Ln(20, 60.2, 95, 60.2, AZ, 0.5) + Ln(20, 61, 20, 58, AZ, 0.5) + Ln(20.5, 60.2, 20.5, 57, AZ, 0.5));
+  o.push(Rc(24, yt, 71, tt, '#d8d8d8', GR, 0.3) + T(60, yt + tt / 2 + 1, 'Losa · h = ' + fmt(M.h, 1) + ' cm', { s: 2.6, f: '#555' }));
+  o.push(Rc(20, yt, 4, tt, '#fff3b0', '#a98100', 0.25) + Rc(20, yt - 0.2, 4, 2.4, '#f4c542', '#a98100', 0.15));
+  o.push(bal(13, 26, 1) + bal(30, 14, 2, 22, yt + 8) + bal(46, 24, 3, 22, yt + 1) + bal(60, 50, 4, 72, 60.6) + bal(14, 51, 5, 21, 57));
+  o.push(Ln(20, yt + 9, 24, yt + 9, '#a98100', 0.1));
+  o.push(titD('Aislamiento de muro'));
+  var L = leyenda(['Muro o cimiento (la losa no se conecta a él)', 'Espuma de celda cerrada 12–20 mm en todo el espesor de la losa', 'Sello flexible de poliuretano sobre la espuma', 'Polietileno de 2 capas (fricción y vapor) bajo la losa', 'La membrana sube contra el muro sin pegarse al concreto'], 84);
+  o.push(L.svg + notasD(['Movimiento esperado de la losa contra el muro ≈ ' + fmt(M.sistema.eps / 1000 * M.maxL / 2, 1) + ' mm. Igual para bases de maquinaria, fosas y drenajes.'], L.y + 1));
+  return o.join('');
+}
+function dRomboPlanta(M) {
+  var c = M.cols[0] || { cx: 0.4, cy: 0.4, r: 0.61, lado: 0.87 }, k = 34, cx0 = 50.5, cy0 = 40, o = [];
+  var rr = c.r * k, q = c.cx * k;
+  o.push(Ln(cx0 - 46, cy0, cx0 + 46, cy0, '#7a7a7a', 0.2, '3 1 0.6 1') + Ln(cx0, cy0 - 33, cx0, cy0 + 33, '#7a7a7a', 0.2, '3 1 0.6 1'));
+  o.push(Pg([[cx0, cy0 - rr], [cx0 + rr, cy0], [cx0, cy0 + rr], [cx0 - rr, cy0]], 'rgba(200,16,46,.10)', ROJO, 0.5));
+  o.push(Rc(cx0 - q / 2 - 1.5, cy0 - q / 2 - 1.5, q + 3, q + 3, '#fff3b0', '#a98100', 0.2) + Rc(cx0 - q / 2, cy0 - q / 2, q, q, GR, GR, 0.2) + T(cx0, cy0 + 0.9, 'COL.', { s: 2.2, f: '#fff', b: 1 }));
+  var bl = 1.2 * k / 2;
+  [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) { [0.05, 0.20].forEach(function (off) {
+    var px = cx0 + d[0] * (rr + off * k), py = cy0 + d[1] * (rr + off * k);
+    o.push(d[0] !== 0 ? Ln(px, py - bl, px, py + bl, ROJO, 0.7) : Ln(px - bl, py, px + bl, py, ROJO, 0.7));
+  }); });
+  // cota del lado
+  o.push(T(cx0, 8, 'lado del rombo ' + fmt(c.lado, 2) + ' m', { s: 2.4, b: 1 }));
+  o.push(bal(cx0 - rr * 0.5 - 2, cy0 - rr * 0.5 - 5, 1, cx0 - rr * 0.5, cy0 - rr * 0.5) + bal(cx0 + rr + 6, cy0 - 14, 2, cx0 + rr + 1.5, cy0 - 8) + bal(cx0 - 3, cy0 + 8, 3, cx0, cy0 + q / 2 + 1) + bal(88, 66, 4, cx0 + rr + 0.3 * k, cy0 + 22));
+  o.push(titD('Planta del rombo de la columna'));
+  var L = leyenda(['Rombo (cuadrado girado 45°): vértices sobre los ejes. Se cuela después', 'Barras Ø12 mm × 1.20 m: 2 por vértice, a 5 y 20 cm, 5 cm bajo la superficie', 'Relleno compresible de 10–20 mm alrededor de la columna', 'Ejes principales / fisura esperada sobre el eje'], 84);
+  o.push(L.svg + notasD(['Refuerzo de esquina: criterio de CONCRE (ninguna norma fija diámetro ni largo). Colar el rombo tras ≥ 28 días, con retracción compensada.'], L.y + 1));
+  return o.join('');
+}
+function dRomboCorte(M) {
+  var o = [], tt = 26, y0 = 61, yt = y0 - tt;
+  o.push(rayado(6, y0, 89, 10, 'grava'));
+  o.push(Ln(6, y0, 95, y0, AZ, 0.5) + Ln(6, y0 - 0.8, 95, y0 - 0.8, AZ, 0.5));
+  o.push(Rc(6, yt, 24, tt, '#d8d8d8', GR, 0.3) + Rc(71, yt, 24, tt, '#d8d8d8', GR, 0.3));
+  o.push(Rc(30, yt, 41, tt, '#bfe3c0', GR, 0.3) + T(50.5, yt + 6, 'relleno del rombo', { s: 2.2, f: '#2e5e30', b: 1 }) + T(50.5, yt + 9, '(colado posterior)', { s: 2.1, f: '#2e5e30' }));
+  o.push(Rc(40, 12, 21, 59, GR, GR, 0.2) + T(50.5, 44, 'COLUMNA', { s: 2.3, f: '#fff', b: 1 }));
+  o.push(Rc(38, yt, 2, tt, '#fff3b0', '#a98100', 0.2) + Rc(61, yt, 2, tt, '#fff3b0', '#a98100', 0.2));
+  o.push(Rc(29.4, yt - 0.2, 1.2, 2.4, '#f4c542', '#a98100', 0.1) + Rc(70.4, yt - 0.2, 1.2, 2.4, '#f4c542', '#a98100', 0.1));
+  o.push(T(18, yt + 13, 'Losa', { s: 2.4, f: '#555' }) + T(83, yt + 13, 'Losa', { s: 2.4, f: '#555' }));
+  o.push(bal(34, 14, 1, 39, yt + 10) + bal(50.5, 26, 2, 50.5, yt + 12.5) + bal(22, 18, 3, 29.8, yt + 1) + bal(78, 18, 4, 71, yt + 1));
+  o.push(titD('Corte por la columna y el rombo'));
+  var L = leyenda(['Relleno compresible en todo el espesor: la columna queda aislada', 'Relleno del rombo (retracción compensada), colado ≥ 28 días después', 'Sello flexible entre la losa y el relleno del rombo', 'Losa con fibra: se mueve libre sin empujar la columna'], 84);
+  o.push(L.svg + notasD(['El hueco del rombo queda abierto mientras la losa completa su retracción inicial (CIP 6).'], L.y + 1));
+  return o.join('');
+}
+function dSeccionTipo(M) {
+  var o = [], e = [['conc', 26, '#d8d8d8'], ['pe2', 2.4, AZ], ['pe1', 2.4, AZ], ['base', 14, '#bdb08a'], ['sub', 14, '#a5917a']];
+  var y = 10, pos = {};
+  e.forEach(function (c) { o.push(Rc(8, y, 50, c[1], c[2], GR, 0.25)); pos[c[0]] = y + c[1] / 2; y += c[1]; });
+  o.push(T(33, pos.conc + 1, 'h = ' + fmt(M.h, 1) + ' cm', { s: 3, b: 1, f: '#444' }));
+  o.push(bal(66, pos.conc, 1, 58, pos.conc) + bal(66, pos.pe2 - 3, 2, 58, pos.pe2) + bal(76, pos.pe1 + 4, 3, 58, pos.pe1) + bal(66, pos.base, 4, 58, pos.base) + bal(66, pos.sub, 5, 58, pos.sub));
+  o.push(T(80, pos.conc + 1, 'sin malla', { s: 2.3, a: 'start', f: '#777' }));
+  o.push(titD('Sección tipo de la macro-losa'));
+  var L = leyenda(['Concreto f’c ' + M.fcTxt + ' kg/cm² con Fibra Plus 54 mm a ' + fmt(M.dosis, 1) + ' kg/m³', 'Polietileno 12 mil (fricción), traslape 30 cm sin pegar', 'Polietileno clase A de ' + (M.in.pesado ? '15' : '10') + ' mil (vapor y fricción), traslape 30 cm', 'Base granular compactada y cerrada, ≥ 20 cm (+0 / −25 mm)', 'Subrasante compactada según el estudio de suelos'], 84);
+  o.push(L.svg + notasD(['La fibra reemplaza la malla de retracción y temperatura (ANSI-DSI C1.0). Colar directo sobre la membrana; curado inmediato.'], L.y + 1));
+  return o.join('');
+}
+function dSecuencia(M) {
+  var o = [], Lx = M.in.Lx, Ly = M.in.Ly, aw = 88, ah = 58, s = Math.min(aw / Lx, ah / Ly), ox = 6 + (aw - Lx * s) / 2, oy = 8;
+  M.panos.forEach(function (p) { var x = ox + p.x0 * s, y = oy + p.y0 * s, w = p.w * s, h = p.l * s; o.push(Rc(x, y, w, h, p.fase === 1 ? '#f3f3f3' : '#cfe0f3', GR, 0.2)); if (Math.min(w, h) > 5) o.push(T(x + w / 2, y + h / 2 + 1.2, String(p.orden), { s: Math.min(4, Math.min(w, h) / 3), b: 1, f: p.fase === 1 ? '#555' : AZ })); });
+  var yy = oy + Ly * s;
+  o.push(titD('Secuencia de colado (número = orden)'));
+  o.push(Rc(8, 82, 5, 3, '#f3f3f3', GR, 0.2) + T(15, 84.4, 'Fase 1', { s: 2.3, a: 'start' }) + Rc(32, 82, 5, 3, '#cfe0f3', GR, 0.2) + T(39, 84.4, 'Fase 2 (≥ 7 días después de la fase 1)', { s: 2.3, a: 'start' }));
+  o.push(notasD(['Paños alternos en tablero: cada paño de fase 1 se retrae libre antes de colar los vecinos.', 'Con retracción compensada, esperar ≥ 70 % de la expansión antes de colar paños contiguos (ACI 223).', 'Una colada por día: cada paño entra en el rendimiento del método de colocación (' + fmt(M.metodo.a_dia, 0) + ' m²/día).'], 91));
+  return o.join('');
+}
+
+function lamina2(ctx) {
+  var M = ctx.M, o = [];
+  o.push('<defs><pattern id="rayas" width="2" height="2" patternUnits="userSpaceOnUse"><path d="M0 2 L2 0" stroke="#999" stroke-width="0.2"/></pattern>' +
+    '<pattern id="grava" width="3" height="3" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.35" fill="#8a7d5a"/><circle cx="2.3" cy="2.2" r="0.3" fill="#8a7d5a"/></pattern>' +
+    '<pattern id="ladrillo" width="4" height="2" patternUnits="userSpaceOnUse"><path d="M0 0 H4 M0 1 H4 M2 0 V1 M0 1 V2" stroke="#999" stroke-width="0.15" fill="none"/></pattern></defs>');
+  o.push(Rc(4, 4, W - 8, H - 8, 'none', GR, 0.6));
+  o.push(celda(0, 0, 'D1', 'Junta de construcción blindada', dJunta(M), 'NTS'));
+  o.push(celda(1, 0, 'D2', 'Aislamiento de muro', dMuro(M), 'NTS'));
+  o.push(celda(2, 0, 'D3', 'Columna: planta del rombo', dRomboPlanta(M), 'NTS'));
+  o.push(celda(0, 1, 'D4', 'Columna: corte del rombo', dRomboCorte(M), 'NTS'));
+  o.push(celda(1, 1, 'D5', 'Sección tipo de la losa', dSeccionTipo(M), 'NTS'));
+  o.push(celda(2, 1, 'D6', 'Secuencia de colado', dSecuencia(M), 'sobre la planta'));
+  o.push(rotulo(ctx, 2));
+  return svgHoja(o.join(''));
+}
+
+// ═══════════ INFORME (A4) ═══════════════════════════════════════════════════
+function tabla(cab, filas, anchos) {
+  return '<table class="t"><tr>' + cab.map(function (h, i) { return '<th' + (anchos && anchos[i] ? ' style="width:' + anchos[i] + '"' : '') + '>' + h + '</th>'; }).join('') + '</tr>' + filas.map(function (f) { return '<tr>' + f.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+}
+function seccion(t, c, salto) { return '<div class="sec' + (salto ? ' salto' : '') + '"><h2>' + esc(t) + '</h2>' + c + '</div>'; }
+function kv(p) { return '<table class="kv">' + p.map(function (x) { return '<tr><td>' + esc(x[0]) + '</td><td><b>' + x[1] + '</b></td></tr>'; }).join('') + '</table>'; }
+
+var NO_REVISA = [
+  'Diseño de la junta blindada como elemento (aplastamiento, anclaje, fatiga): siga la ficha y el cálculo del proveedor a la apertura de diseño.',
+  'La fisuración real: la retracción, el alabeo y el ancho de fisura dependen de la mezcla, el curado y la base. Se mitigan pero no se calculan en detalle (la 4ª ed. de TR34 eliminó el cálculo de retracción).',
+  'Desempeño de la fibra en la mezcla real: se usan los valores de la tabla de Fibra Plus 54 mm; deben confirmarse con ensayos de viga (EN 14651 o ASTM C1609) de la mezcla.',
+  'Asentamientos del suelo y estudio de suelos; losas sobre suelos expansivos o rellenos sin control.',
+  'Efecto de grupo de patas de rack cercanas, cargas de maquinaria con cimentación propia y pisos de pasillo muy angosto (VNA).',
+  'Movimiento térmico (cámaras frías o calor de procesos) y su efecto en las aperturas.',
+  'Paños de más de 24 m: el respaldo es de fabricantes y literatura; requieren estudio específico, prueba de la mezcla y monitoreo de aperturas.',
+  'Naves que no sean rectangulares (con esquinas entrantes): el programa trabaja con planta rectangular.'
+];
+var DESCARGO = 'Este documento es una herramienta de predimensionamiento elaborada por CONCRE con base en las normas y fuentes indicadas en él. No constituye una memoria de cálculo ni un plano constructivo, y no sustituye el diseño, la revisión ni la firma del ingeniero responsable (CFIA), ni el estudio de suelos del sitio. Los resultados dependen de los datos ingresados; los valores marcados como estimados (E) o por defecto son criterios de CONCRE y deben confirmarse. Las recomendaciones sobre Fibra Plus 54 mm se calculan con las especificaciones de la fibra de CONCRE / Concreequipos y no son válidas con otra fibra. Las distancias entre juntas de las macro-losas se apoyan en la normativa vigente (TR34 4ª ed., ACI 302.1R, ACI 360R) y en literatura técnica y de fabricantes; no existe una norma única para macro-losas con fibra sintética, por lo que el ingeniero responsable debe validar el sistema y las aperturas. CONCRE no asume responsabilidad por el uso de este documento fuera de ese alcance, ni por la construcción, el curado, el control de calidad o el uso posterior de la losa.';
+var DESCARGO_CORTO = 'Predimensionamiento de CONCRE: no constituye memoria de cálculo ni plano constructivo; no sustituye el diseño ni la firma del ingeniero responsable. Cálculos orientados a Fibra Plus 54 mm de CONCRE. Ver descargo al final.';
+
+function informe(ctx) {
+  var M = ctx.M, S = ctx.S, R = ctx.R, u = R.u, d = R.d, ev = R.ev, o = [];
+  var ref = ctx.ref || 'SIN GUARDAR';
+  var logo = ctx.logo ? 'data:image/png;base64,' + ctx.logo : '';
+  o.push('<div class="enc">' + (logo ? '<img class="logo" src="' + logo + '">' : '<div class="logo">CONCRE</div>') + '<div class="encd"><div class="tit">Macro-losa · Predimensionamiento <span class="sello">Borrador</span></div><div class="sub">' + esc(u.nombre) + ' · Referencia <b>' + esc(ref) + '</b> · ' + esc(ctx.fecha || '') + '</div></div></div>');
+  o.push('<p class="aviso">Este documento <b>no constituye una memoria de cálculo</b> ni un plano constructivo. Requiere la revisión y la firma del ingeniero responsable (CFIA).</p>');
+  o.push(kv([['Proyecto', esc(S.proy.nombre || '—')], ['Cliente', esc(S.proy.cliente || '—')], ['Ubicación', esc(S.proy.ubicacion || '—')], ['Elaborado por', esc(ctx.autor || 'CONCRE')], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²']]));
+  o.push(seccion('Resultado', '<div class="kpis">' +
+    '<div class="kpi"><b>' + fmt(M.h, 1) + ' cm</b><span>Espesor de la macro-losa</span></div>' +
+    '<div class="kpi"><b>f’c ' + R.rec.fc + '</b><span>kg/cm²</span></div>' +
+    '<div class="kpi"><b>' + fmt(M.dosis, 1) + ' kg/m³</b><span>Fibra Plus 54 mm</span></div>' +
+    '<div class="kpi"><b>' + fmt(M.Lmax, 1) + ' m</b><span>Distancia máx. entre juntas</span></div>' +
+    '<div class="kpi"><b>' + (M.nJx + M.nJy) + '</b><span>Juntas blindadas (' + fmt(M.cant.juntas_m, 0) + ' m)</span></div></div>' +
+    '<p class="p">Sistema: <b>' + esc(M.sistema.nombre) + '</b>. Retracción neta de diseño ' + M.sistema.eps + ' µε; apertura esperada de las juntas ' + fmt(M.aperturaMax, 1) + ' mm (límite ' + M.in.aperturaAdm + ' mm). Paños: ' + M.panos.length + ', el mayor de ' + fmt(M.maxL, 1) + ' m.</p>'));
+  if (M.avisos.length) o.push(seccion('Avisos', '<ul class="av">' + M.avisos.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'));
+  // comparación de sistemas
+  o.push(seccion('Qué lograría cada sistema en esta nave', tabla(['Sistema', 'Dosis', 'Distancia máx.', 'Juntas', 'Paños', 'Apertura'], M.comparacion.map(function (c) {
+    return [(c.id === M.sistema.id ? '<b>' + esc(c.nombre) + ' ◄</b>' : esc(c.nombre)) + (c.especial ? ' <span class="n">(requiere estudio)</span>' : ''), fmt(c.dosis, 1) + ' kg/m³', fmt(c.Lmax, 1) + ' m', c.juntas, c.panos, fmt(c.apertura, 1) + ' mm'];
+  })) + '<p class="n">Mientras más control de retracción tenga la mezcla, mayor la distancia entre juntas y menos juntas blindadas. Fuentes: Pombo (Rev. Hormigón, 2023), BLK CR / ICCYC 2025, obra PiSA (BarChip), TR34 4ª ed. (tope 35 m).</p>'));
+  // datos de entrada
+  o.push(seccion('Datos de entrada', tabla(['Dato', 'Valor'], [
+    ['Uso', esc(u.nombre)], ['Suelo de apoyo', esc(R.k.nota) + ' <b>k = ' + fmt(R.k.k, 2) + ' kg/cm³</b>'], ['Método de colocación', esc(M.metodo.nombre) + ' · colada diaria ≤ ' + fmt(M.metodo.a_dia, 0) + ' m²'],
+    ['Ejes principales', 'Verticales: ' + (M.ejesTxtX) + ' · Horizontales: ' + (M.ejesTxtY)], ['Columnas', fmt(M.in.colX, 2) + ' × ' + fmt(M.in.colY, 2) + ' m · ' + M.cols.length + ' (interiores ' + M.nInt + ', borde ' + M.nBor + ', esquina ' + M.nEsq + ')'],
+    ['Piso sensible a la humedad', S.pisoSensible ? 'Sí' : 'No'], ['Capacidad de la junta (ficha)', M.in.capJunta_kNm > 0 ? fmt(M.in.capJunta_kNm, 1) + ' kN/m' : 'No ingresada: confirmar con el proveedor']], ['34%', '66%'])));
+  // verificación por carga (motor de losas)
+  o.push(seccion('Verificación del espesor por carga (TR34 + Westergaard)', tabla(['Carga', 'Método · ubicación', 'Demanda', 'Capacidad', 'Uso', ''], ev.chequeos.map(function (c) {
+    var esU = c.unidad === 'MPa' && c.motor === 'A';
+    var dm = esU ? fmt(c.demanda * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.demanda, 2) + ' ' + c.unidad, cp = esU ? fmt(c.capacidad * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.capacidad, 2) + ' ' + c.unidad;
+    return [esc(c.carga), c.motor + ' · ' + c.ubic, dm, cp, fmt(c.uso * 100, 0) + ' %', c.ok ? 'Cumple' : '<b>No cumple</b>'];
+  })) + '<p class="n">Espesor por cargas: ' + fmt(d.h_rec, 1) + ' cm; el espesor de macro-losa es ' + fmt(M.h, 1) + ' cm.</p>'));
+  // recomendaciones
+  M.grupos.forEach(function (g) {
+    o.push(seccion(g.titulo, tabla(['Tema', 'Recomendación', 'Norma / fuente', ''], g.filas.map(function (f) {
+      return ['<b>' + esc(f.t) + '</b>', esc(f.v) + (f.nota ? '<div class="n">' + esc(f.nota) + '</div>' : ''), esc(f.norma), '<b>' + esc(f.estado) + '</b>'];
+    }), ['20%', '52%', '22%', '6%'])));
+  });
+  o.push('<p class="n">V verificado en norma · S fuente secundaria (fabricante, universidad, artículo) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.</p>');
+  // juntas disponibles
+  o.push(seccion('Juntas blindadas disponibles en el mercado local', tabla(['Tipo', 'Proveedor', 'Uso'], M.juntasCat.map(function (j) { return ['<b>' + esc(j.nombre) + '</b>', esc(j.prov), esc(j.uso)]; }), ['34%', '28%', '38%']) + '<p class="n">CONCRE no vende estas juntas: son referencias de mercado. El modelo, el espesor del acero y la capacidad a la apertura de diseño deben confirmarse con la ficha técnica del proveedor.</p>'));
+  // pasos
+  o.push('<div class="sec salto"><h2>Cálculo paso a paso</h2>' + M.pasos.concat(ev.pasos).map(function (p, i) {
+    return '<div class="paso"><div class="pt">' + (i + 1) + '. ' + esc(p.titulo) + '</div><div class="pf">' + esc(p.formula) + '</div><div class="pv">' + esc(p.valores) + '</div><div class="pr">' + esc(p.resultado) + '</div><div class="pn">' + esc(p.norma) + '</div></div>';
+  }).join('') + '</div>');
+  o.push(seccion('Lo que este cálculo NO revisa', '<ul class="av">' + NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'));
+  o.push(seccion('Fuentes consultadas (solo nombre)', '<p class="p" style="font-size:calc(8.5px*var(--fs,1))">TR34 4ª ed. (Concrete Society) y 3ª ed. · ACI 360R-10 · ACI 302.1R-04 / -15 · ACI 223 · ACI 308 · ACI 305R · ACI 544 · EN 14651 · ASTM C157, C494, C1609, C1702, E1155, E1745 · ANSI-DSI C1.0 · Concrete Society (large area pours; fibre reinforced floors) · Pombo, Revista Hormigón 63 (2023) · BLK CR / ICCYC 2025 · BarChip (guía de pisos y caso PiSA) · FORTA (High-Fiber Slabs) · Permaban (juntas armadas) · Sika Costa Rica (SikaControl NS) · NRMCA CIP 6.</p>'));
+  o.push(seccion('Revisión y firma', '<table class="kv"><tr><td>Ingeniero responsable (CFIA)</td><td>&nbsp;</td></tr><tr><td>N.º de colegiado</td><td>&nbsp;</td></tr><tr><td>Fecha y firma</td><td style="height:26px">&nbsp;</td></tr></table>'));
+  o.push(seccion('Descargo de responsabilidad', '<p class="p" style="font-size:calc(8.5px*var(--fs,1));color:#555">' + esc(DESCARGO) + '</p>'));
+  o.push('<div class="sec salto"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE.</p></div>');
+  return o.join('');
+}
+
+function html(ctx) {
+  var ref = ctx.ref || 'SIN GUARDAR';
+  var logo = ctx.logo ? 'data:image/png;base64,' + ctx.logo : '';
+  var css = '*{box-sizing:border-box}html,body{margin:0}body{font-family:Arial,sans-serif;color:#3D3D3D;font-size:calc(9.5px*var(--fs,1));background:#fff}' +
+    '@page plano{size:432mm 279mm;margin:0}@page informe{size:A4;margin:11mm 12mm}' +
+    '.lamina{page:plano;width:432mm;height:278mm;overflow:hidden;break-after:page;background:#fff}.lamina svg.hoja{width:432mm;height:279mm;display:block}' +
+    '.informe{page:informe}' +
+    'table.pg{width:100%;border-collapse:collapse}table.pg>tfoot>tr>td,table.pg>tbody>tr>td{padding:0}' +
+    '.marca{position:fixed;left:0;right:0;top:32%;text-align:center;z-index:0;pointer-events:none}.marca img{width:60%;opacity:.07}' +
+    '.pie{border-top:2px solid #C8102E;margin-top:6px;padding-top:4px;font-size:calc(7.5px*var(--fs,1));color:#777;line-height:1.4}' +
+    '.enc{display:flex;align-items:center;gap:14px;border-bottom:3px solid #C8102E;padding-bottom:8px;margin-bottom:8px}.enc .logo{height:46px;width:auto}.enc div.logo{font-size:calc(22px*var(--fs,1));font-weight:800;color:#C8102E}.tit{font-size:calc(19px*var(--fs,1));font-weight:800}.sub{font-size:calc(10px*var(--fs,1));color:#666;margin-top:2px}' +
+    '.sello{float:right;margin-left:8px;white-space:nowrap;font-size:calc(7px*var(--fs,1));font-weight:700;color:#C8102E;letter-spacing:.5px;text-transform:uppercase;border:1px solid #e0a3ae;border-radius:3px;padding:2px 6px}' +
+    '.aviso{background:#fff7f8;border:1px solid #e0a3ae;padding:5px 8px;font-size:calc(9px*var(--fs,1));margin:0 0 8px}' +
+    '.sec{margin:0 0 9px;position:relative;z-index:1}.sec h2{font-size:calc(11px*var(--fs,1));margin:0 0 4px;padding:3px 7px;background:#3D3D3D;color:#fff;break-after:avoid}.salto{break-before:page}' +
+    'table.t{width:100%;border-collapse:collapse;font-size:calc(8.6px*var(--fs,1))}table.t th{background:#eee;text-align:left;padding:3px 5px;border:1px solid #ddd}table.t td{padding:3px 5px;border:1px solid #e3e3e3;vertical-align:top}table.t tr{break-inside:avoid}' +
+    'table.kv{width:100%;border-collapse:collapse;font-size:calc(9px*var(--fs,1))}table.kv td{padding:2.5px 5px;border-bottom:1px solid #eee;vertical-align:top}table.kv td:first-child{width:38%;color:#666}' +
+    '.kpis{display:flex;gap:6px;margin-bottom:5px}.kpi{flex:1;border:1px solid #ddd;border-left:4px solid #C8102E;padding:5px 7px}.kpi b{display:block;font-size:calc(14px*var(--fs,1));color:#C8102E}.kpi span{font-size:calc(8px*var(--fs,1));color:#777}' +
+    '.p{margin:4px 0;line-height:1.5}.n{font-size:calc(8px*var(--fs,1));color:#777;margin:3px 0;line-height:1.4}.av{margin:2px 0 0;padding-left:15px;line-height:1.5}' +
+    '.paso{border-bottom:1px solid #eee;padding:3px 0;break-inside:avoid}.pt{font-weight:800}.pf{font-family:Consolas,monospace;color:#444;font-size:calc(8.5px*var(--fs,1))}.pv{color:#666}.pr{font-weight:700;color:#C8102E}.pn{font-size:calc(7.5px*var(--fs,1));color:#999}' +
+    '.barra{position:sticky;top:0;background:#3D3D3D;color:#fff;padding:8px 14px;z-index:5;font-size:calc(12px*var(--fs,1))}.barra button{background:#C8102E;color:#fff;border:0;border-radius:5px;padding:6px 14px;font-weight:700;cursor:pointer;margin-right:10px}' +
+    '@media screen{.lamina{width:auto;height:auto;margin:10px auto;max-width:1300px;border:1px solid #ccc}.lamina svg.hoja{width:100%;height:auto}.informe{max-width:900px;margin:0 auto;padding:10px}}' +
+    '@media print{.barra{display:none}}';
+  return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>CONCRE — Macro-losa ' + esc(ref) + '</title><style>' + css + '</style></head><body>' +
+    '<div class="barra"><button onclick="window.print()">🖨 Imprimir / Guardar PDF</button>Macro-losa ' + esc(ref) + ' · láminas Tabloide 11×17 pulg + informe A4 (en el cuadro de impresión elija «Tamaño de papel: según la página» o Tabloide / A4)</div>' +
+    '<div class="lamina">' + lamina1(ctx) + '</div><div class="lamina">' + lamina2(ctx) + '</div>' +
+    (logo ? '<div class="marca"><img src="' + logo + '"></div>' : '') +
+    '<div class="informe"><table class="pg"><tbody><tr><td>' + informe(ctx) + '</td></tr></tbody><tfoot><tr><td><div class="pie"><b>CONCRE</b> · ' + esc(ref) + ' · ' + esc(DESCARGO_CORTO) + '</div></td></tr></tfoot></table></div></body></html>';
+}
+
+var API = { html: html, lamina1: lamina1, lamina2: lamina2, DESCARGO: DESCARGO, NO_REVISA: NO_REVISA };
+if (typeof module !== 'undefined' && module.exports) module.exports = API;
+root.MACRO_INF = API;
+})(typeof window !== 'undefined' ? window : globalThis);
+/* MACRO:INFORME:FIN */
+
 // ══════════════════════════════════════════════════════════════════════════════
 // CONCRE · Diseño de losas — PANTALLA (etapa 3)
 // Usa LOSAS_MOTOR (cálculo) y LOSAS_CAT (usos, equipos y valores por defecto).
@@ -36357,11 +37198,12 @@ function nuevoEstado() {
     panelLx: '', panelLy: '',
     borde: 15, esq: 15, nu: 0.20,
     criterio: 'mayor', mr: 'aci318',
+    macro: false, mLx: '', mLy: '', mEjesX: [], mEjesY: [], mSinCol: [], mSistema: 'sra', mMetodo: 'laser', mCols: 'todas', mColX: 0.4, mColY: 0.4, mCapJunta: '', mPesado: false, mMont: true, /* MACRO:ESTADO */
     res: null
   };
 }
 
-var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr'];
+var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr', 'macro', 'mLx', 'mLy', 'mEjesX', 'mEjesY', 'mSinCol', 'mSistema', 'mMetodo', 'mCols', 'mColX', 'mColY', 'mCapJunta', 'mPesado', 'mMont'];
 function serializar(S) { var e = {}; CAMPOS_ESTADO.forEach(function (k) { e[k] = clone(S[k]); }); return e; }
 function nuevoId() { return 'lo_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function refLocal() {
@@ -36442,6 +37284,7 @@ function calcular(S) {
   R.pend = u.pendiente ? u.pendiente(S.o) : null;
   R.recs = REC.recomendar({ uso: u, o: S.o, clima: S.clima, suelo: S.suelo, pisoSensible: S.pisoSensible, h_cm: d.h_rec, fc: R.rec.fc, MR: R.MR,
     dosis: d.dosis_rec, cargas: cargas, juntas: R.juntas, area: R.area, borde_pct: S.borde, esq_pct: S.esq });
+  if (S.macro && !WEB) R.macro = calcularMacroUI(S, R); /* MACRO:CALC */
   return R;
 }
 
@@ -36461,6 +37304,10 @@ function selBox(vals, cur, onchg) {
 }
 
 // ── PASO 0: uso ──────────────────────────────────────────────────────────────
+function elegirUso(S, u, macro) {
+  if (S.usoId !== u.id) { S.usoId = u.id; S.o = opcionesPorDefecto(u); S.cargas = cargasDeUso(S); S.res = null; S.clima = REC.climaPorDefecto(u.id, S.o); if (u.kFijo) S.base = 'ninguna'; }
+  if (!!S.macro !== !!macro) { S.macro = !!macro; S.res = null; }
+}
 function pintarUso(S, box, ir) {
   box.appendChild(el('h2', { class: 'ls-h2' }, ['¿Para qué se va a usar la losa?']));
   box.appendChild(el('p', { class: 'ls-p' }, ['Escoja el uso final. El programa carga los equipos y pesos típicos de ese uso; usted puede cambiar cualquier valor en el paso siguiente.']));
@@ -36477,12 +37324,13 @@ function pintarUso(S, box, ir) {
         box.insertBefore(av, g); try { av.scrollIntoView({ block: 'nearest' }); } catch (e) {}
         return;
       }
-      if (S.usoId !== u.id) { S.usoId = u.id; S.o = opcionesPorDefecto(u); S.cargas = cargasDeUso(S); S.res = null; S.clima = REC.climaPorDefecto(u.id, S.o); if (u.kFijo) S.base = 'ninguna'; }
+      elegirUso(S, u, false); /* MACRO:USO */
       ir(1);
     });
     g.appendChild(c);
   });
   box.appendChild(g);
+  if (!WEB) pintarTarjetasMacro(S, box, g, ir, elegirUso); /* MACRO:TARJ */
 }
 
 // ── PASO 1: datos del uso y cargas ───────────────────────────────────────────
@@ -36543,7 +37391,8 @@ function pintarDatos(S, box, ir) {
   gp.appendChild(campo('Nombre del proyecto', inpTxt(S.proy.nombre, function (v) { S.proy.nombre = v; })));
   gp.appendChild(campo('Cliente', inpTxt(S.proy.cliente, function (v) { S.proy.cliente = v; })));
   gp.appendChild(campo('Ubicación', inpTxt(S.proy.ubicacion, function (v) { S.proy.ubicacion = v; })));
-  gp.appendChild(campo('Área de la losa (m²)', inpNum(S.proy.area, function (v) { S.proy.area = v; }), 'Sirve para calcular la fibra necesaria'));
+  if (S.macro) gp.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Área de la losa']), el('div', { class: 'ls-info' }, ['En la macro-losa el área sale del largo y el ancho de la nave (paso 3).'])])); /* MACRO:AREA */
+  else gp.appendChild(campo('Área de la losa (m²)', inpNum(S.proy.area, function (v) { S.proy.area = v; }), 'Sirve para calcular la fibra necesaria'));
   bp.appendChild(gp); box.appendChild(bp);
 
   // opciones del uso
@@ -36615,6 +37464,7 @@ function pintarTerreno(S, box, ir) {
   box.appendChild(el('h2', { class: 'ls-h2' }, ['Terreno, clima y concreto']));
   box.appendChild(el('p', { class: 'ls-p' }, ['Todos los valores de este paso vienen precargados con los típicos recomendados: puede calcular sin cambiar nada. Si no conoce el suelo, deje «No lo sé»: el programa usa un valor del lado seguro y lo dice en el informe.']));
 
+  if (S.macro && !WEB) pintarMacroCaja(S, box); /* MACRO:CAJA */
   var bs = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Suelo de apoyo'])]);
   var gs = el('div', { class: 'ls-grid' });
   var info = el('div', { class: 'ls-info' });
@@ -36654,9 +37504,9 @@ function pintarTerreno(S, box, ir) {
 
   var bg = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Geometría, criterio y parámetros'])]);
   var gg = el('div', { class: 'ls-grid' });
-  gg.appendChild(campo('Tamaño del paño · lado 1 (m) — opcional', inpNum(S.panelLx, function (v) { S.panelLx = v; }),
+  if (!S.macro) gg.appendChild(campo('Tamaño del paño · lado 1 (m) — opcional', inpNum(S.panelLx, function (v) { S.panelLx = v; }),
     'El «paño» es cada cuadro en que queda dividida la losa por las juntas que se cortan con sierra. No es el tamaño de la bodega: es el tamaño de cada cuadro. Si lo deja vacío, el programa usa el paño que él mismo recomienda, que es lo normal.'));
-  gg.appendChild(campo('Tamaño del paño · lado 2 (m) — opcional', inpNum(S.panelLy, function (v) { S.panelLy = v; }),
+  if (!S.macro) gg.appendChild(campo('Tamaño del paño · lado 2 (m) — opcional', inpNum(S.panelLy, function (v) { S.panelLy = v; }),
     'La otra medida del cuadro. Conviene que los dos lados sean parecidos: un paño largo y angosto se fisura.'));
   gg.appendChild(campo('Transferencia de carga en borde (%)', inpNum(S.borde, function (v) { S.borde = Math.min(35, Math.max(0, num(v, 15))); }),
     'Cuando una carga cae justo al lado de una junta, parte del peso lo puede tomar el paño vecino si la junta lleva dovelas, que son las varillas o placas que cruzan la junta. Esto dice cuánto ayuda el paño vecino: 0 % si no va a poner dovelas, 15 a 25 % con placa diamante, 20 a 35 % con dovela redonda. Valor típico recomendado: 15 %.'));
@@ -36693,6 +37543,7 @@ function pintarResultados(S, box, ir, nuevo) {
     box.appendChild(el('div', { class: 'ls-warn ls-bad', html: '<b>Con estas cargas no hay un espesor de hasta ' + M.H_MAX + ' cm que cumpla.</b> Reduzca la carga por apoyo, aumente la placa de apoyo o el f’c, o mejore el suelo (base granular). No se extrapola fuera del rango.' }));
     box.appendChild(navRes(ir, nuevo)); return;
   }
+  if (S.macro && R.macro) return pintarMacroResultados(S, box, ir, nuevo); /* MACRO:RES */
   var ev = R.ev, ff = R.fibra;
   if (S.aviso) box.appendChild(el('div', { class: 'ls-info' }, [S.aviso]));
   box.appendChild(barraAcciones(S, ir, nuevo));
@@ -36832,7 +37683,7 @@ function resumenRecs(R) {
   var sl = g.sello.filas[0]; out.push('sello ' + (/Semirr/.test(sl.v) ? 'semirrígido en el recorrido de montacargas' : 'flexible'));
   return out.join('; ');
 }
-function resumenGuardar(S, R) { return { h_cm: R.d.h_rec, fc: R.rec.fc, dosis: R.d.dosis_rec, fibra_kg: R.fibra.kg, area: R.area, cumple: !!(R.ev.okA && (R.criterio === 'tr34' || R.ev.okB)) }; }
+function resumenGuardar(S, R) { if (S.macro && R.macro && !R.macro.error) return { h_cm: R.macro.M.h, fc: R.rec.fc, dosis: R.macro.M.dosis, fibra_kg: R.macro.M.cant.fibra_kg, area: R.macro.M.cant.area, cumple: !!R.macro.cumple, macro: true, juntas: R.macro.M.nJx + R.macro.M.nJy }; return { h_cm: R.d.h_rec, fc: R.rec.fc, dosis: R.d.dosis_rec, fibra_kg: R.fibra.kg, area: R.area, cumple: !!(R.ev.okA && (R.criterio === 'tr34' || R.ev.okB)) }; }
 
 function guardarProyecto(S) {
   if (S._guardando) return S._guardando;          // reutiliza la operación en vuelo
@@ -36855,7 +37706,7 @@ async function abrirInforme(S, w) {
     if (!WEB) await guardarProyecto(S);   // en el ERP el informe y lo guardado quedan iguales
     else if (!S.ref) S.ref = refLocal();
     var ses = (typeof SESSION !== 'undefined' && SESSION) ? SESSION : null;
-    var html = INF.html({ S: S, R: S.res, ref: S.ref, fecha: new Date().toLocaleDateString('es-CR'), autor: ses && ses.nombre, logo: (typeof LOSAS_LOGO_B64 !== 'undefined' ? LOSAS_LOGO_B64 : (typeof FACT_LOGO_B64 !== 'undefined' ? FACT_LOGO_B64 : '')), formulas: true, resumenRecs: resumenRecs(S.res) });
+    var html = (S.macro && S.res.macro && !S.res.macro.error) ? MINF.html(ctxMacro(S, S.res)) : INF.html({ S: S, R: S.res, ref: S.ref, fecha: new Date().toLocaleDateString('es-CR'), autor: ses && ses.nombre, logo: (typeof LOSAS_LOGO_B64 !== 'undefined' ? LOSAS_LOGO_B64 : (typeof FACT_LOGO_B64 !== 'undefined' ? FACT_LOGO_B64 : '')), formulas: true, resumenRecs: resumenRecs(S.res) });
     w.document.open(); w.document.write(html); w.document.close();
     setTimeout(function () { try { w.focus(); w.print(); } catch (e) {} }, 700);
   } catch (e) { console.error(e); try { w.close(); } catch (e2) {} toastLs('No se pudo generar el informe: ' + (e.message || e)); }
@@ -36909,9 +37760,9 @@ function abrirProyecto(S, p, ir) {
   if (!usoActual(S)) { toastLs('El uso de este proyecto ya no existe en el programa.'); S.step = 0; return ir(0); }
   S.res = calcular(S);
   if (S.res && !S.res.error && !S.res.d.no_cumple && p.resumen) {
-    var r = S.res, q = p.resumen;
-    if (q.h_cm !== r.d.h_rec || q.fc !== r.rec.fc || q.dosis !== r.d.dosis_rec)
-      S.aviso = 'Este proyecto se guardó con ' + fmt(q.h_cm, 1) + ' cm, f’c ' + q.fc + ' y ' + fmt(q.dosis, 1) + ' kg/m³. Con la versión actual del programa el resultado es ' + fmt(r.d.h_rec, 1) + ' cm, f’c ' + r.rec.fc + ' y ' + fmt(r.d.dosis_rec, 1) + ' kg/m³. Revise antes de usar el informe anterior.';
+    var r = S.res, q = p.resumen, mm = (S.macro && r.macro && !r.macro.error) ? r.macro.M : null, rh = mm ? mm.h : r.d.h_rec, rdo = mm ? mm.dosis : r.d.dosis_rec; /* MACRO:ABRIR */
+    if (q.h_cm !== rh || q.fc !== r.rec.fc || q.dosis !== rdo)
+      S.aviso = 'Este proyecto se guardó con ' + fmt(q.h_cm, 1) + ' cm, f’c ' + q.fc + ' y ' + fmt(q.dosis, 1) + ' kg/m³. Con la versión actual del programa el resultado es ' + fmt(rh, 1) + ' cm, f’c ' + r.rec.fc + ' y ' + fmt(rdo, 1) + ' kg/m³. Revise antes de usar el informe anterior.';
   }
   ir(3);
 }
@@ -36927,7 +37778,7 @@ function pintarProyectos(S, box, ir, nuevo) {
     var filas = arr.map(function (p) {
       var f = p.actualizado ? new Date(p.actualizado).toLocaleDateString('es-CR') : '';
       var uso = C.USOS.filter(function (u) { return u.id === p.uso; })[0];
-      return { p: p, html: '<td><b>' + esc(p.ref) + '</b></td><td>' + esc(p.nombre) + '</td><td>' + esc(p.cliente) + '</td><td>' + esc(uso ? uso.nombre : p.uso) + '</td><td>' + (p.resumen ? fmt(p.resumen.h_cm, 1) + ' cm · f’c ' + p.resumen.fc : '') + '</td><td>' + esc(p.usuario_nombre || '') + '</td><td>' + f + '</td>' };
+      return { p: p, html: '<td><b>' + esc(p.ref) + '</b></td><td>' + esc(p.nombre) + '</td><td>' + esc(p.cliente) + '</td><td>' + (p.estado && p.estado.macro ? 'Macro-losa · ' : '') + esc(uso ? uso.nombre : p.uso) + '</td><td>' + (p.resumen ? fmt(p.resumen.h_cm, 1) + ' cm · f’c ' + p.resumen.fc : '') + '</td><td>' + esc(p.usuario_nombre || '') + '</td><td>' + f + '</td>' };
     });
     var tb = el('table', { class: 'ls-tb', html: '<tr><th>Ref.</th><th>Proyecto</th><th>Cliente</th><th>Uso</th><th>Resultado</th><th>Usuario</th><th>Fecha</th><th></th></tr>' });
     filas.forEach(function (x) {
@@ -36943,6 +37794,331 @@ function pintarProyectos(S, box, ir, nuevo) {
     lista.appendChild(el('div', { style: 'overflow-x:auto' }, [tb]));
   }).catch(function (e) { console.error(e); lista.innerHTML = ''; lista.appendChild(el('div', { class: 'ls-warn ls-bad' }, ['No se pudo leer la lista: ' + (e.message || e)])); });
 }
+
+/* MACRO:UI:INICIO */
+// ══════════════════════════════════════════════════════════════════════════════
+// MACRO-LOSA · pantalla (se inyecta DENTRO del IIFE de la pantalla de Diseño de losas;
+// usa sus ayudas: el, campo, inpNum, selBox, fmt, num, esc, clone, M, C, WEB, toastLs)
+// ══════════════════════════════════════════════════════════════════════════════
+var MM = window.MACRO_MOTOR, MINF = window.MACRO_INF;
+var USOS_MACRO = ['taller_industrial', 'bodega_almacen', 'bodega_produccion', 'bodega_alquiler'];
+var MACRO_CSS = [
+  '.ls .mc-bar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}',
+  '.ls .mc-bar button.on{background:#C8102E;color:#fff;border-color:#C8102E}',
+  '.ls .mc-hint{font-size:calc(12px*var(--fs,1));color:#666;margin:4px 0 6px}',
+  '.ls .mc-svg{width:100%;height:auto;background:#fff;border:1px solid #ddd;border-radius:8px;touch-action:none;user-select:none}',
+  '.ls .mc-chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}',
+  '.ls .mc-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #ccc;border-radius:14px;padding:2px 4px 2px 10px;font-size:calc(12px*var(--fs,1));background:#fafafa}',
+  '.ls .mc-chip button{border:0;background:#eee;border-radius:50%;width:20px;height:20px;cursor:pointer;line-height:1;font-size:calc(12px*var(--fs,1))}',
+  '.ls .mc-sis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:6px 0}',
+  '.ls .mc-sis .it{border:2px solid #ddd;border-radius:10px;padding:10px;cursor:pointer;background:#fff}',
+  '.ls .mc-sis .it.on{border-color:#C8102E;background:#fff7f8}',
+  '.ls .mc-sis .it b{display:block;margin-bottom:3px}',
+  '.ls .mc-sis .it .d{font-size:calc(12px*var(--fs,1));color:#666;line-height:1.35}',
+  '.ls .mc-plano{overflow:auto;border:1px solid #ddd;border-radius:8px;background:#fff;margin:8px 0}',
+  '.ls .mc-plano svg{display:block;min-width:900px;width:100%;height:auto}',
+  '.ls .mc-sub{font-weight:700;margin:12px 0 4px}'
+].join('');
+
+function r2m(x) { return Math.round(x * 100) / 100; }
+function parseEjes(txt, L) {
+  var out = [];
+  String(txt || '').split(/[;,\s]+/).forEach(function (t) {
+    var v = parseFloat(String(t).replace(',', '.'));
+    if (isFinite(v) && v > 0.01 && v < L - 0.01) out.push(r2m(v));
+  });
+  out.sort(function (a, b) { return a - b; });
+  return out.filter(function (v, i, a) { return i === 0 || Math.abs(v - a[i - 1]) > 0.01; });
+}
+function letraEje(i) { var s = ''; i = Math.floor(i); do { s = String.fromCharCode(65 + i % 26) + s; i = Math.floor(i / 26) - 1; } while (i >= 0); return s; }
+function generarEjes(L, paso) { var a = []; if (!(paso > 0.5)) return a; for (var v = paso; v < L - 0.01; v += paso) a.push(r2m(v)); return a; }
+
+// ── tarjetas de macro-losa en el paso 1 ─────────────────────────────────────
+function pintarTarjetasMacro(S, box, g, ir, elegir) {
+  box.appendChild(el('h2', { class: 'ls-h2', style: 'margin-top:22px' }, ['Macro-losa (sin cortes de contracción)']));
+  box.appendChild(el('p', { class: 'ls-p' }, ['Piso de gran área, con fibra, sin juntas aserradas: solo juntas de construcción blindadas, cada 8 a 35 m según el sistema de control de retracción. Escoja el uso: usted indica los ejes principales y el programa recomienda la base, la distancia entre juntas, el tipo de junta blindada, la barrera, el espesor, el f’c y la Fibra Plus 54 mm, y genera el plano en PDF.']));
+  var g2 = el('div', { class: 'ls-cards' });
+  USOS_MACRO.forEach(function (id) {
+    var u = C.USOS.filter(function (x) { return x.id === id; })[0]; if (!u) return;
+    var c = el('div', { class: 'ls-card' + (S.macro && S.usoId === id ? ' on' : '') }, [
+      el('div', { class: 'ic' }, [u.icono]), el('div', { class: 'nm' }, ['Macro-losa · ' + u.nombre]), el('div', { class: 'ds' }, ['Mismos datos y cargas que «' + u.nombre + '», con la nave sin juntas de contracción.'])]);
+    c.addEventListener('click', function () { elegir(S, u, true); ir(1); });
+    g2.appendChild(c);
+  });
+  box.appendChild(g2);
+}
+
+// ── caja de nave, ejes y sistema (paso 3) ───────────────────────────────────
+function pintarMacroCaja(S, box) {
+  if (!document.getElementById('ls-css-macro')) { var st = document.createElement('style'); st.id = 'ls-css-macro'; st.textContent = MACRO_CSS; document.head.appendChild(st); }
+  var u = usoActual(S);
+  var bx = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Macro-losa · nave y ejes principales'])]);
+  bx.appendChild(el('p', { class: 'ls-p' }, ['Escriba las medidas de la nave y dónde van los ejes principales (los de las columnas o los marcos). El programa coloca las juntas de construcción sobre esos ejes cuando puede. No hace falta que dibuje todo: puede generar los ejes por separación fija y luego mover los que difieran.']));
+
+  var g = el('div', { class: 'ls-grid' });
+  var iLx = inpNum(S.mLx, function (v) { S.mLx = v; recortar(); redibujar(); }), iLy = inpNum(S.mLy, function (v) { S.mLy = v; recortar(); redibujar(); });
+  g.appendChild(campo('Largo de la nave (m) · eje horizontal', iLx, 'De muro a muro, medida en el sentido horizontal del dibujo'));
+  g.appendChild(campo('Ancho de la nave (m) · eje vertical', iLy, 'La otra medida de la nave'));
+  bx.appendChild(g);
+
+  var gg = el('div', { class: 'ls-grid', style: 'margin-top:8px' });
+  var sepX = '', sepY = '';
+  gg.appendChild(campo('Generar ejes verticales cada (m)', inpNum('', function (v) { sepX = v; }), 'Separación típica entre columnas, por ejemplo 10 o 12 m'));
+  gg.appendChild(campo('Generar ejes horizontales cada (m)', inpNum('', function (v) { sepY = v; }), 'Igual, en el otro sentido'));
+  bx.appendChild(gg);
+  bx.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () {
+    var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0);
+    if (num(sepX, 0) > 0) S.mEjesX = generarEjes(Lx, num(sepX, 0));
+    if (num(sepY, 0) > 0) S.mEjesY = generarEjes(Ly, num(sepY, 0));
+    S.mSinCol = []; sincronizar(); redibujar();
+  } }, ['Generar ejes']));
+
+  var gt = el('div', { class: 'ls-grid', style: 'margin-top:10px' });
+  var tX = el('input', { type: 'text', value: (S.mEjesX || []).join(', ') }), tY = el('input', { type: 'text', value: (S.mEjesY || []).join(', ') });
+  tX.addEventListener('change', function () { S.mEjesX = parseEjes(tX.value, num(S.mLx, 0)); sincronizar(); redibujar(); });
+  tY.addEventListener('change', function () { S.mEjesY = parseEjes(tY.value, num(S.mLy, 0)); sincronizar(); redibujar(); });
+  gt.appendChild(campo('Ejes verticales: distancia desde el borde izquierdo (m)', tX, 'Separe con comas, por ejemplo: 10, 20, 30. Los bordes de la nave ya son ejes'));
+  gt.appendChild(campo('Ejes horizontales: distancia desde el borde de arriba (m)', tY, 'Igual, de arriba hacia abajo'));
+  bx.appendChild(gt);
+
+  // lienzo
+  bx.appendChild(el('div', { class: 'mc-sub' }, ['Dibujo rápido (opcional)']));
+  var modo = 'mover';
+  var bar = el('div', { class: 'mc-bar' });
+  var hint = el('div', { class: 'mc-hint' });
+  var HINTS = { mover: 'Arrastre el círculo de un eje para moverlo. Doble clic (o doble toque) sobre el círculo lo borra.', addV: 'Haga clic dentro de la nave donde va un eje vertical nuevo.', addH: 'Haga clic dentro de la nave donde va un eje horizontal nuevo.', cols: 'Haga clic en un cruce de ejes para quitar o poner la columna.' };
+  var botones = {};
+  [['mover', '✋ Mover ejes'], ['addV', '＋ Eje vertical'], ['addH', '＋ Eje horizontal'], ['cols', '▣ Quitar / poner columnas']].forEach(function (m) {
+    var b = el('button', { class: 'ls-btn sec sm', onclick: function () { modo = m[0]; marcar(); } }, [m[1]]);
+    botones[m[0]] = b; bar.appendChild(b);
+  });
+  function marcar() { Object.keys(botones).forEach(function (k) { botones[k].className = 'ls-btn sec sm' + (modo === k ? ' on' : ''); }); hint.textContent = HINTS[modo]; }
+  bx.appendChild(bar); bx.appendChild(hint);
+  var holder = el('div', {});
+  bx.appendChild(holder);
+  var chips = el('div', { class: 'mc-chips' });
+  bx.appendChild(chips);
+
+  function recortar() { var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0); S.mEjesX = (S.mEjesX || []).filter(function (v) { return v > 0.01 && v < Lx - 0.01; }); S.mEjesY = (S.mEjesY || []).filter(function (v) { return v > 0.01 && v < Ly - 0.01; }); sincronizar(); }
+  function sincronizar() { tX.value = (S.mEjesX || []).join(', '); tY.value = (S.mEjesY || []).join(', '); }
+  function listaChips() {
+    chips.innerHTML = '';
+    (S.mEjesX || []).forEach(function (v, i) { chips.appendChild(el('span', { class: 'mc-chip' }, ['Eje ' + letraEje(i + 1) + ' · ' + fmt(v, 2) + ' m', el('button', { title: 'Quitar', onclick: function () { S.mEjesX.splice(i, 1); sincronizar(); redibujar(); } }, ['✕'])])); });
+    (S.mEjesY || []).forEach(function (v, i) { chips.appendChild(el('span', { class: 'mc-chip' }, ['Eje ' + (i + 2) + ' · ' + fmt(v, 2) + ' m', el('button', { title: 'Quitar', onclick: function () { S.mEjesY.splice(i, 1); sincronizar(); redibujar(); } }, ['✕'])])); });
+  }
+  function redibujar() { holder.innerHTML = ''; var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0); if (!(Lx > 0 && Ly > 0)) { holder.appendChild(el('div', { class: 'ls-warn' }, ['Escriba el largo y el ancho de la nave para ver el dibujo.'])); chips.innerHTML = ''; return; } dibujarLienzo(S, holder, function () { return modo; }, function () { sincronizar(); listaChips(); }); listaChips(); }
+
+  // columnas
+  bx.appendChild(el('div', { class: 'mc-sub' }, ['Columnas']));
+  var gc = el('div', { class: 'ls-grid' });
+  gc.appendChild(campo('Dónde hay columnas', selBox([{ v: 'todas', l: 'En todos los cruces de ejes' }, { v: 'perimetro', l: 'Solo en el perímetro (en los muros)' }, { v: 'interior', l: 'Solo en el interior' }, { v: 'ninguna', l: 'No hay columnas (marcos de luz libre)' }], S.mCols, function (v) { S.mCols = v; S.mSinCol = []; redibujar(); }), 'Cada columna lleva un rombo de aislamiento que se cuela después'));
+  gc.appendChild(campo('Columna · lado en el sentido horizontal (m)', inpNum(S.mColX, function (v) { S.mColX = v; }), 'Por ejemplo 0.40'));
+  gc.appendChild(campo('Columna · lado en el sentido vertical (m)', inpNum(S.mColY, function (v) { S.mColY = v; }), 'Por ejemplo 0.40'));
+  bx.appendChild(gc);
+
+  // sistema
+  bx.appendChild(el('div', { class: 'mc-sub' }, ['Sistema de control de retracción']));
+  bx.appendChild(el('p', { class: 'ls-p' }, ['Entre más control de retracción tenga la mezcla, mayor la distancia entre juntas y menos juntas blindadas (que son lo más caro). En el resultado verá lo que lograría cada sistema en su nave.']));
+  var cs = el('div', { class: 'mc-sis' });
+  var DESCS = { fibra: 'Fibra Plus 54 mm y mezcla de baja retracción. Es lo más sencillo; paños más cortos (≈ 8 a 15 m).', sra: 'Fibra más reductor de retracción (SRA). Paños de ≈ 15 a 24 m. Producto disponible en Costa Rica (SikaControl NS).', comp: 'Fibra más concreto de retracción compensada. Paños de hasta ≈ 35 m. Requiere estudio y confirmar el aditivo expansivo en Costa Rica.' };
+  ['fibra', 'sra', 'comp'].forEach(function (id) {
+    var s = MM.SISTEMAS[id];
+    var it = el('div', { class: 'it' + (S.mSistema === id ? ' on' : '') }, [el('b', {}, [s.corto + (id === 'sra' ? ' (recomendado)' : '')]), el('div', { class: 'd' }, [DESCS[id]])]);
+    it.addEventListener('click', function () { S.mSistema = id; Array.prototype.forEach.call(cs.children, function (x) { x.className = 'it'; }); it.className = 'it on'; });
+    cs.appendChild(it);
+  });
+  bx.appendChild(cs);
+
+  var go = el('div', { class: 'ls-grid' });
+  go.appendChild(campo('Método de colocación', selBox([{ v: 'laser', l: 'Regla láser (laser screed) · hasta 1 000 m² por día' }, { v: 'vibratoria', l: 'Regla vibratoria o manual · hasta 400 m² por día' }], S.mMetodo, function (v) { S.mMetodo = v; }), 'Decide el tamaño máximo de cada paño: debe poder colarse en un día'));
+  go.appendChild(campo('Capacidad de la junta del proveedor (kN/m) — opcional', inpNum(S.mCapJunta, function (v) { S.mCapJunta = v; }), 'Si ya tiene la ficha técnica de la junta a 20 mm de apertura, escríbala y el programa la compara con la requerida'));
+  var ckP = el('input', { type: 'checkbox' }); ckP.checked = !!S.mPesado; ckP.addEventListener('change', function () { S.mPesado = ckP.checked; });
+  go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Membrana más gruesa']), el('label', { class: 'ls-chk' }, [ckP, 'Equipo pesado sobre la membrana o base de piedra angular (15 mil)'])]));
+  if (u && u.id === 'bodega_produccion') {
+    var ckM = el('input', { type: 'checkbox' }); ckM.checked = !!S.mMont; ckM.addEventListener('change', function () { S.mMont = ckM.checked; });
+    go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Montacargas']), el('label', { class: 'ls-chk' }, [ckM, 'Circulan montacargas (planicidad más exigente)'])]));
+  }
+  bx.appendChild(go);
+  bx.appendChild(el('div', { class: 'ls-tipico-pie' }, ['Los valores de distancia entre juntas salen de la normativa (TR34 4ª ed., ACI 302.1R y ACI 360R) y de la literatura técnica; no existe una norma única para macro-losas con fibra sintética. El resultado explica de dónde sale cada número.']));
+  box.appendChild(bx);
+  marcar(); redibujar();
+}
+
+// ── lienzo SVG ───────────────────────────────────────────────────────────────
+function dibujarLienzo(S, holder, getModo, alCambiar) {
+  var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0);
+  var W = 820, m = 38, s = Math.min((W - 2 * m) / Lx, 430 / Ly), Wn = Lx * s, Hn = Ly * s, H = Hn + 2 * m;
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 ' + (Wn + 2 * m) + ' ' + H); svg.setAttribute('class', 'mc-svg');
+  holder.appendChild(svg);
+  var drag = null;
+  function X(v) { return m + v * s; } function Y(v) { return m + v * s; }
+  function nodos() {
+    var ex = [0].concat(S.mEjesX || [], [Lx]), ey = [0].concat(S.mEjesY || [], [Ly]), out = [];
+    ex.forEach(function (x, i) { ey.forEach(function (y, j) { out.push({ x: x, y: y, i: i, j: j, key: x + ',' + y, perim: i === 0 || j === 0 || i === ex.length - 1 || j === ey.length - 1 }); }); });
+    return out;
+  }
+  function hayColumna(n) {
+    var md = S.mCols; if (md === 'ninguna') return false;
+    if (md === 'perimetro' && !n.perim) return false; if (md === 'interior' && n.perim) return false;
+    return (S.mSinCol || []).indexOf(n.key) < 0;
+  }
+  function pintar() {
+    var o = [], ex = [0].concat(S.mEjesX || [], [Lx]), ey = [0].concat(S.mEjesY || [], [Ly]);
+    o.push('<rect x="' + m + '" y="' + m + '" width="' + Wn + '" height="' + Hn + '" fill="#f6f6f6" stroke="#333" stroke-width="2"/>');
+    ex.forEach(function (x, i) {
+      var inter = i > 0 && i < ex.length - 1;
+      o.push('<line x1="' + X(x) + '" y1="' + (m - 8) + '" x2="' + X(x) + '" y2="' + (m + Hn + 8) + '" stroke="#888" stroke-dasharray="7 3 2 3"/>');
+      o.push('<g data-k="v' + (i - 1) + '" style="' + (inter ? 'cursor:ew-resize' : '') + '"><circle cx="' + X(x) + '" cy="' + (m - 18) + '" r="11" fill="#fff" stroke="' + (inter ? '#C8102E' : '#555') + '" stroke-width="1.5"' + (inter ? ' data-k="v' + (i - 1) + '"' : '') + '/><text x="' + X(x) + '" y="' + (m - 14) + '" font-size="12" font-weight="700" text-anchor="middle" font-family="Arial" pointer-events="none">' + letraEje(i) + '</text></g>');
+      if (i > 0) o.push('<text x="' + ((X(x) + X(ex[i - 1])) / 2) + '" y="' + (m - 36 + 10) + '" font-size="10" fill="#666" text-anchor="middle" font-family="Arial" pointer-events="none">' + fmt(x - ex[i - 1], 2) + '</text>');
+    });
+    ey.forEach(function (y, j) {
+      var inter = j > 0 && j < ey.length - 1;
+      o.push('<line x1="' + (m - 8) + '" y1="' + Y(y) + '" x2="' + (m + Wn + 8) + '" y2="' + Y(y) + '" stroke="#888" stroke-dasharray="7 3 2 3"/>');
+      o.push('<g><circle cx="' + (m - 18) + '" cy="' + Y(y) + '" r="11" fill="#fff" stroke="' + (inter ? '#C8102E' : '#555') + '" stroke-width="1.5"' + (inter ? ' data-k="h' + (j - 1) + '" style="cursor:ns-resize"' : '') + '/><text x="' + (m - 18) + '" y="' + (Y(y) + 4) + '" font-size="12" font-weight="700" text-anchor="middle" font-family="Arial" pointer-events="none">' + (j + 1) + '</text></g>');
+    });
+    nodos().forEach(function (n) {
+      var c = hayColumna(n), q = Math.max(4, (num(S.mColX, 0.4) * s)), cx = X(n.x), cy = Y(n.y);
+      o.push('<rect data-n="' + n.key + '" x="' + (cx - Math.max(q, 7) / 2) + '" y="' + (cy - Math.max(q, 7) / 2) + '" width="' + Math.max(q, 7) + '" height="' + Math.max(q, 7) + '" fill="' + (c ? '#3D3D3D' : '#fff') + '" stroke="#3D3D3D" stroke-width="1" ' + (c ? '' : 'stroke-dasharray="2 2" ') + 'style="cursor:' + (getModo() === 'cols' ? 'pointer' : 'default') + '"/>');
+    });
+    o.push('<text x="' + (m + Wn / 2) + '" y="' + (H - 8) + '" font-size="11" fill="#888" text-anchor="middle" font-family="Arial">Nave ' + fmt(Lx, 1) + ' × ' + fmt(Ly, 1) + ' m</text>');
+    svg.innerHTML = o.join('');
+  }
+  function pos(e) { var r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal; return { x: (e.clientX - r.left) * vb.width / r.width, y: (e.clientY - r.top) * vb.height / r.height }; }
+  function snap(v, L) { return Math.min(L - 0.5, Math.max(0.5, Math.round(v * 2) / 2)); }
+  function limpiar() {
+    S.mEjesX = S.mEjesX.map(r2m).sort(function (a, b) { return a - b; }).filter(function (v, i, a) { return v > 0.01 && v < Lx - 0.01 && (i === 0 || Math.abs(v - a[i - 1]) > 0.01); });
+    S.mEjesY = S.mEjesY.map(r2m).sort(function (a, b) { return a - b; }).filter(function (v, i, a) { return v > 0.01 && v < Ly - 0.01 && (i === 0 || Math.abs(v - a[i - 1]) > 0.01); });
+  }
+  svg.addEventListener('pointerdown', function (e) {
+    var t = e.target, k = t.getAttribute && t.getAttribute('data-k'), n = t.getAttribute && t.getAttribute('data-n'), md = getModo(), p = pos(e);
+    S.mEjesX = S.mEjesX || []; S.mEjesY = S.mEjesY || [];
+    if (md === 'mover' && k) { drag = { t: k[0], i: +k.slice(1) }; try { svg.setPointerCapture(e.pointerId); } catch (x) {} e.preventDefault(); return; }
+    if (md === 'cols' && n) { S.mSinCol = S.mSinCol || []; var ix = S.mSinCol.indexOf(n); if (ix >= 0) S.mSinCol.splice(ix, 1); else S.mSinCol.push(n); pintar(); return; }
+    if (md === 'addV') { var vx = (p.x - m) / s; if (vx > 0.4 && vx < Lx - 0.4) { S.mEjesX.push(snap(vx, Lx)); limpiar(); pintar(); alCambiar(); } return; }
+    if (md === 'addH') { var vy = (p.y - m) / s; if (vy > 0.4 && vy < Ly - 0.4) { S.mEjesY.push(snap(vy, Ly)); limpiar(); pintar(); alCambiar(); } return; }
+  });
+  svg.addEventListener('pointermove', function (e) {
+    if (!drag) return; var p = pos(e);
+    if (drag.t === 'v') S.mEjesX[drag.i] = snap((p.x - m) / s, Lx); else S.mEjesY[drag.i] = snap((p.y - m) / s, Ly);
+    pintar();
+  });
+  function soltar() { if (!drag) return; drag = null; limpiar(); pintar(); alCambiar(); }
+  svg.addEventListener('pointerup', soltar); svg.addEventListener('pointercancel', soltar);
+  svg.addEventListener('dblclick', function (e) {
+    var k = e.target.getAttribute && e.target.getAttribute('data-k'); if (!k || getModo() !== 'mover') return;
+    if (k[0] === 'v') S.mEjesX.splice(+k.slice(1), 1); else S.mEjesY.splice(+k.slice(1), 1);
+    pintar(); alCambiar();
+  });
+  pintar();
+}
+
+// ── cálculo (se llama desde calcular(S) cuando S.macro) ──────────────────────
+function calcularMacroUI(S, R) {
+  var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0);
+  if (!(Lx > 0 && Ly > 0)) return { error: 'Escriba el largo y el ancho de la nave en el paso «Terreno y concreto».' };
+  var d = R.d, sis = S.mSistema || 'sra';
+  var dm = MM.dosisMacro(sis, d.dosis_rec);
+  var hMin = MM.techoSistema(sis, dm.dosis) > 20 ? 17 : 15;
+  var h = Math.max(d.h_rec, hMin);
+  var e2 = Object.assign({}, R.e, { h_cm: h, dosis: dm.dosis });
+  var ev2 = M.evaluar(e2);
+  var Pd = 0;
+  R.cargas.forEach(function (c) {
+    var kg = c.tipo === 'rack' ? c.P_kg * c.gF : c.tipo === 'rueda' ? c.W_kg * c.gF * (c.impacto || 1) : 0;
+    Pd = Math.max(Pd, kg * 9.80665 / 1000);
+  });
+  var inp = { Lx: Lx, Ly: Ly, ejesX: (S.mEjesX || []).slice(), ejesY: (S.mEjesY || []).slice(), sistema: sis, metodo: S.mMetodo || 'laser', columnasModo: S.mCols || 'todas',
+    colX: num(S.mColX, 0.4), colY: num(S.mColY, 0.4), sinColumna: (S.mSinCol || []).slice(), h_cm: h, fc: R.rec.fc, dosisCargas: d.dosis_rec, ell_mm: ev2.props.ell, Pd_kN: Pd,
+    uso: S.usoId, o: S.o, clima: S.clima, pisoSensible: !!S.pisoSensible, pesado: !!S.mPesado, montacargas: !!S.mMont, capJunta_kNm: num(S.mCapJunta, 0), fR: M.interpolarFrc(dm.dosis) };
+  var res = MM.calcularMacro(inp);
+  if (res.error) return { error: res.error };
+  if (S.clima && S.clima !== 'interior') res.avisos.push('La macro-losa se piensa para interior cubierto. Con sol, lluvia, zona costera o frío el movimiento térmico y de humedad cambia la apertura de las juntas: requiere un estudio específico del ingeniero.');
+  var okCh = ev2.chequeos.every(function (c) { return c.ok; });
+  if (!okCh) res.avisos.push('Alguna carga no cumple con el espesor y la dosis finales de la macro-losa (ver «Verificación por carga»).');
+  return { M: res, ev: ev2, inp: inp, cumple: okCh && res.okArrastre };
+}
+
+// ── resultados (en el paso 4) ────────────────────────────────────────────────
+function ctxMacro(S, R) {
+  var ses = (typeof SESSION !== 'undefined' && SESSION) ? SESSION : null;
+  return { M: R.macro.M, S: { ejesX: S.mEjesX || [], ejesY: S.mEjesY || [], proy: S.proy, pisoSensible: !!S.pisoSensible }, R: Object.assign({}, R, { ev: R.macro.ev }),
+    ref: S.ref || (WEB ? refLocal() : 'SIN GUARDAR'), fecha: new Date().toLocaleDateString('es-CR'), autor: ses && ses.nombre,
+    logo: (typeof LOSAS_LOGO_B64 !== 'undefined' ? LOSAS_LOGO_B64 : (typeof FACT_LOGO_B64 !== 'undefined' ? FACT_LOGO_B64 : '')) };
+}
+function pintarMacroResultados(S, box, ir, nuevo) {
+  var R = S.res, MR = R.macro, u = R.u;
+  box.appendChild(el('p', { class: 'ls-p' }, ['Macro-losa · ' + u.nombre + ' · sin cortes aserrados de contracción']));
+  if (MR.error) { box.appendChild(el('div', { class: 'ls-warn ls-bad' }, [MR.error])); box.appendChild(navRes(ir, nuevo)); return; }
+  var X = MR.M;
+  if (S.aviso) box.appendChild(el('div', { class: 'ls-info' }, [S.aviso]));
+  box.appendChild(barraAcciones(S, ir, nuevo));
+
+  var k = el('div', { class: 'ls-kpis' });
+  function kpi(v, l, s) { k.appendChild(el('div', { class: 'ls-kpi' }, [el('div', { class: 'v' }, [v]), el('div', { class: 'l' }, [l]), s ? el('div', { class: 's' }, [s]) : null])); }
+  kpi(fmt(X.h, 1) + ' cm', 'Espesor de la macro-losa', 'Por cargas: ' + fmt(R.d.h_rec, 1) + ' cm');
+  kpi(R.rec.fc + ' kg/cm²', 'Resistencia del concreto f’c', 'a/c ≤ 0.50');
+  kpi(fmt(X.dosis, 1) + ' kg/m³', 'Fibra Plus 54 mm', fmt(X.cant.fibra_kg, 0) + ' kg · ' + X.cant.sacos10 + ' sacos de 10 kg + ' + X.cant.bolsas1 + ' bolsas de 1 kg');
+  kpi(fmt(X.Lmax, 1) + ' m', 'Distancia máxima entre juntas', X.panos.length + ' paños · el mayor de ' + fmt(X.maxL, 1) + ' m');
+  kpi(String(X.nJx + X.nJy), 'Juntas de construcción blindadas', fmt(X.cant.juntas_m, 0) + ' m de junta');
+  box.appendChild(k);
+  box.appendChild(el('div', { class: 'ls-info', html: '<b>Sistema:</b> ' + esc(X.sistema.nombre) + '. Retracción neta de diseño ' + X.sistema.eps + ' µε (' + fmt(X.sistema.eps / 1000, 2) + ' mm/m); apertura esperada de las juntas <b>' + fmt(X.aperturaMax, 1) + ' mm</b> (límite ' + X.in.aperturaAdm + ' mm). <b>No se asierran cortes de contracción.</b>' }));
+  X.avisos.forEach(function (a) { box.appendChild(el('div', { class: 'ls-warn' }, [a])); });
+  if (!MR.cumple) box.appendChild(el('div', { class: 'ls-warn ls-bad' }, ['Alguno de los chequeos no cumple: revise los avisos y los datos antes de usar este resultado.']));
+
+  // plano en pantalla
+  var ctx = ctxMacro(S, R);
+  var bp = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Plano: planta de juntas y distribución'])]);
+  bp.appendChild(el('div', { class: 'mc-plano', html: MINF.lamina1(ctx) }));
+  bp.appendChild(el('div', { class: 'ls-nota' }, ['El PDF trae esta hoja y la de detalles en Tabloide 11×17 pulg, más el informe en hojas carta A4.']));
+  box.appendChild(bp);
+  var bd = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Detalles constructivos'])]);
+  bd.appendChild(el('div', { class: 'mc-plano', html: MINF.lamina2(ctx) }));
+  box.appendChild(bd);
+
+  // comparación de sistemas
+  var bc = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Qué lograría cada sistema en esta nave'])]);
+  var tb = el('table', { class: 'ls-tb', html: '<tr><th>Sistema</th><th>Dosis</th><th>Distancia máx.</th><th>Juntas</th><th>Paños</th><th>Apertura</th><th></th></tr>' });
+  X.comparacion.forEach(function (c) {
+    var tr = el('tr', { html: '<td>' + (c.id === X.sistema.id ? '<b>' + esc(c.nombre) + ' ◄</b>' : esc(c.nombre)) + (c.especial ? ' <small>(requiere estudio)</small>' : '') + '</td><td>' + fmt(c.dosis, 1) + ' kg/m³</td><td>' + fmt(c.Lmax, 1) + ' m</td><td>' + c.juntas + '</td><td>' + c.panos + '</td><td>' + fmt(c.apertura, 1) + ' mm</td>' });
+    var td = el('td', {});
+    if (c.id !== X.sistema.id) td.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () { S.mSistema = c.id; S.res = calcular(S); ir(3); } }, ['Usar este']));
+    tr.appendChild(td); tb.appendChild(tr);
+  });
+  bc.appendChild(el('div', { style: 'overflow-x:auto' }, [tb]));
+  box.appendChild(bc);
+
+  // verificación por carga
+  var rows = MR.ev.chequeos.map(function (c) {
+    var dm = c.unidad === 'MPa' && c.motor === 'A' ? fmt(c.demanda * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.demanda, 2) + ' ' + c.unidad;
+    var cp = c.unidad === 'MPa' && c.motor === 'A' ? fmt(c.capacidad * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.capacidad, 2) + ' ' + c.unidad;
+    return '<tr><td>' + esc(c.carga) + '</td><td>' + c.motor + ' · ' + c.ubic + '</td><td>' + dm + '</td><td>' + cp + '</td><td>' + fmt(c.uso * 100, 0) + ' %</td><td class="' + (c.ok ? 'ls-ok' : 'ls-no') + '">' + (c.ok ? 'Cumple' : 'No cumple') + '</td></tr>';
+  }).join('');
+  var bv = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Verificación por carga con el espesor final'])]);
+  bv.appendChild(el('div', { style: 'overflow-x:auto', html: '<table class="ls-tb"><tr><th>Carga</th><th>Método · ubicación</th><th>Demanda</th><th>Capacidad</th><th>Uso</th><th></th></tr>' + rows + '</table>' }));
+  box.appendChild(bv);
+
+  // recomendaciones
+  X.grupos.forEach(function (g) {
+    var bg = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, [g.titulo])]);
+    bg.appendChild(el('div', { style: 'overflow-x:auto', html: '<table class="ls-tb"><tr><th>Tema</th><th>Recomendación</th><th>Norma / fuente</th><th></th></tr>' + g.filas.map(function (f) {
+      return '<tr><td><b>' + esc(f.t) + '</b></td><td>' + esc(f.v) + (f.nota ? '<div class="ls-nota">' + esc(f.nota) + '</div>' : '') + '</td><td>' + esc(f.norma) + '</td><td title="' + esc(MM.ESTADO_TXT[f.estado] || '') + '"><b>' + esc(f.estado) + '</b></td></tr>';
+    }).join('') + '</table>' }));
+    box.appendChild(bg);
+  });
+  box.appendChild(el('div', { class: 'ls-leyenda' }, ['V verificado en norma · S fuente secundaria (fabricante, universidad, artículo) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.']));
+
+  // juntas del mercado
+  var bj = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Juntas blindadas disponibles en el mercado local'])]);
+  bj.appendChild(el('div', { style: 'overflow-x:auto', html: '<table class="ls-tb"><tr><th>Tipo</th><th>Proveedor</th><th>Uso</th></tr>' + X.juntasCat.map(function (j) { return '<tr><td><b>' + esc(j.nombre) + '</b></td><td>' + esc(j.prov) + '</td><td>' + esc(j.uso) + '</td></tr>'; }).join('') + '</table>' }));
+  bj.appendChild(el('div', { class: 'ls-nota' }, ['CONCRE no vende estas juntas. El modelo, el espesor del acero y la capacidad a la apertura de diseño deben confirmarse con la ficha técnica del proveedor.']));
+  box.appendChild(bj);
+
+  box.appendChild(el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Lo que este cálculo NO revisa']), el('ul', { class: 'ls-p', html: MINF.NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') })]));
+  box.appendChild(el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Descargo de responsabilidad · sujeto a revisión del profesional']), el('div', { class: 'ls-desc' }, [MINF.DESCARGO])]));
+  box.appendChild(navRes(ir, nuevo));
+}
+/* MACRO:UI:FIN */
 
 // ── arranque ─────────────────────────────────────────────────────────────────
 function initLosas(rootId) {
