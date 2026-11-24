@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261120100000';
+var APP_BUILD='20261124110000';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -36263,61 +36263,60 @@ root.LOSAS_NUBE = API;
 // la mecánica de la losa (retracción, fricción, fibra, apertura de la junta) y el
 // rendimiento de colada; no el ancho de una franja.
 //
+// Las juntas van SOLO sobre los ejes principales (nunca entre ejes). El programa elige
+// cuáles ejes llevan junta; el usuario puede moverlas de un eje a otro en el dibujo.
+//
 // Etiquetas de cada dato (igual que el resto del programa):
-//   V verificado en norma · S fuente secundaria (fabricante, universidad, artículo)
+//   V verificado en norma · S fuente técnica secundaria (no es norma)
 //   D derivado por fórmula · E criterio de CONCRE (no es cita de norma)
-// Cada regla lleva el nombre de la norma o fuente; el detalle está en
-// claude/macrolosas-investigacion-2026-11-20.md del proyecto.
+// El informe NO nombra empresas ni marcas de terceros: solo normas y guías técnicas.
 // ══════════════════════════════════════════════════════════════════════════════
 (function (root) {
 'use strict';
 
 // ── Constantes de diseño ─────────────────────────────────────────────────────
 const L_TOPE = 35;            // m · TR34 4ª ed. (coladas hasta ~35 m sin juntas aserradas) — fuente secundaria
-const APERTURA_ADM = 20;      // mm · TR34 (3ª ed. §8.10.3 «las juntas abrirán hasta 20 mm»; 4ª ed. ~18 mm); ficha Permaban a 20 mm
+const APERTURA_ADM = 20;      // mm · TR34 (3ª ed. §8.10.3 «las juntas abrirán hasta 20 mm»; 4ª ed. ~18 mm)
 const GAMMA_C = 24;           // kN/m³ concreto
 const H_MIN_MACRO = 15;       // cm · TR34 4ª ed. espesor mínimo de diseño
-const H_MIN_MACRO_GRANDE = 17;// cm · macro-paños > 20 m (BLK CR, espesor desde 170 mm) — fabricante
+const H_MIN_MACRO_GRANDE = 17;// cm · macro-paños > 20 m (criterio de CONCRE; la literatura técnica parte de 170 mm)
 const L_ESPESOR_GRANDE = 20;  // m
+const DOSIS_MIN = 2.3;        // kg/m³ · límite inferior de la tabla EN 14651 de Fibra Plus 54 mm
 const ASPECTO_MAX = 1.5;      // ACI 302.1R / TR34
 const DOSIS_MAX = 6.0;        // kg/m³ · límite de la tabla EN 14651 de Fibra Plus 54 mm
 const T_ROMBO = 0.15;         // m · holgura libre mínima alrededor de la columna para colar y vibrar el rombo (criterio CONCRE)
 
 // Sistemas de control de retracción (lo que se le pide a la mezcla además de la fibra)
-//   eps: retracción neta que abre las juntas (µε).  Base 500 µε = 0.5 mm/m (TR34 4ª ed. vía MGSI; PiSA midió 480–500).
-//   SRA reduce 25–50 % (TR34 3ª ed. §11.3.5): se toma 25 %.  Compensada: expansión mínima 0.03 % (BLK CR).
+//   eps: retracción neta que abre las juntas (µε).  Base 500 µε = 0.5 mm/m (TR34 4ª ed.; mediciones en obra 480–500).
+//   SRA reduce 25–50 % (TR34 3ª ed. §11.3.5): se toma 25 %.  Compensada: expansión mínima 0.03 %.
 const SISTEMAS = {
   fibra: { id: 'fibra', nombre: 'Fibra Plus 54 mm y mezcla de baja retracción', corto: 'Solo fibra', eps: 500, dosisBase: 5.0, mu: 0.5, capas: 2,
-    techo: [3, 8, 5, 15], fuente: 'Pombo, Rev. Hormigón 2023: macrofibra sintética 3–5 kg/m³ → 8–15 m', estado: 'S',
+    techo: [3, 8, 5, 15], fuente: 'Literatura técnica sobre macrofibra sintética: 3–5 kg/m³ → paños de 8 a 15 m', estado: 'S',
     mezcla: 'Relación a/c ≤ 0.50; revenimiento 150 ± 25 mm con aditivo; retracción libre máx. 600 µε (ASTM C157).' },
   sra:   { id: 'sra', nombre: 'Fibra Plus 54 mm + reductor de retracción (SRA)', corto: 'Fibra + SRA', eps: 375, dosisBase: 4.5, mu: 0.5, capas: 2,
-    techo: [3, 15, 5.3, 24], fuente: 'Pombo 2023 (15–20 m con retracción controlada) y obra PiSA, Jalisco (paños de 20 × 24 m, 5.3 kg/m³, SRA, doble polietileno)', estado: 'S',
-    mezcla: 'SRA tipo S (ASTM C494), p. ej. SikaControl NS: 2–7 % del peso del cementante (Sika Costa Rica); a/c ≤ 0.50; retracción libre máx. 450 µε (ASTM C157).' },
+    techo: [3, 15, 5.3, 24], fuente: 'Literatura técnica y casos construidos: 15 a 20 m con retracción controlada; hasta 20 × 24 m con 5.3 kg/m³, reductor de retracción y doble polietileno', estado: 'S',
+    mezcla: 'Reductor de retracción tipo S (ASTM C494) en la dosis que indique la ficha del aditivo (2–7 % del peso del cementante es el rango usual); a/c ≤ 0.50; retracción libre máx. 450 µε (ASTM C157).' },
   comp:  { id: 'comp', nombre: 'Fibra Plus 54 mm + concreto de retracción compensada', corto: 'Fibra + compensada', eps: 200, dosisBase: 4.5, mu: 0.5, capas: 2,
-    techo: [3, 20, 5, 35], fuente: 'Pombo 2023 (15–20 m sintética + compensada) y BLK CR / ICCYC 2025 (macro-paños de 35 × 35 a 42 × 42 m, fabricante); tope TR34 4ª ed. 35 m', estado: 'S',
+    techo: [3, 20, 5, 35], fuente: 'Literatura técnica: 15 a 20 m con fibra sintética y retracción compensada; paños de 35 m y más en casos construidos; tope TR34 4ª ed. 35 m', estado: 'S',
     mezcla: 'Aditivo expansivo (ACI 223) con expansión mínima 0.03 %; refuerzo en el tercio superior según ACI 223; a/c ≤ 0.50. Confirmar el suministro del expansivo en Costa Rica.',
     especial: true },
 };
 
-// Método de colocación → rendimiento diario (área de una colada)
+// Método de colocación → área que se puede colar en un día (una colada).
+// El informe NO dice cuál método se usa: solo la planicidad (FF/FL) y el área máxima por colada.
 const METODOS = {
-  laser: { id: 'laser', nombre: 'Regla láser (laser screed)', a_dia: 1000, a_max: 2000, fuente: 'Concrete Society y TR34: 1 000 a 2 000 m²/día; se recomienda ~1 000', estado: 'S' },
-  vibratoria: { id: 'vibratoria', nombre: 'Regla vibratoria / colocación manual', a_dia: 400, a_max: 600, fuente: 'Criterio CONCRE (no hay cifra en norma)', estado: 'E' },
+  laser: { id: 'laser', nombre: 'Regla láser (laser screed)', a_dia: 2000, a_max: 2000, fuente: 'TR34: 1 000 a 2 000 m²/día con regla láser', estado: 'S' },
+  vibratoria: { id: 'vibratoria', nombre: 'Colocación manual (regla vibratoria)', a_dia: 1000, a_max: 1000, fuente: 'Criterio de CONCRE: hasta 1 000 m²/día sin problema', estado: 'E' },
 };
 
-// Juntas blindadas que se consiguen en Costa Rica (el ingeniero confirma modelo y capacidad con el proveedor)
-const JUNTAS = [
-  { id: 'sinusoidal_placa', nombre: 'Junta armada sinusoidal con placa superior y dovelas', prov: 'RR Construcción (Costa Rica); BLK CR «Cosinus Slide» (sistema Seamless Floor)',
-    uso: 'Recomendada: el perfil sinusoidal evita el golpe de las ruedas y permite cruzar en cualquier dirección.', estado: 'S' },
-  { id: 'sinusoidal_anclaje', nombre: 'Junta armada sinusoidal con anclaje y dovelas', prov: 'RR Construcción (Costa Rica)',
-    uso: 'Alternativa con anclajes; mismo uso.', estado: 'S' },
-  { id: 'perfil_recto', nombre: 'Perfil de acero recto (ángulo) con dovelas o placas', prov: 'Renteco, Promatco u otro proveedor / fabricación propia',
-    uso: 'Solo donde el tránsito no cruza la junta de frente; confirmar rigidez y anclaje (TR34 3ª ed. §8.9).', estado: 'E' },
-  { id: 'permaban', nombre: 'Permaban (Signature, Eclipse, Wave, SignatureSlide)', prov: 'Importada (RCR Flooring Products)',
-    uso: 'SignatureSlide (doble placa sin hueco) para aperturas grandes; ficha con cargas a 20 mm de apertura.', estado: 'S' },
-];
+// Junta blindada: descripción genérica (sin marcas ni proveedores) para el informe.
+const JUNTA_BLINDADA = {
+  que_es: 'Perfil de acero que protege el borde del concreto en cada junta de construcción (por eso «blindada»). Lleva anclajes al concreto y dovelas (o placas) con vaina que transfieren la carga de un paño al otro y dejan que la junta se abra cuando la losa se retrae. Reemplaza al corte aserrado: la losa no se asierra, solo se junta en estos puntos.',
+  propuesta: 'Perfil de acero con placa superior sinusoidal (en forma de onda) y dovelas con vaina. La onda hace que la rueda cruce sin golpe desde cualquier dirección; es la opción recomendada para montacargas.',
+  alternativa: 'Perfil de acero recto (ángulo) con dovelas o placas deslizantes. Se puede fabricar en un taller de acero a partir del detalle D1. Solo donde el tránsito no cruza la junta de frente; confirmar rigidez y anclaje.'
+};
 
-const ESTADO_TXT = { V: 'verificado en norma', S: 'fuente secundaria', D: 'derivado por fórmula', E: 'criterio de CONCRE' };
+const ESTADO_TXT = { V: 'verificado en norma', S: 'fuente técnica secundaria (no es norma)', D: 'derivado por fórmula', E: 'criterio de CONCRE' };
 
 // ── utilidades ───────────────────────────────────────────────────────────────
 function r1(x) { return Math.round(x * 10) / 10; }
@@ -36339,46 +36338,83 @@ function dosisMacro(sistemaId, dosisCargas) {
 function techoSistema(sistemaId, dosis) { return interp(dosis, SISTEMAS[sistemaId].techo); }
 
 // ── partición 1D: dónde caen las juntas a lo largo de una dirección ───────────
-// posiciones = ejes principales dentro de (0, total); Lmax = distancia máxima entre juntas.
-// Minimiza el número de juntas y, a igual número, la colada más larga; prefiere juntas sobre ejes.
+// Las juntas van SOLO sobre los ejes principales (nunca entre ejes). ejes = ejes interiores de (0, total);
+// Lmax = distancia máxima entre juntas. Minimiza el número de juntas y, a igual número, la colada más larga.
+// Si con los ejes dados no se puede cumplir Lmax, devuelve ok:false con TODOS los ejes como juntas (lo más corto
+// posible) y una sugerencia de ejes a agregar.
+function ejesInteriores(ejes, total) {
+  const set = {};
+  (ejes || []).forEach(function (x) { x = r2(x); if (x > 0.01 && x < total - 0.01) set[x] = true; });
+  return Object.keys(set).map(Number).sort(function (a, b) { return a - b; });
+}
+function sugerirEjes(P, Lmax) {
+  const sug = [];
+  for (let i = 1; i < P.length; i++) {
+    const a = P[i - 1], b = P[i], seg = b - a;
+    if (seg <= Lmax + 1e-9) continue;
+    const n = Math.ceil(seg / Lmax - 1e-9); // paños necesarios entre estos dos ejes
+    for (let k = 1; k < n; k++) sug.push(Math.round((a + seg * k / n) * 2) / 2);
+  }
+  return sug;
+}
 function particion1D(ejes, total, Lmax) {
-  if (!(total > 0)) return { cortes: [], segs: [] };
-  if (total <= Lmax + 1e-9) return { cortes: [], segs: [total] };
-  const PASO = 0.5;
-  const setEjes = {}; (ejes || []).forEach(function (x) { setEjes[r2(x)] = true; });
-  const mapa = {}; mapa[0] = true; mapa[r2(total)] = true;
-  for (let x = PASO; x < total - 1e-9; x += PASO) mapa[r2(x)] = true;
-  Object.keys(setEjes).forEach(function (k) { const x = +k; if (x > 0.5 && x < total - 0.5) mapa[r2(x)] = true; });
-  const Q = Object.keys(mapa).map(Number).sort(function (a, b) { return a - b; }).map(function (p) { return { p: p, eje: !!setEjes[p] || p === 0 || Math.abs(p - total) < 1e-6 }; });
-  const m = Q.length, best = new Array(m);
-  best[0] = { n: 0, mx: 0, ne: 0, prev: -1 };
+  if (!(total > 0)) return { cortes: [], segs: [], ok: true, sug: [] };
+  if (total <= Lmax + 1e-9) return { cortes: [], segs: [r2(total)], ok: true, sug: [] };
+  const P = [0].concat(ejesInteriores(ejes, total), [r2(total)]);
+  const m = P.length, best = new Array(m);
+  best[0] = { n: 0, mx: 0, prev: -1 };
   for (let j = 1; j < m; j++) {
     for (let i = 0; i < j; i++) {
       if (!best[i]) continue;
-      const seg = Q[j].p - Q[i].p;
+      const seg = P[j] - P[i];
       if (seg > Lmax + 1e-9) continue;
-      const c = { n: best[i].n + (j < m - 1 ? 1 : 0), mx: Math.max(best[i].mx, seg), ne: best[i].ne + (j < m - 1 && Q[j].eje ? 1 : 0), prev: i };
+      const c = { n: best[i].n + (j < m - 1 ? 1 : 0), mx: Math.max(best[i].mx, seg), prev: i };
       const b = best[j];
-      // primero menos juntas; luego la colada más larga lo más corta posible (paños parejos); luego más juntas sobre ejes
-      if (!b || c.n < b.n || (c.n === b.n && (c.mx < b.mx - 1e-9 || (Math.abs(c.mx - b.mx) < 1e-9 && c.ne > b.ne)))) best[j] = c;
+      // primero menos juntas; luego la colada más larga lo más corta posible (paños parejos)
+      if (!b || c.n < b.n || (c.n === b.n && c.mx < b.mx - 1e-9)) best[j] = c;
     }
   }
-  const cortes = []; let j = m - 1; const pts = [Q[m - 1].p];
-  while (best[j] && best[j].prev >= 0) { j = best[j].prev; if (j > 0) cortes.unshift({ pos: Q[j].p, enEje: Q[j].eje }); pts.unshift(Q[j].p); }
+  let pts;
+  if (best[m - 1]) {
+    pts = [P[m - 1]]; let j = m - 1;
+    while (best[j] && best[j].prev >= 0) { j = best[j].prev; pts.unshift(P[j]); }
+  } else pts = P.slice();                      // no hay solución con estos ejes: se usan todos
+  const cortes = pts.slice(1, -1).map(function (p) { return { pos: p, enEje: true }; });
   const segs = []; for (let i = 1; i < pts.length; i++) segs.push(r2(pts[i] - pts[i - 1]));
-  return { cortes: cortes, segs: segs };
+  return { cortes: cortes, segs: segs, ok: !!best[m - 1], sug: best[m - 1] ? [] : sugerirEjes(P, Lmax) };
+}
+// Juntas elegidas a mano por el usuario (siempre sobre ejes): pos = posiciones deseadas.
+function particionFija(ejes, total, pos, Lmax) {
+  const P = [0].concat(ejesInteriores(ejes, total), [r2(total)]);
+  const usadas = {}, pts = [0];
+  let descartadas = 0;
+  (pos || []).slice().sort(function (a, b) { return a - b; }).forEach(function (x) {
+    const e = P.filter(function (q) { return q > 0 && q < P[P.length - 1] && Math.abs(q - x) < 0.06; })[0];
+    if (e == null || usadas[e]) { descartadas++; return; }
+    usadas[e] = true; pts.push(e);
+  });
+  pts.push(P[P.length - 1]); pts.sort(function (a, b) { return a - b; });
+  const segs = []; for (let i = 1; i < pts.length; i++) segs.push(r2(pts[i] - pts[i - 1]));
+  return { cortes: pts.slice(1, -1).map(function (p) { return { pos: p, enEje: true }; }), segs: segs,
+    ok: Math.max.apply(null, segs) <= Lmax + 1e-9, sug: sugerirEjes(P, Lmax), manual: true, descartadas: descartadas };
 }
 
 // ── distribución de juntas en la nave (X e Y), con relación de aspecto ≤ 1.5 y área diaria ──
 function distribuir(inp, Lmax, aDia) {
   const lim = Math.min(Lmax, Math.sqrt(ASPECTO_MAX * aDia));
   let capX = lim, capY = lim, px, py, it;
+  const fijoX = Array.isArray(inp.juntasX), fijoY = Array.isArray(inp.juntasY);
+  let prev = null;
   for (it = 0; it < 8; it++) {
-    px = particion1D(inp.ejesX, inp.Lx, capX); py = particion1D(inp.ejesY, inp.Ly, capY);
+    px = fijoX ? particionFija(inp.ejesX, inp.Lx, inp.juntasX, Lmax) : particion1D(inp.ejesX, inp.Lx, capX);
+    py = fijoY ? particionFija(inp.ejesY, inp.Ly, inp.juntasY, Lmax) : particion1D(inp.ejesY, inp.Ly, capY);
+    // si al endurecer el límite por relación de aspecto los ejes ya no alcanzan, se vuelve al resultado anterior
+    if (prev && ((!px.ok && prev.px.ok) || (!py.ok && prev.py.ok))) { px = prev.px; py = prev.py; break; }
+    prev = { px: px, py: py };
     const wmax = Math.max.apply(null, px.segs), wmin = Math.min.apply(null, px.segs), hmax = Math.max.apply(null, py.segs), hmin = Math.min.apply(null, py.segs);
     let cambio = false;
-    if (wmax / hmin > ASPECTO_MAX + 1e-6 && hmin * ASPECTO_MAX < capX - 1e-6 && hmin * ASPECTO_MAX >= 6) { capX = hmin * ASPECTO_MAX; cambio = true; }
-    if (hmax / wmin > ASPECTO_MAX + 1e-6 && wmin * ASPECTO_MAX < capY - 1e-6 && wmin * ASPECTO_MAX >= 6) { capY = wmin * ASPECTO_MAX; cambio = true; }
+    if (!fijoX && wmax / hmin > ASPECTO_MAX + 1e-6 && hmin * ASPECTO_MAX < capX - 1e-6 && hmin * ASPECTO_MAX >= 6) { capX = hmin * ASPECTO_MAX; cambio = true; }
+    if (!fijoY && hmax / wmin > ASPECTO_MAX + 1e-6 && wmin * ASPECTO_MAX < capY - 1e-6 && wmin * ASPECTO_MAX >= 6) { capY = wmin * ASPECTO_MAX; cambio = true; }
     if (!cambio) break;
   }
   return { px: px, py: py, lim: lim };
@@ -36440,8 +36476,10 @@ function validar(inp) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  CÁLCULO DE LA MACRO-LOSA
 //  inp: { Lx, Ly (m), ejesX[], ejesY[] (m desde el borde), sistema, metodo, columnasModo, colX, colY (m),
-//         h_cm, fc, dosisCargas, ell_mm, Pd_kN (rueda o apoyo de diseño ya con γF), uso, o, clima, pisoSensible,
-//         capJunta_kNm (opcional, de la ficha del proveedor), junta (id), pesado (equipo pesado/base angular) }
+//         h_cm, hFijo (true = el espesor lo fijó el usuario: no se sube), fc, resTxt, dosisCargas, dosisUsar (kg/m³ fijada por el usuario),
+//         ell_mm, Pd_kN (rueda o apoyo de diseño ya con γF), uso, o, clima, pisoSensible, fR,
+//         juntasX[], juntasY[] (posiciones elegidas a mano sobre ejes; null = automático),
+//         capJunta_kNm (opcional, de la ficha del proveedor), pesado (equipo pesado/base angular) }
 // ══════════════════════════════════════════════════════════════════════════════
 function calcularMacro(inp) {
   const errs = validar(inp);
@@ -36451,11 +36489,15 @@ function calcularMacro(inp) {
   const avisos = [];
 
   // 1. Dosis y techo del sistema
-  const dm = dosisMacro(S.id, inp.dosisCargas);
+  const dmRec = dosisMacro(S.id, inp.dosisCargas);
+  const dosisManual = inp.dosisUsar > 0;
+  const dm = dosisManual ? { dosis: Math.min(Math.max(inp.dosisUsar, DOSIS_MIN), DOSIS_MAX), excede: false, deCargas: true } : dmRec;
   if (dm.excede) avisos.push('Las cargas piden más de ' + DOSIS_MAX + ' kg/m³ de Fibra Plus 54 mm; la tabla de la fibra llega a ese valor. Aumente el espesor o revise las cargas.');
   const Ltecho = techoSistema(S.id, dm.dosis);
-  paso('Dosis de fibra de la macro-losa', 'dosis = máx(dosis por cargas ; dosis base del sistema)', 'cargas = ' + fm(inp.dosisCargas || 0, 1) + ' · base ' + S.corto + ' = ' + S.dosisBase + ' kg/m³', fm(dm.dosis, 1) + ' kg/m³', 'Pombo 2023 · BLK CR/ICCYC 2025 · FORTA (fuentes secundarias)');
-  paso('Techo de distancia entre juntas por sistema', 'L_techo = interpolación entre los valores de la fuente según la dosis', S.fuente, fm(Ltecho, 1) + ' m', 'Fuentes secundarias (no hay norma única para fibra sintética)');
+  paso('Dosis de fibra de la macro-losa', dosisManual ? 'dosis definida por el usuario (verificada con las cargas)' : 'dosis = máx(dosis por cargas ; dosis base del sistema)',
+    dosisManual ? 'definida = ' + fm(dm.dosis, 1) + ' kg/m³ · por cargas ' + fm(inp.dosisCargas || 0, 1) + ' · base ' + S.corto + ' = ' + S.dosisBase + ' kg/m³' : 'cargas = ' + fm(inp.dosisCargas || 0, 1) + ' · base ' + S.corto + ' = ' + S.dosisBase + ' kg/m³',
+    fm(dm.dosis, 1) + ' kg/m³', 'EN 14651 (tabla de la fibra) · literatura técnica (fuente secundaria)');
+  paso('Techo de distancia entre juntas por sistema', 'L_techo = interpolación entre los valores de la fuente según la dosis', S.fuente, fm(Ltecho, 1) + ' m', 'Literatura técnica (no hay norma única para fibra sintética)');
 
   // 2. Apertura de junta
   const Ljunta = APERTURA_ADM / (S.eps / 1000);
@@ -36463,14 +36505,17 @@ function calcularMacro(inp) {
 
   // 3. Espesor mínimo de macro-losa
   const hMin = Ltecho > L_ESPESOR_GRANDE ? H_MIN_MACRO_GRANDE : H_MIN_MACRO;
-  const h = Math.max(inp.h_cm || 0, hMin);
-  if (h > (inp.h_cm || 0) + 1e-9) avisos.push('El espesor por cargas (' + fm(inp.h_cm, 1) + ' cm) se sube a ' + fm(h, 1) + ' cm por ser macro-losa (mínimo TR34 4ª ed.: 15 cm; paños mayores de 20 m: 17 cm).');
-  paso('Espesor mínimo de macro-losa', 'h = máx(h por cargas ; ' + H_MIN_MACRO + ' cm ; ' + H_MIN_MACRO_GRANDE + ' cm si L > ' + L_ESPESOR_GRANDE + ' m)', 'h cargas = ' + fm(inp.h_cm, 1) + ' cm', fm(h, 1) + ' cm', 'TR34 4ª ed.; BLK CR (desde 170 mm)');
+  const hFijo = !!inp.hFijo;
+  const h = hFijo ? (inp.h_cm || 0) : Math.max(inp.h_cm || 0, hMin);
+  const hOk = h >= hMin - 1e-9;
+  if (!hFijo && h > (inp.h_cm || 0) + 1e-9) avisos.push('El espesor por cargas (' + fm(inp.h_cm, 1) + ' cm) se sube a ' + fm(h, 1) + ' cm por ser macro-losa (mínimo TR34 4ª ed.: 15 cm; paños mayores de 20 m: 17 cm).');
+  if (hFijo && !hOk) avisos.push('El espesor indicado (' + fm(h, 1) + ' cm) es menor que el mínimo de macro-losa para este sistema (' + fm(hMin, 1) + ' cm).');
+  paso('Espesor de macro-losa', hFijo ? 'h definido por el usuario ≥ ' + H_MIN_MACRO + ' cm (' + H_MIN_MACRO_GRANDE + ' cm si L > ' + L_ESPESOR_GRANDE + ' m)' : 'h = máx(h por cargas ; ' + H_MIN_MACRO + ' cm ; ' + H_MIN_MACRO_GRANDE + ' cm si L > ' + L_ESPESOR_GRANDE + ' m)', 'h cargas = ' + fm(inp.h_cm, 1) + ' cm · mínimo del sistema = ' + fm(hMin, 1) + ' cm', fm(h, 1) + ' cm', 'TR34 4ª ed. (espesor mínimo de diseño)');
 
   // 4. Longitud máxima de colada
   const Lmax = Math.max(4, Math.min(Ltecho, Ljunta, L_TOPE));
   paso('Distancia máxima entre juntas de construcción', 'L_máx = mín(L_techo ; L_junta ; ' + L_TOPE + ' m)', 'L_techo ' + fm(Ltecho, 1) + ' · L_junta ' + fm(Ljunta, 1) + ' · tope ' + L_TOPE, fm(r1(Lmax), 1) + ' m', 'TR34 4ª ed. (tope 35 m)');
-  if (Ltecho > 24 && S.especial) avisos.push('Con paños de más de 24 m el respaldo es de fabricantes y de la literatura, no de una norma: requiere estudio específico del ingeniero, prueba de la mezcla, ensayo de la fibra (EN 14651) y monitoreo de las aperturas.');
+  if (Ltecho > 24 && S.especial) avisos.push('Con paños de más de 24 m el respaldo es la literatura técnica y no una norma: requiere estudio específico del ingeniero, prueba de la mezcla, ensayo de la fibra (EN 14651) y monitoreo de las aperturas.');
 
   // 5. Comprobación de arrastre (fibra frente a fricción)
   const fr = inp.fR || [0, 0, 0, 0];
@@ -36483,7 +36528,7 @@ function calcularMacro(inp) {
     'f_req = ' + fm(f_req, 3) + ' MPa · disponible ' + fm(f_disp, 3) + ' MPa · ' + (okArrastre ? 'cumple' : 'NO cumple'), 'ACI 360R (arrastre de la subrasante); EN 14651; TR34 4ª ed.');
   if (!okArrastre) avisos.push('La fibra no alcanza a resistir el arrastre sobre la membrana con este paño: aumente la dosis o reduzca la distancia entre juntas.');
 
-  // 6. Distribución de juntas
+  // 6. Distribución de juntas (solo sobre ejes)
   const dist = distribuir(inp, Lmax, MT.a_dia);
   const g = armarPanos(dist.px, dist.py, h, dm.dosis);
   secuencia(g.panos);
@@ -36493,17 +36538,26 @@ function calcularMacro(inp) {
   const maxA = Math.max.apply(null, panos.map(function (p) { return p.area; }));
   const maxAsp = Math.max.apply(null, panos.map(function (p) { return p.aspecto; }));
   const maxL = Math.max.apply(null, panos.map(function (p) { return Math.max(p.w, p.l); }));
-  if (maxAsp > ASPECTO_MAX + 1e-6) avisos.push('Algún paño tiene relación de aspecto ' + fm(maxAsp, 2) + ' (> 1,5). Ajuste los ejes para equilibrar los paños.');
-  if (maxA > MT.a_dia * 1.0001) avisos.push('Un paño de ' + fm(maxA, 0) + ' m² supera el rendimiento diario recomendado (' + fm(MT.a_dia, 0) + ' m²): no se podría colar en un solo día; ajuste ejes o método.');
-  const noEje = dist.px.cortes.concat(dist.py.cortes).filter(function (c) { return !c.enEje; }).length;
-  if (noEje) avisos.push(noEje + ' junta(s) caen entre ejes de columnas (no sobre un eje) para dejar la menor cantidad de juntas con paños parejos.');
-  paso('Distribución de juntas en la nave', 'Se eligen los ejes que dejan paños ≤ L_máx, con relación de aspecto ≤ 1.5 y área ≤ rendimiento diario', 'Nave ' + fm(inp.Lx, 1) + ' × ' + fm(inp.Ly, 1) + ' m · método ' + MT.nombre,
+  const manualJ = !!(dist.px.manual || dist.py.manual);
+  const okEjes = !!(dist.px.ok && dist.py.ok);
+  const sugerencia = { x: dist.px.ok ? [] : dist.px.sug, y: dist.py.ok ? [] : dist.py.sug };
+  if (!okEjes) {
+    const trozos = [];
+    if (!dist.px.ok) trozos.push('en el sentido horizontal hay ejes separados más de ' + fm(r1(Lmax), 1) + ' m' + (sugerencia.x.length ? ' (agregue ejes hacia ' + sugerencia.x.map(function (v) { return fm(v, 1); }).join(' · ') + ' m)' : ''));
+    if (!dist.py.ok) trozos.push('en el sentido vertical hay ejes separados más de ' + fm(r1(Lmax), 1) + ' m' + (sugerencia.y.length ? ' (agregue ejes hacia ' + sugerencia.y.map(function (v) { return fm(v, 1); }).join(' · ') + ' m)' : ''));
+    avisos.push('Las juntas solo pueden ir sobre ejes y con los ejes indicados no se logra la distancia máxima: ' + trozos.join('; ') + '. Agregue esos ejes o use un sistema que permita paños más largos.');
+  }
+  if (manualJ && (dist.px.descartadas || dist.py.descartadas)) avisos.push('Algunas juntas elegidas a mano ya no coinciden con un eje y se descartaron.');
+  if (okEjes && maxL > Lmax + 1e-6) avisos.push('Hay un paño de ' + fm(maxL, 1) + ' m, mayor que la distancia máxima entre juntas (' + fm(r1(Lmax), 1) + ' m).');
+  if (maxAsp > ASPECTO_MAX + 1e-6) avisos.push('Algún paño tiene relación de aspecto ' + fm(maxAsp, 2) + ' (> 1,5). Ajuste los ejes o las juntas para equilibrar los paños.');
+  if (maxA > MT.a_dia * 1.0001) avisos.push('Un paño de ' + fm(maxA, 0) + ' m² supera el área que se puede colar en un día (' + fm(MT.a_dia, 0) + ' m²); ajuste ejes o juntas para partirlo.');
+  paso('Distribución de juntas en la nave', 'Las juntas van solo sobre ejes principales: se eligen los ejes que dejan paños ≤ L_máx, con relación de aspecto ≤ 1.5 y área ≤ la colada de un día', 'Nave ' + fm(inp.Lx, 1) + ' × ' + fm(inp.Ly, 1) + ' m · colada máxima ' + fm(MT.a_dia, 0) + ' m²' + (manualJ ? ' · posiciones ajustadas por el usuario sobre ejes' : ''),
     (nJx + nJy) + ' juntas (' + nJx + ' verticales, ' + nJy + ' horizontales) · ' + panos.length + ' paños · mayor ' + fm(maxL, 1) + ' m', 'ACI 302.1R (aspecto); TR34 (colada de gran área)');
 
   // 7. Transferencia de carga en la junta (placas efectivas 0.9ℓ a cada lado, máx. 50 %)
   const ell_m = (inp.ell_mm || 0) / 1000;
   const Q_req = (inp.Pd_kN > 0 && ell_m > 0) ? 0.5 * inp.Pd_kN / (1.8 * ell_m) : 0;
-  paso('Transferencia de carga requerida en la junta', 'Q_req = 0.5·Pd / (1.8·ℓ)  (transferencia ≤ 50 %; zona efectiva 0.9ℓ a cada lado)', 'Pd = ' + fm(inp.Pd_kN || 0, 1) + ' kN · ℓ = ' + fm(ell_m, 2) + ' m', fm(Q_req, 1) + ' kN por metro de junta, a ' + APERTURA_ADM + ' mm de apertura', 'TR34 4ª ed. (fuente secundaria: MGSI)');
+  paso('Transferencia de carga requerida en la junta', 'Q_req = 0.5·Pd / (1.8·ℓ)  (transferencia ≤ 50 %; zona efectiva 0.9ℓ a cada lado)', 'Pd = ' + fm(inp.Pd_kN || 0, 1) + ' kN · ℓ = ' + fm(ell_m, 2) + ' m', fm(Q_req, 1) + ' kN por metro de junta, a ' + APERTURA_ADM + ' mm de apertura', 'TR34 4ª ed.');
   let juntaOk = null;
   if (inp.capJunta_kNm > 0) { juntaOk = inp.capJunta_kNm >= Q_req * 1.0; if (!juntaOk) avisos.push('La capacidad de la junta ingresada (' + fm(inp.capJunta_kNm, 1) + ' kN/m) es menor que la requerida (' + fm(Q_req, 1) + ' kN/m).'); }
 
@@ -36531,11 +36585,12 @@ function calcularMacro(inp) {
 
   return {
     in: { Lx: inp.Lx, Ly: inp.Ly, aperturaAdm: APERTURA_ADM, colX: inp.colX || 0.40, colY: inp.colY || 0.40, pesado: !!inp.pesado, capJunta_kNm: inp.capJunta_kNm || 0, fc: inp.fc },
-    ffTxt: ffTexto(inp), juntasCat: JUNTAS, fcTxt: String(inp.fc || ''),
+    ffTxt: ffTexto(inp), junta: JUNTA_BLINDADA, fcTxt: String(inp.fc || ''), resTxt: inp.resTxt || ('f’c ' + inp.fc + ' kg/cm²'), resCorto: inp.resCorto || ('f’c ' + inp.fc), resTipo: inp.resTipo || 'fc',
     ejesTxtX: listaEjes(inp.ejesX, inp.Lx), ejesTxtY: listaEjes(inp.ejesY, inp.Ly),
-    sistema: S, metodo: MT, dosis: dm.dosis, h: h, Ltecho: Ltecho, Ljunta: Ljunta, Lmax: Lmax, maxL: maxL, aperturaMax: aperturaMax, Q_req: Q_req, juntaOk: juntaOk,
+    sistema: S, metodo: MT, dosis: dm.dosis, h: h, hMin: hMin, hOk: hOk, hFijo: hFijo, dosisManual: dosisManual, Ltecho: Ltecho, Ljunta: Ljunta, Lmax: Lmax, maxL: maxL, aperturaMax: aperturaMax, Q_req: Q_req, juntaOk: juntaOk,
     f_req: f_req, f_disp: f_disp, okArrastre: okArrastre, mu: mu,
     px: dist.px, py: dist.py, xs: g.xs, ys: g.ys, panos: panos, nJx: nJx, nJy: nJy, cols: cols, nInt: nInt, nBor: nBor, nEsq: nEsq,
+    okEjes: okEjes, okLong: okEjes && maxL <= Lmax + 1e-6 && maxA <= MT.a_dia * 1.0001, sugerencia: sugerencia, juntasManual: manualJ,
     maxAsp: maxAsp, maxA: maxA, cant: cant, grupos: grupos, avisos: avisos, pasos: pasos,
     comparacion: ['fibra', 'sra', 'comp'].map(function (id) { return compararSistema(inp, id); })
   };
@@ -36555,11 +36610,12 @@ function ffTexto(inp) {
 // Qué lograría cada sistema en esta nave (para que el usuario compare)
 function compararSistema(inp, id) {
   const S = SISTEMAS[id], MT = METODOS[inp.metodo] || METODOS.laser;
-  const dm = dosisMacro(id, inp.dosisCargas), tecno = techoSistema(id, dm.dosis);
+  const propio = inp.dosisUsar > 0 && id === inp.sistema;       // el sistema elegido se compara con la dosis que usa el usuario
+  const dm = propio ? { dosis: Math.min(Math.max(inp.dosisUsar, DOSIS_MIN), DOSIS_MAX) } : dosisMacro(id, inp.dosisCargas), tecno = techoSistema(id, dm.dosis);
   const L = Math.max(4, Math.min(tecno, APERTURA_ADM / (S.eps / 1000), L_TOPE));
-  const d = distribuir(inp, L, MT.a_dia);
+  const d = distribuir(Object.assign({}, inp, { juntasX: null, juntasY: null }), L, MT.a_dia);  // la comparación es siempre automática
   const mL = Math.max.apply(null, d.px.segs.concat(d.py.segs));
-  return { id: id, nombre: S.corto, dosis: dm.dosis, Lmax: r1(L), maxL: r1(mL), juntas: d.px.cortes.length + d.py.cortes.length, panos: d.px.segs.length * d.py.segs.length, apertura: r1(S.eps / 1000 * mL), eps: S.eps, especial: !!S.especial };
+  return { id: id, nombre: S.corto, dosis: dm.dosis, Lmax: r1(L), maxL: r1(mL), juntas: d.px.cortes.length + d.py.cortes.length, panos: d.px.segs.length * d.py.segs.length, apertura: r1(S.eps / 1000 * mL), eps: S.eps, especial: !!S.especial, ok: !!(d.px.ok && d.py.ok) };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -36581,52 +36637,61 @@ function claseFF(inp) {
 }
 
 function recomendaciones(inp, S, MT, c) {
-  const G = [], h = c.h, hmm = Math.round(h * 10);
+  const G = [], h = c.h;
   const sens = !!inp.pisoSensible, pesado = !!inp.pesado;
+  const largoJ = c.nJx * inp.Ly + c.nJy * inp.Lx;
   // Base y subrasante
   const g1 = { id: 'base', titulo: 'Base y sub-base', filas: [] };
   g1.filas.push(fila('Base granular', 'Material bien graduado, espesor mínimo 20 cm (20–25 cm), compactado y cerrado con material fino (blinding) para no rasgar la membrana', 'TR34 (sub-base 200–250 mm)', 'S', 'Compactación y ensayos de densidad según el estudio de suelos; criterio de CONCRE.'));
-  g1.filas.push(fila('Planicidad de la base', 'Tolerancia +0 / −25 mm respecto al nivel de proyecto; sin escalones, rodadas ni piedras sueltas', 'TR34 (sub-base); Dramix', 'S', 'La macro-losa desliza sobre la base: una base irregular genera restricción y fisuras. Revise con malla láser antes de colocar la membrana.'));
+  g1.filas.push(fila('Planicidad de la base', 'Tolerancia +0 / −25 mm respecto al nivel de proyecto; sin escalones, rodadas ni piedras sueltas', 'TR34 (sub-base)', 'S', 'La macro-losa desliza sobre la base: una base irregular genera restricción y fisuras. Revise los niveles con topografía antes de colocar la membrana.'));
   g1.filas.push(fila('Elementos dentro de la losa', 'Sin estacas de nivel, tubos ni pasos que atraviesen la losa; los pasos de instalaciones van con relleno compresible o fuera de la zona', 'ACI 360R (evitar conectar la losa a otros elementos)', 'V'));
   G.push(g1);
 
-  // Membranas
-  const g2 = { id: 'membrana', titulo: 'Barrera de fricción y barrera de vapor', filas: [] };
-  g2.filas.push(fila('Barrera de fricción (deslizamiento)', '2 capas de polietileno de 12 mil (≈ 300 µm, calibre 1200), sin arrugas, traslapes de 30 cm sin pegar, traslapes de la capa superior desfasados de los de la inferior', 'TR34 3ª ed. §6.5 (1200 gauge, traslape ≥ 300 mm); FORTA; PiSA', 'S', 'Coeficiente de fricción de diseño μ = ' + c.mu + ' (BLK CR 0.5 con plástico ≥ 12 mil; FORTA 0.3 con dos láminas; una sola lámina 0.8). Se toma el valor más conservador.'));
+  // Reductor de fricción y barrera de vapor
+  const g2 = { id: 'membrana', titulo: 'Reductor de fricción y barrera de vapor', filas: [] };
+  g2.filas.push(fila('Reductor de fricción', 'SÍ lleva: 2 capas de polietileno de 12 mil (≈ 300 µm, calibre 1200) entre la base y la losa, sin arrugas, con traslapes de 30 cm sin pegar y desfasados entre una capa y otra', 'TR34 3ª ed. §6.5 (calibre 1200, traslape ≥ 300 mm); ACI 360R', 'S', 'Es lo que deja que la losa se mueva sin fisurarse: coeficiente de fricción de diseño μ = ' + c.mu + ' (la literatura da 0.3 a 0.5 con dos láminas y cerca de 0.8 con una; se toma el valor conservador de las dos láminas).'));
   if (sens) g2.filas.push(fila('Barrera de vapor', 'OBLIGATORIA: la capa inferior es clase A (ASTM E1745) de ' + (pesado ? '15' : '10') + ' mil, permeancia ≤ 0.1 perm, con cinta en traslapes de 15 cm y penetraciones selladas', 'ACI 302.1R', 'V', 'Piso sensible a la humedad. La capa superior sigue siendo la de fricción.'));
   else g2.filas.push(fila('Barrera de vapor', 'Recomendada: la capa inferior clase A (ASTM E1745) de ' + (pesado ? '15' : '10') + ' mil; la segunda capa de 12 mil completa la fricción', 'ACI 302.1R', 'V', 'Mínimo 10 mil; 15 mil si hay equipo pesado sobre la barrera o base angular.'));
-  g2.filas.push(fila('Espesor y capas en resumen', pesado ? '2 capas · inferior clase A 15 mil + superior 12 mil' : '2 capas · inferior clase A 10 mil + superior 12 mil', 'ACI 302.1R; TR34', 'S'));
+  g2.filas.push(fila('Capas bajo la losa (de arriba hacia abajo)', 'Losa · polietileno 12 mil (fricción) · polietileno clase A de ' + (pesado ? '15' : '10') + ' mil (vapor y fricción) · base granular ≥ 20 cm · subrasante compactada', 'ACI 302.1R; TR34', 'S'));
   g2.filas.push(fila('Colar sobre la membrana', 'El concreto se coloca directo sobre la membrana (sin capa de arena): curado inmediato y mezcla con poco sangrado para evitar fisura plástica y alabeo', 'ACI 302.1R', 'S'));
   G.push(g2);
 
   // Concreto
   const g3 = { id: 'concreto', titulo: 'Concreto y fibra', filas: [] };
-  g3.filas.push(fila('Resistencia', 'f’c ' + inp.fc + ' kg/cm² · espesor ' + fm(h, 1) + ' cm', 'ACI 318 / TR34', 'D'));
-  g3.filas.push(fila('Fibra Plus 54 mm', fm(c.dm.dosis, 1) + ' kg/m³ (mínimo del sistema ' + S.dosisBase + ' kg/m³)', 'EN 14651; Pombo 2023; BLK CR/ICCYC 2025', 'D', 'Los valores fR1–fR4 son los de la tabla de Fibra Plus 54 mm de la calculadora de fibra. Confirmar con ensayo de viga (EN 14651 / ASTM C1609) de la mezcla real.'));
-  g3.filas.push(fila('Control de retracción', S.mezcla, S.id === 'sra' ? 'TR34 3ª ed. §11.3.5; Sika CR' : S.id === 'comp' ? 'ACI 223' : 'ASTM C157', 'S'));
+  g3.filas.push(fila('Resistencia', (inp.resTxt || ('f’c ' + inp.fc + ' kg/cm²')) + ' · espesor ' + fm(h, 1) + ' cm', 'ACI 318 / TR34', 'D'));
+  g3.filas.push(fila('Fibra Plus 54 mm', fm(c.dm.dosis, 1) + ' kg/m³' + (inp.dosisUsar > 0 ? ' (definida por el usuario y verificada con las cargas)' : ' (mínimo del sistema ' + S.dosisBase + ' kg/m³)'), 'EN 14651; literatura técnica', 'D', 'Los valores fR1–fR4 son los de la tabla de Fibra Plus 54 mm de la calculadora de fibra. Confirmar con ensayo de viga (EN 14651 / ASTM C1609) de la mezcla real.'));
+  g3.filas.push(fila('Control de retracción', S.mezcla, S.id === 'sra' ? 'ASTM C494; TR34 3ª ed. §11.3.5' : S.id === 'comp' ? 'ACI 223' : 'ASTM C157', 'S'));
   g3.filas.push(fila('Colocación y clima', 'Temperatura del concreto ≤ 30–32 °C al colar; fraguado de 6 a 8 h (ASTM C1702)', 'ACI 305R', 'S', 'En clima cálido, colar de noche o temprano.'));
   g3.filas.push(fila('Curado', 'Compuesto de curado inmediato tras el acabado y curado húmedo mínimo 7 días; no retirar la protección en 3 días', 'ACI 308; TR34 (curado)', 'S', 'El curado es lo que más reduce la retracción diferencial.'));
   G.push(g3);
 
   // Juntas
-  const g4 = { id: 'juntas', titulo: 'Juntas de construcción blindadas', filas: [] };
-  g4.filas.push(fila('Distancia entre juntas', 'Máximo ' + fm(r1(c.Lmax), 1) + ' m en cada sentido; en esta nave: ' + c.nJx + ' junta(s) verticales y ' + c.nJy + ' horizontales', 'TR34 4ª ed.; ACI 302.1R (aspecto ≤ 1.5)', 'S', 'La distancia sale de la mecánica (apertura, fibra, retracción), no del ancho del paño.'));
-  g4.filas.push(fila('Cortes aserrados de contracción', 'NO se aserran: la macro-losa no lleva juntas de contracción; las fisuras de retracción quedan distribuidas y finas (objetivo ≤ 0.3 mm)', 'TR34 4ª ed. (no recomienda aserrar pisos de solo fibra sin transferencia)', 'S', 'Referencias: BLK CR fisuras 0.1–0.3 mm; PiSA 0.275 mm calculado.'));
-  g4.filas.push(fila('Tipo de junta', JUNTAS[0].nombre + ' (modelo y capacidad se confirman con la ficha del proveedor)', 'TR34 3ª ed. §8.9', 'S', 'Opciones locales: ' + JUNTAS.map(function (j) { return j.prov.split(';')[0]; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(' · ') + '. Con aperturas cercanas a 20 mm, preferir perfil con placa deslizante (tipo SignatureSlide).'));
-  g4.filas.push(fila('Altura del perfil', 'Igual al espesor de la losa: ' + fm(h, 1) + ' cm (perfil de ' + fm(Math.max(h - 2.5, 10), 1) + ' cm o el comercial inmediato)', 'Permaban Signature (alturas 125–200 mm para losas de 150–220 mm)', 'S', 'Pida la altura que el proveedor tenga para ese espesor.'));
-  g4.filas.push(fila('Transferencia de carga necesaria', fm(c.Q_req, 1) + ' kN por metro de junta a 20 mm de apertura (≈ 0.5·Pd / 1.8ℓ)', 'TR34 4ª ed. (vía MGSI)', 'D', inp.capJunta_kNm > 0 ? 'Capacidad ingresada: ' + fm(inp.capJunta_kNm, 1) + ' kN/m.' : 'Compare con la tabla de cargas del proveedor a 20 mm de apertura. Con esa apertura no cuenta la trabazón del agregado.'));
+  const g4 = { id: 'juntas', titulo: 'Juntas de construcción', filas: [] };
+  g4.filas.push(fila('Dónde van las juntas', c.nJx + ' junta(s) verticales y ' + c.nJy + ' horizontales, TODAS sobre ejes principales (nunca entre ejes)', 'Criterio de CONCRE', 'E', 'Las juntas se alinean con los ejes de las columnas y los marcos. Pueden moverse de un eje a otro en el dibujo del programa.'));
+  g4.filas.push(fila('Distancia entre juntas', 'Máximo ' + fm(r1(c.Lmax), 1) + ' m en cada sentido', 'TR34 4ª ed.; ACI 302.1R (aspecto ≤ 1.5)', 'S', 'La distancia sale de la mecánica (apertura, fibra, retracción), no del ancho del paño.'));
+  g4.filas.push(fila('Cortes aserrados de contracción', 'NO se aserran: la macro-losa no lleva juntas de contracción; las fisuras de retracción quedan distribuidas y finas (objetivo ≤ 0.3 mm)', 'TR34 4ª ed. (no recomienda aserrar pisos de solo fibra sin transferencia)', 'S', 'La literatura técnica y los casos construidos reportan fisuras de 0.1 a 0.3 mm.'));
+  g4.filas.push(fila('Transferencia de carga necesaria', fm(c.Q_req, 1) + ' kN por metro de junta a 20 mm de apertura (≈ 0.5·Pd / 1.8ℓ)', 'TR34 4ª ed.', 'D', inp.capJunta_kNm > 0 ? 'Capacidad ingresada: ' + fm(inp.capJunta_kNm, 1) + ' kN/m.' : 'Compare con la capacidad de la junta a 20 mm de apertura. Con esa apertura no cuenta la trabazón del agregado.'));
   g4.filas.push(fila('Dovelas', 'Placas o dovelas con vaina que permitan el movimiento horizontal; no continuar barras corrugadas a través de la junta', 'TR34 3ª ed. §8.8; ACI 302.1R', 'V'));
   g4.filas.push(fila('Cruces de juntas', 'En los cruces el perfil de acero queda discontinuo para permitir la retracción; la junta nueva a ≥ 1.5 m de otra paralela', 'TR34 3ª ed. §8.9; ACI 302.1R', 'V'));
   g4.filas.push(fila('Secuencia de colado', 'Paños alternos en tablero (fase 1: ' + c.panos.filter(function (p) { return p.fase === 1; }).length + ' paños; fase 2: ' + c.panos.filter(function (p) { return p.fase === 2; }).length + '); intermedios después de ≥ 7 días', 'Criterio CONCRE; ACI 223 (retracción compensada: ≥ 70 % de la expansión antes de colar contiguos)', 'E', 'La separación de 7 días la confirma el ingeniero según la mezcla.'));
-  g4.filas.push(fila('Sello', 'Fondo de junta y sello flexible (poliuretano) al inicio, lo más tarde posible; cambiar a semirrígido cuando la apertura se haya estabilizado (monitoreo mensual durante 18 meses)', 'TR34 (sellado de juntas); Face Consultants', 'S', 'Productos locales: Maxiflex 40 (poliuretano), Maxistik 510 (epóxico flexible) y backer rod (INTACO).'));
+  g4.filas.push(fila('Sello', 'Fondo de junta y sello flexible de poliuretano al inicio, lo más tarde posible; cambiar a semirrígido cuando la apertura se haya estabilizado (monitoreo mensual durante 18 meses)', 'TR34 (sellado de juntas); ACI 302.1R', 'S'));
   G.push(g4);
+
+  // Junta blindada: qué es y qué pedir
+  const g4b = { id: 'junta_blindada', titulo: 'Junta blindada: cuál es y qué pedir', filas: [] };
+  g4b.filas.push(fila('Qué es', JUNTA_BLINDADA.que_es, 'TR34 3ª ed. §8.8–8.9; ACI 302.1R', 'S'));
+  g4b.filas.push(fila('Junta propuesta', JUNTA_BLINDADA.propuesta, 'TR34 3ª ed. §8.9', 'S', 'Ver el detalle D1 en la hoja 2.'));
+  g4b.filas.push(fila('Alternativa', JUNTA_BLINDADA.alternativa, 'TR34 3ª ed. §8.9', 'E'));
+  g4b.filas.push(fila('Qué pedir al cotizar o fabricar', 'Altura del perfil: ' + fm(Math.max(h - 2.5, 10), 1) + ' cm (o la comercial inmediata inferior al espesor de ' + fm(h, 1) + ' cm) · longitud total ≈ ' + fm(largoJ, 0) + ' m · apertura de diseño 20 mm · capacidad de transferencia ≥ ' + fm(c.Q_req, 1) + ' kN/m a esa apertura · dovelas con vaina · anclajes al concreto · protección contra la corrosión', 'TR34 3ª ed. §8.9', 'D', 'Pida la ficha técnica con la capacidad a la apertura de diseño y compárela con la requerida.'));
+  g4b.filas.push(fila('Dónde conseguirla', 'En el mercado nacional o por importación, con fabricantes especializados en juntas para pisos industriales. La alternativa recta puede fabricarse en un taller de acero según el detalle D1.', 'Criterio de CONCRE', 'E', 'CONCRE no vende estas juntas. Confirme el modelo y la capacidad con la ficha del proveedor.'));
+  G.push(g4b);
 
   // Columnas y muros
   const g5 = { id: 'columnas', titulo: 'Columnas, muros y esquinas', filas: [] };
-  g5.filas.push(fila('Aislamiento de columnas', 'Rombo (cuadrado girado 45°) con los vértices sobre los ejes y las juntas; lado ' + (c.cols[0] ? fm(c.cols[0].lado, 2) + ' m' : '—') + ' para columna de ' + fm(inp.colX || 0.4, 2) + ' × ' + fm(inp.colY || 0.4, 2) + ' m (holgura de ' + fm(T_ROMBO * 100, 0) + ' cm)', 'ACI 302.1R / CIP 6; TR34 3ª ed. §8.6', 'S', 'La columna queda envuelta en relleno compresible de 10–20 mm en todo el espesor.'));
-  g5.filas.push(fila('Colado del rombo', 'Se cuela DESPUÉS: dejar el hueco libre hasta que la losa haya completado su retracción inicial (mínimo 28 días) y antes de cargar con racks; usar concreto o mortero de retracción compensada o con SRA, del mismo f’c', 'CIP 6 (hueco libre hasta que endurezca la losa); criterio CONCRE', 'E', 'El plazo de 28 días es criterio de CONCRE; el ingeniero puede ampliarlo.'));
+  g5.filas.push(fila('Aislamiento de columnas', 'Rombo (cuadrado girado 45°) con los vértices sobre los ejes y las juntas; lado ' + (c.cols[0] ? fm(c.cols[0].lado, 2) + ' m' : '—') + ' para columna de ' + fm(inp.colX || 0.4, 2) + ' × ' + fm(inp.colY || 0.4, 2) + ' m (holgura de ' + fm(T_ROMBO * 100, 0) + ' cm)', 'ACI 302.1R; TR34 3ª ed. §8.6', 'S', 'La columna queda envuelta en relleno compresible de 10–20 mm en todo el espesor.'));
+  g5.filas.push(fila('Colado del rombo', 'Se cuela DESPUÉS: dejar el hueco libre hasta que la losa haya completado su retracción inicial (mínimo 28 días) y antes de cargar con racks; usar concreto o mortero de retracción compensada o con reductor de retracción, de la misma resistencia', 'ACI 302.1R; criterio de CONCRE', 'E', 'El plazo de 28 días es criterio de CONCRE; el ingeniero puede ampliarlo.'));
   g5.filas.push(fila('Refuerzo en las esquinas del rombo', '2 barras Ø12 mm (#4) de 1.20 m por vértice, perpendiculares a la fisura esperada, a 5 cm y 20 cm del vértice y 5 cm bajo la superficie; el relleno del rombo lleva varilla Ø10 mm @ 20 cm en ambos sentidos', 'ACI 360R (barras diagonales en esquinas, detalle conceptual); TR34 3ª ed. §8.10.1 (sin diámetro ni largo)', 'E', 'Ninguna norma fija diámetro ni largo: es criterio de diseño que el ingeniero debe confirmar.'));
-  g5.filas.push(fila('Columnas de borde y de esquina', 'Medio rombo (columna en el muro) y cuarto de rombo (esquina)', 'Práctica (Canzac, CIP 6)', 'S'));
+  g5.filas.push(fila('Columnas de borde y de esquina', 'Medio rombo (columna en el muro) y cuarto de rombo (esquina)', 'ACI 302.1R (práctica de construcción)', 'S'));
   g5.filas.push(fila('Aislamiento de muros', 'Plancha de espuma de polietileno de celda cerrada (o poliestireno de alta densidad) de ' + (c.aperturaMax / 2 + 6 > 15 ? '20' : c.aperturaMax / 2 + 6 > 12 ? '15' : '12') + ' mm, en todo el espesor de la losa, sin doblar en esquinas; sello flexible encima', 'TR34 3ª ed. §8.6 (10–20 mm); ACI 302.1R (espuma de celda cerrada)', 'S', 'Movimiento esperado contra el muro ≈ ' + fm(S.eps / 1000 * c.maxL / 2, 1) + ' mm por la mitad del paño.'));
   g5.filas.push(fila('Esquinas entrantes', 'Evitar paños en L o T; si hay una esquina entrante, 2 barras Ø12 mm de 1.20 m en diagonal a 5 cm bajo la superficie', 'ACI 302.1R; TR34 3ª ed. §8.10.1', 'E', 'La nave rectangular no tiene esquinas entrantes.'));
   g5.filas.push(fila('Bases de maquinaria, fosas y drenajes', 'Aislar con relleno compresible igual que las columnas; pasos de tubería con camisa', 'TR34 3ª ed. §8.6; ACI 360R', 'V'));
@@ -36641,12 +36706,12 @@ function recomendaciones(inp, S, MT, c) {
     g6.filas.push(fila('FF / FL mínimo global', ff.cls.ff + ' / ' + ff.cls.fl + ' (' + ff.cls.nombre.toLowerCase() + ')', 'ACI 302.1R', 'V', 'Mínimo local ' + ff.cls.ffl + ' / ' + ff.cls.fll + '. Medición ASTM E1155 dentro de 72 horas. ' + (ff.nota || '')));
     g6.filas.push(fila('Alcance de CONCRE', 'Se ejecuta hasta FF ' + CONCRE_FF + ' / FL ' + CONCRE_FL + '; la planicidad pedida ' + (ff.cls.ff <= CONCRE_FF && ff.cls.fl <= CONCRE_FL ? 'está dentro de ese alcance' : 'está FUERA de ese alcance'), 'Criterio CONCRE', 'E', 'No se recomienda FF 50 o más salvo que el cliente lo pida.'));
   }
-  g6.filas.push(fila('Alabeo de bordes', 'Los paños grandes se levantan en los bordes y esquinas: curado inmediato, mezcla de baja retracción y espesor ≥ ' + fm(c.h, 0) + ' cm; medir niveles a los 28 días', 'TR34; FORTA (paños de 11.6 × 13 m sin alabeo apreciable con macrofibra)', 'S'));
+  g6.filas.push(fila('Alabeo de bordes', 'Los paños grandes se levantan en los bordes y esquinas: curado inmediato, mezcla de baja retracción y espesor ≥ ' + fm(c.h, 0) + ' cm; medir niveles a los 28 días', 'TR34', 'S'));
   G.push(g6);
   return G;
 }
 
-const API = { SISTEMAS: SISTEMAS, METODOS: METODOS, JUNTAS: JUNTAS, ESTADO_TXT: ESTADO_TXT, FFFL: FFFL, L_TOPE: L_TOPE, APERTURA_ADM: APERTURA_ADM, T_ROMBO: T_ROMBO,
+const API = { SISTEMAS: SISTEMAS, METODOS: METODOS, JUNTA_BLINDADA: JUNTA_BLINDADA, DOSIS_MIN: DOSIS_MIN, DOSIS_MAX: DOSIS_MAX, particionFija: particionFija, ESTADO_TXT: ESTADO_TXT, FFFL: FFFL, L_TOPE: L_TOPE, APERTURA_ADM: APERTURA_ADM, T_ROMBO: T_ROMBO,
   CONCRE_FF: CONCRE_FF, CONCRE_FL: CONCRE_FL, H_MIN_MACRO: H_MIN_MACRO, dosisMacro: dosisMacro, techoSistema: techoSistema, particion1D: particion1D, distribuir: distribuir,
   armarPanos: armarPanos, columnas: columnas, validar: validar, calcularMacro: calcularMacro, compararSistema: compararSistema, claseFF: claseFF };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
@@ -36737,16 +36802,6 @@ function lamina1(ctx) {
   // contorno de la nave (muros)
   var c0 = U(0, 0), c1 = U(Lx, Ly);
   o.push(Rc(Math.min(c0[0], c1[0]), Math.min(c0[1], c1[1]), Math.abs(c1[0] - c0[0]), Math.abs(c1[1] - c0[1]), 'none', GR, 0.7));
-  // juntas de construcción (perfil blindado)
-  var jn = 0, jl = [];
-  M.px.cortes.forEach(function (c) { jn++; jl.push({ n: jn, x: c.pos, v: true, eje: c.enEje }); });
-  M.py.cortes.forEach(function (c) { jn++; jl.push({ n: jn, y: c.pos, v: false, eje: c.enEje }); });
-  jl.forEach(function (j) {
-    var a = j.v ? U(j.x, 0) : U(0, j.y), b = j.v ? U(j.x, Ly) : U(Lx, j.y);
-    o.push(Ln(a[0], a[1], b[0], b[1], ROJO, 1.0) + Ln(a[0], a[1], b[0], b[1], '#fff', 0.25));
-    var mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, lx = a[0] + (b[0] - a[0]) * 0.06, ly = a[1] + (b[1] - a[1]) * 0.06;
-    o.push('<rect x="' + r(lx - 4) + '" y="' + r(ly - 2.1) + '" width="8" height="4.2" fill="#fff" stroke="' + ROJO + '" stroke-width="0.25"/>' + T(lx, ly + 1, 'J-' + j.n, { s: 2.7, b: 1, f: ROJO }));
-  });
   // columnas y rombos
   M.cols.forEach(function (c) {
     var p = U(c.x, c.y), rr = Math.max(c.r * s, 2.0);
@@ -36755,6 +36810,22 @@ function lamina1(ctx) {
     var q = Math.max(Math.max(c.cx, c.cy) * s, 1.4);
     o.push(Rc(p[0] - q / 2, p[1] - q / 2, q, q, GR, GR, 0.1));
   });
+  // juntas de construcción (perfil blindado)
+  var jn = 0, jl = [];
+  M.px.cortes.forEach(function (c) { jn++; jl.push({ n: jn, x: c.pos, v: true, eje: c.enEje }); });
+  M.py.cortes.forEach(function (c) { jn++; jl.push({ n: jn, y: c.pos, v: false, eje: c.enEje }); });
+  jl.forEach(function (j) {
+    var a = j.v ? U(j.x, 0) : U(0, j.y), b = j.v ? U(j.x, Ly) : U(Lx, j.y);
+    var eje = j.v ? (rotar ? 'y' : 'x') : (rotar ? 'x' : 'y');           // eje de PANTALLA por el que se puede arrastrar la junta
+    var lx = a[0] + (b[0] - a[0]) * 0.06, ly = a[1] + (b[1] - a[1]) * 0.06;
+    o.push('<g class="jn" data-t="' + (j.v ? 'v' : 'h') + '" data-n="' + j.n + '" data-pos="' + (j.v ? j.x : j.y) + '" data-ax="' + eje + '" style="cursor:' + (eje === 'x' ? 'ew-resize' : 'ns-resize') + ';touch-action:none">' +
+      Ln(a[0], a[1], b[0], b[1], 'rgba(255,255,255,0.01)', 5) +
+      Ln(a[0], a[1], b[0], b[1], ROJO, 1.0) + Ln(a[0], a[1], b[0], b[1], '#fff', 0.25) +
+      '<rect x="' + r(lx - 4) + '" y="' + r(ly - 2.1) + '" width="8" height="4.2" fill="#fff" stroke="' + ROJO + '" stroke-width="0.25"/>' + T(lx, ly + 1, 'J-' + j.n, { s: 2.7, b: 1, f: ROJO }) + '</g>');
+  });
+  // posiciones posibles de las juntas (solo sobre ejes) para poder arrastrarlas: [posición en m, coordenada en pantalla]
+  var cand = { v: exs.slice(1, -1).map(function (x) { return [x, r(rotar ? U(x, 0)[1] : U(x, 0)[0])]; }), h: eys.slice(1, -1).map(function (y) { return [y, r(rotar ? U(0, y)[0] : U(0, y)[1])]; }) };
+  var attrs = ' data-cand="' + esc(JSON.stringify(cand)) + '"';
   // cotas: ejes (arriba / izquierda) y juntas (abajo / derecha)
   var topY = Math.min(U(0, 0)[1], U(Lx, Ly)[1]) - 14, botY = Math.max(U(0, 0)[1], U(Lx, Ly)[1]) + 12;
   var lefX = Math.min(U(0, 0)[0], U(Lx, Ly)[0]) - 14, rigX = Math.max(U(0, 0)[0], U(Lx, Ly)[0]) + 12;
@@ -36791,7 +36862,7 @@ function lamina1(ctx) {
   // notas generales (a la derecha de la leyenda, con salto de línea)
   var notas = [
     '1. Predimensionamiento de CONCRE (BORRADOR): no es un plano constructivo ni sustituye el diseño y la firma del ingeniero responsable (CFIA).',
-    '2. Las únicas juntas son las de construcción blindadas (J). No se aserran cortes de contracción: la retracción la controlan la fibra, la mezcla y la barrera de fricción.',
+    '2. Las únicas juntas son las de construcción blindadas (J) y van siempre sobre ejes principales. No se aserran cortes de contracción: la retracción la controlan la fibra, la mezcla y el reductor de fricción.',
     '3. Las juntas blindadas se anclan y se les cuela el concreto contra ellas; modelo y capacidad según la ficha del proveedor, para una apertura de hasta ' + M.in.aperturaAdm + ' mm.',
     '4. Los rombos de las columnas se dejan sin colar hasta que la losa complete su retracción inicial (≥ 28 días) y se rellenan con concreto de retracción compensada.',
     '5. Colar en el orden indicado: primero los paños de fase 1 y los de fase 2 después de ≥ 7 días. Curado inmediato. Distancias en metros.'
@@ -36801,7 +36872,7 @@ function lamina1(ctx) {
   notas.forEach(function (t) { envolver(t, 122).forEach(function (ln, k) { ny += 4.4; o.push(T(108 + (k ? 3 : 0), ny, ln, { s: 2.4, a: 'start', f: '#444' })); }); });
   // ── columna derecha: rótulo y cuadros ──
   o.push(rotulo(ctx, 1));
-  return svgHoja(o.join(''));
+  return svgHoja(o.join(''), attrs);
 }
 
 function rotulo(ctx, hoja) {
@@ -36813,14 +36884,14 @@ function rotulo(ctx, hoja) {
   o.push(T(x + 40, 19.5, hoja === 1 ? 'Planta de juntas y distribución' : 'Detalles constructivos', { s: 2.8, a: 'start', f: '#555' }));
   o.push(T(x + 40, 23.5, 'Hoja ' + hoja + ' de 2', { s: 2.6, a: 'start', f: '#555' }));
   o.push(Ln(x, 27, x + w, 27, GR, 0.3));
-  var datos = [['Proyecto', S.proy.nombre || '—'], ['Cliente', S.proy.cliente || '—'], ['Ubicación', S.proy.ubicacion || '—'], ['Referencia', ctx.ref || 'SIN GUARDAR'], ['Fecha', ctx.fecha || ''], ['Elaborado por', ctx.autor || 'CONCRE']];
+  var datos = [['Proyecto', S.proy.nombre || '—'], ['Cliente', S.proy.cliente || '—'], ['Ubicación', S.proy.ubicacion || '—'], ['Referencia', ctx.ref || 'SIN GUARDAR'], ['Fecha', ctx.fecha || ''], ['Elaborado por', 'CONCRE']];
   datos.forEach(function (d, i) { var y = 31 + i * 5.2; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 24, y, String(d[1]).slice(0, 34), { s: 2.7, a: 'start', b: 1 })); });
   o.push(Ln(x, 61, x + w, 61, GR, 0.3));
   if (hoja === 1) {
     o.push(T(x + 2, 65.5, 'DATOS DE DISEÑO', { s: 2.8, a: 'start', b: 1, f: ROJO }));
-    var rows = [['Uso', R.u.nombre], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²'], ['Espesor / f’c', fmt(M.h, 1) + ' cm · ' + R.rec.fc + ' kg/cm²'], ['Fibra Plus 54 mm', fmt(M.dosis, 1) + ' kg/m³ · ' + fmt(M.cant.fibra_kg, 0) + ' kg'],
+    var rows = [['Uso', R.u.nombre], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²'], ['Espesor / resistencia', fmt(M.h, 1) + ' cm · ' + M.resTxt], ['Fibra Plus 54 mm', fmt(M.dosis, 1) + ' kg/m³ · ' + fmt(M.cant.fibra_kg, 0) + ' kg'],
       ['Sistema', M.sistema.corto], ['Retracción neta', M.sistema.eps + ' µε (' + fmt(M.sistema.eps / 1000, 2) + ' mm/m)'], ['Distancia máx. juntas', fmt(M.Lmax, 1) + ' m'], ['Apertura esperada', fmt(M.aperturaMax, 1) + ' mm (límite ' + M.in.aperturaAdm + ')'],
-      ['Membrana', '2 capas polietileno ' + (M.in.pesado ? '15' : '10') + ' + 12 mil'], ['Planicidad', M.ffTxt], ['Colocación', M.metodo.nombre]];
+      ['Fricción y vapor', '2 capas polietileno ' + (M.in.pesado ? '15' : '10') + ' + 12 mil'], ['Planicidad', M.ffTxt], ['Juntas', 'sobre ejes principales']];
     rows.forEach(function (d, i) { var y = 70.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 32, y, String(d[1]).slice(0, 40), { s: 2.5, a: 'start', b: 1 })); });
     o.push(Ln(x, 126, x + w, 126, GR, 0.3));
     o.push(T(x + 2, 130.5, 'CUADRO DE JUNTAS', { s: 2.8, a: 'start', b: 1, f: ROJO }));
@@ -36832,7 +36903,7 @@ function rotulo(ctx, hoja) {
     cj.forEach(function (d, i) { var y = 135.5 + i * 4.9; var b = i === 0; o.push(T(x + 2, y, d[0], { s: 2.5, a: 'start', b: 1 }) + T(x + 9, y, d[1], { s: 2.4, a: 'start', b: b }) + T(x + w - 2, y, d[2], { s: 2.5, a: 'end', b: 1 })); });
     o.push(Ln(x, 161, x + w, 161, GR, 0.3));
     o.push(T(x + 2, 165.5, 'CANTIDADES', { s: 2.8, a: 'start', b: 1, f: ROJO }));
-    var ct = [['Concreto', fmt(M.cant.vol_m3, 0) + ' m³ (+ rombos ' + fmt(M.cant.vol_rombos_m3, 1) + ' m³)'], ['Fibra Plus 54 mm', fmt(M.cant.fibra_kg, 0) + ' kg · ' + M.cant.sacos10 + ' sacos de 10 kg' + (M.cant.bolsas1 ? ' + ' + M.cant.bolsas1 + ' bolsas de 1 kg' : '')], ['Polietileno (2 capas, +10 %)', fmt(M.cant.pe_m2, 0) + ' m²'], ['Barras en rombos Ø12 × 1.20 m', M.cant.barras_esquina + ' u'], ['Paños / colada diaria', M.panos.length + ' paños · ≤ ' + fmt(M.metodo.a_dia, 0) + ' m²/día']];
+    var ct = [['Concreto', fmt(M.cant.vol_m3, 0) + ' m³ (+ rombos ' + fmt(M.cant.vol_rombos_m3, 1) + ' m³)'], ['Fibra Plus 54 mm', fmt(M.cant.fibra_kg, 0) + ' kg · ' + M.cant.sacos10 + ' sacos de 10 kg' + (M.cant.bolsas1 ? ' + ' + M.cant.bolsas1 + ' bolsas de 1 kg' : '')], ['Polietileno (2 capas, +10 %)', fmt(M.cant.pe_m2, 0) + ' m²'], ['Barras en rombos Ø12 × 1.20 m', M.cant.barras_esquina + ' u'], ['Paños', M.panos.length + ' paños · el mayor de ' + fmt(M.maxA, 0) + ' m²']];
     ct.forEach(function (d, i) { var y = 170.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 40, y, d[1].slice(0, 40), { s: 2.4, a: 'start', b: 1 })); });
     o.push(Ln(x, 196, x + w, 196, GR, 0.3));
     o.push(T(x + 2, 200.5, 'CHEQUEOS DEL SISTEMA', { s: 2.8, a: 'start', b: 1, f: ROJO }));
@@ -36840,19 +36911,17 @@ function rotulo(ctx, hoja) {
     ck.forEach(function (d, i) { var y = 205.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.4, a: 'start' }) + T(x + w - 2, y, d[1], { s: 2.5, a: 'end', b: 1, f: d[2] ? '#2e7d32' : '#c62828' })); });
   } else {
     o.push(T(x + 2, 65.5, 'NOTAS DE LOS DETALLES', { s: 2.8, a: 'start', b: 1, f: ROJO }));
-    ['Detalles esquemáticos, sin escala (NTS).', 'Las medidas con letra cursiva dependen del', 'proveedor o del ingeniero responsable.', 'Perfil de junta, anclajes y dovelas: según ficha', 'técnica del proveedor local (RR Construcción,', 'BLK CR u otro) a la apertura de diseño.', 'Refuerzo de rombos: criterio de CONCRE;', 'ninguna norma fija diámetro ni largo.'].forEach(function (t, i) { o.push(T(x + 2, 71 + i * 4.2, t, { s: 2.4, a: 'start', f: '#444' })); });
+    ['Detalles esquemáticos, sin escala (NTS).', 'Las medidas dependen del proveedor o del', 'ingeniero responsable.', 'Perfil de junta, anclajes y dovelas: según la', 'ficha técnica del proveedor a la apertura', 'de diseño.', 'Refuerzo de rombos: criterio de CONCRE;', 'ninguna norma fija diámetro ni largo.'].forEach(function (t, i) { o.push(T(x + 2, 71 + i * 4.2, t, { s: 2.4, a: 'start', f: '#444' })); });
   }
   // firmas
   o.push(Ln(x, 228, x + w, 228, GR, 0.3));
   o.push(Rc(x + 2, 231, 58, 8, '#fff7f8', ROJO, 0.3) + T(x + 31, 236.5, 'BORRADOR · NO PARA CONSTRUCCIÓN', { s: 2.5, b: 1, f: ROJO }));
   o.push(T(x + 2, 246, 'Elaboró: CONCRE', { s: 2.5, a: 'start' }));
-  o.push(Ln(x + 2, 258, x + w - 2, 258, GR, 0.25) + T(x + 2, 262, 'Revisó y firma: ingeniero responsable (CFIA)', { s: 2.4, a: 'start', f: '#555' }));
-  o.push(T(x + 2, 267, 'Nombre / N.º de colegiado / Fecha:', { s: 2.3, a: 'start', f: '#777' }));
   return o.join('');
 }
 
-function svgHoja(inner) {
-  return '<svg class="hoja" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">' + Rc(0, 0, W, H, '#fff', 'none', 0) + inner + '</svg>';
+function svgHoja(inner, attrs) {
+  return '<svg class="hoja" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg"' + (attrs || '') + '>' + Rc(0, 0, W, H, '#fff', 'none', 0) + inner + '</svg>';
 }
 
 // ═══════════ LÁMINA 2: DETALLES ═════════════════════════════════════════════
@@ -36897,7 +36966,7 @@ function dJunta(M) {
   o.push(Ln(43.6, 22, 57.4, 22, ROJO, 0.3) + Ln(43.6, 20.2, 43.6, 23.8, ROJO, 0.3) + Ln(57.4, 20.2, 57.4, 23.8, ROJO, 0.3) + T(50.5, 18, 'apertura de diseño hasta ' + A + ' mm', { s: 2.4, b: 1, f: ROJO }));
   o.push(bal(20, 12, 1, 42.8, yt + 14) + bal(36, 30, 2, 46, yt - 1) + bal(78, 49, 3, 66, yt + tt / 2) + bal(85, 12, 4, 54, yt + 4.4) + bal(14, 49, 5, 34, yt + tt * 0.7));
   o.push(titD('Sección de la junta de construcción'));
-  var L = leyenda(['Perfil de acero armado: dos placas verticales unidas con remaches frágiles', 'Placa superior sinusoidal (rueda cruza sin golpe)', 'Dovela con vaina: permite abrir y transfiere carga', 'Sello flexible y fondo de junta (backer rod)', 'Anclajes en el concreto'], 84);
+  var L = leyenda(['Perfil de acero blindado en el borde de cada paño (dos placas verticales)', 'Placa superior sinusoidal (rueda cruza sin golpe)', 'Dovela con vaina: permite abrir y transfiere carga', 'Sello flexible y fondo de junta (backer rod)', 'Anclajes en el concreto'], 84);
   o.push(L.svg + notasD(['Sin barra corrugada a través de la junta. Modelo y capacidad según ficha del proveedor a ' + A + ' mm. Transferencia requerida ≈ ' + fmt(M.Q_req, 1) + ' kN/m.'], L.y + 1));
   return o.join('');
 }
@@ -36911,7 +36980,7 @@ function dMuro(M) {
   o.push(bal(13, 26, 1) + bal(30, 14, 2, 22, yt + 8) + bal(46, 24, 3, 22, yt + 1) + bal(60, 50, 4, 72, 60.6) + bal(14, 51, 5, 21, 57));
   o.push(Ln(20, yt + 9, 24, yt + 9, '#a98100', 0.1));
   o.push(titD('Aislamiento de muro'));
-  var L = leyenda(['Muro o cimiento (la losa no se conecta a él)', 'Espuma de celda cerrada 12–20 mm en todo el espesor de la losa', 'Sello flexible de poliuretano sobre la espuma', 'Polietileno de 2 capas (fricción y vapor) bajo la losa', 'La membrana sube contra el muro sin pegarse al concreto'], 84);
+  var L = leyenda(['Muro o cimiento (la losa no se conecta a él)', 'Espuma de celda cerrada 12–20 mm en todo el espesor de la losa', 'Sello flexible de poliuretano sobre la espuma', 'Polietileno de 2 capas (reductor de fricción y barrera de vapor) bajo la losa', 'La membrana sube contra el muro sin pegarse al concreto'], 84);
   o.push(L.svg + notasD(['Movimiento esperado de la losa contra el muro ≈ ' + fmt(M.sistema.eps / 1000 * M.maxL / 2, 1) + ' mm. Igual para bases de maquinaria, fosas y drenajes.'], L.y + 1));
   return o.join('');
 }
@@ -36947,7 +37016,7 @@ function dRomboCorte(M) {
   o.push(bal(34, 14, 1, 39, yt + 10) + bal(50.5, 26, 2, 50.5, yt + 12.5) + bal(22, 18, 3, 29.8, yt + 1) + bal(78, 18, 4, 71, yt + 1));
   o.push(titD('Corte por la columna y el rombo'));
   var L = leyenda(['Relleno compresible en todo el espesor: la columna queda aislada', 'Relleno del rombo (retracción compensada), colado ≥ 28 días después', 'Sello flexible entre la losa y el relleno del rombo', 'Losa con fibra: se mueve libre sin empujar la columna'], 84);
-  o.push(L.svg + notasD(['El hueco del rombo queda abierto mientras la losa completa su retracción inicial (CIP 6).'], L.y + 1));
+  o.push(L.svg + notasD(['El hueco del rombo queda abierto mientras la losa completa su retracción inicial (ACI 302.1R).'], L.y + 1));
   return o.join('');
 }
 function dSeccionTipo(M) {
@@ -36958,8 +37027,8 @@ function dSeccionTipo(M) {
   o.push(bal(66, pos.conc, 1, 58, pos.conc) + bal(66, pos.pe2 - 3, 2, 58, pos.pe2) + bal(76, pos.pe1 + 4, 3, 58, pos.pe1) + bal(66, pos.base, 4, 58, pos.base) + bal(66, pos.sub, 5, 58, pos.sub));
   o.push(T(80, pos.conc + 1, 'sin malla', { s: 2.3, a: 'start', f: '#777' }));
   o.push(titD('Sección tipo de la macro-losa'));
-  var L = leyenda(['Concreto f’c ' + M.fcTxt + ' kg/cm² con Fibra Plus 54 mm a ' + fmt(M.dosis, 1) + ' kg/m³', 'Polietileno 12 mil (fricción), traslape 30 cm sin pegar', 'Polietileno clase A de ' + (M.in.pesado ? '15' : '10') + ' mil (vapor y fricción), traslape 30 cm', 'Base granular compactada y cerrada, ≥ 20 cm (+0 / −25 mm)', 'Subrasante compactada según el estudio de suelos'], 84);
-  o.push(L.svg + notasD(['La fibra reemplaza la malla de retracción y temperatura (ANSI-DSI C1.0). Colar directo sobre la membrana; curado inmediato.'], L.y + 1));
+  var L = leyenda(['Concreto ' + M.resTxt + ' con Fibra Plus 54 mm a ' + fmt(M.dosis, 1) + ' kg/m³', 'Polietileno 12 mil (reductor de fricción), traslape 30 cm sin pegar', 'Polietileno clase A de ' + (M.in.pesado ? '15' : '10') + ' mil (barrera de vapor y fricción), traslape 30 cm', 'Base granular compactada y cerrada, ≥ 20 cm (+0 / −25 mm)', 'Subrasante compactada según el estudio de suelos'], 84);
+  o.push(L.svg + notasD(['Sin malla de retracción y temperatura: la fibra aporta el control de fisuración (ACI 544). Colar directo sobre la membrana; curado inmediato.'], L.y + 1));
   return o.join('');
 }
 function dSecuencia(M) {
@@ -36968,7 +37037,7 @@ function dSecuencia(M) {
   var yy = oy + Ly * s;
   o.push(titD('Secuencia de colado (número = orden)'));
   o.push(Rc(8, 82, 5, 3, '#f3f3f3', GR, 0.2) + T(15, 84.4, 'Fase 1', { s: 2.3, a: 'start' }) + Rc(32, 82, 5, 3, '#cfe0f3', GR, 0.2) + T(39, 84.4, 'Fase 2 (≥ 7 días después de la fase 1)', { s: 2.3, a: 'start' }));
-  o.push(notasD(['Paños alternos en tablero: cada paño de fase 1 se retrae libre antes de colar los vecinos.', 'Con retracción compensada, esperar ≥ 70 % de la expansión antes de colar paños contiguos (ACI 223).', 'Una colada por día: cada paño entra en el rendimiento del método de colocación (' + fmt(M.metodo.a_dia, 0) + ' m²/día).'], 91));
+  o.push(notasD(['Paños alternos en tablero: cada paño de fase 1 se retrae libre antes de colar los vecinos.', 'Con retracción compensada, esperar ≥ 70 % de la expansión antes de colar paños contiguos (ACI 223).', 'Una colada por día: cada paño se cuela completo en una jornada (el mayor mide ' + fmt(M.maxA, 0) + ' m²).'], 91));
   return o.join('');
 }
 
@@ -37002,10 +37071,10 @@ var NO_REVISA = [
   'Asentamientos del suelo y estudio de suelos; losas sobre suelos expansivos o rellenos sin control.',
   'Efecto de grupo de patas de rack cercanas, cargas de maquinaria con cimentación propia y pisos de pasillo muy angosto (VNA).',
   'Movimiento térmico (cámaras frías o calor de procesos) y su efecto en las aperturas.',
-  'Paños de más de 24 m: el respaldo es de fabricantes y literatura; requieren estudio específico, prueba de la mezcla y monitoreo de aperturas.',
+  'Paños de más de 24 m: el respaldo es la literatura técnica y no una norma; requieren estudio específico, prueba de la mezcla y monitoreo de aperturas.',
   'Naves que no sean rectangulares (con esquinas entrantes): el programa trabaja con planta rectangular.'
 ];
-var DESCARGO = 'Este documento es una herramienta de predimensionamiento elaborada por CONCRE con base en las normas y fuentes indicadas en él. No constituye una memoria de cálculo ni un plano constructivo, y no sustituye el diseño, la revisión ni la firma del ingeniero responsable (CFIA), ni el estudio de suelos del sitio. Los resultados dependen de los datos ingresados; los valores marcados como estimados (E) o por defecto son criterios de CONCRE y deben confirmarse. Las recomendaciones sobre Fibra Plus 54 mm se calculan con las especificaciones de la fibra de CONCRE / Concreequipos y no son válidas con otra fibra. Las distancias entre juntas de las macro-losas se apoyan en la normativa vigente (TR34 4ª ed., ACI 302.1R, ACI 360R) y en literatura técnica y de fabricantes; no existe una norma única para macro-losas con fibra sintética, por lo que el ingeniero responsable debe validar el sistema y las aperturas. CONCRE no asume responsabilidad por el uso de este documento fuera de ese alcance, ni por la construcción, el curado, el control de calidad o el uso posterior de la losa.';
+var DESCARGO = 'Este documento es una herramienta de predimensionamiento elaborada por CONCRE con base en las normas y fuentes indicadas en él. No constituye una memoria de cálculo ni un plano constructivo, y no sustituye el diseño, la revisión ni la firma del ingeniero responsable (CFIA), ni el estudio de suelos del sitio. Los resultados dependen de los datos ingresados; los valores marcados como estimados (E) o por defecto son criterios de CONCRE y deben confirmarse. Las recomendaciones sobre Fibra Plus 54 mm se calculan con las especificaciones de la fibra de CONCRE / Concreequipos y no son válidas con otra fibra. Las distancias entre juntas de las macro-losas se apoyan en la normativa vigente (TR34 4ª ed., ACI 302.1R, ACI 360R) y en literatura técnica; no existe una norma única para macro-losas con fibra sintética, por lo que el ingeniero responsable debe validar el sistema y las aperturas. CONCRE no asume responsabilidad por el uso de este documento fuera de ese alcance, ni por la construcción, el curado, el control de calidad o el uso posterior de la losa.';
 var DESCARGO_CORTO = 'Predimensionamiento de CONCRE: no constituye memoria de cálculo ni plano constructivo; no sustituye el diseño ni la firma del ingeniero responsable. Cálculos orientados a Fibra Plus 54 mm de CONCRE. Ver descargo al final.';
 
 function informe(ctx) {
@@ -37014,22 +37083,24 @@ function informe(ctx) {
   var logo = ctx.logo ? 'data:image/png;base64,' + ctx.logo : '';
   o.push('<div class="enc">' + (logo ? '<img class="logo" src="' + logo + '">' : '<div class="logo">CONCRE</div>') + '<div class="encd"><div class="tit">Macro-losa · Predimensionamiento <span class="sello">Borrador</span></div><div class="sub">' + esc(u.nombre) + ' · Referencia <b>' + esc(ref) + '</b> · ' + esc(ctx.fecha || '') + '</div></div></div>');
   o.push('<p class="aviso">Este documento <b>no constituye una memoria de cálculo</b> ni un plano constructivo. Requiere la revisión y la firma del ingeniero responsable (CFIA).</p>');
-  o.push(kv([['Proyecto', esc(S.proy.nombre || '—')], ['Cliente', esc(S.proy.cliente || '—')], ['Ubicación', esc(S.proy.ubicacion || '—')], ['Elaborado por', esc(ctx.autor || 'CONCRE')], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²']]));
+  o.push(kv([['Proyecto', esc(S.proy.nombre || '—')], ['Cliente', esc(S.proy.cliente || '—')], ['Ubicación', esc(S.proy.ubicacion || '—')], ['Elaborado por', 'CONCRE'], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²']]));
   o.push(seccion('Resultado', '<div class="kpis">' +
     '<div class="kpi"><b>' + fmt(M.h, 1) + ' cm</b><span>Espesor de la macro-losa</span></div>' +
-    '<div class="kpi"><b>f’c ' + R.rec.fc + '</b><span>kg/cm²</span></div>' +
+    '<div class="kpi"><b>' + esc(M.resCorto) + '</b><span>Resistencia · kg/cm²</span></div>' +
     '<div class="kpi"><b>' + fmt(M.dosis, 1) + ' kg/m³</b><span>Fibra Plus 54 mm</span></div>' +
     '<div class="kpi"><b>' + fmt(M.Lmax, 1) + ' m</b><span>Distancia máx. entre juntas</span></div>' +
     '<div class="kpi"><b>' + (M.nJx + M.nJy) + '</b><span>Juntas blindadas (' + fmt(M.cant.juntas_m, 0) + ' m)</span></div></div>' +
-    '<p class="p">Sistema: <b>' + esc(M.sistema.nombre) + '</b>. Retracción neta de diseño ' + M.sistema.eps + ' µε; apertura esperada de las juntas ' + fmt(M.aperturaMax, 1) + ' mm (límite ' + M.in.aperturaAdm + ' mm). Paños: ' + M.panos.length + ', el mayor de ' + fmt(M.maxL, 1) + ' m.</p>'));
+    '<p class="p">Sistema: <b>' + esc(M.sistema.nombre) + '</b>. Retracción neta de diseño ' + M.sistema.eps + ' µε; apertura esperada de las juntas ' + fmt(M.aperturaMax, 1) + ' mm (límite ' + M.in.aperturaAdm + ' mm). Paños: ' + M.panos.length + ', el mayor de ' + fmt(M.maxL, 1) + ' m. Todas las juntas van sobre ejes principales.</p>' +
+    '<p class="p"><b>Capas bajo la losa:</b> reductor de fricción de 2 capas de polietileno de 12 mil y barrera de vapor clase A de ' + (M.in.pesado ? '15' : '10') + ' mil (la capa inferior de la barrera hace también de fricción). Detalle en «Reductor de fricción y barrera de vapor».</p>'));
   if (M.avisos.length) o.push(seccion('Avisos', '<ul class="av">' + M.avisos.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'));
   // comparación de sistemas
   o.push(seccion('Qué lograría cada sistema en esta nave', tabla(['Sistema', 'Dosis', 'Distancia máx.', 'Juntas', 'Paños', 'Apertura'], M.comparacion.map(function (c) {
-    return [(c.id === M.sistema.id ? '<b>' + esc(c.nombre) + ' ◄</b>' : esc(c.nombre)) + (c.especial ? ' <span class="n">(requiere estudio)</span>' : ''), fmt(c.dosis, 1) + ' kg/m³', fmt(c.Lmax, 1) + ' m', c.juntas, c.panos, fmt(c.apertura, 1) + ' mm'];
-  })) + '<p class="n">Mientras más control de retracción tenga la mezcla, mayor la distancia entre juntas y menos juntas blindadas. Fuentes: Pombo (Rev. Hormigón, 2023), BLK CR / ICCYC 2025, obra PiSA (BarChip), TR34 4ª ed. (tope 35 m).</p>'));
+    return [(c.id === M.sistema.id ? '<b>' + esc(c.nombre) + ' ◄</b>' : esc(c.nombre)) + (c.especial ? ' <span class="n">(requiere estudio)</span>' : '') + (c.ok === false ? ' <span class="n">(con estos ejes no alcanza: falta algún eje)</span>' : ''), fmt(c.dosis, 1) + ' kg/m³', fmt(c.Lmax, 1) + ' m', c.juntas, c.panos, fmt(c.apertura, 1) + ' mm'];
+  })) + '<p class="n">Mientras más control de retracción tenga la mezcla, mayor la distancia entre juntas y menos juntas blindadas. Respaldo: TR34 4ª ed. (tope de 35 m) y literatura técnica sobre macro-losas con fibra sintética.</p>'));
   // datos de entrada
   o.push(seccion('Datos de entrada', tabla(['Dato', 'Valor'], [
-    ['Uso', esc(u.nombre)], ['Suelo de apoyo', esc(R.k.nota) + ' <b>k = ' + fmt(R.k.k, 2) + ' kg/cm³</b>'], ['Método de colocación', esc(M.metodo.nombre) + ' · colada diaria ≤ ' + fmt(M.metodo.a_dia, 0) + ' m²'],
+    ['Uso', esc(u.nombre)], ['Suelo de apoyo', esc(R.k.nota) + ' <b>k = ' + fmt(R.k.k, 2) + ' kg/cm³</b>'],     ['Espesor y fibra', M.hFijo || M.dosisManual ? 'Definidos por el usuario y verificados con las cargas' + (M.rec ? ' (recomendado por el programa: ' + fmt(M.rec.h, 1) + ' cm · ' + fmt(M.rec.dosis, 1) + ' kg/m³)' : '') : 'Recomendados por el programa'],
+    ['Posición de las juntas', M.juntasManual ? 'Ajustada por el usuario (siempre sobre ejes)' : 'Automática, sobre ejes principales'],
     ['Ejes principales', 'Verticales: ' + (M.ejesTxtX) + ' · Horizontales: ' + (M.ejesTxtY)], ['Columnas', fmt(M.in.colX, 2) + ' × ' + fmt(M.in.colY, 2) + ' m · ' + M.cols.length + ' (interiores ' + M.nInt + ', borde ' + M.nBor + ', esquina ' + M.nEsq + ')'],
     ['Piso sensible a la humedad', S.pisoSensible ? 'Sí' : 'No'], ['Capacidad de la junta (ficha)', M.in.capJunta_kNm > 0 ? fmt(M.in.capJunta_kNm, 1) + ' kN/m' : 'No ingresada: confirmar con el proveedor']], ['34%', '66%'])));
   // verificación por carga (motor de losas)
@@ -37044,16 +37115,13 @@ function informe(ctx) {
       return ['<b>' + esc(f.t) + '</b>', esc(f.v) + (f.nota ? '<div class="n">' + esc(f.nota) + '</div>' : ''), esc(f.norma), '<b>' + esc(f.estado) + '</b>'];
     }), ['20%', '52%', '22%', '6%'])));
   });
-  o.push('<p class="n">V verificado en norma · S fuente secundaria (fabricante, universidad, artículo) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.</p>');
-  // juntas disponibles
-  o.push(seccion('Juntas blindadas disponibles en el mercado local', tabla(['Tipo', 'Proveedor', 'Uso'], M.juntasCat.map(function (j) { return ['<b>' + esc(j.nombre) + '</b>', esc(j.prov), esc(j.uso)]; }), ['34%', '28%', '38%']) + '<p class="n">CONCRE no vende estas juntas: son referencias de mercado. El modelo, el espesor del acero y la capacidad a la apertura de diseño deben confirmarse con la ficha técnica del proveedor.</p>'));
+  o.push('<p class="n">V verificado en norma · S fuente técnica secundaria (no es norma) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.</p>');
   // pasos
-  o.push('<div class="sec salto"><h2>Cálculo paso a paso</h2>' + M.pasos.concat(ev.pasos).map(function (p, i) {
+  o.push('<div class="sec salto"><h2>Cálculo paso a paso</h2>' + M.pasos.concat(ev.pasos.filter(function (p) { return M.resTipo === 'mr' ? p.titulo !== 'Resistencia del concreto' : p.titulo !== 'MR de diseño'; }).map(function (p) { return M.resTipo === 'mr' && p.titulo === 'MR de diseño' ? { titulo: p.titulo, formula: p.formula.replace(/√f.c/, '√fck'), valores: 'criterio de la norma', resultado: M.resTxt, norma: p.norma } : p; })).map(function (p, i) {
     return '<div class="paso"><div class="pt">' + (i + 1) + '. ' + esc(p.titulo) + '</div><div class="pf">' + esc(p.formula) + '</div><div class="pv">' + esc(p.valores) + '</div><div class="pr">' + esc(p.resultado) + '</div><div class="pn">' + esc(p.norma) + '</div></div>';
   }).join('') + '</div>');
   o.push(seccion('Lo que este cálculo NO revisa', '<ul class="av">' + NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'));
-  o.push(seccion('Fuentes consultadas (solo nombre)', '<p class="p" style="font-size:calc(8.5px*var(--fs,1))">TR34 4ª ed. (Concrete Society) y 3ª ed. · ACI 360R-10 · ACI 302.1R-04 / -15 · ACI 223 · ACI 308 · ACI 305R · ACI 544 · EN 14651 · ASTM C157, C494, C1609, C1702, E1155, E1745 · ANSI-DSI C1.0 · Concrete Society (large area pours; fibre reinforced floors) · Pombo, Revista Hormigón 63 (2023) · BLK CR / ICCYC 2025 · BarChip (guía de pisos y caso PiSA) · FORTA (High-Fiber Slabs) · Permaban (juntas armadas) · Sika Costa Rica (SikaControl NS) · NRMCA CIP 6.</p>'));
-  o.push(seccion('Revisión y firma', '<table class="kv"><tr><td>Ingeniero responsable (CFIA)</td><td>&nbsp;</td></tr><tr><td>N.º de colegiado</td><td>&nbsp;</td></tr><tr><td>Fecha y firma</td><td style="height:26px">&nbsp;</td></tr></table>'));
+  o.push(seccion('Normas y guías técnicas consultadas', '<p class="p" style="font-size:calc(8.5px*var(--fs,1))">TR34 (Concrete Society), 4ª y 3ª ed. · ACI 360R-10 · ACI 302.1R · ACI 223 · ACI 308 · ACI 305R · ACI 544 · ACI 318 · EN 14651 · ASTM C157, C494, C1609, C1702, E1155, E1745 · Eurocódigo 2 (EC2).</p>'));
   o.push(seccion('Descargo de responsabilidad', '<p class="p" style="font-size:calc(8.5px*var(--fs,1));color:#555">' + esc(DESCARGO) + '</p>'));
   o.push('<div class="sec salto"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE.</p></div>');
   return o.join('');
@@ -37073,7 +37141,7 @@ function html(ctx) {
     '.sello{float:right;margin-left:8px;white-space:nowrap;font-size:calc(7px*var(--fs,1));font-weight:700;color:#C8102E;letter-spacing:.5px;text-transform:uppercase;border:1px solid #e0a3ae;border-radius:3px;padding:2px 6px}' +
     '.aviso{background:#fff7f8;border:1px solid #e0a3ae;padding:5px 8px;font-size:calc(9px*var(--fs,1));margin:0 0 8px}' +
     '.sec{margin:0 0 9px;position:relative;z-index:1}.sec h2{font-size:calc(11px*var(--fs,1));margin:0 0 4px;padding:3px 7px;background:#3D3D3D;color:#fff;break-after:avoid}.salto{break-before:page}' +
-    'table.t{width:100%;border-collapse:collapse;font-size:calc(8.6px*var(--fs,1))}table.t th{background:#eee;text-align:left;padding:3px 5px;border:1px solid #ddd}table.t td{padding:3px 5px;border:1px solid #e3e3e3;vertical-align:top}table.t tr{break-inside:avoid}' +
+    'table.t{width:100%;border-collapse:collapse;font-size:calc(8.6px*var(--fs,1))}table.t th{background:#eee;text-align:left;padding:3px 5px;border:1px solid #ddd}table.t td{padding:3px 5px;border:1px solid #e3e3e3;vertical-align:top}table.t tr{break-inside:avoid}table.t tr:first-child{break-after:avoid}' +
     'table.kv{width:100%;border-collapse:collapse;font-size:calc(9px*var(--fs,1))}table.kv td{padding:2.5px 5px;border-bottom:1px solid #eee;vertical-align:top}table.kv td:first-child{width:38%;color:#666}' +
     '.kpis{display:flex;gap:6px;margin-bottom:5px}.kpi{flex:1;border:1px solid #ddd;border-left:4px solid #C8102E;padding:5px 7px}.kpi b{display:block;font-size:calc(14px*var(--fs,1));color:#C8102E}.kpi span{font-size:calc(8px*var(--fs,1));color:#777}' +
     '.p{margin:4px 0;line-height:1.5}.n{font-size:calc(8px*var(--fs,1));color:#777;margin:3px 0;line-height:1.4}.av{margin:2px 0 0;padding-left:15px;line-height:1.5}' +
@@ -37198,12 +37266,12 @@ function nuevoEstado() {
     panelLx: '', panelLy: '',
     borde: 15, esq: 15, nu: 0.20,
     criterio: 'mayor', mr: 'aci318',
-    macro: false, mLx: '', mLy: '', mEjesX: [], mEjesY: [], mSinCol: [], mSistema: 'sra', mMetodo: 'laser', mCols: 'todas', mColX: 0.4, mColY: 0.4, mCapJunta: '', mPesado: false, mMont: true, /* MACRO:ESTADO */
+    macro: false, mLx: '', mLy: '', mEjesX: [], mEjesY: [], mSinCol: [], mSistema: 'sra', mMetodo: 'laser', mCols: 'todas', mColX: 0.4, mColY: 0.4, mCapJunta: '', mPesado: false, mMont: true, mAuto: true, mH: '', mDosis: '', mVista: 'fc', mJuntasX: null, mJuntasY: null, /* MACRO:ESTADO */
     res: null
   };
 }
 
-var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr', 'macro', 'mLx', 'mLy', 'mEjesX', 'mEjesY', 'mSinCol', 'mSistema', 'mMetodo', 'mCols', 'mColX', 'mColY', 'mCapJunta', 'mPesado', 'mMont'];
+var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr', 'macro', 'mLx', 'mLy', 'mEjesX', 'mEjesY', 'mSinCol', 'mSistema', 'mMetodo', 'mCols', 'mColX', 'mColY', 'mCapJunta', 'mPesado', 'mMont', 'mAuto', 'mH', 'mDosis', 'mVista', 'mJuntasX', 'mJuntasY'];
 function serializar(S) { var e = {}; CAMPOS_ESTADO.forEach(function (k) { e[k] = clone(S[k]); }); return e; }
 function nuevoId() { return 'lo_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function refLocal() {
@@ -37836,7 +37904,7 @@ function generarEjes(L, paso) { var a = []; if (!(paso > 0.5)) return a; for (va
 // ── tarjetas de macro-losa en el paso 1 ─────────────────────────────────────
 function pintarTarjetasMacro(S, box, g, ir, elegir) {
   box.appendChild(el('h2', { class: 'ls-h2', style: 'margin-top:22px' }, ['Macro-losa (sin cortes de contracción)']));
-  box.appendChild(el('p', { class: 'ls-p' }, ['Piso de gran área, con fibra, sin juntas aserradas: solo juntas de construcción blindadas, cada 8 a 35 m según el sistema de control de retracción. Escoja el uso: usted indica los ejes principales y el programa recomienda la base, la distancia entre juntas, el tipo de junta blindada, la barrera, el espesor, el f’c y la Fibra Plus 54 mm, y genera el plano en PDF.']));
+  box.appendChild(el('p', { class: 'ls-p' }, ['Piso de gran área, con fibra, sin juntas aserradas: solo juntas de construcción blindadas, siempre sobre los ejes principales, cada 8 a 35 m según el sistema de control de retracción. Escoja el uso: usted indica los ejes principales y el programa recomienda la base, la distancia entre juntas, la junta blindada, el reductor de fricción y la barrera de vapor, el espesor, la resistencia del concreto y la Fibra Plus 54 mm, y genera el plano en PDF. Usted puede cambiar el espesor y la fibra y mover las juntas de un eje a otro.']));
   var g2 = el('div', { class: 'ls-cards' });
   USOS_MACRO.forEach(function (id) {
     var u = C.USOS.filter(function (x) { return x.id === id; })[0]; if (!u) return;
@@ -37853,7 +37921,7 @@ function pintarMacroCaja(S, box) {
   if (!document.getElementById('ls-css-macro')) { var st = document.createElement('style'); st.id = 'ls-css-macro'; st.textContent = MACRO_CSS; document.head.appendChild(st); }
   var u = usoActual(S);
   var bx = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Macro-losa · nave y ejes principales'])]);
-  bx.appendChild(el('p', { class: 'ls-p' }, ['Escriba las medidas de la nave y dónde van los ejes principales (los de las columnas o los marcos). El programa coloca las juntas de construcción sobre esos ejes cuando puede. No hace falta que dibuje todo: puede generar los ejes por separación fija y luego mover los que difieran.']));
+  bx.appendChild(el('p', { class: 'ls-p' }, ['Escriba las medidas de la nave y dónde van los ejes principales (los de las columnas o los marcos). Las juntas de construcción van solo sobre esos ejes: el programa escoge cuáles y usted puede moverlas después, en el plano del resultado. No hace falta que dibuje todo: puede generar los ejes por separación fija y luego mover los que difieran.']));
 
   var g = el('div', { class: 'ls-grid' });
   var iLx = inpNum(S.mLx, function (v) { S.mLx = v; recortar(); redibujar(); }), iLy = inpNum(S.mLy, function (v) { S.mLy = v; recortar(); redibujar(); });
@@ -37900,7 +37968,7 @@ function pintarMacroCaja(S, box) {
   bx.appendChild(chips);
 
   function recortar() { var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0); S.mEjesX = (S.mEjesX || []).filter(function (v) { return v > 0.01 && v < Lx - 0.01; }); S.mEjesY = (S.mEjesY || []).filter(function (v) { return v > 0.01 && v < Ly - 0.01; }); sincronizar(); }
-  function sincronizar() { tX.value = (S.mEjesX || []).join(', '); tY.value = (S.mEjesY || []).join(', '); }
+  function sincronizar() { tX.value = (S.mEjesX || []).join(', '); tY.value = (S.mEjesY || []).join(', '); S.mJuntasX = null; S.mJuntasY = null; }  // si cambian los ejes, las juntas vuelven a automático
   function listaChips() {
     chips.innerHTML = '';
     (S.mEjesX || []).forEach(function (v, i) { chips.appendChild(el('span', { class: 'mc-chip' }, ['Eje ' + letraEje(i + 1) + ' · ' + fmt(v, 2) + ' m', el('button', { title: 'Quitar', onclick: function () { S.mEjesX.splice(i, 1); sincronizar(); redibujar(); } }, ['✕'])])); });
@@ -37920,7 +37988,7 @@ function pintarMacroCaja(S, box) {
   bx.appendChild(el('div', { class: 'mc-sub' }, ['Sistema de control de retracción']));
   bx.appendChild(el('p', { class: 'ls-p' }, ['Entre más control de retracción tenga la mezcla, mayor la distancia entre juntas y menos juntas blindadas (que son lo más caro). En el resultado verá lo que lograría cada sistema en su nave.']));
   var cs = el('div', { class: 'mc-sis' });
-  var DESCS = { fibra: 'Fibra Plus 54 mm y mezcla de baja retracción. Es lo más sencillo; paños más cortos (≈ 8 a 15 m).', sra: 'Fibra más reductor de retracción (SRA). Paños de ≈ 15 a 24 m. Producto disponible en Costa Rica (SikaControl NS).', comp: 'Fibra más concreto de retracción compensada. Paños de hasta ≈ 35 m. Requiere estudio y confirmar el aditivo expansivo en Costa Rica.' };
+  var DESCS = { fibra: 'Fibra Plus 54 mm y mezcla de baja retracción. Es lo más sencillo; paños más cortos (≈ 8 a 15 m).', sra: 'Fibra más reductor de retracción (SRA). Paños de ≈ 15 a 24 m.', comp: 'Fibra más concreto de retracción compensada. Paños de hasta ≈ 35 m. Requiere estudio y confirmar el aditivo expansivo en Costa Rica.' };
   ['fibra', 'sra', 'comp'].forEach(function (id) {
     var s = MM.SISTEMAS[id];
     var it = el('div', { class: 'it' + (S.mSistema === id ? ' on' : '') }, [el('b', {}, [s.corto + (id === 'sra' ? ' (recomendado)' : '')]), el('div', { class: 'd' }, [DESCS[id]])]);
@@ -37929,8 +37997,33 @@ function pintarMacroCaja(S, box) {
   });
   bx.appendChild(cs);
 
+  // espesor y fibra: el programa recomienda, el usuario puede cambiarlos si cumplen
+  bx.appendChild(el('div', { class: 'mc-sub' }, ['Espesor de la losa y fibra']));
+  bx.appendChild(el('p', { class: 'ls-p' }, ['El programa recomienda el espesor y la dosis de Fibra Plus 54 mm según las cargas. Si prefiere otros valores, desmarque la casilla y escríbalos: se aceptan solo si cumplen la verificación por carga, el espesor mínimo de macro-losa y el arrastre sobre la membrana. Si no cumplen, el programa se lo dice y le muestra los valores recomendados.']));
+  var ckA = el('input', { type: 'checkbox' }); ckA.checked = S.mAuto !== false;
+  var iH = inpNum(S.mH, function (v) { S.mH = v; }), iD = inpNum(S.mDosis, function (v) { S.mDosis = v; }, { step: 0.1 });
+  function estadoManual() { iH.disabled = ckA.checked; iD.disabled = ckA.checked; }
+  ckA.addEventListener('change', function () {
+    if (!ckA.checked && !(num(S.mH, 0) > 0 && num(S.mDosis, 0) > 0)) {   // se rellena con lo que recomienda el programa para que el usuario parta de ahí
+      try { var rr = calcular(Object.assign({}, S, { mAuto: true })); if (rr && rr.macro && rr.macro.M) { S.mH = rr.macro.M.h; S.mDosis = rr.macro.M.dosis; iH.value = S.mH; iD.value = S.mDosis; } } catch (x) {}
+    }
+    S.mAuto = ckA.checked; estadoManual();
+  });
+  var ge = el('div', { class: 'ls-grid' });
+  ge.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Selección']), el('label', { class: 'ls-chk' }, [ckA, 'Que el programa recomiende el espesor y la fibra (recomendado)'])]));
+  ge.appendChild(campo('Espesor de la macro-losa (cm)', iH, 'Mínimo de macro-losa: 15 cm (17 cm si el paño pasa de 20 m)'));
+  ge.appendChild(campo('Fibra Plus 54 mm (kg/m³)', iD, 'Entre 2,3 y 6 kg/m³ (rango de la tabla de la fibra)'));
+  bx.appendChild(ge); estadoManual();
+
+  // cómo mostrar la resistencia del concreto
+  bx.appendChild(el('div', { class: 'mc-sub' }, ['Resistencia del concreto en el informe']));
+  var gr = el('div', { class: 'ls-grid' });
+  gr.appendChild(campo('Mostrar la resistencia como', selBox([{ v: 'fc', l: 'f’c en kg/cm² (resistencia a compresión)' }, { v: 'mr', l: 'MR en kg/cm² (módulo de rotura)' }], S.mVista || 'fc', function (v) { S.mVista = v; }),
+    'El plano y el informe muestran solo el valor que escoja. El programa calcula con los dos (el MR sale del criterio de «Geometría, criterio y parámetros»).'));
+  bx.appendChild(gr);
+
   var go = el('div', { class: 'ls-grid' });
-  go.appendChild(campo('Método de colocación', selBox([{ v: 'laser', l: 'Regla láser (laser screed) · hasta 1 000 m² por día' }, { v: 'vibratoria', l: 'Regla vibratoria o manual · hasta 400 m² por día' }], S.mMetodo, function (v) { S.mMetodo = v; }), 'Decide el tamaño máximo de cada paño: debe poder colarse en un día'));
+  go.appendChild(campo('Método de colocación', selBox([{ v: 'laser', l: 'Regla láser (laser screed) · hasta 2 000 m² por día' }, { v: 'vibratoria', l: 'Colocación manual (regla vibratoria) · hasta 1 000 m² por día' }], S.mMetodo, function (v) { S.mMetodo = v; }), 'Decide el área máxima de cada paño: debe poder colarse en un día. El informe no indica el método: solo la planicidad.'));
   go.appendChild(campo('Capacidad de la junta del proveedor (kN/m) — opcional', inpNum(S.mCapJunta, function (v) { S.mCapJunta = v; }), 'Si ya tiene la ficha técnica de la junta a 20 mm de apertura, escríbala y el programa la compara con la requerida'));
   var ckP = el('input', { type: 'checkbox' }); ckP.checked = !!S.mPesado; ckP.addEventListener('change', function () { S.mPesado = ckP.checked; });
   go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Membrana más gruesa']), el('label', { class: 'ls-chk' }, [ckP, 'Equipo pesado sobre la membrana o base de piedra angular (15 mil)'])]));
@@ -38014,63 +38107,135 @@ function dibujarLienzo(S, holder, getModo, alCambiar) {
 }
 
 // ── cálculo (se llama desde calcular(S) cuando S.macro) ──────────────────────
+// El programa recomienda el espesor y la dosis; si el usuario los cambia (S.mAuto === false) se aceptan
+// solo si cumplen: verificación por carga, espesor mínimo de macro-losa y arrastre sobre la membrana.
 function calcularMacroUI(S, R) {
   var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0);
   if (!(Lx > 0 && Ly > 0)) return { error: 'Escriba el largo y el ancho de la nave en el paso «Terreno y concreto».' };
   var d = R.d, sis = S.mSistema || 'sra';
-  var dm = MM.dosisMacro(sis, d.dosis_rec);
-  var hMin = MM.techoSistema(sis, dm.dosis) > 20 ? 17 : 15;
-  var h = Math.max(d.h_rec, hMin);
-  var e2 = Object.assign({}, R.e, { h_cm: h, dosis: dm.dosis });
+  var dmRec = MM.dosisMacro(sis, d.dosis_rec);
+  var hMinRec = MM.techoSistema(sis, dmRec.dosis) > 20 ? 17 : 15;
+  var rec = { h: Math.max(d.h_rec, hMinRec), dosis: dmRec.dosis };
+  var manual = S.mAuto === false, h = rec.h, dosis = rec.dosis;
+  if (manual) {
+    h = num(S.mH, 0); dosis = num(S.mDosis, 0);
+    if (!(h > 0) || !(dosis > 0)) return { error: 'Escriba el espesor y la dosis de fibra, o marque «Que el programa recomiende el espesor y la fibra».', manualError: true, rec: rec };
+    if (dosis < MM.DOSIS_MIN - 1e-9 || dosis > MM.DOSIS_MAX + 1e-9) return { error: 'La dosis de Fibra Plus 54 mm debe estar entre ' + fmt(MM.DOSIS_MIN, 1) + ' y ' + fmt(MM.DOSIS_MAX, 1) + ' kg/m³ (rango de la tabla de la fibra).', manualError: true, rec: rec };
+  }
+  var e2 = Object.assign({}, R.e, { h_cm: h, dosis: dosis });
   var ev2 = M.evaluar(e2);
   var Pd = 0;
   R.cargas.forEach(function (c) {
     var kg = c.tipo === 'rack' ? c.P_kg * c.gF : c.tipo === 'rueda' ? c.W_kg * c.gF * (c.impacto || 1) : 0;
     Pd = Math.max(Pd, kg * 9.80665 / 1000);
   });
+  var mr = S.mVista === 'mr';
   var inp = { Lx: Lx, Ly: Ly, ejesX: (S.mEjesX || []).slice(), ejesY: (S.mEjesY || []).slice(), sistema: sis, metodo: S.mMetodo || 'laser', columnasModo: S.mCols || 'todas',
-    colX: num(S.mColX, 0.4), colY: num(S.mColY, 0.4), sinColumna: (S.mSinCol || []).slice(), h_cm: h, fc: R.rec.fc, dosisCargas: d.dosis_rec, ell_mm: ev2.props.ell, Pd_kN: Pd,
-    uso: S.usoId, o: S.o, clima: S.clima, pisoSensible: !!S.pisoSensible, pesado: !!S.mPesado, montacargas: !!S.mMont, capJunta_kNm: num(S.mCapJunta, 0), fR: M.interpolarFrc(dm.dosis) };
+    colX: num(S.mColX, 0.4), colY: num(S.mColY, 0.4), sinColumna: (S.mSinCol || []).slice(), h_cm: h, hFijo: manual, dosisUsar: manual ? dosis : 0, fc: R.rec.fc,
+    resTipo: mr ? 'mr' : 'fc', resTxt: mr ? 'MR ' + fmt(R.MR, 1) + ' kg/cm²' : 'f’c ' + R.rec.fc + ' kg/cm²', resCorto: mr ? 'MR ' + fmt(R.MR, 1) : 'f’c ' + R.rec.fc,
+    dosisCargas: d.dosis_rec, ell_mm: ev2.props.ell, Pd_kN: Pd,
+    uso: S.usoId, o: S.o, clima: S.clima, pisoSensible: !!S.pisoSensible, pesado: !!S.mPesado, montacargas: !!S.mMont, capJunta_kNm: num(S.mCapJunta, 0), fR: M.interpolarFrc(dosis),
+    juntasX: Array.isArray(S.mJuntasX) ? S.mJuntasX.slice() : null, juntasY: Array.isArray(S.mJuntasY) ? S.mJuntasY.slice() : null };
   var res = MM.calcularMacro(inp);
   if (res.error) return { error: res.error };
-  if (S.clima && S.clima !== 'interior') res.avisos.push('La macro-losa se piensa para interior cubierto. Con sol, lluvia, zona costera o frío el movimiento térmico y de humedad cambia la apertura de las juntas: requiere un estudio específico del ingeniero.');
+  res.rec = rec;
   var okCh = ev2.chequeos.every(function (c) { return c.ok; });
+  if (manual) {
+    var fallas = [];
+    var malas = ev2.chequeos.filter(function (c) { return !c.ok; }).map(function (c) { return c.carga; });
+    if (malas.length) fallas.push('no cumple la verificación por carga (' + malas.join(', ') + ')');
+    if (!res.hOk) fallas.push('el espesor es menor que el mínimo de macro-losa para este sistema (' + fmt(res.hMin, 1) + ' cm)');
+    if (!res.okArrastre) fallas.push('la fibra no resiste el arrastre sobre la membrana en paños de ' + fmt(res.Lmax, 1) + ' m');
+    if (fallas.length) return { error: 'Con ' + fmt(h, 1) + ' cm y ' + fmt(dosis, 1) + ' kg/m³ no se puede aceptar: ' + fallas.join('; ') + '. Valores recomendados por el programa: ' + fmt(rec.h, 1) + ' cm y ' + fmt(rec.dosis, 1) + ' kg/m³.', manualError: true, rec: rec };
+  }
+  if (S.clima && S.clima !== 'interior') res.avisos.push('La macro-losa se piensa para interior cubierto. Con sol, lluvia, zona costera o frío el movimiento térmico y de humedad cambia la apertura de las juntas: requiere un estudio específico del ingeniero.');
   if (!okCh) res.avisos.push('Alguna carga no cumple con el espesor y la dosis finales de la macro-losa (ver «Verificación por carga»).');
-  return { M: res, ev: ev2, inp: inp, cumple: okCh && res.okArrastre };
+  return { M: res, ev: ev2, inp: inp, cumple: okCh && res.okArrastre && res.okLong && res.hOk };
 }
 
 // ── resultados (en el paso 4) ────────────────────────────────────────────────
 function ctxMacro(S, R) {
-  var ses = (typeof SESSION !== 'undefined' && SESSION) ? SESSION : null;
   return { M: R.macro.M, S: { ejesX: S.mEjesX || [], ejesY: S.mEjesY || [], proy: S.proy, pisoSensible: !!S.pisoSensible }, R: Object.assign({}, R, { ev: R.macro.ev }),
-    ref: S.ref || (WEB ? refLocal() : 'SIN GUARDAR'), fecha: new Date().toLocaleDateString('es-CR'), autor: ses && ses.nombre,
+    ref: S.ref || (WEB ? refLocal() : 'SIN GUARDAR'), fecha: new Date().toLocaleDateString('es-CR'),
     logo: (typeof LOSAS_LOGO_B64 !== 'undefined' ? LOSAS_LOGO_B64 : (typeof FACT_LOGO_B64 !== 'undefined' ? FACT_LOGO_B64 : '')) };
 }
+// arrastrar una junta del plano hasta otro eje (las juntas solo pueden ir sobre ejes)
+function activarArrastreJuntas(S, cont, X, ir) {
+  var svg = cont.querySelector('svg'); if (!svg) return;
+  var cand; try { cand = JSON.parse(svg.getAttribute('data-cand')); } catch (e) { return; }
+  var drag = null;
+  function ptSvg(e) { var pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; var m = svg.getScreenCTM(); return m ? pt.matrixTransform(m.inverse()) : { x: 0, y: 0 }; }
+  svg.addEventListener('pointerdown', function (e) {
+    var g = e.target.closest && e.target.closest('g.jn'); if (!g) return;
+    var t = g.getAttribute('data-t'), lista = cand[t] || []; if (!lista.length) return;
+    var pos = parseFloat(g.getAttribute('data-pos')), c0 = (lista.filter(function (c) { return Math.abs(c[0] - pos) < 0.01; })[0] || [0, 0])[1];
+    drag = { g: g, t: t, ax: g.getAttribute('data-ax'), pos: pos, c0: c0, lista: lista, dest: pos };
+    try { svg.setPointerCapture(e.pointerId); } catch (x) {} e.preventDefault();
+  });
+  svg.addEventListener('pointermove', function (e) {
+    if (!drag) return; var p = ptSvg(e), c = drag.ax === 'x' ? p.x : p.y, best = drag.lista[0];
+    drag.lista.forEach(function (q) { if (Math.abs(q[1] - c) < Math.abs(best[1] - c)) best = q; });
+    drag.dest = best[0]; var dd = best[1] - drag.c0;
+    drag.g.setAttribute('transform', drag.ax === 'x' ? 'translate(' + dd + ' 0)' : 'translate(0 ' + dd + ')');
+  });
+  function fin() {
+    if (!drag) return; var d = drag; drag = null;
+    if (Math.abs(d.dest - d.pos) < 0.01) { d.g.removeAttribute('transform'); return; }
+    var actuales = (d.t === 'v' ? X.px.cortes : X.py.cortes).map(function (c) { return c.pos; });
+    if (actuales.some(function (q) { return Math.abs(q - d.dest) < 0.01; })) { d.g.removeAttribute('transform'); toastLs('Ya hay una junta en ese eje.'); return; }
+    var nuevo = actuales.map(function (q) { return Math.abs(q - d.pos) < 0.01 ? d.dest : q; }).sort(function (a, b) { return a - b; });
+    if (d.t === 'v') S.mJuntasX = nuevo; else S.mJuntasY = nuevo;
+    var y = window.pageYOffset; S.res = calcular(S); ir(3); try { window.scrollTo(0, y); } catch (x) {}
+  }
+  svg.addEventListener('pointerup', fin); svg.addEventListener('pointercancel', fin);
+}
+function unirEjes(a, b) { return (a || []).concat(b || []).map(r2m).sort(function (x, y) { return x - y; }).filter(function (v, i, arr) { return i === 0 || Math.abs(v - arr[i - 1]) > 0.01; }); }
+
 function pintarMacroResultados(S, box, ir, nuevo) {
   var R = S.res, MR = R.macro, u = R.u;
   box.appendChild(el('p', { class: 'ls-p' }, ['Macro-losa · ' + u.nombre + ' · sin cortes aserrados de contracción']));
-  if (MR.error) { box.appendChild(el('div', { class: 'ls-warn ls-bad' }, [MR.error])); box.appendChild(navRes(ir, nuevo)); return; }
+  if (MR.error) {
+    box.appendChild(el('div', { class: 'ls-warn ls-bad' }, [MR.error]));
+    if (MR.manualError) {
+      var bt = el('div', { class: 'ls-nav' }, []);
+      if (MR.rec) bt.appendChild(el('button', { class: 'ls-btn', onclick: function () { S.mAuto = true; S.res = calcular(S); ir(3); } }, ['Usar los valores recomendados (' + fmt(MR.rec.h, 1) + ' cm · ' + fmt(MR.rec.dosis, 1) + ' kg/m³)']));
+      bt.appendChild(el('button', { class: 'ls-btn sec', onclick: function () { ir(2); } }, ['← Cambiar los valores']));
+      box.appendChild(bt);
+    }
+    box.appendChild(navRes(ir, nuevo)); return;
+  }
   var X = MR.M;
   if (S.aviso) box.appendChild(el('div', { class: 'ls-info' }, [S.aviso]));
   box.appendChild(barraAcciones(S, ir, nuevo));
 
   var k = el('div', { class: 'ls-kpis' });
   function kpi(v, l, s) { k.appendChild(el('div', { class: 'ls-kpi' }, [el('div', { class: 'v' }, [v]), el('div', { class: 'l' }, [l]), s ? el('div', { class: 's' }, [s]) : null])); }
-  kpi(fmt(X.h, 1) + ' cm', 'Espesor de la macro-losa', 'Por cargas: ' + fmt(R.d.h_rec, 1) + ' cm');
-  kpi(R.rec.fc + ' kg/cm²', 'Resistencia del concreto f’c', 'a/c ≤ 0.50');
+  kpi(fmt(X.h, 1) + ' cm', 'Espesor de la macro-losa', X.hFijo ? 'Recomendado: ' + fmt(X.rec.h, 1) + ' cm' : 'Por cargas: ' + fmt(R.d.h_rec, 1) + ' cm');
+  kpi(X.resCorto, 'Resistencia del concreto · kg/cm²', 'a/c ≤ 0.50');
   kpi(fmt(X.dosis, 1) + ' kg/m³', 'Fibra Plus 54 mm', fmt(X.cant.fibra_kg, 0) + ' kg · ' + X.cant.sacos10 + ' sacos de 10 kg + ' + X.cant.bolsas1 + ' bolsas de 1 kg');
   kpi(fmt(X.Lmax, 1) + ' m', 'Distancia máxima entre juntas', X.panos.length + ' paños · el mayor de ' + fmt(X.maxL, 1) + ' m');
-  kpi(String(X.nJx + X.nJy), 'Juntas de construcción blindadas', fmt(X.cant.juntas_m, 0) + ' m de junta');
+  kpi(String(X.nJx + X.nJy), 'Juntas de construcción blindadas', fmt(X.cant.juntas_m, 0) + ' m de junta · sobre ejes');
   box.appendChild(k);
+  if (X.hFijo || X.dosisManual) box.appendChild(el('div', { class: 'ls-info' }, ['Espesor y fibra definidos por usted: cumplen la verificación por carga, el mínimo de macro-losa y el arrastre. Recomendado por el programa: ' + fmt(X.rec.h, 1) + ' cm · ' + fmt(X.rec.dosis, 1) + ' kg/m³.']));
   box.appendChild(el('div', { class: 'ls-info', html: '<b>Sistema:</b> ' + esc(X.sistema.nombre) + '. Retracción neta de diseño ' + X.sistema.eps + ' µε (' + fmt(X.sistema.eps / 1000, 2) + ' mm/m); apertura esperada de las juntas <b>' + fmt(X.aperturaMax, 1) + ' mm</b> (límite ' + X.in.aperturaAdm + ' mm). <b>No se asierran cortes de contracción.</b>' }));
+  box.appendChild(el('div', { class: 'ls-info', html: '<b>Reductor de fricción:</b> 2 capas de polietileno de 12 mil entre la base y la losa. <b>Barrera de vapor:</b> clase A de ' + (X.in.pesado ? '15' : '10') + ' mil' + (S.pisoSensible ? ' (obligatoria: piso sensible a la humedad)' : ' (recomendada)') + '; es la capa inferior. Detalle más abajo, en «Reductor de fricción y barrera de vapor».' }));
   X.avisos.forEach(function (a) { box.appendChild(el('div', { class: 'ls-warn' }, [a])); });
+  if (!X.okEjes && X.sugerencia && (X.sugerencia.x.length || X.sugerencia.y.length)) {
+    box.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () {
+      S.mEjesX = unirEjes(S.mEjesX, X.sugerencia.x); S.mEjesY = unirEjes(S.mEjesY, X.sugerencia.y); S.mJuntasX = null; S.mJuntasY = null;
+      S.res = calcular(S); ir(3);
+    } }, ['Agregar los ejes sugeridos y recalcular']));
+  }
   if (!MR.cumple) box.appendChild(el('div', { class: 'ls-warn ls-bad' }, ['Alguno de los chequeos no cumple: revise los avisos y los datos antes de usar este resultado.']));
 
-  // plano en pantalla
+  // plano en pantalla (las juntas se pueden arrastrar de un eje a otro)
   var ctx = ctxMacro(S, R);
   var bp = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Plano: planta de juntas y distribución'])]);
-  bp.appendChild(el('div', { class: 'mc-plano', html: MINF.lamina1(ctx) }));
-  bp.appendChild(el('div', { class: 'ls-nota' }, ['El PDF trae esta hoja y la de detalles en Tabloide 11×17 pulg, más el informe en hojas carta A4.']));
+  var plano = el('div', { class: 'mc-plano', html: MINF.lamina1(ctx) });
+  bp.appendChild(plano);
+  activarArrastreJuntas(S, plano, X, ir);
+  bp.appendChild(el('div', { class: 'ls-nota' }, ['Las juntas (rojas, J-1, J-2…) van solo sobre ejes. Para cambiar una de lugar, arrástrela hasta otro eje: el programa recalcula los paños y los avisos. El PDF trae esta hoja y la de detalles en Tabloide 11×17 pulg, más el informe en hojas carta A4.']));
+  if (X.juntasManual) bp.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () { S.mJuntasX = null; S.mJuntasY = null; var y = window.pageYOffset; S.res = calcular(S); ir(3); try { window.scrollTo(0, y); } catch (x) {} } }, ['Volver a juntas automáticas']));
   box.appendChild(bp);
   var bd = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Detalles constructivos'])]);
   bd.appendChild(el('div', { class: 'mc-plano', html: MINF.lamina2(ctx) }));
@@ -38080,9 +38245,9 @@ function pintarMacroResultados(S, box, ir, nuevo) {
   var bc = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Qué lograría cada sistema en esta nave'])]);
   var tb = el('table', { class: 'ls-tb', html: '<tr><th>Sistema</th><th>Dosis</th><th>Distancia máx.</th><th>Juntas</th><th>Paños</th><th>Apertura</th><th></th></tr>' });
   X.comparacion.forEach(function (c) {
-    var tr = el('tr', { html: '<td>' + (c.id === X.sistema.id ? '<b>' + esc(c.nombre) + ' ◄</b>' : esc(c.nombre)) + (c.especial ? ' <small>(requiere estudio)</small>' : '') + '</td><td>' + fmt(c.dosis, 1) + ' kg/m³</td><td>' + fmt(c.Lmax, 1) + ' m</td><td>' + c.juntas + '</td><td>' + c.panos + '</td><td>' + fmt(c.apertura, 1) + ' mm</td>' });
+    var tr = el('tr', { html: '<td>' + (c.id === X.sistema.id ? '<b>' + esc(c.nombre) + ' ◄</b>' : esc(c.nombre)) + (c.especial ? ' <small>(requiere estudio)</small>' : '') + (c.ok === false ? ' <small>(con estos ejes no alcanza: falta algún eje)</small>' : '') + '</td><td>' + fmt(c.dosis, 1) + ' kg/m³</td><td>' + fmt(c.Lmax, 1) + ' m</td><td>' + c.juntas + '</td><td>' + c.panos + '</td><td>' + fmt(c.apertura, 1) + ' mm</td>' });
     var td = el('td', {});
-    if (c.id !== X.sistema.id) td.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () { S.mSistema = c.id; S.res = calcular(S); ir(3); } }, ['Usar este']));
+    if (c.id !== X.sistema.id) td.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () { S.mSistema = c.id; S.mJuntasX = null; S.mJuntasY = null; S.res = calcular(S); ir(3); } }, ['Usar este']));
     tr.appendChild(td); tb.appendChild(tr);
   });
   bc.appendChild(el('div', { style: 'overflow-x:auto' }, [tb]));
@@ -38106,13 +38271,7 @@ function pintarMacroResultados(S, box, ir, nuevo) {
     }).join('') + '</table>' }));
     box.appendChild(bg);
   });
-  box.appendChild(el('div', { class: 'ls-leyenda' }, ['V verificado en norma · S fuente secundaria (fabricante, universidad, artículo) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.']));
-
-  // juntas del mercado
-  var bj = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Juntas blindadas disponibles en el mercado local'])]);
-  bj.appendChild(el('div', { style: 'overflow-x:auto', html: '<table class="ls-tb"><tr><th>Tipo</th><th>Proveedor</th><th>Uso</th></tr>' + X.juntasCat.map(function (j) { return '<tr><td><b>' + esc(j.nombre) + '</b></td><td>' + esc(j.prov) + '</td><td>' + esc(j.uso) + '</td></tr>'; }).join('') + '</table>' }));
-  bj.appendChild(el('div', { class: 'ls-nota' }, ['CONCRE no vende estas juntas. El modelo, el espesor del acero y la capacidad a la apertura de diseño deben confirmarse con la ficha técnica del proveedor.']));
-  box.appendChild(bj);
+  box.appendChild(el('div', { class: 'ls-leyenda' }, ['V verificado en norma · S fuente técnica secundaria (no es norma) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.']));
 
   box.appendChild(el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Lo que este cálculo NO revisa']), el('ul', { class: 'ls-p', html: MINF.NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') })]));
   box.appendChild(el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Descargo de responsabilidad · sujeto a revisión del profesional']), el('div', { class: 'ls-desc' }, [MINF.DESCARGO])]));
