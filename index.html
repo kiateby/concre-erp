@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261124233000';
+var APP_BUILD='20261124235500';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -36088,13 +36088,13 @@ function html(ctx) {
     ['Separación recomendada', fmt(R.recs.sepRecomendada_cm / 100, 2) + ' m (' + (R.recs.severidad.length ? '24' : '30') + '·h, tope 5.5 m)'],
     ['Paño revisado', fmt(j.Lmax_cm / 100, 2) + ' × ' + fmt(j.Lmin_cm / 100, 2) + ' m · aspecto ' + fmt(j.aspecto, 2) + (j.ok_aspecto ? ' (cumple ≤ 1.5)' : ' (NO cumple ≤ 1.5)')]])));
 
-  // Recomendaciones
+  // Recomendaciones (la leyenda va arriba: al final se quedaba sola en una hoja)
+  out.push('<p class="n leyenda">V verificado en norma · S fuente secundaria (fabricante, universidad) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.</p>');
   R.recs.grupos.forEach(function (g) {
     out.push(seccion(g.titulo, tabla(['Tema', 'Recomendación', 'Norma', ''], g.filas.map(function (f) {
       return ['<b>' + esc(f.t) + '</b>', esc(f.v) + (f.nota ? '<div class="n">' + esc(f.nota) + '</div>' : ''), esc(f.norma), '<b>' + esc(f.estado) + '</b>'];
     }), ['20%', '52%', '22%', '6%'])));
   });
-  out.push('<p class="n">V verificado en norma · S fuente secundaria (fabricante, universidad) · D derivado por fórmula · E criterio de CONCRE, no es cita de norma.</p>');
 
   // Fibra vs malla
   out.push(seccion('Fibra Plus 54 mm frente a malla electrosoldada', kv([
@@ -36116,7 +36116,7 @@ function html(ctx) {
 
   // Paso a paso
   if (formulas) {
-    out.push('<div class="sec salto"><h2>Cálculo paso a paso</h2>' + ev.pasos.map(function (p, i) {
+    out.push('<div class="sec"><h2>Cálculo paso a paso</h2>' + ev.pasos.map(function (p, i) {
       return '<div class="paso"><div class="pt">' + (i + 1) + '. ' + esc(p.titulo) + '</div><div class="pf">' + esc(p.formula) + '</div><div class="pv">' + esc(p.valores) + '</div><div class="pr">' + esc(p.resultado) + '</div><div class="pn">' + esc(p.norma) + '</div></div>';
     }).join('') + '</div>');
   }
@@ -36124,10 +36124,13 @@ function html(ctx) {
   // Lo que NO revisa
   out.push(seccion('Lo que este cálculo NO revisa', '<ul class="av">' + NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'));
 
+  // cierre: descargo + servicios juntos, para que el último folio nunca quede con solo una línea
+  out.push('<div style="break-inside:avoid">');
   out.push(seccion('Descargo de responsabilidad', '<p class="p" style="font-size:calc(8.5px*var(--fs,1));color:#555">' + esc(DESCARGO) + '</p>'));
 
   // Servicios de CONCRE: hoja aparte, para no mezclar promoción con el cuerpo técnico
-  out.push('<div class="sec salto"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE; no son válidos con otra fibra.</p></div>');
+  out.push('<div class="sec" style="break-inside:avoid"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE; no son válidos con otra fibra.</p></div>');
+  out.push('</div>');
 
   var css = '*{box-sizing:border-box}html,body{margin:0}body{font-family:Arial,sans-serif;color:#3D3D3D;font-size:calc(9.5px*var(--fs,1));background:#fff}' +
     '@page{size:A4;margin:11mm 12mm}' +
@@ -36143,7 +36146,7 @@ function html(ctx) {
     'table.t{width:100%;border-collapse:collapse;font-size:calc(8.6px*var(--fs,1))}table.t th{background:#eee;text-align:left;padding:3px 5px;border:1px solid #ddd}table.t td{padding:3px 5px;border:1px solid #e3e3e3;vertical-align:top}table.t tr{break-inside:avoid}' +
     'table.kv{width:100%;border-collapse:collapse;font-size:calc(9px*var(--fs,1))}table.kv td{padding:2.5px 5px;border-bottom:1px solid #eee;vertical-align:top}table.kv td:first-child{width:38%;color:#666}' +
     '.kpis{display:flex;gap:6px;margin-bottom:5px}.kpi{flex:1;border:1px solid #ddd;border-left:4px solid #C8102E;padding:5px 7px}.kpi b{display:block;font-size:calc(14px*var(--fs,1));color:#C8102E}.kpi span{font-size:calc(8px*var(--fs,1));color:#777}' +
-    '.p{margin:4px 0;line-height:1.5}.n{font-size:calc(8px*var(--fs,1));color:#777;margin:3px 0;line-height:1.4}.av{margin:2px 0 0;padding-left:15px;line-height:1.5}' +
+    '.p{margin:4px 0;line-height:1.5}.n{font-size:calc(8px*var(--fs,1));color:#777;margin:3px 0;line-height:1.4}.leyenda{break-after:avoid}.av{margin:2px 0 0;padding-left:15px;line-height:1.5}' +
     '.paso{border-bottom:1px solid #eee;padding:3px 0;break-inside:avoid}.pt{font-weight:800}.pf{font-family:Consolas,monospace;color:#444;font-size:calc(8.5px*var(--fs,1))}.pv{color:#666}.pr{font-weight:700;color:#C8102E}.pn{font-size:calc(7.5px*var(--fs,1));color:#999}' +
     '.barra{position:sticky;top:0;background:#3D3D3D;color:#fff;padding:8px 14px;z-index:5;font-size:calc(12px*var(--fs,1))}.barra button{background:#C8102E;color:#fff;border:0;border-radius:5px;padding:6px 14px;font-weight:700;cursor:pointer;margin-right:10px}' +
     '@media print{.barra{display:none}}';
@@ -37444,21 +37447,24 @@ function informe(ctx) {
     var dm = esU ? fmt(c.demanda * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.demanda, 2) + ' ' + c.unidad, cp = esU ? fmt(c.capacidad * 1e6 / 9.80665, 0) + ' kg/m²' : fmt(c.capacidad, 2) + ' ' + c.unidad;
     return [esc(c.carga), c.motor + ' · ' + c.ubic, dm, cp, fmt(c.uso * 100, 0) + ' %', c.ok ? 'Cumple' : '<b>No cumple</b>'];
   })) + '<p class="n">Espesor por cargas: ' + fmt(d.h_rec, 1) + ' cm; el espesor de macro-losa es ' + fmt(M.h, 1) + ' cm.</p>'));
-  // recomendaciones
+  // recomendaciones (la leyenda va arriba: al final se quedaba sola en una hoja)
+  o.push('<p class="n leyenda">V verificado en norma · S fuente técnica secundaria (no es norma) · D derivado por fórmula.</p>');
   M.grupos.forEach(function (g) {
     o.push(seccion(g.titulo, tabla(['Tema', 'Recomendación', 'Norma / fuente', ''], g.filas.map(function (f) {
       return ['<b>' + esc(f.t) + '</b>', esc(f.v) + (f.nota ? '<div class="n">' + esc(f.nota) + '</div>' : ''), esc(f.norma), '<b>' + esc(f.estado) + '</b>'];
     }), ['20%', '52%', '22%', '6%'])));
   });
-  o.push('<p class="n">V verificado en norma · S fuente técnica secundaria (no es norma) · D derivado por fórmula.</p>');
   // pasos
-  o.push('<div class="sec salto"><h2>Cálculo paso a paso</h2>' + M.pasos.concat(ev.pasos.filter(function (p) { return M.resTipo === 'mr' ? p.titulo !== 'Resistencia del concreto' : p.titulo !== 'MR de diseño'; }).map(function (p) { return M.resTipo === 'mr' && p.titulo === 'MR de diseño' ? { titulo: p.titulo, formula: p.formula.replace(/√f.c/, '√fck'), valores: 'criterio de la norma', resultado: M.resTxt, norma: p.norma } : p; })).map(function (p, i) {
+  o.push('<div class="sec"><h2>Cálculo paso a paso</h2>' + M.pasos.concat(ev.pasos.filter(function (p) { return M.resTipo === 'mr' ? p.titulo !== 'Resistencia del concreto' : p.titulo !== 'MR de diseño'; }).map(function (p) { return M.resTipo === 'mr' && p.titulo === 'MR de diseño' ? { titulo: p.titulo, formula: p.formula.replace(/√f.c/, '√fck'), valores: 'criterio de la norma', resultado: M.resTxt, norma: p.norma } : p; })).map(function (p, i) {
     return '<div class="paso"><div class="pt">' + (i + 1) + '. ' + esc(p.titulo) + '</div><div class="pf">' + esc(p.formula) + '</div><div class="pv">' + esc(p.valores) + '</div><div class="pr">' + esc(p.resultado) + '</div><div class="pn">' + esc(p.norma) + '</div></div>';
   }).join('') + '</div>');
   o.push(seccion('Lo que este cálculo NO revisa', '<ul class="av">' + NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'));
   o.push(seccion('Normas y guías técnicas consultadas', '<p class="p" style="font-size:calc(8.5px*var(--fs,1))">TR34 (Concrete Society), 4ª y 3ª ed. · ACI 360R-10 · ACI 302.1R · ACI 223 · ACI 308 · ACI 305R · ACI 544 · ACI 318 · EN 14651 · ASTM C157, C494, C1609, C1702, E1155, E1745 · Eurocódigo 2 (EC2).</p>'));
+  // cierre: descargo + servicios van juntos, para que el último folio nunca quede con solo una línea
+  o.push('<div style="break-inside:avoid">');
   o.push(seccion('Descargo de responsabilidad', '<p class="p" style="font-size:calc(8.5px*var(--fs,1));color:#555">' + esc(DESCARGO) + '</p>'));
-  o.push('<div class="sec salto"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE.</p></div>');
+  o.push('<div class="sec" style="break-inside:avoid"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE.</p></div>');
+  o.push('</div>');
   return o.join('');
 }
 
@@ -37479,7 +37485,7 @@ function html(ctx) {
     'table.t{width:100%;border-collapse:collapse;font-size:calc(8.6px*var(--fs,1))}table.t th{background:#eee;text-align:left;padding:3px 5px;border:1px solid #ddd}table.t td{padding:3px 5px;border:1px solid #e3e3e3;vertical-align:top}table.t tr{break-inside:avoid}table.t tr:first-child{break-after:avoid}' +
     'table.kv{width:100%;border-collapse:collapse;font-size:calc(9px*var(--fs,1))}table.kv td{padding:2.5px 5px;border-bottom:1px solid #eee;vertical-align:top}table.kv td:first-child{width:38%;color:#666}' +
     '.kpis{display:flex;gap:6px;margin-bottom:5px}.kpi{flex:1;border:1px solid #ddd;border-left:4px solid #C8102E;padding:5px 7px}.kpi b{display:block;font-size:calc(14px*var(--fs,1));color:#C8102E}.kpi span{font-size:calc(8px*var(--fs,1));color:#777}' +
-    '.p{margin:4px 0;line-height:1.5}.n{font-size:calc(8px*var(--fs,1));color:#777;margin:3px 0;line-height:1.4}.av{margin:2px 0 0;padding-left:15px;line-height:1.5}' +
+    '.p{margin:4px 0;line-height:1.5}.n{font-size:calc(8px*var(--fs,1));color:#777;margin:3px 0;line-height:1.4}.leyenda{break-after:avoid}.av{margin:2px 0 0;padding-left:15px;line-height:1.5}' +
     '.paso{border-bottom:1px solid #eee;padding:3px 0;break-inside:avoid}.pt{font-weight:800}.pf{font-family:Consolas,monospace;color:#444;font-size:calc(8.5px*var(--fs,1))}.pv{color:#666}.pr{font-weight:700;color:#C8102E}.pn{font-size:calc(7.5px*var(--fs,1));color:#999}' +
     '.barra{position:sticky;top:0;background:#3D3D3D;color:#fff;padding:8px 14px;z-index:5;font-size:calc(12px*var(--fs,1))}.barra button{background:#C8102E;color:#fff;border:0;border-radius:5px;padding:6px 14px;font-weight:700;cursor:pointer;margin-right:10px}' +
     '@media screen{.lamina{width:auto;height:auto;margin:10px auto;max-width:1300px;border:1px solid #ccc}.lamina svg.hoja{width:100%;height:auto}.informe{max-width:900px;margin:0 auto;padding:10px}}' +
