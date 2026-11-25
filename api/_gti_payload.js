@@ -425,6 +425,14 @@ function receptor(cli, doc, extraCopia) {
 }
 
 // ── Una línea de detalle ────────────────────────────────────────────────────
+// Código de institución de la exoneración (Tabla 19): Hacienda lo escribe con
+// dos dígitos («01»). Si llega «1» se completa; si viene vacío, 01 = Hacienda.
+function instExo(v) {
+  const t = String(v == null ? '' : v).trim();
+  if (!t) return '01';
+  return /^\d$/.test(t) ? '0' + t : t;
+}
+
 function linea(l, i, doc) {
   const cabys = txt(l.cabys).replace(/\D/g, '');
   if (cabys.length !== 13) {
@@ -484,7 +492,8 @@ function linea(l, i, doc) {
   // Sin IVA la línea es EXENTA y no lleva nodo de impuestos: el manual define
   // «exento» justamente como la línea que no tiene código de impuesto.
   const pct = Number(l.iva_pct != null ? l.iva_pct : (doc.iva_pct != null ? doc.iva_pct : 13));
-  const pctExo = Number(l.exo_pct || 0);
+  // El porcentaje exonerado nunca puede pasar de la tarifa de la línea.
+  const pctExo = Math.min(Number(l.exo_pct || 0), pct > 0 ? pct : 0);
   let montoImp = 0, montoExo = 0;
 
   if (pct > 0) {
@@ -503,7 +512,7 @@ function linea(l, i, doc) {
       imp.Exoneracion = {
         TipoDocExo: Number(ent(l.exo_tipo_doc) || 1),          // Tabla 9
         NumeroExo: txt(l.exo_numero, 40),
-        NombreInstitucion: txt(l.exo_institucion || '1', 160), // Tabla 19
+        NombreInstitucion: txt(instExo(l.exo_institucion), 160), // Tabla 19 (dos dígitos: «01»)
         FechaExoneracion: fechaGTI(l.exo_fecha),
         MontoExonerado: montoExo,
         PorcentajeExonerado: Math.round(pctExo),
