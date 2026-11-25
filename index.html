@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261125020620';
+var APP_BUILD='20261125040500';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -29401,6 +29401,8 @@ function renderEditor(b){
       +'</div>'
     +'</div>'
 
+    +exoCard(d)
+
     // ── Líneas ──
     +'<div class="fx-card">'
       +'<div class="fx-h">Líneas</div>'
@@ -29735,9 +29737,410 @@ function renderLineas(){
           +'<div data-sub="'+l.id+'" style="font-size:calc(9.5px*var(--fs,1));color:var(--text3)">base '+_mon(l.subtotal, d.moneda)+'</div></td>'
         +'<td class="fx-c" style="padding-top:10px">'
           +'<button class="fx-b sm gh" style="color:var(--red)" onclick="FACT.quitarLinea(\''+l.id+'\')">✕</button></td>'
-        +'</tr>';
+        +'</tr>'+exoFilaLinea(l,d);
     }).join('')
     +'</tbody></table></div>';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// EXONERACIÓN DEL IVA (FACT_EXO)
+// Una exoneración se guarda en las líneas (exo_numero, exo_tipo_doc,
+// exo_institucion, exo_fecha, exo_pct). El IVA de la línea (l.impuesto) queda
+// NETO: IVA − exonerado, así que subtotal + impuesto = total sigue valiendo
+// en toda la aplicación (Ventas, totales, el chequeo del puente).
+// Si nadie marca exoneración, nada de esto cambia el resultado.
+// ══════════════════════════════════════════════════════════════════════════
+var EXO_TIPOS=[['01','Compras autorizadas'],['02','Ventas exentas a diplomáticos'],
+  ['03','Autorizado por ley especial'],['04','Exenciones Dirección General de Hacienda'],['99','Otros']];
+var EXO_INST=[['01','Ministerio de Hacienda'],['02','Relaciones Exteriores y Culto'],
+  ['03','Agricultura y Ganadería'],['04','Economía, Industria y Comercio'],
+  ['05','Cruz Roja Costarricense'],['06','Cuerpo de Bomberos'],['99','Otros']];
+
+function _exoNum(v){ return String(v==null?'':v).trim().toUpperCase(); }
+function _exoEsAL(n){ return /^AL-\d{8}-\d{2}$/.test(_exoNum(n)); }
+function _exoDig(v){ return String(v==null?'':v).replace(/\D/g,''); }
+function _exoVer(){ if(!S.exoVer) S.exoVer={}; return S.exoVer; }
+
+// Cuánto IVA se exonera en una línea (la línea ya trae subtotal e iva_pct)
+/* FACT_EXO */
+function exoMonto(l){
+  if(!l || !String(l.exo_numero==null?'':l.exo_numero).trim()) return 0;
+  var p=Math.min(_n(l.exo_pct), _n(l.iva_pct));
+  if(!(p>0)) return 0;
+  return _n(l.subtotal)*p/100;
+}
+function exoTotal(lineas){ return (lineas||[]).reduce(function(s,l){ return s+exoMonto(l); },0); }
+
+function _exoCopiar(o,l){
+  l.exo_tipo_doc=o.exo_tipo_doc||null; l.exo_numero=_exoNum(o.exo_numero)||null;
+  l.exo_institucion=o.exo_institucion||null; l.exo_fecha=o.exo_fecha||null; l.exo_pct=_n(o.exo_pct);
+}
+function _exoLimpiar(l){
+  l.exo_tipo_doc=null; l.exo_numero=null; l.exo_institucion=null; l.exo_fecha=null; l.exo_pct=0;
+}
+
+// ¿La exoneración (según Hacienda) cubre el CABYS de la línea?
+function exoCubre(info,l){
+  var x=info&&info.datos; if(!x) return true;
+  if(!x.posee_cabys || !x.cabys || !x.cabys.length) return true;
+  var cb=String(l.cabys||'');
+  return x.cabys.some(function(c){ c=String(c||''); return c && cb.indexOf(c)===0; });
+}
+
+// Pregunta a Hacienda (a través del servidor, con el pase de sesión)
+async function exoConsultar(num){
+  num=_exoNum(num);
+  if(!_exoEsAL(num)) return {ok:true, estado:'manual', mensaje:'Hacienda solo consulta números con la forma AL-00000000-00.'};
+  try{
+    var cab={}; if(window.__ERP_TOKEN) cab['Authorization']='Bearer '+window.__ERP_TOKEN;
+    var r=await fetch('/api/exoneracion?numero='+encodeURIComponent(num), {headers:cab, cache:'no-store'});
+    var j=await r.json().catch(function(){ return null; });
+    if(!j || j.ok===false) return {ok:true, estado:'error', mensaje:(j&&j.error)||('El servicio de consulta no contestó ('+r.status+').')};
+    if(j.datos && j.estado!=='error') _exoVer()[num]=j;
+    return j;
+  }catch(e){ return {ok:true, estado:'error', mensaje:'No se pudo comunicar con el servicio de consulta.'}; }
+}
+
+// ── Doc: toda la factura ──
+function exoAplicarDoc(){
+  var d=S.edit; if(!d || d.exo_modo!=='toda') return;
+  var info=_exoVer()[_exoNum(d.exo_numero)];
+  var hay=!!_exoNum(d.exo_numero);
+  S.lineas.forEach(function(l){
+    if(hay && _n(l.iva_pct)>0 && (!info || exoCubre(info,l))) _exoCopiar(d,l);
+    else _exoLimpiar(l);
+  });
+}
+function exoNuevaLinea(l){
+  var d=S.edit; if(!d || d.exo_modo!=='toda' || !_exoNum(d.exo_numero)) return;
+  var info=_exoVer()[_exoNum(d.exo_numero)];
+  if(_n(l.iva_pct)>0 && (!info || exoCubre(info,l))) _exoCopiar(d,l);
+}
+function exoRefrescar(){
+  var d=S.edit; if(!d) return;
+  var el=document.getElementById('fact-exo');
+  if(el) el.innerHTML=exoCardInner(d);
+  renderLineas(); renderTotales();
+}
+function exoModo(m){
+  var d=S.edit; if(!d) return;
+  if(m==='sin'){
+    if(!('exo_modo' in d) && !d.exo_modo) { exoRefrescar(); return; }
+    d.exo_modo='';
+    ['exo_tipo_doc','exo_numero','exo_institucion','exo_fecha'].forEach(function(k){ d[k]=null; });
+    d.exo_pct=0;
+    S.lineas.forEach(function(l){ _exoLimpiar(l); l._exoOn=false; });
+  } else if(m==='toda'){
+    d.exo_modo='toda';
+    S.lineas.forEach(function(l){ l._exoOn=false; });
+    exoAplicarDoc();
+  } else if(m==='linea'){
+    d.exo_modo='linea';
+  }
+  S.exoMsg=null; S.dirty=true;
+  exoRefrescar();
+}
+function exoSet(campo,val){
+  var d=S.edit; if(!d) return;
+  if(campo==='exo_pct'){ val=Math.max(0,Math.min(100,_n(val))); }
+  else if(campo==='exo_numero'){ val=_exoNum(val); S.exoMsg=null; }
+  d[campo]=val;
+  if(d.exo_modo==='toda') exoAplicarDoc();
+  S.dirty=true; exoRefrescar();
+}
+function _exoMsg(d,t,m){ S.exoMsg={id:d.id, t:t, m:m}; }
+async function exoVerificar(){
+  var d=S.edit; if(!d) return;
+  var num=_exoNum(d.exo_numero);
+  if(!num){ _toast('Escriba primero el número de autorización'); return; }
+  _exoMsg(d,'wait','Consultando a Hacienda…'); exoRefrescar();
+  var j=await exoConsultar(num);
+  if(!S.edit || S.edit.id!==d.id) return;
+  if(j.estado==='vigente'){
+    var x=j.datos, ced=_exoDig(d.cliente_identificacion);
+    d.exo_numero=x.numero; d.exo_tipo_doc=x.tipo_doc; d.exo_institucion=x.institucion;
+    d.exo_fecha=x.emision; d.exo_pct=x.porcentaje;
+    if(ced && x.identificacion && ced!==x.identificacion)
+      _exoMsg(d,'bad','Vigente, pero está a nombre de la cédula '+x.identificacion+', no del cliente ('+ced+'). No se podrá emitir así.');
+    else _exoMsg(d,'ok','✓ '+(j.mensaje||'Vigente')+' · '+x.porcentaje+'% · '+(x.institucion_txt||'')
+      +(x.posee_cabys&&x.cabys.length?' · limitada a '+x.cabys.length+' código(s) CABYS':''));
+    if(d.exo_modo==='toda') exoAplicarDoc();
+    S.dirty=true;
+  } else if(j.estado==='manual'){
+    _exoMsg(d,'warn',j.mensaje+' Llene los datos a mano; no se podrá comprobar con Hacienda.');
+  } else if(j.estado==='error'){
+    _exoMsg(d,'warn',(j.mensaje||'No se pudo consultar.')+' Puede seguir, pero se pedirá confirmación al emitir.');
+  } else {
+    _exoMsg(d,'bad','✕ '+(j.mensaje||'No sirve')+' — no se podrá emitir con esta exoneración.');
+  }
+  exoRefrescar();
+}
+
+function _exoSel(lista,val,fn){
+  var v=String(val==null?'':val), hay=false;
+  var op=lista.map(function(x){ var s=(x[0]===v); if(s) hay=true;
+    return '<option value="'+x[0]+'"'+(s?' selected':'')+'>'+x[0]+' · '+_esc(x[1])+'</option>'; }).join('');
+  if(!hay) op='<option value="'+_esc(v)+'" selected>'+(v?_esc(v)+' · (según Hacienda)':'— escoja —')+'</option>'+op;
+  return '<select class="fx-i" onchange="'+fn+'">'+op+'</select>';
+}
+function _exoLbl(t,h){
+  return '<div><div style="font-size:calc(10px*var(--fs,1));font-weight:800;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">'+t+'</div>'+h+'</div>';
+}
+function _exoMsgHTML(m){
+  if(!m) return '';
+  var col=m.t==='ok'?'var(--green,#1a9c5a)':m.t==='bad'?'var(--red)':m.t==='warn'?'var(--amber)':'var(--text3)';
+  return '<div style="margin-top:8px;font-size:calc(11.5px*var(--fs,1));font-weight:700;color:'+col+';line-height:1.5">'+_esc(m.m)+'</div>';
+}
+function _exoNoCubiertas(d){
+  if(d.exo_modo!=='toda' || !_exoNum(d.exo_numero)) return [];
+  return S.lineas.filter(function(l){ return _n(l.iva_pct)>0 && !String(l.exo_numero||'').trim(); });
+}
+function exoCard(d){ return '<div class="fx-card" id="fact-exo">'+exoCardInner(d)+'</div>'; }
+function exoCardInner(d){
+  var modo=d.exo_modo||'';
+  var h='<div class="fx-h">Exoneración del IVA</div>'
+    +'<div style="font-size:calc(11px*var(--fs,1));color:var(--text3);line-height:1.6;margin-bottom:9px">'
+      +'Solo si el cliente presenta una autorización de exoneración. Si no marca nada, la factura sale como siempre.</div>'
+    +'<div style="display:flex;gap:16px;flex-wrap:wrap">'
+    +[['sin','Sin exoneración'],['toda','Toda la factura'],['linea','Línea por línea']].map(function(o){
+        var on=(o[0]==='sin'?!modo:modo===o[0]);
+        return '<label class="fx-chk"><input type="radio" name="fact-exo-modo"'+(on?' checked':'')
+          +' onchange="FACT.exoModo(\''+o[0]+'\')"> '+o[1]+'</label>';
+      }).join('')
+    +'</div>';
+  if(modo==='toda'){
+    h+='<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-top:12px">'
+      +_exoLbl('N.º de autorización','<input class="fx-i" value="'+_esc(d.exo_numero||'')+'" placeholder="AL-00000000-00"'
+        +' onchange="FACT.exoSet(\'exo_numero\',this.value)">')
+      +_exoLbl('Tipo de documento',_exoSel(EXO_TIPOS,d.exo_tipo_doc,'FACT.exoSet(\'exo_tipo_doc\',this.value)'))
+      +_exoLbl('Institución que exonera',_exoSel(EXO_INST,d.exo_institucion,'FACT.exoSet(\'exo_institucion\',this.value)'))
+      +_exoLbl('Fecha de emisión','<input type="date" class="fx-i" value="'+_esc(String(d.exo_fecha||'').slice(0,10))+'"'
+        +' onchange="FACT.exoSet(\'exo_fecha\',this.value)">')
+      +_exoLbl('% exonerado','<input type="number" min="0" max="100" step="0.01" class="fx-i fx-r" value="'+_n(d.exo_pct)+'"'
+        +' onchange="FACT.exoSet(\'exo_pct\',this.value)">')
+    +'</div>'
+    +'<div style="margin-top:10px"><button class="fx-b sm" onclick="FACT.exoVerificar()">🔎 Verificar con Hacienda</button></div>'
+    +_exoMsgHTML(S.exoMsg&&S.exoMsg.id===d.id?S.exoMsg:null);
+    var nc=_exoNoCubiertas(d);
+    if(nc.length) h+='<div style="margin-top:8px;font-size:calc(11.5px*var(--fs,1));font-weight:700;color:var(--amber);line-height:1.5">'
+      +'⚠ '+nc.length+' línea(s) quedan con el IVA completo porque su CABYS no está en la exoneración: '
+      +nc.slice(0,4).map(function(l){ return '«'+_esc(l.descripcion||'sin descripción')+'»'; }).join(', ')+(nc.length>4?'…':'')+'</div>';
+    h+='<div style="margin-top:8px;font-size:calc(10.5px*var(--fs,1));color:var(--text3);line-height:1.55">'
+      +'El % exonerado nunca pasa del IVA de la línea. Al emitir, la exoneración se vuelve a comprobar con Hacienda.</div>';
+  } else if(modo==='linea'){
+    var n=S.lineas.filter(function(l){ return exoMonto(l)>0; }).length;
+    h+='<div style="margin-top:10px;font-size:calc(11.5px*var(--fs,1));color:var(--text3);line-height:1.6">'
+      +'Marque «Exonerar» en cada línea de la tabla de abajo y llene su autorización. '
+      +'Líneas exoneradas: <b>'+n+'</b> de '+S.lineas.length+'.</div>';
+  }
+  return h;
+}
+
+// ── Líneas: modo «línea por línea» ──
+function _exoOnLinea(l){ return !!l._exoOn || !!String(l.exo_numero||'').trim(); }
+function exoLineaOn(lid,on){
+  var l=S.lineas.find(function(x){ return x.id===lid; }); if(!l) return;
+  if(on){ l._exoOn=true; }
+  else { l._exoOn=false; _exoLimpiar(l); if(S.exoLMsg) delete S.exoLMsg[lid]; }
+  S.dirty=true; exoRefrescar();
+}
+function exoLinea(lid,campo,val){
+  var l=S.lineas.find(function(x){ return x.id===lid; }); if(!l) return;
+  if(campo==='exo_pct') val=Math.max(0,Math.min(100,_n(val)));
+  else if(campo==='exo_numero'){ val=_exoNum(val); if(S.exoLMsg) delete S.exoLMsg[lid]; }
+  l[campo]=val;
+  S.dirty=true; exoRefrescar();
+}
+async function exoLineaVerificar(lid){
+  var l=S.lineas.find(function(x){ return x.id===lid; }); if(!l) return;
+  var num=_exoNum(l.exo_numero);
+  if(!num){ _toast('Escriba primero el número de autorización'); return; }
+  if(!S.exoLMsg) S.exoLMsg={};
+  S.exoLMsg[lid]={t:'wait',m:'Consultando a Hacienda…'}; exoRefrescar();
+  var j=await exoConsultar(num);
+  var d=S.edit; if(!d) return;
+  l=S.lineas.find(function(x){ return x.id===lid; }); if(!l) return;
+  if(j.estado==='vigente'){
+    var x=j.datos, ced=_exoDig(d.cliente_identificacion);
+    if(!exoCubre(j,l)){
+      _exoLimpiar(l); l._exoOn=true;
+      S.exoLMsg[lid]={t:'bad',m:'✕ Esta exoneración no incluye el CABYS '+(l.cabys||'(sin CABYS)')+' de la línea. No se puede exonerar.'};
+    } else {
+      l.exo_numero=x.numero; l.exo_tipo_doc=x.tipo_doc; l.exo_institucion=x.institucion;
+      l.exo_fecha=x.emision; l.exo_pct=x.porcentaje;
+      S.exoLMsg[lid]=(ced && x.identificacion && ced!==x.identificacion)
+        ? {t:'bad',m:'Vigente, pero está a nombre de la cédula '+x.identificacion+', no del cliente ('+ced+').'}
+        : {t:'ok',m:'✓ '+(j.mensaje||'Vigente')+' · '+x.porcentaje+'% · '+(x.institucion_txt||'')};
+    }
+    S.dirty=true;
+  } else if(j.estado==='manual'){
+    S.exoLMsg[lid]={t:'warn',m:j.mensaje+' Llene los datos a mano; no se podrá comprobar.'};
+  } else if(j.estado==='error'){
+    S.exoLMsg[lid]={t:'warn',m:(j.mensaje||'No se pudo consultar.')+' Se pedirá confirmación al emitir.'};
+  } else {
+    S.exoLMsg[lid]={t:'bad',m:'✕ '+(j.mensaje||'No sirve')+' — no se podrá emitir con esta exoneración.'};
+  }
+  exoRefrescar();
+}
+function exoCopiarATodas(lid){
+  var o=S.lineas.find(function(x){ return x.id===lid; }); if(!o || !_exoNum(o.exo_numero)){ _toast('Primero llene la exoneración de esta línea'); return; }
+  var info=_exoVer()[_exoNum(o.exo_numero)], n=0, no=0;
+  S.lineas.forEach(function(l){
+    if(l.id===lid || _n(l.iva_pct)<=0) return;
+    if(info && !exoCubre(info,l)){ no++; return; }
+    _exoCopiar(o,l); l._exoOn=true; n++;
+  });
+  S.dirty=true; exoRefrescar();
+  _toast('Copiada a '+n+' línea(s)'+(no?' · '+no+' no se exoneraron por su CABYS':''));
+}
+function exoFilaLinea(l,d){
+  var modo=d.exo_modo; if(!modo) return '';
+  var cs=function(h){ return '<tr class="exo-r"><td></td><td colspan="8" style="padding:2px 6px 9px 6px">'+h+'</td></tr>'; };
+  if(modo==='toda'){
+    var ex=exoMonto(l);
+    if(ex>0) return cs('<div style="font-size:calc(11px*var(--fs,1));color:var(--green,#1a9c5a);font-weight:700">Exonerada al '
+      +_num(Math.min(_n(l.exo_pct),_n(l.iva_pct)),0)+'% — se rebajan '+_mon(ex,d.moneda)+' de IVA</div>');
+    if(_n(l.iva_pct)>0 && _exoNum(d.exo_numero)) return cs('<div style="font-size:calc(11px*var(--fs,1));color:var(--amber);font-weight:700">'
+      +'⚠ Sin exoneración: su CABYS no está cubierto por la autorización. Lleva el IVA completo.</div>');
+    return '';
+  }
+  // línea por línea
+  if(_n(l.iva_pct)<=0) return '';
+  var on=_exoOnLinea(l), id=l.id;
+  var h='<label class="fx-chk"><input type="checkbox"'+(on?' checked':'')
+    +' onchange="FACT.exoLineaOn(\''+id+'\',this.checked)"> Exonerar esta línea</label>';
+  if(on){
+    var f=function(c){ return 'FACT.exoLinea(\''+id+'\',\''+c+'\',this.value)'; };
+    h+='<div class="fx-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:8px">'
+      +_exoLbl('N.º de autorización','<input class="fx-i" value="'+_esc(l.exo_numero||'')+'" placeholder="AL-00000000-00" onchange="'+f('exo_numero')+'">')
+      +_exoLbl('Tipo de documento',_exoSel(EXO_TIPOS,l.exo_tipo_doc,f('exo_tipo_doc')))
+      +_exoLbl('Institución',_exoSel(EXO_INST,l.exo_institucion,f('exo_institucion')))
+      +_exoLbl('Fecha de emisión','<input type="date" class="fx-i" value="'+_esc(String(l.exo_fecha||'').slice(0,10))+'" onchange="'+f('exo_fecha')+'">')
+      +_exoLbl('% exonerado','<input type="number" min="0" max="100" step="0.01" class="fx-i fx-r" value="'+_n(l.exo_pct)+'" onchange="'+f('exo_pct')+'">')
+    +'</div>'
+    +'<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">'
+      +'<button class="fx-b sm" onclick="FACT.exoLineaVerificar(\''+id+'\')">🔎 Verificar con Hacienda</button>'
+      +'<button class="fx-b sm gh" onclick="FACT.exoCopiarATodas(\''+id+'\')">Copiar a las demás líneas</button>'
+    +'</div>'
+    +_exoMsgHTML(S.exoLMsg&&S.exoLMsg[id]);
+    var ex2=exoMonto(l);
+    if(ex2>0) h+='<div style="margin-top:6px;font-size:calc(11px*var(--fs,1));color:var(--text3)">Se rebajan '+_mon(ex2,d.moneda)+' de IVA en esta línea.</div>';
+  }
+  return cs(h);
+}
+
+// Filas de IVA / exoneración para totales (editor, vista e impresión)
+function exoFilasIVA(d,lineas){
+  var ex=exoTotal(lineas), m=d.moneda;
+  if(!(ex>0)) return '<div class="fx-tot"><span style="color:var(--text3)">IVA</span><b>'+_mon(d.impuesto_total,m)+'</b></div>';
+  return '<div class="fx-tot"><span style="color:var(--text3)">IVA</span><b>'+_mon(_n(d.impuesto_total)+ex,m)+'</b></div>'
+    +'<div class="fx-tot"><span style="color:var(--text3)">Exoneración</span><b>− '+_mon(ex,m).replace('− ','')+'</b></div>';
+}
+function exoTextoImpreso(lineas){
+  var vistos={}, out=[];
+  (lineas||[]).forEach(function(l){
+    var n=_exoNum(l.exo_numero); if(!n || exoMonto(l)<=0 || vistos[n]) return;
+    vistos[n]=1;
+    out.push('Exoneración N.º '+_esc(n)+(l.exo_fecha?' (emitida el '+_esc(String(l.exo_fecha).slice(0,10))+')':'')
+      +' · '+_num(l.exo_pct,0)+'%');
+  });
+  return out.length?'<div class="cond-txt"><b>IVA exonerado:</b> '+out.join(' · ')+'</div>':'';
+}
+
+// Guardado: los campos nuevos viajan solo cuando se usan
+function exoFilaDoc(row,d){
+  var cols=!!d.exo_modo || (S.docs||[]).some(function(x){ return 'exo_modo' in x; });
+  if(!cols) return;
+  row.exo_modo=d.exo_modo||null;
+  row.exo_tipo_doc=d.exo_tipo_doc||null; row.exo_numero=_exoNum(d.exo_numero)||null;
+  row.exo_institucion=d.exo_institucion||null; row.exo_fecha=d.exo_fecha||null; row.exo_pct=_n(d.exo_pct);
+}
+function exoFilasLineas(filas,d){
+  var usa=!!d.exo_modo || S.lineas.some(function(l){ return 'exo_numero' in l; });
+  if(!usa) return;
+  filas.forEach(function(f,i){
+    var l=S.lineas[i];
+    f.exo_tipo_doc=l.exo_tipo_doc||null; f.exo_numero=_exoNum(l.exo_numero)||null;
+    f.exo_institucion=l.exo_institucion||null; f.exo_fecha=l.exo_fecha||null; f.exo_pct=_n(l.exo_pct);
+  });
+}
+
+// Revisión previa a facturar (lo que se ve sin salir de la pantalla)
+function exoRevisar(d,lineas,faltas,avisos){
+  var con=lineas.filter(function(l){ return String(l.exo_numero||'').trim(); });
+  if(d.exo_modo==='toda' && !_exoNum(d.exo_numero))
+    faltas.push('Marcó exoneración de toda la factura pero falta el número de autorización.');
+  if(d.exo_modo==='linea' && !con.length)
+    avisos.push('Eligió exoneración línea por línea pero ninguna línea tiene exoneración.');
+  if(!con.length) return;
+  var incompl=con.filter(function(l){ return !l.exo_tipo_doc || !l.exo_institucion || !l.exo_fecha || !(_n(l.exo_pct)>0); });
+  if(incompl.length) faltas.push(incompl.length+' línea(s) con exoneración incompleta (falta tipo de documento, institución, fecha o %): '
+    +incompl.slice(0,3).map(function(l){ return '«'+(l.descripcion||'sin descripción')+'»'; }).join(', ')+'.');
+  var sobra=con.filter(function(l){ return _n(l.exo_pct)>_n(l.iva_pct); });
+  if(sobra.length) avisos.push(sobra.length+' línea(s) exoneran más que su IVA: se rebaja solo hasta el IVA de la línea.');
+  var libres=lineas.filter(function(l){ return _n(l.iva_pct)>0 && !String(l.exo_numero||'').trim(); });
+  if(d.exo_modo==='toda' && libres.length)
+    avisos.push(libres.length+' línea(s) llevan el IVA completo porque no están cubiertas por la exoneración.');
+  avisos.push('La exoneración se vuelve a comprobar con Hacienda al emitir.');
+}
+
+// Comprobación final con Hacienda justo antes de emitir. true = se puede seguir.
+async function exoVerificarEmision(prof,lineas){
+  var nums={};
+  lineas.forEach(function(l){
+    var n=_exoNum(l.exo_numero); if(!n || !(_n(l.exo_pct)>0) || !(_n(l.iva_pct)>0)) return;
+    (nums[n]=nums[n]||[]).push(l);
+  });
+  var claves=Object.keys(nums); if(!claves.length) return true;
+  var ced=_exoDig(prof.cliente_identificacion), bloq=[], dudas=[];
+  _toast('Comprobando la exoneración con Hacienda…');
+  for(var i=0;i<claves.length;i++){
+    var num=claves[i], ls=nums[num];
+    if(!_exoEsAL(num)){ dudas.push(num+': no tiene la forma AL-… y Hacienda no la puede comprobar.'); continue; }
+    var j=await exoConsultar(num);
+    if(j.estado==='vigente'){
+      var x=j.datos;
+      if(ced && x.identificacion && ced!==x.identificacion)
+        bloq.push(num+' está a nombre de la cédula '+x.identificacion+', no del cliente ('+ced+').');
+      ls.forEach(function(l){
+        if(_n(l.exo_pct)>_n(x.porcentaje)+0.001)
+          bloq.push('«'+(l.descripcion||'línea')+'»: se exonera '+_n(l.exo_pct)+'% pero Hacienda autoriza '+x.porcentaje+'%.');
+        if(!exoCubre(j,l))
+          bloq.push('«'+(l.descripcion||'línea')+'»: su CABYS '+(l.cabys||'')+' no está en la exoneración '+num+'.');
+      });
+    } else if(j.estado==='error' || j.estado==='manual'){
+      dudas.push(num+': '+(j.mensaje||'no se pudo consultar')+'');
+    } else {
+      bloq.push(num+': '+(j.mensaje||'no está vigente')+'.');
+    }
+  }
+  if(bloq.length){
+    alert('No se puede emitir: la exoneración no pasa la comprobación con Hacienda.\n\n• '+bloq.join('\n• ')
+      +'\n\nCorrija la exoneración en la proforma (o quítela) y vuelva a intentar.');
+    return false;
+  }
+  if(dudas.length){
+    return confirm('No se pudo comprobar la exoneración con Hacienda:\n\n• '+dudas.join('\n• ')
+      +'\n\nSi la exoneración no fuera válida, Hacienda podría rechazar la factura.\n\n¿Emitir de todas formas?');
+  }
+  return true;
+}
+
+// Notas de crédito / débito: llevan la misma exoneración de la factura
+function exoNotaMonto(l){
+  if(!String(l.exo_numero==null?'':l.exo_numero).trim()) return 0;
+  var p=Math.min(_n(l.exo_pct), _n(l.iva_pct));
+  return p>0 ? _n(l.cantidad)*_n(l.precio_unitario)*p/100 : 0;
+}
+function exoFilasNota(filas,b){
+  var on=b.lineas.filter(function(l){ return l.on; });
+  filas.forEach(function(f,i){
+    var l=on[i]; if(!l) return;
+    var ex=exoNotaMonto(l); if(!(ex>0)) return;
+    f.exo_tipo_doc=l.exo_tipo_doc||null; f.exo_numero=_exoNum(l.exo_numero);
+    f.exo_institucion=l.exo_institucion||null; f.exo_fecha=l.exo_fecha||null; f.exo_pct=_n(l.exo_pct);
+    f.impuesto=_n(f.impuesto)-ex; f.total=_n(f.subtotal)+f.impuesto;
+  });
 }
 
 // Recalcula una línea y actualiza solo sus celdas (no re-renderiza: no pierde el foco)
@@ -29746,6 +30149,8 @@ function calcLinea(l){
   l.descuento_monto=bruto*(_n(l.descuento_pct)/100);
   l.subtotal=bruto-l.descuento_monto;
   l.impuesto=l.subtotal*(_n(l.iva_pct)/100);
+  var _ex=exoMonto(l);
+  if(_ex>0) l.impuesto=Math.max(0, Math.round((l.impuesto-_ex)*1e6)/1e6);
   l.total=l.subtotal+l.impuesto;
 }
 function pintarLinea(l){
@@ -29780,7 +30185,7 @@ function renderTotales(){
   S.lineas.forEach(function(l){
     var p=_n(l.iva_pct);
     if(!ivaGrupos[p]) ivaGrupos[p]=0;
-    ivaGrupos[p]+=l.impuesto;
+    ivaGrupos[p]+=l.impuesto+exoMonto(l);
   });
   el.innerHTML=
     '<div class="fx-tot"><span style="color:var(--text3)">Subtotal</span><b>'+_mon(d.subtotal,m)+'</b></div>'
@@ -29788,6 +30193,7 @@ function renderTotales(){
     +Object.keys(ivaGrupos).filter(function(p){return _n(p)>0;}).map(function(p){
         return '<div class="fx-tot"><span style="color:var(--text3)">IVA '+p+'%</span><b>'+_mon(ivaGrupos[p],m)+'</b></div>';
       }).join('')
+    +(exoTotal(S.lineas)>0?'<div class="fx-tot"><span style="color:var(--text3)">Exoneración</span><b>− '+_mon(exoTotal(S.lineas),m).replace('− ','')+'</b></div>':'')
     +'<div class="fx-tot gr"><span>Total</span><span style="color:var(--red)">'+_mon(d.total,m)+'</span></div>'
     +(m==='USD'&&_n(d.tipo_cambio)>0
       ? '<div style="font-size:calc(10.5px*var(--fs,1));color:var(--text3);margin-top:6px;text-align:right">≈ '
@@ -29906,6 +30312,7 @@ async function guardarProforma(){
     exportada_ventas:!!d.exportada_ventas, en_papelera:false,
     actualizado_en:new Date().toISOString()
   };
+  exoFilaDoc(row,d);
 
   try{
     var r=await DB.from('fact_docs').upsert([row],{onConflict:'id'});
@@ -29924,6 +30331,7 @@ async function guardarProforma(){
         venta_id:l.venta_id||null, exportada:!!l.exportada
       };
     });
+    exoFilasLineas(filas,d);
     if(filas.length){
       var rl=await DB.from('fact_lineas').upsert(filas,{onConflict:'id'});
       if(rl.error) throw rl.error;
@@ -30137,6 +30545,7 @@ function agregarLibre(){
     cantidad:1, precio_unitario:0, descuento_pct:0, descuento_monto:0,
     iva_pct:_n(d.iva_pct), subtotal:0, impuesto:0, total:0, exportada:false
   });
+  exoNuevaLinea(S.lineas[S.lineas.length-1]);
   S.dirty=true;
   renderLineas(); renderTotales();
 }
@@ -30238,6 +30647,7 @@ function agregarItem(cid){
     subtotal:0, impuesto:0, total:0,
     venta_categoria:c.venta_categoria_default||null, exportada:false
   });
+  exoNuevaLinea(S.lineas[S.lineas.length-1]);
   S.dirty=true;
 
   // Se cierra la ventana y el cursor queda en la cantidad de la línea nueva,
@@ -30493,14 +30903,15 @@ function docHTML(d, lineas, e){
   var ivaG={};
   lineas.forEach(function(l){
     var p=_n(l.iva_pct);
-    ivaG[p]=(ivaG[p]||0)+_n(l.impuesto);
+    ivaG[p]=(ivaG[p]||0)+_n(l.impuesto)+exoMonto(l);
   });
 
   var filas=lineas.map(function(l,i){
     return '<tr><td class="c">'+(i+1)+'</td>'
       +'<td>'+(l.codigo?'<div class="cod">'+_esc(l.codigo)+'</div>':'')
         +'<div class="desc">'+_esc(l.descripcion)+'</div>'
-        +(l.detalle?'<div class="det">'+_esc(l.detalle).replace(/\n/g,'<br>')+'</div>':'')+'</td>'
+        +(l.detalle?'<div class="det">'+_esc(l.detalle).replace(/\n/g,'<br>')+'</div>':'')
+        +(exoMonto(l)>0?'<div class="det">IVA exonerado al '+_num(Math.min(_n(l.exo_pct),_n(l.iva_pct)),0)+'%</div>':'')+'</td>'
       +'<td class="c">'+_esc(l.unidad||'Unid')+'</td>'
       +'<td class="r">'+_num(l.cantidad)+'</td>'
       +'<td class="r">'+_num(l.precio_unitario)+'</td>'
@@ -30567,6 +30978,7 @@ function docHTML(d, lineas, e){
         +(d.condiciones?'<div class="cond-txt">'+_esc(d.condiciones).replace(/\n/g,'<br>')+'</div>':'')
         +(e.cuenta_bancaria?'<div class="cond-txt"><b>Cuenta bancaria:</b> '+_esc(e.cuenta_bancaria)+'</div>':'')
         +(d.notas?'<div class="cond-txt">'+_esc(d.notas).replace(/\n/g,'<br>')+'</div>':'')
+        +exoTextoImpreso(lineas)
         +(d.texto_legal?'<div class="legal">'+_esc(d.texto_legal).replace(/\n/g,'<br>')+'</div>':'')
       +'</div>'
       +'<table class="totales">'
@@ -30575,6 +30987,7 @@ function docHTML(d, lineas, e){
         +Object.keys(ivaG).filter(function(p){return _n(p)>0;}).map(function(p){
             return '<tr><th>IVA '+_esc(p)+'%</th><td>'+_mon(ivaG[p],m)+'</td></tr>';
           }).join('')
+        +(exoTotal(lineas)>0?'<tr><th>Exoneración</th><td>− '+_mon(exoTotal(lineas),m).replace('− ','')+'</td></tr>':'')
         +'<tr class="gran"><th>Total</th><td>'+_mon(d.total,m)+'</td></tr>'
       +'</table>'
     +'</div>'
@@ -31899,6 +32312,7 @@ function revisarParaFacturar(d, lineas){
     avisos.push('La proforma está en «'+((ESTADOS[d.estado]||{}).lbl||d.estado)
       +'»: lo normal es facturar una vez aceptada por el cliente.');
 
+  exoRevisar(d, lineas, faltas, avisos);
   return {faltas:faltas, avisos:avisos, cliente:cli};
 }
 
@@ -32222,6 +32636,7 @@ async function emitirDesdeProforma(id){
     return;
   }
 
+  if(!(await exoVerificarEmision(prof, lineas))) return;
   if(!confirm('Se va a emitir la factura electrónica de '+(prof.consecutivo||'')+' por '
       +_mon(prof.total, prof.moneda)+'.\n\n'
       +'Una factura aceptada por Hacienda NO se puede modificar ni borrar: se corrige '
@@ -33387,8 +33802,7 @@ function renderVista(b){
         +(_n(d.descuento_total)>0
           ? '<div class="fx-tot"><span style="color:var(--text3)">Descuentos</span><b>− '
             +_mon(d.descuento_total, d.moneda).replace('− ','')+'</b></div>' : '')
-        +'<div class="fx-tot"><span style="color:var(--text3)">IVA</span><b>'
-          +_mon(d.impuesto_total, d.moneda)+'</b></div>'
+        +exoFilasIVA(d, S.lineas)
         +'<div class="fx-tot gr"><span>Total</span><span style="color:var(--red)">'
           +_mon(d.total, d.moneda)+'</span></div>'
       +'</div>'
@@ -33511,6 +33925,8 @@ async function nuevaNota(facId, tipo){
         ref:l.id, descripcion:l.descripcion, detalle:l.detalle||'',
         unidad:l.unidad||'Unid', cabys:l.cabys||'', codigo:l.codigo||'',
         iva_pct:_n(l.iva_pct), precio_unitario:_n(l.precio_unitario),
+        exo_tipo_doc:l.exo_tipo_doc||null, exo_numero:l.exo_numero||null, exo_institucion:l.exo_institucion||null,
+        exo_fecha:l.exo_fecha||null, exo_pct:_n(l.exo_pct),
         cantMax:_n(l.cantidad), cantidad:_n(l.cantidad),
         on:!!mot.todo, libre:false,
       };
@@ -33606,7 +34022,7 @@ function totalesNota(){
   (b?b.lineas:[]).forEach(function(l){
     if(!l.on) return;
     var s=_n(l.cantidad)*_n(l.precio_unitario);
-    sub+=s; imp+=s*(_n(l.iva_pct)/100);
+    sub+=s; imp+=s*(_n(l.iva_pct)/100)-exoNotaMonto(l);
   });
   return {subtotal:sub, impuesto:imp, total:sub+imp};
 }
@@ -33715,7 +34131,7 @@ function pintarNota(){
       +'<th style="width:30px"></th></tr></thead><tbody>'
       +b.lineas.map(function(l,i){
           var st=_n(l.cantidad)*_n(l.precio_unitario);
-          var tot=st+st*(_n(l.iva_pct)/100);
+          var tot=st+st*(_n(l.iva_pct)/100)-exoNotaMonto(l);
           var bloq=m.todo;
           return '<tr'+(l.on?'':' style="opacity:.45"')+'>'
             +'<td class="fx-c"><input type="checkbox"'+(l.on?' checked':'')
@@ -33800,7 +34216,7 @@ function refrescarNota(){
     var el=document.querySelector('[data-nt="'+i+'"]');
     if(!el) return;
     var st=_n(l.cantidad)*_n(l.precio_unitario);
-    el.textContent = l.on ? _mon(st+st*(_n(l.iva_pct)/100), fac.moneda) : '—';
+    el.textContent = l.on ? _mon(st+st*(_n(l.iva_pct)/100)-exoNotaMonto(l), fac.moneda) : '—';
   });
 
   var e=document.getElementById('fact-nota-estado');
@@ -33899,6 +34315,7 @@ async function emitirNota(){
       creado_en:ahora,
     };
   });
+  exoFilasNota(filas,b);
   if(filas.length){
     var il=await DB.from('fact_lineas').insert(filas);
     if(il.error){ _toast('⚠ No se pudieron crear las líneas: '+il.error.message); return; }
@@ -34681,6 +35098,11 @@ window.FACT={
   agregarLibre:agregarLibre, agregarDeCatalogo:agregarDeCatalogo,
   agregarItem:agregarItem, filtrarCatModal:filtrarCatModal,
   setLinea:setLinea, quitarLinea:quitarLinea,
+  // Exoneración del IVA
+  exoModo:exoModo, exoSet:exoSet, exoVerificar:exoVerificar, exoLinea:exoLinea, exoLineaOn:exoLineaOn,
+  exoLineaVerificar:exoLineaVerificar, exoCopiarATodas:exoCopiarATodas,
+  __exo:{monto:exoMonto, total:exoTotal, cubre:exoCubre, revisar:exoRevisar, verificarEmision:exoVerificarEmision,
+         aplicarDoc:exoAplicarDoc, filasDoc:exoFilaDoc, filasLineas:exoFilasLineas, notaMonto:exoNotaMonto, filasNota:exoFilasNota},
   subirAdjunto:subirAdjunto, borrarAdjunto:borrarAdjunto,
   anularFactura:anularFactura, setBuscaFac:setBuscaFac, setFechaFac:setFechaFac,
   limpiarFac:limpiarFac, rangoFac:rangoFac, setTipoFac:setTipoFac,
