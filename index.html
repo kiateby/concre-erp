@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261124235500';
+var APP_BUILD='20261125020620';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -36522,7 +36522,9 @@ function armarPanos(px, py, h_cm, dosis) {
 //     por la base preparada que aún no se ha colado;
 //   · los paños contiguos se agrupan en jornadas (una por día) de ~700–900 m², sin pasar de la colada máxima del día.
 // acceso: lado de la nave por donde entra el camión ('y1' = extremo y = Ly, 'y0' = y = 0, 'x1' = x = Lx, 'x0' = x = 0).
-function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos) {
+function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos, opc) {
+  opc = opc || {};
+  const DMIN = opc.dMin || DIA_MIN, DMAX = opc.dMax || DIA_MAX, UNICA = !!opc.unica;   // losa convencional: cada colado (paño) es una jornada, de 700 a 1 000 m²
   acceso = ACCESOS.indexOf(acceso) >= 0 ? acceso : 'y1';
   const porFilas = (acceso === 'y1' || acceso === 'y0');        // las franjas son filas (y) si el camión entra por un extremo en Y
   const nl = porFilas ? ny : nx;
@@ -36587,9 +36589,9 @@ function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos) {
   // para que todos sus bordes coincidan con juntas blindadas (nunca una forma en L ni irregular)
   function costo(A, ultima) {
     let c = 3000;                                                // cada jornada extra cuesta un poco
-    if (A < DIA_MIN) c += (DIA_MIN - A) * (DIA_MIN - A) * (ultima ? 0.4 : 1);
-    else if (A > DIA_MAX) c += 0.5 * (A - DIA_MAX) * (A - DIA_MAX);   // pasarse de 900 cuesta menos que dejar un día con un solo paño pequeño
-    else c += 0.02 * (A - (DIA_MIN + DIA_MAX) / 2) * (A - (DIA_MIN + DIA_MAX) / 2);
+    if (A < DMIN) c += (DMIN - A) * (DMIN - A) * (ultima ? 0.4 : 1);
+    else if (A > DMAX) c += 0.5 * (A - DMAX) * (A - DMAX);   // pasarse de 900 cuesta menos que dejar un día con un solo paño pequeño
+    else c += 0.02 * (A - (DMIN + DMAX) / 2) * (A - (DMIN + DMAX) / 2);
     return c;
   }
   function programar(seq) {
@@ -36604,10 +36606,11 @@ function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos) {
         const q = seq[i];
         i0 = Math.min(i0, q.i); i1 = Math.max(i1, q.i); j0 = Math.min(j0, q.j); j1 = Math.max(j1, q.j);
         if ((i1 - i0 + 1) * (j1 - j0 + 1) !== j - i) continue;     // no es un rectángulo de paños
+        if (UNICA && j - i > 1) break;                              // un paño por jornada
         const A = pre[j] - pre[i];
         if (A > aDia * 1.0001 && j - i > 1) continue;              // no cabe en un día (salvo un paño solo, que se avisa aparte)
         // un día con un solo paño pequeño cuesta más cuanto más temprano cae en la secuencia (lo ideal es que sea el último)
-        const suelto = (j - i === 1 && A < DIA_MIN && j < m) ? 25000 * (1 - j / m) : 0;
+        const suelto = (j - i === 1 && A < DMIN && j < m) ? 25000 * (1 - j / m) : 0;
         const cc = best[i] + costo(A, j === m) + suelto + (A > aDia * 1.0001 ? 1e7 : 0);
         if (cc < best[j]) { best[j] = cc; prev[j] = i; }
       }
@@ -36646,7 +36649,7 @@ function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos) {
       x0: Math.min.apply(null, ps.map(function (p) { return p.x0; })), x1: Math.max.apply(null, ps.map(function (p) { return p.x1; })),
       y0: Math.min.apply(null, ps.map(function (p) { return p.y0; })), y1: Math.max.apply(null, ps.map(function (p) { return p.y1; })),
       juntas: [], ml: 0,
-      dentro: A >= DIA_MIN - 1e-6 && A <= DIA_MAX + 1e-6 };
+      dentro: A >= DMIN - 1e-6 && A <= DMAX + 1e-6 };
   });
   // juntas blindadas de cada jornada: las que están dentro o cierran el rectángulo del día. «ml» = metros de junta que se instalan
   // ese día (las internas y las que lo separan de un día posterior; contra la de un día anterior ya instalada se cuela).
@@ -36666,7 +36669,7 @@ function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos) {
   dias.forEach(function (d) { d.juntas.sort(function (a, b) { return a - b; }); d.ml = r2(d.ml); });
   seq.forEach(function (p, k) { p.orden = k + 1; });
   return { dias: dias, acceso: acceso, accPos: pos, accModo: modo, franjas: fr, costo: elegido.puntaje, seq: seq.map(function (p) { return p.n; }), puerta: ult.slice(ga, gb + 1).map(function (p) { return p.n; }),
-    sueltos: dias.filter(function (d) { return d.nPanos === 1 && d.area < DIA_MIN - 1e-6; }).map(function (d) { return d.dia; }) };
+    sueltos: dias.filter(function (d) { return d.nPanos === 1 && d.area < DMIN - 1e-6; }).map(function (d) { return d.dia; }) };
 }
 
 // ── columnas y rombos ────────────────────────────────────────────────────────
@@ -36969,11 +36972,480 @@ function recomendaciones(inp, S, MT, c) {
 
 const API = { DIA_MIN: DIA_MIN, DIA_MAX: DIA_MAX, APERTURA_ASERRADA: APERTURA_ASERRADA, ACCESOS: ACCESOS, secuencia: secuencia, SISTEMAS: SISTEMAS, METODOS: METODOS, JUNTA_BLINDADA: JUNTA_BLINDADA, DOSIS_MIN: DOSIS_MIN, DOSIS_MAX: DOSIS_MAX, particionFija: particionFija, ESTADO_TXT: ESTADO_TXT, FFFL: FFFL, L_TOPE: L_TOPE, APERTURA_ADM: APERTURA_ADM, T_ROMBO: T_ROMBO,
   CONCRE_FF: CONCRE_FF, CONCRE_FL: CONCRE_FL, H_MIN_MACRO: H_MIN_MACRO, dosisMacro: dosisMacro, aMedio: aMedio, dosisUsuario: dosisUsuario, techoSistema: techoSistema, particion1D: particion1D, distribuir: distribuir, sugerirFibra: sugerirFibra,
-  armarPanos: armarPanos, columnas: columnas, validar: validar, calcularMacro: calcularMacro, compararSistema: compararSistema, claseFF: claseFF };
+  armarPanos: armarPanos, columnas: columnas, validar: validar, calcularMacro: calcularMacro, compararSistema: compararSistema, claseFF: claseFF,
+  // ayudas que reutiliza la losa convencional (CONV_MOTOR)
+  particionesExactas: particionesExactas, ejesInteriores: ejesInteriores, sugerirEjes: sugerirEjes, listaEjes: listaEjes, ffTexto: ffTexto, fila: fila, fm: fm, r1: r1, r2: r2, GAMMA_C: GAMMA_C, ASPECTO_MAX: ASPECTO_MAX, APERTURA_ADM_MACRO: APERTURA_ADM };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 root.MACRO_MOTOR = API;
 })(typeof window !== 'undefined' ? window : globalThis);
 /* MACRO:MOTOR:FIN */
+
+/* MACRO:CONV:INICIO */
+// ══════════════════════════════════════════════════════════════════════════════
+// CONCRE · Diseño de losas — LOSA CONVENCIONAL (con cortes aserrados) · MOTOR
+// Módulo puro (sin DOM): corre en el navegador (window.CONV_MOTOR) y en Node.
+//
+// Reutiliza el motor de macro-losas (MACRO_MOTOR): ejes principales, entrada del camión, orden de colado,
+// rombos de columnas, planicidad y cantidades. Cambia SOLO la parte de juntas:
+//   · Juntas de contracción ASERRADAS. La separación máxima la fijan el espesor y la dosis de fibra
+//     (regla empírica de ACI 302.1R: 24·h a 36·h, tope 5,5 m) y la distancia entre ejes: cada vano entre
+//     ejes se divide en partes IGUALES (a la mitad si basta), de modo que los cortes calzan con los ejes.
+//   · Juntas de CONSTRUCCIÓN solo entre colados (los colados son de 700 a ≈ 1 000 m², cerrados por ejes),
+//     la menor cantidad posible, con dovelas redondas lisas o placas de diamante (ACI 302.1R, tablas de dovelas).
+//   · Sello semirrígido con fondo de junta (backer rod) y profundidad de corte recomendada.
+// El informe NO nombra empresas ni marcas de terceros: solo normas y guías técnicas.
+// ══════════════════════════════════════════════════════════════════════════════
+(function (root) {
+'use strict';
+const MM = (typeof module !== 'undefined' && module.exports) ? require('./macro-motor.js') : root.MACRO_MOTOR;
+const fm = MM.fm, r1 = MM.r1, r2 = MM.r2, fila = MM.fila;
+
+// ── Constantes de diseño ─────────────────────────────────────────────────────
+const K_MIN = 24, K_MAX = 36;            // ACI 302.1R: separación de juntas de contracción = 24·h a 36·h
+const K_D0 = 3, K_D1 = 5;                // kg/m³ de fibra: con ≤ 3 se usa 24·h; con ≥ 5 se usa 36·h (interpolación derivada)
+const L_CORTE_TOPE = 5.5;                // m · ACI 302.1R (tope de la regla empírica)
+const L_CORTE_REF = 4.5;                 // m · PCA CIP 6 (referencia para losas de 15 cm)
+const ASPECTO_MAX = 1.5;                 // ACI 302.1R: largo/ancho ≤ 1,5 (mejor 1:1)
+const PARTE_MIN = 1.5;                   // m · no se subdivide un vano en partes menores que esto
+const COLADO_MIN = 700, COLADO_MAX = 1000;   // m² · colado diario: de 700 a ≈ 1 000 m²
+const EPS = 500;                         // µε · retracción neta de diseño (TR34 4ª ed.: 0,5 mm/m)
+const APERTURA_DOVELA = 5;               // mm · las tablas de dovelas de ACI 302.1R valen para aperturas ≤ 5 mm
+const PARTES_AVISO = 3;                  // más de 3 partes iguales en un vano: se avisa y se sugiere un eje
+const CLARO_DOVELA = 0.30;               // m · dovelas a ≥ 300 mm del cruce de juntas y del borde (ACI 302.1R)
+
+// Tablas de dovelas de ACI 302.1R (espesores en cm). Se repiten aquí para no depender del módulo de losas normales;
+// una prueba verifica que coinciden con LOSAS_REC.
+const DOVELAS = [
+  { hasta: 15,   rango: '12,5–15 cm',   redonda: { diam: 19, diamTxt: 'Ø 19 mm (¾")',  largo: 360, sep: 300 }, diamante: { t: 6,  lado: 115, sep: 450 } },
+  { hasta: 20,   rango: '17,5–20 cm',   redonda: { diam: 25, diamTxt: 'Ø 25 mm (1")',  largo: 410, sep: 300 }, diamante: { t: 10, lado: 115, sep: 450 } },
+  { hasta: 27.5, rango: '22,5–27,5 cm', redonda: { diam: 32, diamTxt: 'Ø 32 mm (1¼")', largo: 460, sep: 300 }, diamante: { t: 19, lado: 115, sep: 500 } },
+];
+
+const SISTEMA_CONV = { id: 'conv', nombre: 'Fibra Plus 54 mm con cortes aserrados de contracción', corto: 'Fibra + cortes aserrados', eps: EPS, dosisBase: 2.5, mu: 0.5, capas: 1, estado: 'V',
+  mezcla: 'Relación a/c ≤ 0.50; revenimiento 150 ± 25 mm con aditivo; retracción libre máx. 600 µε (ASTM C157).' };
+
+// ── utilidades ───────────────────────────────────────────────────────────────
+function letraEje(i) { let s = ''; i = Math.floor(i); do { s = String.fromCharCode(65 + i % 26) + s; i = Math.floor(i / 26) - 1; } while (i >= 0); return s; }
+function sube5(x) { return Math.ceil(x / 5 - 1e-9) * 5; }
+function aPaso(x, p) { return Math.floor(x / p + 1e-9) * p; }
+
+// ── separación máxima de cortes ──────────────────────────────────────────────
+function kCorte(dosis) {
+  const t = Math.min(1, Math.max(0, ((dosis || 0) - K_D0) / (K_D1 - K_D0)));
+  return K_MIN + (K_MAX - K_MIN) * t;
+}
+function separacionMax(h_cm, dosis) {
+  const k = kCorte(dosis), cruda = k * h_cm / 100, L = Math.min(cruda, L_CORTE_TOPE);
+  return { k: k, cruda: cruda, Lc: r2(aPaso(L, 0.05)), tope: cruda > L_CORTE_TOPE + 1e-9 };
+}
+// dosis de la losa convencional: la que piden las cargas, en pasos de 0,5 kg/m³ (media bolsa de 1 kg por m³), nunca menor que las cargas
+function dosisConv(dosisCargas) {
+  const d = dosisCargas || 0;
+  let r = MM.aMedio(d); if (r < d - 1e-9) r += 0.5;
+  r = Math.max(r, 2.5);
+  return { dosis: Math.min(r, MM.DOSIS_MAX), exacta: d, excede: d > MM.DOSIS_MAX + 1e-9 };
+}
+
+// ── profundidad de corte, sello y dovelas ────────────────────────────────────
+function selloSpec(h_cm) {
+  const ancho = h_cm <= 20 ? 6 : 8, varilla = h_cm <= 20 ? 8 : 10, espesor = h_cm <= 20 ? 25 : 30;
+  return { ancho: ancho, varilla: varilla, espesor: espesor, reservorio: espesor + varilla, durezaShore: '80–85 (epóxico) · 85–90 (poliurea)' };
+}
+function profCorte(h_cm) {
+  const base = Math.max(25, sube5(h_cm * 10 / 4)), res = selloSpec(h_cm).reservorio;
+  return { mm: Math.max(base, sube5(res + 5)), minimo: Math.max(25, Math.round(h_cm * 10 / 4)), tercio: Math.round(h_cm * 10 / 3), porSello: base < sube5(res + 5) };
+}
+function dovelaDe(h_cm) {
+  if (h_cm < 12.5 || h_cm > 27.5) return null;
+  const f = DOVELAS.filter(function (x) { return h_cm <= x.hasta + 1e-9; })[0];
+  const hueco = (h_cm > 15 && h_cm < 17.5) || (h_cm > 20 && h_cm < 22.5);
+  return { fila: f, redonda: f.redonda, diamante: f.diamante, enHueco: hueco };
+}
+// dovelas que caben en un tramo de junta (sin tocar el cruce con otra junta ni el borde)
+function nDovelas(largo, sep_mm) { const s = sep_mm / 1000, util = largo - 2 * CLARO_DOVELA; return util < -1e-9 ? 0 : Math.floor(util / s + 1e-9) + 1; }
+
+// ── retícula de cortes aserrados ─────────────────────────────────────────────
+// P: ejes con los bordes [0, …, total]. Cada vano entre ejes se divide en n partes iguales, con n mínimo para que cada parte ≤ Lc.
+// Después se mejora la forma de los paños (largo/ancho ≤ 1,5) subdividiendo el vano cuya parte es la más larga del paño más alargado.
+function reticula(PX, PY, Lc) {
+  const nx = [], ny = [];
+  for (let i = 1; i < PX.length; i++) nx.push(Math.max(1, Math.ceil((PX[i] - PX[i - 1]) / Lc - 1e-9)));
+  for (let j = 1; j < PY.length; j++) ny.push(Math.max(1, Math.ceil((PY[j] - PY[j - 1]) / Lc - 1e-9)));
+  function peor() {
+    let w = null;
+    nx.forEach(function (a, k) { ny.forEach(function (b, l) {
+      const dx = (PX[k + 1] - PX[k]) / a, dy = (PY[l + 1] - PY[l]) / b, asp = Math.max(dx, dy) / Math.min(dx, dy);
+      if (!w || asp > w.asp + 1e-9) w = { asp: asp, k: k, l: l, dx: dx, dy: dy };
+    }); });
+    return w;
+  }
+  let w = peor(), mejoras = 0;
+  for (let it = 0; it < 40 && w && w.asp > ASPECTO_MAX + 1e-9; it++) {
+    const alto = w.dx > w.dy;                         // se corta el sentido más largo del paño
+    const vano = alto ? PX[w.k + 1] - PX[w.k] : PY[w.l + 1] - PY[w.l], n = alto ? nx[w.k] : ny[w.l];
+    if (vano / (n + 1) < PARTE_MIN - 1e-9) break;
+    if (alto) nx[w.k]++; else ny[w.l]++;
+    const w2 = peor();
+    if (w2.asp >= w.asp - 1e-9) { if (alto) nx[w.k]--; else ny[w.l]--; break; }   // no mejora: se deja como estaba
+    w = w2; mejoras++;
+  }
+  function lineas(P, n) {
+    const out = [{ pos: 0, tipo: 'borde' }];
+    for (let k = 1; k < P.length; k++) {
+      const a = P[k - 1], b = P[k], m = n[k - 1];
+      for (let q = 1; q < m; q++) out.push({ pos: r2(a + (b - a) * q / m), tipo: 'div', vano: k - 1, de: q, partes: m });
+      out.push({ pos: r2(b), tipo: k === P.length - 1 ? 'borde' : 'eje' });
+    }
+    return out;
+  }
+  return { nx: nx, ny: ny, lx: lineas(PX, nx), ly: lineas(PY, ny), mejoras: mejoras, asp: peor().asp };
+}
+
+// ── juntas de construcción: colados cerrados por ejes, la menor cantidad de juntas ──
+// Un colado es un rectángulo cuyos bordes son juntas de construcción sobre ejes. Se busca la partición con el MENOR largo de junta
+// (metros) tal que cada colado quede dentro del área máxima; a igual largo, la menor cantidad y las mejores jornadas.
+function sugerirColados(Lx, Ly, aMax) {
+  let mejor = null;
+  for (let a = 0; a <= 14; a++) for (let b = 0; b <= 14; b++) {
+    if ((Lx / (a + 1)) * (Ly / (b + 1)) > aMax + 1e-9) continue;
+    const len = a * Ly + b * Lx, cnt = a + b;
+    if (!mejor || len < mejor.len - 1e-9 || (Math.abs(len - mejor.len) < 1e-9 && cnt < mejor.cnt)) mejor = { a: a, b: b, len: len, cnt: cnt };
+  }
+  if (!mejor) return { x: [], y: [] };
+  const eq = function (L, n) { const o = []; for (let k = 1; k <= n; k++) o.push(Math.round(L * k / (n + 1) * 2) / 2); return o; };
+  return { x: eq(Lx, mejor.a), y: eq(Ly, mejor.b) };
+}
+function maxSeg(segs) { return Math.max.apply(null, segs); }
+function elegirColados(inp, aMax, ctx) {
+  const Lx = inp.Lx, Ly = inp.Ly;
+  const fijoX = Array.isArray(inp.juntasX), fijoY = Array.isArray(inp.juntasY);
+  const ex = MM.ejesInteriores(inp.ejesX, Lx), ey = MM.ejesInteriores(inp.ejesY, Ly);
+  const FX = fijoX ? MM.particionFija(inp.ejesX, Lx, inp.juntasX, Infinity) : null, FY = fijoY ? MM.particionFija(inp.ejesY, Ly, inp.juntasY, Infinity) : null;
+  const opcX = fijoX ? [FX] : null, opcY = fijoY ? [FY] : null;
+  const exactas = function (ejes, total, n) { return MM.particionesExactas(ejes, total, Infinity, n, 2000); };
+  const listasX = {}, listasY = {};
+  const getX = function (n) { return fijoX ? opcX : (listasX[n] = listasX[n] || exactas(inp.ejesX, Lx, n)); };
+  const getY = function (n) { return fijoY ? opcY : (listasY[n] = listasY[n] || exactas(inp.ejesY, Ly, n)); };
+  const nxs = fijoX ? [FX.cortes.length] : ex.map(function (_, i) { return i; }).concat([ex.length]);
+  const nys = fijoY ? [FY.cortes.length] : ey.map(function (_, i) { return i; }).concat([ey.length]);
+  const pares = [];
+  nxs.forEach(function (a) { nys.forEach(function (b) { pares.push({ a: a, b: b, len: a * Ly + b * Lx }); }); });
+  pares.sort(function (p, q) { return p.len - q.len || (p.a + p.b) - (q.a + q.b); });
+  function factibles(par) {
+    const out = [], LX = getX(par.a), LY = getY(par.b);
+    for (let i = 0; i < LX.length; i++) {
+      const W = maxSeg(LX[i].segs);
+      for (let j = 0; j < LY.length; j++) {
+        const H = maxSeg(LY[j].segs);
+        if (W * H <= aMax + 1e-6) out.push({ px: LX[i], py: LY[j], W: W, H: H });
+      }
+    }
+    return out;
+  }
+  let grupo = [], lenMin = null;
+  for (let q = 0; q < pares.length; q++) {
+    if (lenMin !== null && pares[q].len > lenMin + 1e-6) break;
+    const f = factibles(pares[q]);
+    if (f.length) { if (lenMin === null) lenMin = pares[q].len; grupo = grupo.concat(f); }
+  }
+  if (!grupo.length) return null;
+  // puntaje barato (colados cerca de 700–1 000 m², poco alargados) y, entre los mejores, el costo real de la secuencia
+  grupo.forEach(function (c) {
+    let pen = 0, asp = 1;
+    c.px.segs.forEach(function (w) { c.py.segs.forEach(function (l) { const A = w * l; if (A < COLADO_MIN) pen += (COLADO_MIN - A) * (COLADO_MIN - A); asp = Math.max(asp, Math.max(w, l) / Math.min(w, l)); }); });
+    c.pre = pen + 40 * asp;
+  });
+  grupo.sort(function (p, q) { return p.pre - q.pre; });
+  let mejor = null;
+  grupo.slice(0, 12).forEach(function (c) {
+    const g = MM.armarPanos(c.px, c.py, ctx.h, ctx.dosis);
+    const sc = MM.secuencia(g.panos, c.px.segs.length, c.py.segs.length, ctx.acceso, aMax, ctx.h, ctx.dosis, ctx.accPos, { dMin: COLADO_MIN, dMax: COLADO_MAX, unica: true });
+    const asp = Math.max.apply(null, g.panos.map(function (p) { return p.aspecto; }));
+    const puntaje = sc.costo + 40 * asp;
+    if (!mejor || puntaje < mejor.puntaje) mejor = { px: c.px, py: c.py, puntaje: puntaje };
+  });
+  mejor.px.lim = mejor.py.lim = Math.max(maxSeg(mejor.px.segs), maxSeg(mejor.py.segs));
+  return mejor;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CÁLCULO DE LA LOSA CONVENCIONAL
+//  inp: igual que calcularMacro (Lx, Ly, ejesX, ejesY, metodo, columnasModo, colX, colY, sinColumna, h_cm, hFijo, dosisUsar, fc, resTxt,
+//       dosisCargas, ell_mm, Pd_kN, uso, o, clima, pisoSensible, pesado, montacargas, juntasX/juntasY (construcción, a mano), acceso, accPos)
+//       + dovela: 'redonda' | 'diamante' (la que se dibuja en la hoja de detalles)
+// ══════════════════════════════════════════════════════════════════════════════
+function calcularConv(inp) {
+  const errs = MM.validar(inp);
+  if (errs.length) return { error: errs.join(' ') };
+  const S = SISTEMA_CONV, MT = MM.METODOS[inp.metodo] || MM.METODOS.laser;
+  const pasos = []; const paso = function (titulo, formula, valores, resultado, norma) { pasos.push({ titulo: titulo, formula: formula, valores: valores, resultado: resultado, norma: norma }); };
+  const avisos = [];
+  const Lx = inp.Lx, Ly = inp.Ly, area = Lx * Ly;
+
+  // 1. Dosis
+  const dmRec = dosisConv(inp.dosisCargas);
+  const dosisManual = inp.dosisUsar > 0;
+  const dm = dosisManual ? { dosis: MM.dosisUsuario(inp.dosisUsar), exacta: inp.dosisUsar, excede: false } : dmRec;
+  if (dosisManual && Math.abs(inp.dosisUsar - dm.dosis) > 1e-6) avisos.push('La dosis de fibra se ajustó de ' + fm(inp.dosisUsar, 2) + ' a ' + fm(dm.dosis, 1) + ' kg/m³: la fibra se dosifica en pasos de 0,5 kg/m³ (media bolsa de 1 kg por m³ de concreto).');
+  if (dm.excede) avisos.push('Las cargas piden más de ' + MM.DOSIS_MAX + ' kg/m³ de Fibra Plus 54 mm; la tabla de la fibra llega a ese valor. Aumente el espesor o revise las cargas.');
+  { const ffc = MM.claseFF(inp);
+    if (ffc.fuera) avisos.push('ATENCIÓN · Planicidad fuera del alcance de CONCRE: racks de más de 8 m piden un piso de movimiento definido (TR34 DM1–DM3), con una planicidad superior a FF ' + MM.CONCRE_FF + ' / FL ' + MM.CONCRE_FL + '. CONCRE ejecuta hasta FF ' + MM.CONCRE_FF + ' / FL ' + MM.CONCRE_FL + ': esta losa no la podría colocar CONCRE sin valorarla antes. Avise al cliente y consulte antes de ofrecerla.');
+    else if (ffc.cls.ff > MM.CONCRE_FF || ffc.cls.fl > MM.CONCRE_FL) avisos.push('ATENCIÓN · Planicidad fuera del alcance de CONCRE: la planicidad recomendada (FF ' + ffc.cls.ff + ' / FL ' + ffc.cls.fl + ') supera FF ' + MM.CONCRE_FF + ' / FL ' + MM.CONCRE_FL + '. Esta losa no la podría colocar CONCRE sin valorarla antes.'); }
+  [['ejesX', Lx, 'vertical', 'ancho'], ['ejesY', Ly, 'horizontal', 'largo']].forEach(function (q) {
+    const l = [0].concat((inp[q[0]] || []).filter(function (v) { return v > 0.01 && v < q[1] - 0.01; }).sort(function (x, y) { return x - y; }), [q[1]]);
+    for (let k = 1; k < l.length; k++) if (l[k] - l[k - 1] < 1) { avisos.push('Hay un eje ' + q[2] + ' a solo ' + fm(r2(l[k] - l[k - 1]), 2) + ' m del ' + (k === l.length - 1 ? 'borde' : 'eje anterior') + ' (en ' + fm(l[k - 1], 2) + ' m). Deja un tramo casi sin ancho y cambia el tamaño de los paños y de los colados. Si la nave debería medir ' + fm(l[k - 1], 1) + ' m, corrija el ' + q[3] + '; si no, quite ese eje.'); break; }
+  });
+  paso('Dosis de fibra', dosisManual ? 'dosis verificada con las cargas, en pasos de 0,5 kg/m³' : 'dosis = la que piden las cargas, en pasos de 0,5 kg/m³ (mínimo 2,5 kg/m³)', 'cargas = ' + fm(inp.dosisCargas || 0, 1) + ' kg/m³', fm(dm.dosis, 1) + ' kg/m³', 'ANSI-DSI C1.0; EN 14651 (tabla de la fibra)');
+
+  // 2. Espesor
+  const hFijo = !!inp.hFijo, h = inp.h_cm || 0;
+  paso('Espesor de la losa', 'h = el que piden las cargas (verificación TR34 + Westergaard)', 'h = ' + fm(h, 1) + ' cm', fm(h, 1) + ' cm', 'TR34; ACI 360R');
+
+  // 3. Separación máxima de cortes
+  const sp = separacionMax(h, dm.dosis);
+  paso('Separación máxima entre cortes aserrados', 'k = 24 + 12·(dosis − 3)/2, entre 24 y 36 ;  L_corte = mín(k·h ; 5,5 m)', 'dosis = ' + fm(dm.dosis, 1) + ' kg/m³ → k = ' + fm(r1(sp.k), 1) + ' · h = ' + fm(h, 1) + ' cm → k·h = ' + fm(r2(sp.cruda), 2) + ' m', fm(sp.Lc, 2) + ' m' + (sp.tope ? ' (tope de 5,5 m)' : ''), 'ACI 302.1R (24·h a 36·h, tope 5,5 m); ACI 360R');
+  if (sp.tope) avisos.push('Con ' + fm(h, 1) + ' cm y ' + fm(dm.dosis, 1) + ' kg/m³ la regla da ' + fm(r2(sp.cruda), 1) + ' m; se limita al tope de 5,5 m de ACI 302.1R.');
+
+  // 4. Retícula de cortes (cada vano entre ejes en partes iguales)
+  const PX = [0].concat(MM.ejesInteriores(inp.ejesX, Lx), [r2(Lx)]), PY = [0].concat(MM.ejesInteriores(inp.ejesY, Ly), [r2(Ly)]);
+  const ret = reticula(PX, PY, sp.Lc);
+  const vanos = { x: [], y: [] };
+  PX.slice(1).forEach(function (b, k) { vanos.x.push({ de: letraEje(k), a: letraEje(k + 1), L: r2(b - PX[k]), n: ret.nx[k], paso: r2((b - PX[k]) / ret.nx[k]) }); });
+  PY.slice(1).forEach(function (b, k) { vanos.y.push({ de: String(k + 1), a: String(k + 2), L: r2(b - PY[k]), n: ret.ny[k], paso: r2((b - PY[k]) / ret.ny[k]) }); });
+  const xsC = ret.lx.map(function (p) { return p.pos; }), ysC = ret.ly.map(function (p) { return p.pos; });
+  // dimensiones de los paños aserrados
+  const wL = [], hL = [];
+  vanos.x.forEach(function (v) { for (let q = 0; q < v.n; q++) wL.push(v.paso); });
+  vanos.y.forEach(function (v) { for (let q = 0; q < v.n; q++) hL.push(v.paso); });
+  const nLosas = wL.length * hL.length;
+  const maxLosaL = Math.max(maxSeg(wL), maxSeg(hL)), minLosaL = Math.min(Math.min.apply(null, wL), Math.min.apply(null, hL));
+  const aspLosa = ret.asp;
+  let largos = 0;
+  [[vanos.x, PX, 'vertical'], [vanos.y, PY, 'horizontal']].forEach(function (q) {
+    q[0].forEach(function (v, k) {
+      v.alerta = v.n > PARTES_AVISO;
+      if (!v.alerta) return;
+      largos++;
+      avisos.push('El vano entre los ejes ' + v.de + ' y ' + v.a + ' (sentido ' + q[2] + ') mide ' + fm(v.L, 2) + ' m: se corta en ' + v.n + ' partes iguales de ' + fm(v.paso, 2) + ' m. Más de ' + PARTES_AVISO + ' partes en un solo vano es una distancia grande entre ejes; si el diseño lo permite, agregue un eje intermedio hacia ' + fm(r2(q[1][k] + v.L / 2), 1) + ' m.');
+    });
+  });
+  if (aspLosa > ASPECTO_MAX + 1e-6) avisos.push('Algún paño aserrado queda alargado (relación largo/ancho ' + fm(r2(aspLosa), 2) + ', ACI 302.1R pide ≤ 1,5). Se debe a la distancia entre ejes: agregue un eje para equilibrarlo.');
+  paso('Retícula de cortes entre ejes', 'n = ⌈B / L_corte⌉ partes iguales por vano entre ejes (a la mitad si n = 2); los ejes llevan corte; paño con largo/ancho ≤ 1,5',
+    'vanos verticales: ' + vanos.x.map(function (v) { return v.L + ' m → ' + v.n; }).join(' · ') + ' · horizontales: ' + vanos.y.map(function (v) { return v.L + ' m → ' + v.n; }).join(' · '),
+    nLosas + ' paños aserrados · el mayor lado ' + fm(r2(maxLosaL), 2) + ' m · relación máx. ' + fm(r2(aspLosa), 2), 'ACI 302.1R (forma del paño, juntas sobre las líneas de columnas)');
+
+  // 5. Profundidad de corte y sello
+  const pc = profCorte(h), sello = selloSpec(h);
+  paso('Profundidad del corte y reservorio del sello', 'prof. ≥ ¼ h y ≥ 25 mm ; reservorio = espesor del sello + diámetro del fondo de junta',
+    'h/4 = ' + fm(h * 10 / 4, 0) + ' mm · sello ' + sello.espesor + ' mm + fondo de junta Ø ' + sello.varilla + ' mm = ' + sello.reservorio + ' mm',
+    'corte de contracción de ' + pc.mm + ' mm de profundidad; corte de sello de ' + sello.ancho + ' mm de ancho × ' + sello.reservorio + ' mm', 'ACI 302.1R (¼ h, mínimo 25 mm); sello: ACI 302.1R / ACI 360R');
+
+  // 6. Apertura esperada de los cortes (y validez de las tablas de dovelas)
+  const aperturaMax = (EPS / 1000) * maxLosaL;
+  paso('Apertura esperada de los cortes', 'Δ = ε_neta · L', 'ε_neta = ' + EPS + ' µε (' + fm(EPS / 1000, 1) + ' mm/m) · L = ' + fm(r2(maxLosaL), 2) + ' m', fm(r1(aperturaMax), 1) + ' mm (las tablas de dovelas valen hasta ' + APERTURA_DOVELA + ' mm)', 'TR34 4ª ed. (≈ 0,5 mm/m); ACI 302.1R');
+  if (aperturaMax > APERTURA_DOVELA + 1e-9) avisos.push('La apertura esperada de los cortes (' + fm(r1(aperturaMax), 1) + ' mm) supera los ' + APERTURA_DOVELA + ' mm de las tablas de dovelas: se requiere diseño específico del ingeniero.');
+
+  // 7. Colados y juntas de construcción
+  const ctx = { acceso: inp.acceso, accPos: inp.accPos, h: h, dosis: dm.dosis };
+  let aTope = Math.min(COLADO_MAX, MT.a_dia), excedeMax = false;
+  let sel = elegirColados(inp, aTope, ctx);
+  if (!sel && MT.a_dia > COLADO_MAX) { sel = elegirColados(inp, MT.a_dia, ctx); if (sel) { excedeMax = true; aTope = MT.a_dia; } }
+  let okEjes = true, sugerencia = { x: [], y: [] };
+  if (!sel) {                                        // los ejes no alcanzan: se usan todos y se sugiere dónde agregar
+    okEjes = false;
+    const todosX = MM.particionesExactas(inp.ejesX, Lx, Infinity, MM.ejesInteriores(inp.ejesX, Lx).length, 1)[0], todosY = MM.particionesExactas(inp.ejesY, Ly, Infinity, MM.ejesInteriores(inp.ejesY, Ly).length, 1)[0];
+    sel = { px: todosX, py: todosY }; sel.px.ok = sel.py.ok = false; sel.px.lim = sel.py.lim = 0;
+    const sg = sugerirColados(Lx, Ly, Math.min(COLADO_MAX, MT.a_dia));
+    sugerencia = { x: sg.x, y: sg.y };
+    avisos.push('Las juntas de construcción solo pueden ir sobre ejes y, con los ejes indicados, no se logran colados de hasta ' + fm(Math.min(COLADO_MAX, MT.a_dia), 0) + ' m². Agregue ejes' + (sg.x.length || sg.y.length ? ' (sugerido: ' + (sg.x.length ? 'verticales hacia ' + sg.x.map(function (v) { return fm(v, 1); }).join(' · ') + ' m' : '') + (sg.x.length && sg.y.length ? '; ' : '') + (sg.y.length ? 'horizontales hacia ' + sg.y.map(function (v) { return fm(v, 1); }).join(' · ') + ' m' : '') + ')' : '') + ' o use los de la sugerencia.');
+  }
+  const px = sel.px, py = sel.py;
+  if (px.ok === undefined) px.ok = true; if (py.ok === undefined) py.ok = true;
+  const g = MM.armarPanos(px, py, h, dm.dosis);
+  const panos = g.panos;
+  const sec = MM.secuencia(panos, px.segs.length, py.segs.length, inp.acceso, Math.max(aTope, COLADO_MAX), h, dm.dosis, inp.accPos, { dMin: COLADO_MIN, dMax: COLADO_MAX, unica: true });
+  const nJx = px.cortes.length, nJy = py.cortes.length;
+  const largoJuntas = nJx * Ly + nJy * Lx;
+  const maxA = Math.max.apply(null, panos.map(function (p) { return p.area; })), minA = Math.min.apply(null, panos.map(function (p) { return p.area; }));
+  const maxAsp = Math.max.apply(null, panos.map(function (p) { return p.aspecto; }));
+  const maxL = maxLosaL;                              // «mayor paño»: el lado mayor de las losas aserradas
+  const manualJ = !!(px.manual || py.manual);
+  if (manualJ && (px.descartadas || py.descartadas)) avisos.push('Algunas juntas elegidas a mano ya no coinciden con un eje y se descartaron.');
+  if (okEjes && maxA > COLADO_MAX + 1e-6) avisos.push('Un colado de ' + fm(maxA, 0) + ' m² supera los ' + fm(COLADO_MAX, 0) + ' m² por día' + (excedeMax ? ' (con estos ejes solo se logra con ese colado; cabe en la colada máxima de ' + fm(MT.a_dia, 0) + ' m² por día del método de colocación)' : '') + '. Agregue ejes o mueva las juntas para partirlo.');
+  if (okEjes && !excedeMax && maxA > MT.a_dia * 1.0001) avisos.push('Un colado de ' + fm(maxA, 0) + ' m² supera el área que se puede colar en un día (' + fm(MT.a_dia, 0) + ' m²); ajuste ejes o juntas.');
+  paso('Colados y juntas de construcción', 'La menor cantidad (y el menor largo) de juntas de construcción: solo sobre ejes y entre colados de 700 a ≈ 1 000 m²; cada colado es un rectángulo cerrado por juntas',
+    'Nave ' + fm(Lx, 1) + ' × ' + fm(Ly, 1) + ' m · ' + fm(area, 0) + ' m²' + (manualJ ? ' · posiciones ajustadas sobre ejes' : ''),
+    (nJx + nJy) + ' juntas (' + nJx + ' verticales, ' + nJy + ' horizontales) · ' + fm(largoJuntas, 0) + ' m · ' + panos.length + ' colados' + (panos.length > 1 ? ' de ' + fm(minA, 0) + ' a ' + fm(maxA, 0) + ' m²' : ''), 'ACI 302.1R (juntas de construcción al final de la colada; juntas a ≥ 1,5 m de otra paralela); ACI 360R');
+  const diasA = sec.dias.map(function (d) { return d.area; });
+  const minDia = Math.min.apply(null, diasA), maxDia = Math.max.apply(null, diasA);
+  const diaTxt = Math.round(minDia) === Math.round(maxDia) ? fm(minDia, 0) + ' m²' : fm(minDia, 0) + ' a ' + fm(maxDia, 0) + ' m²';
+  paso('Secuencia y jornadas de colado', 'Descarga directa del camión mezclador: franjas del fondo hacia la entrada; un colado (rectángulo cerrado por juntas de construcción) por día',
+    sec.franjas + ' franjas · ' + panos.length + ' colados · ' + fm(area, 0) + ' m² en total', sec.dias.length + ' jornada(s) · ' + diaTxt + ' por día · ' + sec.dias.map(function (d) { return 'día ' + d.dia + ': ' + fm(d.area, 0) + ' m²'; }).join(' · '), 'ACI 302.1R (colada de gran área); TR34');
+  panos.forEach(function (p) {
+    const ix = xsC.filter(function (x) { return x > p.x0 + 1e-6 && x < p.x1 - 1e-6; }).length + 1, iy = ysC.filter(function (y) { return y > p.y0 + 1e-6 && y < p.y1 - 1e-6; }).length + 1;
+    p.nLosas = ix * iy;
+  });
+  if (sec.sueltos.length && panos.length > 1) {
+    const pn = sec.dias.filter(function (d) { return sec.sueltos.indexOf(d.dia) >= 0; }).map(function (d) { return 'día ' + d.dia + ' (C-' + d.panos[0] + ', ' + fm(d.area, 0) + ' m²)'; });
+    avisos.push('Colados menores de ' + COLADO_MIN + ' m²: ' + pn.join(', ') + '. Con la menor cantidad de juntas de construcción que permiten los ejes, esos colados no llegan a ' + COLADO_MIN + ' m². Si prefiere jornadas más parejas, mueva las juntas a otros ejes.');
+  }
+
+  // 8. Dovelas en las juntas de construcción
+  const dv = dovelaDe(h);
+  if (!dv) avisos.push('Con ' + fm(h, 1) + ' cm las tablas de dovelas (12,5 a 27,5 cm) no aplican: se requiere diseño específico del ingeniero y la ficha del fabricante.');
+  const dovelaSel = inp.dovela === 'diamante' ? 'diamante' : 'redonda';
+  let nRed = 0, nDia = 0, kgRed = 0;
+  if (dv) {
+    const tramos = [];
+    const cx = [0].concat(px.cortes.map(function (c) { return c.pos; }), [Lx]), cy = [0].concat(py.cortes.map(function (c) { return c.pos; }), [Ly]);
+    px.cortes.forEach(function () { for (let i = 1; i < cy.length; i++) tramos.push(cy[i] - cy[i - 1]); });     // junta vertical: tramos entre las horizontales
+    py.cortes.forEach(function () { for (let i = 1; i < cx.length; i++) tramos.push(cx[i] - cx[i - 1]); });     // junta horizontal: tramos entre las verticales
+    tramos.forEach(function (L) { nRed += nDovelas(L, dv.redonda.sep); nDia += nDovelas(L, dv.diamante.sep); });
+    kgRed = nRed * Math.PI * Math.pow(dv.redonda.diam / 1000, 2) / 4 * (dv.redonda.largo / 1000) * 7850;
+    paso('Dovelas en las juntas de construcción', 'Tablas de ACI 302.1R por espesor de losa (apertura ≤ 5 mm); dovelas a ≥ 300 mm del cruce de juntas',
+      'h = ' + fm(h, 1) + ' cm → fila ' + dv.fila.rango + (dv.enHueco ? ' (cae entre filas: se toma la siguiente, del lado seguro)' : ''),
+      'redonda ' + dv.redonda.diamTxt + ' × ' + dv.redonda.largo / 10 + ' cm cada ' + dv.redonda.sep / 10 + ' cm (' + nRed + ' u) · placa diamante ' + dv.diamante.t + ' × ' + dv.diamante.lado + ' × ' + dv.diamante.lado + ' mm cada ' + dv.diamante.sep / 10 + ' cm (' + nDia + ' u)', 'ACI 302.1R, tablas de dovelas (redondas lisas y placas de diamante)');
+  }
+
+  // 9. Transferencia de carga (información)
+  const ell_m = (inp.ell_mm || 0) / 1000;
+  const Q_req = (inp.Pd_kN > 0 && ell_m > 0) ? 0.5 * inp.Pd_kN / (1.8 * ell_m) : 0;
+  paso('Transferencia de carga requerida en la junta', 'Q_req = 0.5·Pd / (1.8·ℓ)  (transferencia ≤ 50 %; zona efectiva 0.9ℓ a cada lado)', 'Pd = ' + fm(inp.Pd_kN || 0, 1) + ' kN · ℓ = ' + fm(ell_m, 2) + ' m', fm(Q_req, 1) + ' kN por metro de junta', 'TR34 4ª ed.');
+
+  // 10. Columnas y rombos
+  const cols = MM.columnas(inp, g.xs, g.ys);
+  const nInt = cols.filter(function (c) { return c.tipo === 'interior'; }).length, nBor = cols.filter(function (c) { return c.tipo === 'borde'; }).length, nEsq = cols.filter(function (c) { return c.tipo === 'esquina'; }).length;
+  const vertices = cols.reduce(function (a, c) { return a + c.vertices; }, 0);
+  const vol_rombos = cols.reduce(function (a, c) { return a + (c.area_rombo - (c.tipo === 'interior' ? c.cx * c.cy : c.tipo === 'borde' ? c.cx * c.cy / 2 : c.cx * c.cy / 4)) * h / 100; }, 0);
+
+  // 11. Cantidades
+  const vol = area * h / 100, fibra_kg = Math.ceil(vol * dm.dosis * 1.03 - 1e-9), perim = 2 * (Lx + Ly);
+  const cortesX = ret.lx.filter(function (p) { return p.tipo !== 'borde' && !px.cortes.some(function (c) { return Math.abs(c.pos - p.pos) < 0.011; }); });
+  const cortesY = ret.ly.filter(function (p) { return p.tipo !== 'borde' && !py.cortes.some(function (c) { return Math.abs(c.pos - p.pos) < 0.011; }); });
+  const cortes_m = cortesX.length * Ly + cortesY.length * Lx;
+  const cant = { area: area, vol_m3: vol, fibra_kg: fibra_kg, kg_m3: dm.dosis, kg_camion8: dm.dosis * 8, sacos10: Math.floor(fibra_kg / 10), bolsas1: fibra_kg - Math.floor(fibra_kg / 10) * 10,
+    juntas_m: largoJuntas, cortes_m: cortes_m, nCortes: cortesX.length + cortesY.length, sello_m: cortes_m + largoJuntas, perimetro_m: perim, pe_m2: area * S.capas * 1.10, rombos: cols.length, barras_esquina: vertices * 2, vol_rombos_m3: vol_rombos,
+    dov_redondas: nRed, dov_diamante: nDia, dov_kg: kgRed, nLosas: nLosas };
+
+  const grupos = recomendaciones(inp, S, MT, { h: h, dm: dm, sp: sp, pc: pc, sello: sello, dv: dv, vanos: vanos, ret: ret, aspLosa: aspLosa, maxLosaL: maxLosaL, aperturaMax: aperturaMax, Q_req: Q_req, cols: cols, nJx: nJx, nJy: nJy, panos: panos, largoJ: largoJuntas, cortes_m: cortes_m, nRed: nRed, nDia: nDia, dias: sec.dias, diaTxt: diaTxt, nLosas: nLosas, dovelaSel: dovelaSel, perim: perim });
+
+  return {
+    modo: 'conv',
+    in: { Lx: Lx, Ly: Ly, aperturaAdm: APERTURA_DOVELA, colX: inp.colX || 0.40, colY: inp.colY || 0.40, pesado: !!inp.pesado, capJunta_kNm: 0, fc: inp.fc },
+    ffTxt: MM.ffTexto(inp), junta: null, fcTxt: String(inp.fc || ''), resTxt: inp.resTxt || ('f’c ' + inp.fc + ' kg/cm²'), resCorto: inp.resCorto || ('f’c ' + inp.fc), resTipo: inp.resTipo || 'fc',
+    ejesTxtX: MM.listaEjes(inp.ejesX, Lx), ejesTxtY: MM.listaEjes(inp.ejesY, Ly),
+    sistema: S, metodo: MT, dosis: dm.dosis, h: h, hMin: 0, hOk: true, hFijo: hFijo, dosisManual: dosisManual, Ltecho: sp.Lc, Ljunta: sp.Lc, Lmax: sp.Lc, maxL: maxL, aperturaMax: aperturaMax, Q_req: Q_req, juntaOk: null,
+    f_req: 0, f_disp: 0, okArrastre: true, mu: S.mu, capas: S.capas,
+    // juntas de construcción (entre colados) — misma forma que la macro-losa
+    px: px, py: py, xs: g.xs, ys: g.ys, panos: panos, nJx: nJx, nJy: nJy, cols: cols, nInt: nInt, nBor: nBor, nEsq: nEsq,
+    okEjes: okEjes, okLong: okEjes && maxA <= Math.max(aTope, COLADO_MAX) * 1.0001, sugerencia: sugerencia, juntasManual: manualJ,
+    maxAsp: maxAsp, maxA: maxA, minA: minA, dias: sec.dias, diaObj: [COLADO_MIN, COLADO_MAX], acceso: sec.acceso, accPos: sec.accPos, accModo: sec.accModo, franjas: sec.franjas, puerta: sec.puerta, sueltos: sec.sueltos, diaMin: minDia, diaMax: maxDia, diaTxt: diaTxt,
+    // cortes aserrados de contracción (específico de la losa convencional)
+    Lcorte: sp.Lc, kCorte: sp.k, Lcruda: sp.cruda, topeCorte: sp.tope, vanos: vanos, cortesX: cortesX, cortesY: cortesY, xsC: xsC, ysC: ysC, lineasX: ret.lx, lineasY: ret.ly, nLosas: nLosas, maxLosaL: maxLosaL, minLosaL: minLosaL, aspLosa: aspLosa,
+    profCorte: pc, sello: sello, dovelas: dv, dovelaSel: dovelaSel, vanosLargos: largos,
+    cant: cant, grupos: grupos, avisos: avisos, pasos: pasos, sugFibra: null, comparacion: []
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RECOMENDACIONES (mismo formato de grupos/filas que macro-losas y losas normales)
+// ══════════════════════════════════════════════════════════════════════════════
+function recomendaciones(inp, S, MT, c) {
+  const G = [], h = c.h, sens = !!inp.pisoSensible, pesado = !!inp.pesado, sello = c.sello, pc = c.pc, dv = c.dv;
+  const g1 = { id: 'base', titulo: 'Base y sub-base', filas: [] };
+  g1.filas.push(fila('Base granular', 'Material bien graduado, espesor mínimo 20 cm (20–25 cm), compactado y cerrado con material fino (blinding) para no rasgar la membrana', 'TR34 (sub-base 200–250 mm)', 'S', 'Compactación y ensayos de densidad según el estudio de suelos.'));
+  g1.filas.push(fila('Planicidad de la base', 'Tolerancia +0 / −25 mm respecto al nivel de proyecto; sin escalones, rodadas ni piedras sueltas', 'TR34 (sub-base)', 'S', 'La losa desliza sobre la base: una base irregular genera restricción y fisuras fuera de los cortes. Revise los niveles con topografía antes de colocar la membrana.'));
+  g1.filas.push(fila('Elementos dentro de la losa', 'Sin estacas de nivel, tubos ni pasos que atraviesen la losa; los pasos de instalaciones van con relleno compresible o fuera de la zona', 'ACI 360R (evitar conectar la losa a otros elementos)', 'V'));
+  G.push(g1);
+
+  const g2 = { id: 'membrana', titulo: 'Barrera de vapor y de fricción', filas: [] };
+  const spec = 'Polietileno clase A (ASTM E1745), ≥ ' + (pesado ? '15' : '10') + ' mil, permeancia ≤ 0.1 perm; traslapes de 15 cm sellados con cinta y penetraciones selladas';
+  if (sens) g2.filas.push(fila('Barrera de vapor', 'OBLIGATORIA, directamente bajo la losa. ' + spec, 'ACI 302.1R', 'V', 'Piso sensible a la humedad (epóxico, vinílico, madera).'));
+  else g2.filas.push(fila('Barrera de vapor', 'Recomendada. ' + spec, 'ACI 302.1R / IRC', 'V', (pesado ? '15 mil por equipo pesado sobre la barrera o base de piedra angular. ' : '') + 'Si el piso no es sensible a la humedad se puede cubrir con 10 cm de material triturado (NRMCA); sin esa capa sube el riesgo de alabeo y fisura plástica.'));
+  g2.filas.push(fila('Barrera de fricción', 'La barrera de vapor clase A cumple también esta función: se especifica una sola capa, sin arrugas', 'ACI 302.1R', 'S', 'Con los cortes cada ' + fm(c.sp.Lc, 2) + ' m como máximo no hace falta una segunda lámina de fricción.'));
+  g2.filas.push(fila('Capas bajo la losa (de arriba hacia abajo)', 'Losa · polietileno clase A de ' + (pesado ? '15' : '10') + ' mil (vapor y fricción) · base granular ≥ 20 cm · subrasante compactada', 'ACI 302.1R; TR34', 'S'));
+  g2.filas.push(fila('Colar sobre la membrana', 'El concreto se coloca directo sobre la membrana (sin capa de arena): curado inmediato y mezcla con poco sangrado para evitar fisura plástica y alabeo', 'ACI 302.1R', 'S'));
+  G.push(g2);
+
+  const g3 = { id: 'concreto', titulo: 'Concreto y fibra', filas: [] };
+  g3.filas.push(fila('Resistencia', (inp.resTxt || ('f’c ' + inp.fc + ' kg/cm²')) + ' · espesor ' + fm(h, 1) + ' cm', 'ACI 318 / TR34', 'D'));
+  g3.filas.push(fila('Fibra Plus 54 mm', fm(c.dm.dosis, 1) + ' kg/m³ (pasos de 0,5 kg/m³ = media bolsa de 1 kg por m³)', 'EN 14651; ANSI-DSI C1.0', 'D', 'Los valores fR1–fR4 son los de la tabla de Fibra Plus 54 mm de la calculadora de fibra. Confirmar con ensayo de viga (EN 14651 / ASTM C1609) de la mezcla real. La fibra no reemplaza los cortes: la separación de cortes depende de ella solo dentro de la regla de ACI 302.1R.'));
+  g3.filas.push(fila('Mezcla', S.mezcla, 'ASTM C157; ACI 302.1R', 'S'));
+  g3.filas.push(fila('Colocación y clima', 'Temperatura del concreto ≤ 30–32 °C al colar; fraguado de 6 a 8 h (ASTM C1702)', 'ACI 305R', 'S', 'En clima cálido, colar de noche o temprano.'));
+  g3.filas.push(fila('Curado', 'Compuesto de curado inmediato tras el acabado y curado húmedo mínimo 7 días; no retirar la protección en 3 días', 'ACI 308; TR34 (curado)', 'S', 'El curado es lo que más reduce la retracción diferencial.'));
+  G.push(g3);
+
+  // Juntas de contracción aserradas
+  const g4 = { id: 'cortes', titulo: 'Juntas de contracción aserradas', filas: [] };
+  g4.filas.push(fila('Separación máxima entre cortes', fm(c.sp.Lc, 2) + ' m = ' + fm(r1(c.sp.k), 1) + ' × ' + fm(h, 1) + ' cm' + (c.sp.tope ? ' (limitado al tope de 5,5 m)' : ''), 'ACI 302.1R (24·h a 36·h, tope 5,5 m); referencia PCA 4,5 m en losas de 15 cm', 'D',
+    'Depende del espesor y de la dosis de fibra: con ≤ 3 kg/m³ se usa 24·h y con ≥ 5 kg/m³, 36·h (interpolación derivada). No hay una norma que ligue la dosis a la separación.'));
+  g4.filas.push(fila('Dónde van los cortes', 'Sobre todos los ejes principales (líneas de columnas) y, dentro de cada vano entre ejes, a partes iguales: a la mitad si el vano mide hasta el doble de la separación máxima, en tercios o cuartos si es mayor', 'ACI 302.1R (juntas sobre líneas de columnas)', 'V', 'Así los cortes y las juntas de construcción calzan con los ejes y la losa queda ordenada.'));
+  g4.filas.push(fila('Cortes de esta nave', c.nLosas + ' paños aserrados · ' + c.cortes_m.toFixed(0).replace('.', ',') + ' m de corte · el paño mayor mide ' + fm(r2(c.maxLosaL), 2) + ' m de lado', 'ACI 302.1R', 'D'));
+  g4.filas.push(fila('Forma del paño', 'Relación largo/ancho ≤ 1,5 (mejor 1:1), sin esquinas entrantes ni paños en L o T. En esta nave la relación máxima es ' + fm(r2(c.aspLosa), 2), 'ACI 302.1R', 'V'));
+  g4.filas.push(fila('Profundidad del corte', 'Recomendada ' + pc.mm + ' mm (¼ del espesor, nunca menos de 25 mm' + (pc.porSello ? '; se sube para que el corte de sello quede dentro del corte' : '') + '); ' + pc.tercio + ' mm (⅓ del espesor) si se busca mayor confiabilidad', 'ACI 302.1R', 'S', 'Ancho del corte de contracción 3 mm (se ensancha a ' + sello.ancho + ' mm solo en el reservorio del sello).'));
+  g4.filas.push(fila('Momento del corte', 'Aserrar temprano, entre 4 y 12 horas después de la colada, según el clima; con sierra de entrada temprana, entre 1 y 4 horas', 'ACI 302.1R / ACI 360R', 'S', 'Cortar antes de que el concreto fisure por sí solo; no esperar a que enfríe. Corte continuo de borde a borde de la nave.'));
+  g4.filas.push(fila('Continuidad', 'Los cortes son continuos de borde a borde y llegan a los vértices de los rombos de las columnas; no se interrumpen donde cruzan una junta de construcción', 'ACI 302.1R', 'V'));
+  g4.filas.push(fila('Transferencia en los cortes', 'Por trabazón del agregado mientras la apertura sea pequeña (' + fm(r1(c.aperturaMax), 1) + ' mm esperados); con tránsito frecuente de montacargas de ruedas duras se recomienda dovela redonda lisa como en las juntas de construcción', 'ACI 302.1R; ACI 360R', 'S', 'Las placas de diamante no se usan en cortes aserrados de contracción.'));
+  G.push(g4);
+
+  // Juntas de construcción con dovelas
+  const g5 = { id: 'construccion', titulo: 'Juntas de construcción y dovelas', filas: [] };
+  g5.filas.push(fila('Dónde van', 'Solo entre colados, sobre ejes, y la menor cantidad posible: ' + (c.nJx + c.nJy) + ' juntas (' + c.nJx + ' verticales y ' + c.nJy + ' horizontales) · ' + fm(c.largoJ, 0) + ' m en total', 'ACI 302.1R; ACI 360R', 'V', 'Cada junta de construcción coincide con una línea de corte de la retícula: no se agregan juntas a medio vano. Colados de ' + c.diaTxt + ' por día.'));
+  g5.filas.push(fila('Programación', 'Cada jornada cuela un rectángulo cerrado por juntas de construcción; la junta se arma como cimbra del borde justo antes de colar y el colado del día siguiente se hace contra ella', 'ACI 302.1R', 'S'));
+  g5.filas.push(fila('Cruces de juntas', 'La junta nueva a ≥ 1,5 m de otra junta paralela; en los cruces las dovelas quedan a ≥ 30 cm de la intersección', 'ACI 302.1R', 'V'));
+  if (dv) {
+    g5.filas.push(fila('Dovela redonda lisa', dv.redonda.diamTxt + ' × ' + dv.redonda.largo / 10 + ' cm, cada ' + dv.redonda.sep / 10 + ' cm (' + fm(100 / (dv.redonda.sep / 10), 1) + ' por metro de junta) · ' + c.nRed + ' dovelas en la nave', 'ACI 302.1R, tabla de dovelas redondas', 'V',
+      'Fila de ' + dv.fila.rango + (dv.enHueco ? ' (el espesor cae entre filas: se toma la siguiente, del lado seguro)' : '') + '. Base: apertura de junta ≤ 5 mm.'));
+    g5.filas.push(fila('Placa de diamante', dv.diamante.t + ' × ' + dv.diamante.lado + ' × ' + dv.diamante.lado + ' mm, cada ' + dv.diamante.sep / 10 + ' cm (' + fm(100 / (dv.diamante.sep / 10), 1) + ' por metro de junta) · ' + c.nDia + ' placas en la nave', 'ACI 302.1R, tabla de placas de diamante', 'V',
+      'Solo en juntas de construcción (la placa permite el movimiento en los dos sentidos); no en cortes aserrados.'));
+    g5.filas.push(fila('Cuál se dibuja', c.dovelaSel === 'diamante' ? 'Placa de diamante' : 'Dovela redonda lisa', '', 'D', 'Las dos opciones cumplen la tabla de ACI 302.1R; el detalle de la hoja 3 muestra la elegida.'));
+    g5.filas.push(fila('Colocación', 'Dovela redonda: alineada y paralela al sentido de la colada, engrasada o con vaina en la mitad que queda del lado del colado siguiente. Placa de diamante: una diagonal paralela a la junta, con el lado del colado siguiente forrado con cinta o vaina para que deslice', 'ACI 302.1R', 'V', 'Tolerancia de alineación: dovelas paralelas entre sí y al plano de la losa.'));
+    g5.filas.push(fila('Ubicación', 'A ≥ 30 cm de la intersección de dos juntas y del borde; no continuar barras corrugadas a través de la junta', 'ACI 302.1R', 'V'));
+  } else {
+    g5.filas.push(fila('Dovelas', 'El espesor (' + fm(h, 1) + ' cm) está fuera de las tablas de ACI 302.1R (12,5 a 27,5 cm): requiere diseño específico y ficha del fabricante', 'ACI 302.1R', 'V'));
+  }
+  g5.filas.push(fila('Transferencia de carga necesaria', fm(c.Q_req, 1) + ' kN por metro de junta (≈ 0.5·Pd / 1.8ℓ)', 'TR34 4ª ed.', 'D', 'Referencia para que el ingeniero verifique el aplastamiento del concreto y la dovela con las cargas del uso.'));
+  G.push(g5);
+
+  // Sello semirrígido
+  const g6 = { id: 'sello', titulo: 'Sello semirrígido de juntas', filas: [] };
+  g6.filas.push(fila('Tipo de sello', 'Relleno semirrígido: epóxico (Shore A 80–85) o poliurea (Shore A 85–90), en todos los cortes y juntas de construcción', 'ACI 302.1R', 'V', 'La norma pide relleno semirrígido donde pasan ruedas duras; las durezas son de fabricantes (fuente secundaria). En juntas de aislamiento contra muros y columnas se usa sello flexible de poliuretano.'));
+  g6.filas.push(fila('Espesor del sello', sello.espesor + ' mm de relleno (mínimo 25 mm), al ras o hasta 2 mm bajo la superficie', 'ACI 302.1R / fabricantes', 'S'));
+  g6.filas.push(fila('Fondo de junta (backer rod)', 'Varilla de polietileno de celda cerrada, Ø ' + sello.varilla + ' mm (≈ 25 % mayor que el ancho del corte), al fondo del reservorio, sin perforarla al insertarla', 'ACI 302.1R; ACI 360R', 'S', 'Evita que el relleno se pegue al fondo y fija el espesor del sello.'));
+  g6.filas.push(fila('Reservorio', 'Corte de ' + sello.ancho + ' mm de ancho × ' + sello.reservorio + ' mm de profundidad (sello ' + sello.espesor + ' mm + fondo de junta ' + sello.varilla + ' mm), hecho sobre el corte de contracción; limpiar y secar antes de rellenar', 'ACI 302.1R', 'S', 'El corte de contracción de ' + pc.mm + ' mm queda por debajo del reservorio y sigue siendo el plano débil.'));
+  g6.filas.push(fila('Cuándo sellar', 'Lo más tarde posible: 60 a 90 días después de la colada (nunca antes de 28 días), cuando ya terminó la retracción', 'ACI 302.1R / fabricantes', 'S', 'El relleno semirrígido casi no se estira: sellar temprano lo rompe. Mientras tanto, proteger los cortes de la basura y la humedad.'));
+  g6.filas.push(fila('Juntas de construcción', 'Se sellan igual: aserrar el reservorio sobre la junta antes de rellenar', 'ACI 302.1R', 'S'));
+  g6.filas.push(fila('Cantidad', fm(c.cortes_m + c.largoJ, 0) + ' m de sello y de fondo de junta (' + fm(c.cortes_m, 0) + ' m de cortes + ' + fm(c.largoJ, 0) + ' m de juntas de construcción)', '', 'D'));
+  G.push(g6);
+
+  // Columnas y muros
+  const g7 = { id: 'columnas', titulo: 'Columnas, muros y esquinas', filas: [] };
+  g7.filas.push(fila('Aislamiento de columnas', 'Rombo (cuadrado girado 45°) con los vértices sobre los ejes, donde llegan los cortes; lado ' + (c.cols[0] ? fm(c.cols[0].lado, 2) + ' m' : '—') + ' para columna de ' + fm(inp.colX || 0.4, 2) + ' × ' + fm(inp.colY || 0.4, 2) + ' m (holgura de ' + fm(MM.T_ROMBO * 100, 0) + ' cm)', 'ACI 302.1R; TR34 3ª ed. §8.6', 'S', 'La columna queda envuelta en relleno compresible de 10–20 mm en todo el espesor.'));
+  g7.filas.push(fila('Colado del rombo', 'Se cuela DESPUÉS: dejar el hueco libre hasta que la losa haya completado su retracción inicial y antes de cargar con racks; usar concreto o mortero de retracción compensada o con reductor de retracción, de la misma resistencia', 'ACI 302.1R', 'S', 'El plazo antes de colar el rombo lo define el ingeniero responsable según la retracción medida.'));
+  g7.filas.push(fila('Refuerzo en las esquinas del rombo', '2 barras Ø12 mm (#4) de 1.20 m por vértice, perpendiculares a la fisura esperada, a 5 cm y 20 cm del vértice y 5 cm bajo la superficie; el relleno del rombo lleva varilla Ø10 mm @ 20 cm en ambos sentidos', 'ACI 360R (barras diagonales en esquinas, detalle conceptual); TR34 3ª ed. §8.10.1 (sin diámetro ni largo)', 'S', 'Ninguna norma fija diámetro ni largo: los confirma el ingeniero responsable.'));
+  g7.filas.push(fila('Columnas de borde y de esquina', 'Medio rombo (columna en el muro) y cuarto de rombo (esquina)', 'ACI 302.1R (práctica de construcción)', 'S'));
+  g7.filas.push(fila('Aislamiento de muros', 'Plancha de espuma de polietileno de celda cerrada (o poliestireno de alta densidad) de ' + (c.aperturaMax / 2 + 6 > 15 ? '20' : c.aperturaMax / 2 + 6 > 12 ? '15' : '12') + ' mm, en todo el espesor de la losa, sin doblar en esquinas; sello flexible encima', 'TR34 3ª ed. §8.6 (10–20 mm); ACI 302.1R (espuma de celda cerrada)', 'S', 'Movimiento esperado contra el muro ≈ ' + fm(r1(c.aperturaMax / 2), 1) + ' mm por la mitad del paño aserrado.'));
+  g7.filas.push(fila('Esquinas entrantes', 'Evitar paños en L o T; si hay una esquina entrante, 2 barras Ø12 mm de 1.20 m en diagonal a 5 cm bajo la superficie y corte desde el vértice', 'ACI 302.1R; TR34 3ª ed. §8.10.1', 'S', 'La nave rectangular no tiene esquinas entrantes.'));
+  g7.filas.push(fila('Bases de maquinaria, fosas y drenajes', 'Aislar con relleno compresible igual que las columnas; pasos de tubería con camisa', 'TR34 3ª ed. §8.6; ACI 360R', 'V'));
+  G.push(g7);
+
+  // Planicidad
+  const g8 = { id: 'ffl', titulo: 'Planicidad (FF / FL)', filas: [] };
+  const ff = MM.claseFF(inp);
+  if (ff.fuera) g8.filas.push(fila('Planicidad', 'Racks de más de 8 m: piso de movimiento definido (TR34 DM1–DM3); la planicidad se define por movimiento y no por FF/FL', 'TR34', 'S', 'Requiere diseño específico del ingeniero responsable.'));
+  else g8.filas.push(fila('FF / FL mínimo global', ff.cls.ff + ' / ' + ff.cls.fl + ' (' + ff.cls.nombre.toLowerCase() + ')', 'ACI 302.1R', 'V', 'Mínimo local ' + ff.cls.ffl + ' / ' + ff.cls.fll + '. Medición ASTM E1155 dentro de 72 horas. ' + (ff.nota || '')));
+  g8.filas.push(fila('Alabeo de bordes', 'Los paños se levantan en los bordes y esquinas: curado inmediato, mezcla de baja retracción y cortes a tiempo; medir niveles a los 28 días', 'TR34', 'S'));
+  G.push(g8);
+  return G;
+}
+
+const API = { K_MIN: K_MIN, K_MAX: K_MAX, L_CORTE_TOPE: L_CORTE_TOPE, L_CORTE_REF: L_CORTE_REF, ASPECTO_MAX: ASPECTO_MAX, COLADO_MIN: COLADO_MIN, COLADO_MAX: COLADO_MAX, APERTURA_DOVELA: APERTURA_DOVELA, PARTES_AVISO: PARTES_AVISO, CLARO_DOVELA: CLARO_DOVELA,
+  DOVELAS: DOVELAS, SISTEMA_CONV: SISTEMA_CONV, kCorte: kCorte, separacionMax: separacionMax, dosisConv: dosisConv, selloSpec: selloSpec, profCorte: profCorte, dovelaDe: dovelaDe, nDovelas: nDovelas,
+  reticula: reticula, elegirColados: elegirColados, sugerirColados: sugerirColados, calcularConv: calcularConv, letraEje: letraEje };
+if (typeof module !== 'undefined' && module.exports) module.exports = API;
+root.CONV_MOTOR = API;
+})(typeof window !== 'undefined' ? window : globalThis);
+/* MACRO:CONV:FIN */
 
 /* MACRO:INFORME:INICIO */
 // ══════════════════════════════════════════════════════════════════════════════
@@ -37005,6 +37477,9 @@ function posTexto(M) {
 }
 function rotada(Lx, Ly) { return (Ly / Lx) > 1.25 * (196 / 306); }   // la planta se gira 90° si la nave es muy alta
 var W = 432, H = 279;   // lámina en mm (Tabloide 17 × 11 pulg)
+function conv(M) { return !!M && M.modo === 'conv'; }          // losa convencional (cortes aserrados) en vez de macro-losa
+function PF(M) { return conv(M) ? 'C-' : 'P-'; }                // rótulo del colado (en macro-losa se llama paño)
+var CORTE = '#3a3a3a';
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
 function fmt(n, d) { if (typeof n !== 'number' || !isFinite(n)) return '—'; d = d == null ? 1 : d; return n.toLocaleString('es-CR', { minimumFractionDigits: 0, maximumFractionDigits: d }); }
@@ -37043,6 +37518,7 @@ function lamina1(ctx) {
   var colsP = M.cols.map(function (c) { return U(c.x, c.y); });
   function libre(cx, cy, bw, bh) { return !colsP.some(function (q) { return q[0] > cx - bw / 2 - 2.5 && q[0] < cx + bw / 2 + 2.5 && q[1] > cy - bh / 2 - 2.5 && q[1] < cy + bh / 2 + 2.5; }); }
   var dm = {}; (M.dias || []).forEach(function (d) { dm[d.dia] = d; });
+  var lab = [];
   M.panos.forEach(function (p) {
     var a = U(p.x0, p.y0), b = U(p.x1, p.y1), x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]), w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1]);
     o.push(Rc(x, y, w, h, colDia(p.dia), '#bbb', 0.15));
@@ -37050,14 +37526,20 @@ function lamina1(ctx) {
       var cand = [[.5, .5], [.25, .3], [.75, .3], [.25, .7], [.75, .7], [.5, .25], [.5, .75]], cx = x + w / 2, cy = y + h / 2;
       for (var ci = 0; ci < cand.length; ci++) { var tx = x + w * cand[ci][0], ty = y + h * cand[ci][1]; if (libre(tx, ty, 40, 13)) { cx = tx; cy = ty; break; } }
       var H1 = { s: 4, b: 1, f: GR, halo: 1 }, H2 = { s: 2.7, f: '#555', halo: 1 }, H3 = { s: 2.7, b: 1, f: COLN, halo: 1 };
-      o.push(T(cx, cy - 2.2, 'P-' + p.n, H1));
-      o.push(T(cx, cy + 1.6, fmt(p.w, 1) + ' × ' + fmt(p.l, 1) + ' m · ' + fmt(p.area, 0) + ' m²', H2));
-      o.push(T(cx, cy + 5.4, 'Día ' + p.dia + (dm[p.dia] ? ' · ' + dm[p.dia].nPanos + (dm[p.dia].nPanos === 1 ? ' paño' : ' paños') + (w > 46 ? ' · ' + fmt(dm[p.dia].area, 0) + ' m² del día' : '') : ''), H3));
+      if (conv(M)) lab.push(Rc(cx - 19, cy - 6.4, 38, 12.6, 'rgba(255,255,255,.8)', 'none', 0));
+      lab.push(T(cx, cy - 2.2, PF(M) + p.n, H1));
+      lab.push(T(cx, cy + 1.6, fmt(p.w, 1) + ' × ' + fmt(p.l, 1) + ' m · ' + fmt(p.area, 0) + ' m²', H2));
+      lab.push(T(cx, cy + 5.4, conv(M) ? 'Día ' + p.dia + ' · ' + p.nLosas + ' losas aserradas' : 'Día ' + p.dia + (dm[p.dia] ? ' · ' + dm[p.dia].nPanos + (dm[p.dia].nPanos === 1 ? ' paño' : ' paños') + (w > 46 ? ' · ' + fmt(dm[p.dia].area, 0) + ' m² del día' : '') : ''), H3));
     } else if (Math.min(w, h) > 9) {
-      o.push(T(x + w / 2, y + h / 2 + 1, 'P-' + p.n, { s: 3, b: 1, halo: 1 }));
-      o.push(T(x + w / 2, y + h / 2 + 4.6, 'Día ' + p.dia, { s: 2.4, b: 1, f: COLN, halo: 1 }));
+      lab.push(T(x + w / 2, y + h / 2 + 1, PF(M) + p.n, { s: 3, b: 1, halo: 1 }));
+      lab.push(T(x + w / 2, y + h / 2 + 4.6, 'Día ' + p.dia, { s: 2.4, b: 1, f: COLN, halo: 1 }));
     }
   });
+  // cortes aserrados de contracción (losa convencional): líneas finas, debajo de los rótulos
+  if (conv(M)) {
+    (M.cortesX || []).forEach(function (c) { var a = U(c.pos, 0), b = U(c.pos, Ly); o.push(Ln(a[0], a[1], b[0], b[1], CORTE, 0.2)); });
+    (M.cortesY || []).forEach(function (c) { var a = U(0, c.pos), b = U(Lx, c.pos); o.push(Ln(a[0], a[1], b[0], b[1], CORTE, 0.2)); });
+  }
   // ejes principales
   var exs = [0].concat((S.ejesX || []).filter(function (v) { return v > 0.01 && v < Lx - 0.01; }), [Lx]);
   var eys = [0].concat((S.ejesY || []).filter(function (v) { return v > 0.01 && v < Ly - 0.01; }), [Ly]);
@@ -37075,6 +37557,7 @@ function lamina1(ctx) {
     if (rotar) { p1 = [a[0], Math.min(a[1], b[1]) - ext]; p2 = [a[0], Math.max(a[1], b[1]) + ext]; o.push(Ln(p1[0], p1[1], p2[0], p2[1], '#7a7a7a', 0.2, '3 1 0.6 1')); [p1, p2].forEach(function (q) { var by = q === p1 ? q[1] - 2.8 : q[1] + 2.8; o.push('<circle cx="' + r(q[0]) + '" cy="' + r(by) + '" r="2.6" fill="#fff" stroke="#555" stroke-width="0.25"/>' + T(q[0], by + 1, String(j + 1), { s: 2.8, b: 1 })); }); }
     else { p1 = [Math.min(a[0], b[0]) - ext, a[1]]; p2 = [Math.max(a[0], b[0]) + ext, a[1]]; o.push(Ln(p1[0], p1[1], p2[0], p2[1], '#7a7a7a', 0.2, '3 1 0.6 1')); [p1, p2].forEach(function (q) { var bx = q === p1 ? q[0] - 2.8 : q[0] + 2.8; o.push('<circle cx="' + r(bx) + '" cy="' + r(q[1]) + '" r="2.6" fill="#fff" stroke="#555" stroke-width="0.25"/>' + T(bx, q[1] + 1, String(j + 1), { s: 2.8, b: 1 })); }); }
   });
+  o.push(lab.join(''));
   // contorno de la nave (muros)
   var c0 = U(0, 0), c1 = U(Lx, Ly);
   o.push(Rc(Math.min(c0[0], c1[0]), Math.min(c0[1], c1[1]), Math.abs(c1[0] - c0[0]), Math.abs(c1[1] - c0[1]), 'none', GR, 0.7));
@@ -37141,21 +37624,27 @@ function lamina1(ctx) {
     o.push(T(flechaAbajo ? Math.max(U(0, 0)[0], U(Lx, Ly)[0]) : U(0, 0)[0], botY + 8, 'Distancia entre juntas de construcción (m)', { s: 2.5, a: flechaAbajo ? 'end' : 'start', f: ROJO }));
   }
   // leyenda + escala (bajo el dibujo, a la izquierda)
-  var lx = 12, ly = 214;
-  o.push(Rc(lx - 3, ly - 4.5, 92, 56, '#fff', GR2, 0.2));
+  var lx = 12, ly = 214, sh = conv(M) ? 5 : 0;
+  o.push(Rc(lx - 3, ly - 4.5, 92, 56 + sh, '#fff', GR2, 0.2));
   o.push(T(lx, ly, 'SIMBOLOGÍA', { s: 2.6, a: 'start', b: 1 }));
-  o.push(Ln(lx, ly + 4.5, lx + 10, ly + 4.5, ROJO, 1.0) + T(lx + 12, ly + 5.4, 'Junta blindada de movimiento libre (J)', { s: 2.4, a: 'start' }));
-  o.push(Ln(lx, ly + 9.5, lx + 10, ly + 9.5, '#7a7a7a', 0.2, '3 1 0.6 1') + T(lx + 12, ly + 10.4, 'Eje principal', { s: 2.4, a: 'start' }));
-  o.push(Rc(lx + 3, ly + 12, 4, 4, COLN, '#fff', 0.2) + T(lx + 12, ly + 15.2, 'Columna', { s: 2.4, a: 'start' }));
-  o.push(Pg([[lx + 5, ly + 17], [lx + 8.2, ly + 20.2], [lx + 5, ly + 23.4], [lx + 1.8, ly + 20.2]], VERDE_F, VERDE, 0.3, '1.2 0.7') + T(lx + 12, ly + 20.6, 'Rombo de la columna (colado posterior)', { s: 2.4, a: 'start' }));
-  o.push(Rc(lx, ly + 25, 4, 3, DIA_COL[0], '#999', 0.15) + Rc(lx + 5, ly + 25, 4, 3, DIA_COL[1], '#999', 0.15) + Rc(lx + 10, ly + 25, 4, 3, DIA_COL[2], '#999', 0.15) + T(lx + 17, ly + 27.2, 'Jornada de colado (un día; el color alterna)', { s: 2.4, a: 'start' }));
-  o.push(Pg([[lx, ly + 31.2], [lx + 6, ly + 31.2], [lx + 6, ly + 30], [lx + 10, ly + 32], [lx + 6, ly + 34], [lx + 6, ly + 32.8], [lx, ly + 32.8]], COLN, COLN, 0.1) + T(lx + 12, ly + 33, 'Entrada del camión mezclador', { s: 2.4, a: 'start' }));
-  o.push(T(lx, ly + 38.5, 'No hay cortes aserrados de contracción.', { s: 2.5, a: 'start', b: 1 }));
-  var bx = lx, by = ly + 44.5;
+  o.push(Ln(lx, ly + 4.5, lx + 10, ly + 4.5, ROJO, 1.0) + T(lx + 12, ly + 5.4, conv(M) ? 'Junta de construcción con dovelas (J)' : 'Junta blindada de movimiento libre (J)', { s: 2.4, a: 'start' }));
+  if (conv(M)) o.push(Ln(lx, ly + 9.5, lx + 10, ly + 9.5, CORTE, 0.25) + T(lx + 12, ly + 10.4, 'Corte aserrado de contracción', { s: 2.4, a: 'start' }));
+  o.push(Ln(lx, ly + sh + 9.5, lx + 10, ly + sh + 9.5, '#7a7a7a', 0.2, '3 1 0.6 1') + T(lx + 12, ly + sh + 10.4, 'Eje principal', { s: 2.4, a: 'start' }));
+  o.push(Rc(lx + 3, ly + sh + 12, 4, 4, COLN, '#fff', 0.2) + T(lx + 12, ly + sh + 15.2, 'Columna', { s: 2.4, a: 'start' }));
+  o.push(Pg([[lx + 5, ly + sh + 17], [lx + 8.2, ly + sh + 20.2], [lx + 5, ly + sh + 23.4], [lx + 1.8, ly + sh + 20.2]], VERDE_F, VERDE, 0.3, '1.2 0.7') + T(lx + 12, ly + sh + 20.6, 'Rombo de la columna (colado posterior)', { s: 2.4, a: 'start' }));
+  o.push(Rc(lx, ly + sh + 25, 4, 3, DIA_COL[0], '#999', 0.15) + Rc(lx + 5, ly + sh + 25, 4, 3, DIA_COL[1], '#999', 0.15) + Rc(lx + 10, ly + sh + 25, 4, 3, DIA_COL[2], '#999', 0.15) + T(lx + 17, ly + sh + 27.2, 'Jornada de colado (un día; el color alterna)', { s: 2.4, a: 'start' }));
+  o.push(Pg([[lx, ly + sh + 31.2], [lx + 6, ly + sh + 31.2], [lx + 6, ly + sh + 30], [lx + 10, ly + sh + 32], [lx + 6, ly + sh + 34], [lx + 6, ly + sh + 32.8], [lx, ly + sh + 32.8]], COLN, COLN, 0.1) + T(lx + 12, ly + sh + 33, 'Entrada del camión mezclador', { s: 2.4, a: 'start' }));
+  o.push(T(lx, ly + sh + 38.5, conv(M) ? 'Cortes cada ≤ ' + fmt(M.Lcorte, 2) + ' m, a partes iguales entre ejes.' : 'No hay cortes aserrados de contracción.', { s: 2.5, a: 'start', b: 1 }));
+  var bx = lx, by = ly + sh + 44.5;
   o.push(Ln(bx, by, bx + 10 * s, by, GR, 0.6) + Ln(bx, by - 1.5, bx, by + 1.5, GR, 0.3) + Ln(bx + 10 * s, by - 1.5, bx + 10 * s, by + 1.5, GR, 0.3) + T(bx + 10 * s + 3, by + 0.9, '10 m', { s: 2.5, a: 'start' }));
   o.push(T(bx, by + 5, 'Escala aprox. 1:' + esc1 + ' en Tabloide 11×17' + (rotar ? ' · planta girada 90°' : ''), { s: 2.3, a: 'start', f: '#666' }));
   // notas generales (a la derecha de la leyenda, con salto de línea)
-  var notas = [
+  var notas = conv(M) ? [
+    '1. Predimensionamiento de CONCRE (BORRADOR): no es un plano constructivo ni sustituye el diseño y la firma del ingeniero responsable (CFIA).',
+    '2. Cortes aserrados de contracción (líneas finas) sobre todos los ejes y, entre ejes, a partes iguales: separación máxima ' + fmt(M.Lcorte, 2) + ' m (' + fmt(M.kCorte, 0) + '·h, ACI 302.1R), profundidad ' + M.profCorte.mm + ' mm, aserrados 4 a 12 h después de la colada.',
+    '3. Juntas de construcción (rojas): solo entre colados, la menor cantidad posible y sobre ejes, con dovelas ' + (M.dovelaSel === "diamante" ? 'de placa de diamante' : 'redondas lisas') + ' según la hoja 3. Sello semirrígido con fondo de junta, a los 60–90 días.',
+    '4. Colado con descarga directa del camión mezclador: del fondo hacia la entrada, un colado de 700 a 1 000 m² por día. Cada colado es un rectángulo cerrado por juntas de construcción. Curado inmediato. Medidas en metros.'
+  ] : [
     '1. Predimensionamiento de CONCRE (BORRADOR): no es un plano constructivo ni sustituye el diseño y la firma del ingeniero responsable (CFIA).',
     '2. Las únicas juntas son las blindadas de movimiento libre (J): la menor cantidad posible, siempre sobre ejes principales y a la mayor distancia que permite el sistema. No se aserran cortes de contracción: la retracción la controlan la fibra, la mezcla y el reductor de fricción.',
     '3. Junta blindada: modelo y capacidad según la ficha del proveedor, para una apertura de hasta ' + M.in.aperturaAdm + ' mm. Los rombos de las columnas se cuelan después, con la retracción inicial completa, con concreto de retracción compensada.',
@@ -37167,11 +37656,11 @@ function lamina1(ctx) {
   // jornadas de colado (de la primera a la última)
   var tx = 233, ty = 214, dias = M.dias || [];
   o.push(T(tx, ty, 'JORNADAS DE COLADO · del fondo a la entrada', { s: 2.6, a: 'start', b: 1 }));
-  o.push(T(tx, ty + 4.4, 'Día', { s: 2.2, a: 'start', f: '#777' }) + T(tx + 8, ty + 4.4, 'Paños', { s: 2.2, a: 'start', f: '#777' }) + T(tx + 46, ty + 4.4, 'm²', { s: 2.2, a: 'end', f: '#777' }) + T(tx + 57, ty + 4.4, 'm³', { s: 2.2, a: 'end', f: '#777' }) + T(tx + 61, ty + 4.4, 'Juntas del día', { s: 2.2, a: 'start', f: '#777' }));
+  o.push(T(tx, ty + 4.4, 'Día', { s: 2.2, a: 'start', f: '#777' }) + T(tx + 8, ty + 4.4, conv(M) ? 'Colados' : 'Paños', { s: 2.2, a: 'start', f: '#777' }) + T(tx + 46, ty + 4.4, 'm²', { s: 2.2, a: 'end', f: '#777' }) + T(tx + 57, ty + 4.4, 'm³', { s: 2.2, a: 'end', f: '#777' }) + T(tx + 61, ty + 4.4, 'Juntas del día', { s: 2.2, a: 'start', f: '#777' }));
   var maxF = 9, yy = ty + 4.4;
   dias.slice(0, dias.length > maxF ? maxF - 1 : maxF).forEach(function (d) {
     yy += 4.2;
-    var lp = d.panos.length > 4 ? 'P-' + d.panos[0] + ' a P-' + d.panos[d.panos.length - 1] + ' (' + d.panos.length + ')' : d.panos.map(function (n) { return 'P-' + n; }).join(', ');
+    var lp = d.panos.length > 4 ? PF(M) + d.panos[0] + ' a ' + PF(M) + d.panos[d.panos.length - 1] + ' (' + d.panos.length + ')' : d.panos.map(function (n) { return PF(M) + n; }).join(', ');
     o.push(Rc(tx - 1, yy - 2.6, 80 + 1, 3.6, colDia(d.dia), 'none', 0) + T(tx, yy, String(d.dia), { s: 2.4, a: 'start', b: 1, f: COLN }) + T(tx + 8, yy, lp, { s: 2.3, a: 'start' }) + T(tx + 46, yy, fmt(d.area, 0), { s: 2.4, a: 'end', b: 1 }) + T(tx + 57, yy, fmt(d.vol_m3, 0), { s: 2.4, a: 'end' }) + T(tx + 61, yy, juntasTxt(d, 19), { s: 2.2, a: 'start' }));
   });
   if (dias.length > maxF) { yy += 4.2; o.push(T(tx, yy, '… y ' + (dias.length - maxF + 1) + ' jornadas más hasta el día ' + dias.length + ' (ver el informe)', { s: 2.3, a: 'start', f: '#555' })); }
@@ -37186,22 +37675,29 @@ function rotulo(ctx, hoja) {
   o.push(Rc(x, 8, w, 263, 'none', GR, 0.4));
   // logo y título
   if (ctx.logo) o.push('<image href="data:image/png;base64,' + ctx.logo + '" x="' + (x + 3) + '" y="10" width="34" height="14" preserveAspectRatio="xMinYMid meet"/>'); else o.push(T(x + 4, 20, 'CONCRE', { s: 8, a: 'start', b: 1, f: ROJO }));
-  o.push(T(x + 40, 14.5, 'MACRO-LOSA', { s: 4.4, a: 'start', b: 1 }));
-  o.push(T(x + 40, 19.5, hoja === 1 ? 'Planta de juntas y distribución' : 'Detalles constructivos', { s: 2.8, a: 'start', f: '#555' }));
-  o.push(T(x + 40, 23.5, 'Hoja ' + hoja + ' de 2', { s: 2.6, a: 'start', f: '#555' }));
+  o.push(T(x + 40, 14.5, conv(M) ? 'LOSA CONVENCIONAL' : 'MACRO-LOSA', { s: conv(M) ? 3.9 : 4.4, a: 'start', b: 1 }));
+  o.push(T(x + 40, 19.5, hoja === 1 ? 'Planta de juntas y distribución' : hoja === 3 ? 'Juntas de construcción y sello' : 'Detalles constructivos', { s: 2.8, a: 'start', f: '#555' }));
+  o.push(T(x + 40, 23.5, 'Hoja ' + hoja + ' de ' + (conv(M) ? 3 : 2), { s: 2.6, a: 'start', f: '#555' }));
   o.push(Ln(x, 27, x + w, 27, GR, 0.3));
   var datos = [['Proyecto', S.proy.nombre || '—'], ['Cliente', S.proy.cliente || '—'], ['Ubicación', S.proy.ubicacion || '—'], ['Referencia', ctx.ref || 'SIN GUARDAR'], ['Fecha', ctx.fecha || ''], ['Elaborado por', 'CONCRE']];
   datos.forEach(function (d, i) { var y = 31 + i * 5.2; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 24, y, String(d[1]).slice(0, 34), { s: 2.7, a: 'start', b: 1 })); });
   o.push(Ln(x, 61, x + w, 61, GR, 0.3));
   if (hoja === 1) {
     o.push(T(x + 2, 65.5, 'DATOS DE DISEÑO', { s: 2.8, a: 'start', b: 1, f: ROJO }));
-    var rows = [['Uso', R.u.nombre], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²'], ['Espesor / resistencia', fmt(M.h, 1) + ' cm · ' + M.resTxt], ['Fibra Plus 54 mm', fmt(M.dosis, 1) + ' kg/m³ · ' + fmt(M.cant.fibra_kg, 0) + ' kg'],
+    var rows = conv(M) ? [['Uso', R.u.nombre], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²'], ['Espesor / resistencia', fmt(M.h, 1) + ' cm · ' + M.resTxt], ['Fibra Plus 54 mm', fmt(M.dosis, 1) + ' kg/m³ · ' + fmt(M.cant.fibra_kg, 0) + ' kg'],
+      ['Control de fisuración', 'cortes aserrados de contracción'], ['Retracción neta', M.sistema.eps + ' µε (' + fmt(M.sistema.eps / 1000, 2) + ' mm/m)'], ['Separación máx. de cortes', fmt(M.Lcorte, 2) + ' m (' + fmt(M.kCorte, 0) + '·h)'], ['Profundidad del corte', M.profCorte.mm + ' mm (¼ h, mín. 25 mm)'],
+      ['Apertura esperada', fmt(M.aperturaMax, 1) + ' mm (dovelas hasta ' + M.in.aperturaAdm + ')'], ['Vapor y fricción', '1 capa clase A de ' + (M.in.pesado ? '15' : '10') + ' mil'], ['Planicidad', M.ffTxt], ['Colado', (M.dias || []).length + ' jornadas · ' + M.diaTxt + ' por día']] :
+      [['Uso', R.u.nombre], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²'], ['Espesor / resistencia', fmt(M.h, 1) + ' cm · ' + M.resTxt], ['Fibra Plus 54 mm', fmt(M.dosis, 1) + ' kg/m³ · ' + fmt(M.cant.fibra_kg, 0) + ' kg'],
       ['Sistema', M.sistema.corto], ['Retracción neta', M.sistema.eps + ' µε (' + fmt(M.sistema.eps / 1000, 2) + ' mm/m)'], ['Distancia máx. juntas', fmt(M.Lmax, 1) + ' m'], ['Apertura esperada', fmt(M.aperturaMax, 1) + ' mm (límite ' + M.in.aperturaAdm + ')'],
       ['Fricción y vapor', '2 capas polietileno ' + (M.in.pesado ? '15' : '10') + ' + 12 mil'], ['Planicidad', M.ffTxt], ['Juntas', 'sobre ejes principales'], ['Colado', (M.dias || []).length + ' jornadas · ' + M.diaTxt + ' por día']];
     rows.forEach(function (d, i) { var y = 70.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 32, y, String(d[1]).slice(0, 40), { s: 2.5, a: 'start', b: 1 })); });
     o.push(Ln(x, 126, x + w, 126, GR, 0.3));
     o.push(T(x + 2, 130.5, 'CUADRO DE JUNTAS', { s: 2.8, a: 'start', b: 1, f: ROJO }));
-    var cj = [['Tipo', 'Descripción', 'Cant.'],
+    var cj = conv(M) ? [['Tipo', 'Descripción', 'Cant.'],
+      ['J', 'Construcción con dovelas: ' + M.nJx + ' vert. + ' + M.nJy + ' horiz.', fmt(M.cant.juntas_m, 0) + ' m'],
+      ['C', 'Corte aserrado de contracción (' + M.cant.nCortes + ' líneas)', fmt(M.cant.cortes_m, 0) + ' m'],
+      ['A', 'Aislamiento de muros (espuma)', fmt(M.cant.perimetro_m, 0) + ' m'],
+      ['R', 'Rombo de columna (colado posterior)', M.cant.rombos + ' u']] : [['Tipo', 'Descripción', 'Cant.'],
       ['J', 'Construcción blindada: ' + M.nJx + ' vert. + ' + M.nJy + ' horiz.', fmt(M.cant.juntas_m, 0) + ' m'],
       ['A', 'Aislamiento de muros (espuma)', fmt(M.cant.perimetro_m, 0) + ' m'],
       ['R', 'Rombo de columna (colado posterior)', M.cant.rombos + ' u'],
@@ -37209,15 +37705,15 @@ function rotulo(ctx, hoja) {
     cj.forEach(function (d, i) { var y = 135.5 + i * 4.9; var b = i === 0; o.push(T(x + 2, y, d[0], { s: 2.5, a: 'start', b: 1 }) + T(x + 9, y, d[1], { s: 2.4, a: 'start', b: b }) + T(x + w - 2, y, d[2], { s: 2.5, a: 'end', b: 1 })); });
     o.push(Ln(x, 161, x + w, 161, GR, 0.3));
     o.push(T(x + 2, 165.5, 'CANTIDADES', { s: 2.8, a: 'start', b: 1, f: ROJO }));
-    var ct = [['Concreto', fmt(M.cant.vol_m3, 0) + ' m³ (+ rombos ' + fmt(M.cant.vol_rombos_m3, 1) + ' m³)'], ['Fibra Plus 54 mm', fmt(M.cant.fibra_kg, 0) + ' kg · ' + M.cant.sacos10 + ' sacos de 10 kg' + (M.cant.bolsas1 ? ' + ' + M.cant.bolsas1 + ' bolsas de 1 kg' : '')], ['Polietileno (2 capas, +10 %)', fmt(M.cant.pe_m2, 0) + ' m²'], ['Barras en rombos Ø12 × 1.20 m', M.cant.barras_esquina + ' u'], ['Paños', M.panos.length + ' paños · el mayor de ' + fmt(M.maxA, 0) + ' m²']];
+    var ct = conv(M) ? [['Concreto', fmt(M.cant.vol_m3, 0) + ' m³ (+ rombos ' + fmt(M.cant.vol_rombos_m3, 1) + ' m³)'], ['Fibra Plus 54 mm', fmt(M.cant.fibra_kg, 0) + ' kg · ' + M.cant.sacos10 + ' sacos de 10 kg' + (M.cant.bolsas1 ? ' + ' + M.cant.bolsas1 + ' bolsas de 1 kg' : '')], ['Polietileno (1 capa, +10 %)', fmt(M.cant.pe_m2, 0) + ' m²'], ['Sello semirrígido y fondo de junta', fmt(M.cant.sello_m, 0) + ' m'], ['Dovelas redondas / de diamante', M.cant.dov_redondas + ' / ' + M.cant.dov_diamante + ' u (se coloca una de las dos)']] : [['Concreto', fmt(M.cant.vol_m3, 0) + ' m³ (+ rombos ' + fmt(M.cant.vol_rombos_m3, 1) + ' m³)'], ['Fibra Plus 54 mm', fmt(M.cant.fibra_kg, 0) + ' kg · ' + M.cant.sacos10 + ' sacos de 10 kg' + (M.cant.bolsas1 ? ' + ' + M.cant.bolsas1 + ' bolsas de 1 kg' : '')], ['Polietileno (2 capas, +10 %)', fmt(M.cant.pe_m2, 0) + ' m²'], ['Barras en rombos Ø12 × 1.20 m', M.cant.barras_esquina + ' u'], ['Paños', M.panos.length + ' paños · el mayor de ' + fmt(M.maxA, 0) + ' m²']];
     ct.forEach(function (d, i) { var y = 170.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.3, a: 'start', f: '#777' }) + T(x + 40, y, d[1].slice(0, 40), { s: 2.4, a: 'start', b: 1 })); });
     o.push(Ln(x, 196, x + w, 196, GR, 0.3));
     o.push(T(x + 2, 200.5, 'CHEQUEOS DEL SISTEMA', { s: 2.8, a: 'start', b: 1, f: ROJO }));
-    var ck = [['Arrastre fibra / fricción', M.okArrastre ? 'cumple' : 'NO cumple', M.okArrastre], ['Apertura de juntas ≤ ' + M.in.aperturaAdm + ' mm', M.aperturaMax <= M.in.aperturaAdm + 1e-6 ? 'cumple' : 'NO cumple', M.aperturaMax <= M.in.aperturaAdm + 1e-6], ['Juntas blindadas (mínimo con los ejes)', (M.nJx + M.nJy) + ' juntas · ' + fmt(M.cant.juntas_m || 0, 0) + ' m', true], ['Transferencia en junta', fmt(M.Q_req, 1) + ' kN/m a 20 mm', true]];
+    var ck = conv(M) ? [['Separación de cortes ≤ ' + fmt(M.Lcorte, 2) + ' m', M.maxLosaL <= M.Lcorte + 1e-6 ? 'cumple' : 'NO cumple', M.maxLosaL <= M.Lcorte + 1e-6], ['Apertura de cortes ≤ ' + M.in.aperturaAdm + ' mm (dovelas)', M.aperturaMax <= M.in.aperturaAdm + 1e-6 ? 'cumple' : 'NO cumple', M.aperturaMax <= M.in.aperturaAdm + 1e-6], ['Paño aserrado: largo/ancho ≤ 1,5', M.aspLosa <= 1.5 + 1e-6 ? 'cumple' : 'revisar (' + fmt(M.aspLosa, 2) + ')', M.aspLosa <= 1.5 + 1e-6], ['Colados ≤ 1 000 m²', M.maxA <= 1000 + 1e-6 ? 'cumple' : 'NO cumple', M.maxA <= 1000 + 1e-6]] : [['Arrastre fibra / fricción', M.okArrastre ? 'cumple' : 'NO cumple', M.okArrastre], ['Apertura de juntas ≤ ' + M.in.aperturaAdm + ' mm', M.aperturaMax <= M.in.aperturaAdm + 1e-6 ? 'cumple' : 'NO cumple', M.aperturaMax <= M.in.aperturaAdm + 1e-6], ['Juntas blindadas (mínimo con los ejes)', (M.nJx + M.nJy) + ' juntas · ' + fmt(M.cant.juntas_m || 0, 0) + ' m', true], ['Transferencia en junta', fmt(M.Q_req, 1) + ' kN/m a 20 mm', true]];
     ck.forEach(function (d, i) { var y = 205.5 + i * 4.9; o.push(T(x + 2, y, d[0], { s: 2.4, a: 'start' }) + T(x + w - 2, y, d[1], { s: 2.5, a: 'end', b: 1, f: d[2] ? '#2e7d32' : '#c62828' })); });
   } else {
     o.push(T(x + 2, 65.5, 'NOTAS DE LOS DETALLES', { s: 2.8, a: 'start', b: 1, f: ROJO }));
-    ['Detalles esquemáticos, sin escala (NTS).', 'Las medidas dependen del proveedor o del', 'ingeniero responsable.', 'Perfil de junta, anclajes y dovelas: según la', 'ficha técnica del proveedor a la apertura', 'de diseño.', 'Refuerzo de rombos: ACI 360R; diámetro y', 'largo a confirmar por el ingeniero.'].forEach(function (t, i) { o.push(T(x + 2, 71 + i * 4.2, t, { s: 2.4, a: 'start', f: '#444' })); });
+    (conv(M) ? ['Detalles esquemáticos, sin escala (NTS).', 'Dovelas, profundidad de corte y sello: ACI 302.1R', 'y ACI 360R. Los valores de cada detalle salen', 'del cálculo de este proyecto.', 'El fabricante del sello y de las dovelas manda', 'sobre las medidas finales (ficha técnica).', 'Refuerzo de rombos: ACI 360R; diámetro y', 'largo a confirmar por el ingeniero.'] : ['Detalles esquemáticos, sin escala (NTS).', 'Las medidas dependen del proveedor o del', 'ingeniero responsable.', 'Perfil de junta, anclajes y dovelas: según la', 'ficha técnica del proveedor a la apertura', 'de diseño.', 'Refuerzo de rombos: ACI 360R; diámetro y', 'largo a confirmar por el ingeniero.']).forEach(function (t, i) { o.push(T(x + 2, 71 + i * 4.2, t, { s: 2.4, a: 'start', f: '#444' })); });
   }
   // firmas
   o.push(Ln(x, 228, x + w, 228, GR, 0.3));
@@ -37280,13 +37776,13 @@ function dMuro(M) {
   var o = [], tt = 26, yb = 60.2, yt = yb - tt;
   o.push(Rc(6, 8, 14, 64, '#cfcfcf', GR, 0.3) + rayado(6, 8, 14, 64, 'ladrillo'));
   o.push(rayado(6, 61.4, 89, 10, 'grava'));
-  o.push(Ln(20, 61, 95, 61, AZ, 0.5) + Ln(20, 60.2, 95, 60.2, AZ, 0.5) + Ln(20, 61, 20, 58, AZ, 0.5) + Ln(20.5, 60.2, 20.5, 57, AZ, 0.5));
+  o.push(Ln(20, 61, 95, 61, AZ, 0.5) + (conv(M) ? '' : Ln(20, 60.2, 95, 60.2, AZ, 0.5)) + Ln(20, 61, 20, 58, AZ, 0.5) + (conv(M) ? '' : Ln(20.5, 60.2, 20.5, 57, AZ, 0.5)));
   o.push(Rc(24, yt, 71, tt, '#d8d8d8', GR, 0.3) + T(60, yt + tt / 2 + 1, 'Losa · h = ' + fmt(M.h, 1) + ' cm', { s: 2.6, f: '#555' }));
   o.push(Rc(20, yt, 4, tt, '#fff3b0', '#a98100', 0.25) + Rc(20, yt - 0.2, 4, 2.4, '#f4c542', '#a98100', 0.15));
   o.push(bal(13, 26, 1) + bal(30, 14, 2, 22, yt + 8) + bal(46, 24, 3, 22, yt + 1) + bal(60, 50, 4, 72, 60.6) + bal(14, 51, 5, 21, 57));
   o.push(Ln(20, yt + 9, 24, yt + 9, '#a98100', 0.1));
   o.push(titD('Aislamiento de muro'));
-  var L = leyenda(['Muro o cimiento (la losa no se conecta a él)', 'Espuma de celda cerrada 12–20 mm en todo el espesor de la losa', 'Sello flexible de poliuretano sobre la espuma', 'Polietileno de 2 capas (reductor de fricción y barrera de vapor) bajo la losa', 'La membrana sube contra el muro sin pegarse al concreto'], 84);
+  var L = leyenda(['Muro o cimiento (la losa no se conecta a él)', 'Espuma de celda cerrada 12–20 mm en todo el espesor de la losa', 'Sello flexible de poliuretano sobre la espuma', (conv(M) ? 'Polietileno clase A (barrera de vapor y de fricción) bajo la losa' : 'Polietileno de 2 capas (reductor de fricción y barrera de vapor) bajo la losa'), 'La membrana sube contra el muro sin pegarse al concreto'], 84);
   o.push(L.svg + notasD(['Movimiento esperado de la losa contra el muro ≈ ' + fmt(M.sistema.eps / 1000 * M.maxL / 2, 1) + ' mm. Igual para bases de maquinaria, fosas y drenajes.'], L.y + 1));
   return o.join('');
 }
@@ -37325,7 +37821,20 @@ function dRomboCorte(M) {
   o.push(L.svg + notasD(['El hueco del rombo queda abierto mientras la losa completa su retracción inicial (ACI 302.1R).'], L.y + 1));
   return o.join('');
 }
+function dSeccionTipoConv(M) {
+  var o = [], e = [['conc', 26, '#d8d8d8'], ['pe1', 2.4, AZ], ['base', 14, '#bdb08a'], ['sub', 14, '#a5917a']];
+  var y = 10, pos = {};
+  e.forEach(function (c) { o.push(Rc(8, y, 50, c[1], c[2], GR, 0.25)); pos[c[0]] = y + c[1] / 2; y += c[1]; });
+  o.push(T(33, pos.conc + 1, 'h = ' + fmt(M.h, 1) + ' cm', { s: 3, b: 1, f: '#444' }));
+  o.push(bal(66, pos.conc, 1, 58, pos.conc) + bal(66, pos.pe1 - 3, 2, 58, pos.pe1) + bal(66, pos.base, 3, 58, pos.base) + bal(66, pos.sub, 4, 58, pos.sub));
+  o.push(T(80, pos.conc + 1, 'sin malla', { s: 2.3, a: 'start', f: '#777' }));
+  o.push(titD('Sección tipo de la losa'));
+  var L = leyenda(['Concreto ' + M.resTxt + ' con Fibra Plus 54 mm a ' + fmt(M.dosis, 1) + ' kg/m³; cortes de ' + M.profCorte.mm + ' mm cada ≤ ' + fmt(M.Lcorte, 2) + ' m', 'Polietileno clase A de ' + (M.in.pesado ? '15' : '10') + ' mil (barrera de vapor y de fricción), traslape de 15 cm con cinta', 'Base granular compactada y cerrada, ≥ 20 cm (+0 / −25 mm)', 'Subrasante compactada según el estudio de suelos'], 84);
+  o.push(L.svg + notasD(['Sin malla de retracción y temperatura: la fibra aporta el control de fisuración (ACI 544) y los cortes controlan dónde se fisura. Colar directo sobre la membrana; curado inmediato.'], L.y + 1));
+  return o.join('');
+}
 function dSeccionTipo(M) {
+  if (conv(M)) return dSeccionTipoConv(M);
   var o = [], e = [['conc', 26, '#d8d8d8'], ['pe2', 2.4, AZ], ['pe1', 2.4, AZ], ['base', 14, '#bdb08a'], ['sub', 14, '#a5917a']];
   var y = 10, pos = {};
   e.forEach(function (c) { o.push(Rc(8, y, 50, c[1], c[2], GR, 0.25)); pos[c[0]] = y + c[1] / 2; y += c[1]; });
@@ -37361,16 +37870,179 @@ function dSecuencia(M) {
   o.push(vert ? T(lt[0], lt[1] + 0.8, 'ENTRADA', { s: 2.2, b: 1, f: COLN, a: 'start' }) : T(Q(-5.5, 0)[0], Q(-5.5, 0)[1] - 3.4, 'ENTRADA', { s: 2.2, b: 1, f: COLN }));
   o.push(T(49, 71, 'Secuencia de colado (número = día)', { s: 2.6, b: 1 }));
   var y0 = 75.5, dias = M.dias || [], maxF = 6;
-  o.push(T(8, y0, 'Día', { s: 2.1, a: 'start', f: '#777' }) + T(15, y0, 'Paños', { s: 2.1, a: 'start', f: '#777' }) + T(52, y0, 'm²', { s: 2.1, a: 'end', f: '#777' }) + T(56, y0, 'Juntas del día', { s: 2.1, a: 'start', f: '#777' }));
+  o.push(T(8, y0, 'Día', { s: 2.1, a: 'start', f: '#777' }) + T(15, y0, conv(M) ? 'Colados' : 'Paños', { s: 2.1, a: 'start', f: '#777' }) + T(52, y0, 'm²', { s: 2.1, a: 'end', f: '#777' }) + T(56, y0, 'Juntas del día', { s: 2.1, a: 'start', f: '#777' }));
   var yy = y0;
   dias.slice(0, dias.length > maxF ? maxF - 1 : maxF).forEach(function (d) {
     yy += 3.3;
-    var lp = d.panos.length > 4 ? 'P-' + d.panos[0] + ' a P-' + d.panos[d.panos.length - 1] : d.panos.map(function (n) { return 'P-' + n; }).join(', ');
+    var lp = d.panos.length > 4 ? PF(M) + d.panos[0] + ' a ' + PF(M) + d.panos[d.panos.length - 1] : d.panos.map(function (n) { return PF(M) + n; }).join(', ');
     o.push(Rc(7, yy - 2.3, 81, 3, colDia(d.dia), 'none', 0) + T(8, yy, String(d.dia), { s: 2.3, a: 'start', b: 1, f: COLN }) + T(15, yy, lp, { s: 2.2, a: 'start' }) + T(52, yy, fmt(d.area, 0), { s: 2.3, a: 'end', b: 1 }) + T(56, yy, juntasTxt(d, 25), { s: 2.2, a: 'start' }));
   });
   if (dias.length > maxF) { yy += 3.3; o.push(T(8, yy, '… y ' + (dias.length - maxF + 1) + ' jornadas más (ver el informe)', { s: 2.2, a: 'start', f: '#555' })); }
-  o.push(notasD(['Descarga directa del camión (sin bomba): del fondo hacia la entrada.', 'Cada día es un rectángulo cerrado por juntas blindadas: se instalan justo antes de colar y el día siguiente se cuela contra ellas.', 'Dejar libre un camino de ≥ 4 m para el camión.'], yy + 5));
+  o.push(notasD(['Descarga directa del camión (sin bomba): del fondo hacia la entrada.', conv(M) ? 'Cada día es un colado (rectángulo) cerrado por juntas de construcción con dovelas: se arman como cimbra justo antes de colar y el día siguiente se cuela contra ellas.' : 'Cada día es un rectángulo cerrado por juntas blindadas: se instalan justo antes de colar y el día siguiente se cuela contra ellas.', 'Dejar libre un camino de ≥ 4 m para el camión.'], yy + 5));
   return o.join('');
+}
+
+// ═══════════ LOSA CONVENCIONAL: detalles de juntas ═══════════════════════════
+function zigzag(x, y0, y1, a) { var p = 'M' + r(x) + ' ' + r(y0), y = y0, s = 1; while (y < y1 - 0.01) { y = Math.min(y + 3, y1); p += ' L' + r(y >= y1 ? x : x + s * a) + ' ' + r(y); s = -s; } return '<path d="' + p + '" fill="none" stroke="' + ROJO + '" stroke-width="0.35" stroke-dasharray="1.2 0.7"/>'; }
+function dCorte(M) {
+  var o = [], tt = 26, yb = 60.2, yt = yb - tt, k = tt / (M.h * 10), prof = M.profCorte.mm * k, xc = 52;
+  o.push(rayado(6, 61.4, 89, 10, 'grava'));
+  o.push(Ln(6, 61, 95, 61, AZ, 0.5));
+  o.push(Rc(20, yt, 75, tt, '#d8d8d8', GR, 0.3));
+  o.push(Rc(xc - 0.8, yt, 1.6, prof, '#fff', GR, 0.2));
+  o.push(zigzag(xc, yt + prof, yb, 0.8));
+  o.push(cotaV(yt, yb, 15, 'h = ' + fmt(M.h, 1) + ' cm', true));
+  o.push(Ln(xc + 6, yt, xc + 6, yt + prof, GR2, 0.2) + Ln(xc + 4.8, yt, xc + 7.2, yt, GR2, 0.2) + Ln(xc + 4.8, yt + prof, xc + 7.2, yt + prof, GR2, 0.2) + T(xc + 8.5, yt + prof / 2 + 0.9, M.profCorte.mm + ' mm (¼ h)', { s: 2.3, a: 'start', f: '#333' }));
+  o.push(T(36, yt + tt / 2 + 8, 'Paño A', { s: 2.5, f: '#555' }) + T(76, yt + tt / 2 + 8, 'Paño B', { s: 2.5, f: '#555' }));
+  o.push(bal(34, 14, 1, 34, yt + 3) + bal(xc, 14, 2, xc, yt - 0.2) + bal(82, 40, 3, xc + 0.8, yt + prof + 6) + bal(18, 51, 4, 24, 60.7) + bal(86, 69, 5, 80, 66));
+  o.push(T(xc, yt - 4.2, 'corte de 3 mm de ancho', { s: 2.2, f: '#555' }));
+  o.push(titD('Sección del corte de contracción'));
+  var L = leyenda(['Losa con Fibra Plus 54 mm, espesor h', 'Corte aserrado de 3 mm × ' + M.profCorte.mm + ' mm (¼ del espesor, mínimo 25 mm)', 'Fisura inducida bajo el corte: la trabazón del agregado transfiere la carga', 'Polietileno clase A (vapor y fricción), traslape de 15 cm con cinta', 'Base granular compactada, ≥ 20 cm'], 84);
+  o.push(L.svg + notasD(['Aserrar de 4 a 12 h después de la colada (1 a 4 h con sierra de entrada temprana). Con ⅓ del espesor (' + M.profCorte.tercio + ' mm) hay más confiabilidad. Reservorio del sello: ver D9.'], L.y + 1));
+  return o.join('');
+}
+function dConstr(M) {
+  var o = [], tt = 26, yb = 60.2, yt = yb - tt, k = tt / (M.h * 10), dv = M.dovelas, red = M.dovelaSel !== 'diamante', xj = 50.5;
+  o.push(rayado(6, 61.4, 89, 10, 'grava'));
+  o.push(Ln(6, 61, 95, 61, AZ, 0.5));
+  o.push(Rc(6, yt, 44, tt, '#d8d8d8', GR, 0.3) + Rc(51, yt, 44, tt, '#d8d8d8', GR, 0.3));
+  o.push(T(28, yt + tt - 3, 'Colado 1', { s: 2.4, f: '#555' }) + T(73, yt + tt - 3, 'Colado 2', { s: 2.4, f: '#555' }));
+  var Lr = 0, ym = yt + tt / 2;
+  if (dv) {
+    if (red) {
+      Lr = dv.redonda.largo * k; var d = Math.max(dv.redonda.diam * k, 1.4);
+      o.push(Rc(xj - Lr / 2, ym - d / 2, Lr / 2, d, '#555', GR, 0.15) + Rc(xj, ym - d / 2, Lr / 2, d, '#e9e9e9', GR, 0.15));
+      o.push(T(xj + Lr / 4, ym - d / 2 - 1.2, 'engrasada', { s: 2, f: '#666' }));
+    } else {
+      Lr = dv.diamante.lado * Math.SQRT2 * k; var t = Math.max(dv.diamante.t * k, 1.2);
+      o.push(Rc(xj - Lr / 2, ym - t / 2, Lr / 2, t, '#555', GR, 0.15) + Rc(xj, ym - t / 2, Lr / 2, t, '#e9e9e9', GR, 0.15));
+      o.push(T(xj + Lr / 4, ym - t / 2 - 1.2, 'forrada', { s: 2, f: '#666' }));
+    }
+    o.push(Ln(xj - Lr / 2, yt - 8, xj + Lr / 2, yt - 8, GR2, 0.2) + Ln(xj - Lr / 2, yt - 9.2, xj - Lr / 2, yt - 6.8, GR2, 0.2) + Ln(xj + Lr / 2, yt - 9.2, xj + Lr / 2, yt - 6.8, GR2, 0.2) + T(xj + Lr / 2 + 2, yt - 7.1, red ? 'L = ' + dv.redonda.largo / 10 + ' cm' : 'diagonal ' + Math.round(dv.diamante.lado * Math.SQRT2 / 10) + ' cm', { s: 2.2, a: 'start', f: '#444' }));
+  }
+  var rd = M.sello.reservorio * k * 1.0;
+  o.push(Rc(xj - 1.5, yt, 3, Math.max(rd, 4), '#f4c542', '#a98100', 0.15));
+  o.push(bal(16, 12, 1, 16, yt + 3) + bal(86, 12, 2, 86, yt + 3) + bal(34, 17, 3, xj - (Lr ? Lr / 4 : 4), ym - 1) + bal(67, 17, 4, xj + (Lr ? Lr / 4 : 4), ym - 1) + bal(xj, 12, 5, xj, yt + 0.5));
+  o.push(titD('Junta de construcción con dovelas'));
+  var d1 = dv ? (red ? 'Dovela redonda lisa ' + dv.redonda.diamTxt + ' × ' + dv.redonda.largo / 10 + ' cm, cada ' + dv.redonda.sep / 10 + ' cm, a media altura del espesor' : 'Placa de diamante ' + dv.diamante.t + ' × ' + dv.diamante.lado + ' × ' + dv.diamante.lado + ' mm, cada ' + dv.diamante.sep / 10 + ' cm, a media altura (una diagonal paralela a la junta)') : 'Espesor fuera de las tablas: dovela por diseño específico';
+  var L = leyenda(['Colado del día, ya endurecido; su borde queda sobre un eje', 'Colado siguiente: se cuela contra la junta', d1, red ? 'Mitad engrasada o con vaina, del lado del colado siguiente, para que la losa se contraiga' : 'Lado del colado siguiente forrado con cinta o vaina para que deslice', 'Reservorio del sello semirrígido sobre la junta (ver D9)'], 84);
+  o.push(L.svg + notasD(['Sin barras corrugadas a través de la junta. La junta coincide con una línea de corte. Las dos opciones (redonda y diamante) están en D8 y D11.'], L.y + 1));
+  return o.join('');
+}
+function dDovelasPlanta(M) {
+  var o = [], dv = M.dovelas, e = 0.07, x0 = 8, yj1 = 22, yj2 = 57, red = M.dovelaSel !== 'diamante';
+  [yj1, yj2].forEach(function (y) { o.push(Ln(x0, y, 93, y, ROJO, 0.8)); o.push(Ln(x0, y - 13, x0, y + 13, ROJO, 0.8)); });
+  if (dv) {
+    var n = 0; for (var q = 0; q < 4; q++) { var xx = x0 + (CLARO_D + q * dv.redonda.sep / 1000) * 1000 * e; if (xx > 93) break; var Lr = dv.redonda.largo * e, d = Math.max(dv.redonda.diam * e, 1.2);
+      o.push(Rc(xx - d / 2, yj1 - Lr / 2, d, Lr, '#555', GR, 0.1)); n++; }
+    o.push(cotaH(x0, x0 + CLARO_D * 1000 * e, yj1 - 15.5, '≥ 30 cm', true));
+    o.push(cotaH(x0 + CLARO_D * 1000 * e, x0 + (CLARO_D * 1000 + dv.redonda.sep) * e, yj1 + 16, dv.redonda.sep / 10 + ' cm', false));
+    for (var q2 = 0; q2 < 4; q2++) { var xd = x0 + (CLARO_D * 1000 + q2 * dv.diamante.sep) * e; if (xd > 93) break; var hd = dv.diamante.lado * Math.SQRT2 / 2 * e;
+      o.push(Pg([[xd - hd, yj2], [xd + hd, yj2], [xd, yj2 + hd]], '#777', GR, 0.2) + Pg([[xd - hd, yj2], [xd + hd, yj2], [xd, yj2 - hd]], '#777', GR, 0.2)); }
+    o.push(cotaH(x0, x0 + CLARO_D * 1000 * e, yj2 - 11, '≥ 30 cm', true));
+    o.push(cotaH(x0 + CLARO_D * 1000 * e, x0 + (CLARO_D * 1000 + dv.diamante.sep) * e, yj2 + 8.5, dv.diamante.sep / 10 + ' cm', false));
+  }
+  o.push(T(94.5, yj1 + 0.8, 'junta', { s: 2.1, f: ROJO, a: 'start' }) + T(94.5, yj2 + 0.8, 'junta', { s: 2.1, f: ROJO, a: 'start' }));
+  o.push(T(x0 + 1, yj1 + 13.5, 'cruce', { s: 2.1, f: '#666', a: 'start' }) + T(x0 + 1, yj2 + 13.5, 'cruce', { s: 2.1, f: '#666', a: 'start' }));
+  o.push(titD('Dovelas en planta (tramo de junta)'));
+  var L = leyenda([dv ? 'Dovela redonda lisa ' + dv.redonda.diamTxt + ' × ' + dv.redonda.largo / 10 + ' cm cada ' + dv.redonda.sep / 10 + ' cm' + (red ? ' (la dibujada en D7)' : '') : 'Fuera de tablas', dv ? 'Placa de diamante ' + dv.diamante.t + ' × ' + dv.diamante.lado + ' × ' + dv.diamante.lado + ' mm cada ' + dv.diamante.sep / 10 + ' cm' + (!red ? ' (la dibujada en D7)' : '') : 'Fuera de tablas', 'Primera dovela a ≥ 30 cm del cruce con otra junta y del borde'], 84);
+  o.push(L.svg + notasD(['Se coloca una de las dos opciones, no las dos. Las placas de diamante solo en juntas de construcción, no en cortes aserrados.'], L.y + 1));
+  return o.join('');
+}
+var CLARO_D = 0.30;
+function dSello(M) {
+  var o = [], sp = M.sello, pc = M.profCorte.mm, y0 = 14, xl = 47.5, xr = 53.5, xc = 50.5, f = Math.min(1, 50 / pc), g = [];
+  function P(x, y) { return [xc + (x - xc) * f, y0 + (y - y0) * f]; }
+  var yS = y0 + 1, yR = y0 + sp.espesor, yF = y0 + sp.reservorio, yC = y0 + pc, H = 58;
+  g.push(Rc(20, y0, xl - 20, H, '#d8d8d8', GR, 0.3) + Rc(xr, y0, 81 - xr, H, '#d8d8d8', GR, 0.3));
+  g.push(Ln(20, y0, 81, y0, GR, 0.5));
+  var w = sp.ancho, a = xc - w / 2, b = xc + w / 2;
+  g.push(Rc(a, y0, w, sp.reservorio, '#fff', 'none', 0));
+  g.push(Rc(a, yS, w, sp.espesor - 1, '#f4c542', '#a98100', 0.2));
+  g.push('<ellipse cx="' + xc + '" cy="' + r(yR + sp.varilla / 2) + '" rx="' + r(w / 2) + '" ry="' + r(sp.varilla / 2) + '" fill="#9ccc65" stroke="#558b2f" stroke-width="0.25"/>');
+  g.push(Rc(xc - 1.5, yF, 3, yC - yF, '#fff', GR, 0.2));
+  g.push(zigzag(xc, yC, y0 + H, 0.9));
+  g.push(Ln(a, y0, a, yF, GR, 0.3) + Ln(b, y0, b, yF, GR, 0.3));
+  g.push(cotaH(a, b, y0 - 4, sp.ancho + ' mm', true));
+  g.push(cotaV(yS, yR, 16, 'sello ' + sp.espesor + ' mm', true));
+  g.push(cotaV(y0, yF, 11, 'reservorio ' + sp.reservorio + ' mm', true));
+  g.push(cotaV(y0, yC, 86, 'corte ' + pc + ' mm (¼ h)', false));
+  o.push(f < 1 ? '<g transform="translate(' + xc + ' ' + y0 + ') scale(' + r(f) + ') translate(' + (-xc) + ' ' + (-y0) + ')">' + g.join('') + '</g>' : g.join(''));
+  var q;
+  o.push(bal(32, 24, 1, (q = P(a + 0.5, y0 + 10))[0], q[1]) + bal(70, 36, 2, (q = P(xc + 2.5, yR + sp.varilla / 2))[0], q[1]) + bal(32, 40, 3, (q = P(a, yF - 3))[0], q[1]) + bal(70, 52, 4, (q = P(xc + 1.5, yC - 3))[0], q[1]) + bal(30, 62, 5, 30, 58));
+  o.push(titD('Sello semirrígido y fondo de junta'));
+  var L = leyenda(['Relleno semirrígido (epóxico Shore A 80–85 o poliurea 85–90), ' + sp.espesor + ' mm de espesor, al ras o hasta 2 mm bajo la superficie', 'Fondo de junta (backer rod) de polietileno de celda cerrada, Ø ' + sp.varilla + ' mm, al fondo del reservorio', 'Reservorio de ' + sp.ancho + ' mm × ' + sp.reservorio + ' mm, aserrado a los 60–90 días sobre el corte', 'Corte de contracción de 3 mm × ' + pc + ' mm, hecho 4 a 12 h después de la colada', 'Concreto de la losa (recorte del espesor)'], 84);
+  o.push(L.svg + notasD(['Limpiar y secar el reservorio antes de colocar el fondo de junta y el relleno. Se sella igual en las juntas de construcción. Escala ampliada (recorte del espesor).'], L.y + 1));
+  return o.join('');
+}
+function dVanos(M) {
+  var o = [], y = 14, V = [];
+  M.vanos.x.forEach(function (v) { V.push(['Ejes ' + v.de + '–' + v.a + ' (vertical)', v]); });
+  M.vanos.y.forEach(function (v) { V.push(['Ejes ' + v.de + '–' + v.a + ' (horizontal)', v]); });
+  o.push(T(4, y, 'Vano entre ejes', { s: 2.2, a: 'start', f: '#777' }) + T(52, y, 'Distancia', { s: 2.2, a: 'end', f: '#777' }) + T(70, y, 'Partes', { s: 2.2, a: 'end', f: '#777' }) + T(97, y, 'Cada una', { s: 2.2, a: 'end', f: '#777' }));
+  var maxF = 13;
+  V.slice(0, V.length > maxF ? maxF - 1 : maxF).forEach(function (q) {
+    y += 4.1; var v = q[1];
+    if (v.alerta) o.push(Rc(3, y - 2.7, 95, 3.8, '#fdecea', 'none', 0));
+    o.push(T(4, y, q[0], { s: 2.3, a: 'start' }) + T(52, y, fmt(v.L, 2) + ' m', { s: 2.3, a: 'end' }) + T(70, y, String(v.n) + (v.alerta ? ' ▲' : ''), { s: 2.3, a: 'end', b: 1, f: v.alerta ? ROJO : GR }) + T(97, y, fmt(v.paso, 2) + ' m', { s: 2.3, a: 'end', b: 1 }));
+  });
+  if (V.length > maxF) { y += 4.1; o.push(T(4, y, '… y ' + (V.length - maxF + 1) + ' vanos más (ver el informe)', { s: 2.2, a: 'start', f: '#555' })); }
+  o.push(titD('Cortes por vano entre ejes'));
+  var L = leyenda(['Separación máxima de cortes: ' + fmt(M.Lcorte, 2) + ' m = ' + fmt(M.kCorte, 0) + ' × h (ACI 302.1R, tope 5,5 m)', 'Cada vano entre ejes se corta en partes iguales (a la mitad si n = 2); los ejes llevan corte', '▲ más de 3 partes en un vano: distancia grande entre ejes; considere un eje intermedio'], 84);
+  o.push(L.svg + notasD(['Paños aserrados: ' + M.nLosas + ' · el mayor lado ' + fmt(M.maxLosaL, 2) + ' m · relación largo/ancho máxima ' + fmt(M.aspLosa, 2) + '.'], L.y + 1));
+  return o.join('');
+}
+function dTablaDovelas(M) {
+  var o = [], y = 14;
+  o.push(T(4, y, 'Espesor', { s: 2.2, a: 'start', f: '#777' }) + T(30, y, 'Dovela redonda lisa', { s: 2.2, a: 'start', f: '#777' }) + T(66, y, 'Placa de diamante', { s: 2.2, a: 'start', f: '#777' }));
+  var cur = M.dovelas ? M.dovelas.fila : null;
+  CONV_DOVELAS.forEach(function (f) {
+    var uso = cur && cur.hasta === f.hasta; y += 14;
+    if (uso) o.push(Rc(2.5, y - 6, 96, 12.5, '#fff7f8', ROJO, 0.3));
+    o.push(T(4, y - 1, f.rango, { s: 2.3, a: 'start', b: uso }) + T(4, y + 3, uso ? '◄ esta losa' : '', { s: 2.1, a: 'start', f: ROJO }));
+    o.push(T(30, y - 1, f.redonda.diamTxt, { s: 2.3, a: 'start', b: uso }) + T(30, y + 3, '× ' + f.redonda.largo / 10 + ' cm, cada ' + f.redonda.sep / 10 + ' cm', { s: 2.2, a: 'start', f: '#555' }));
+    o.push(T(66, y - 1, f.diamante.t + ' × ' + f.diamante.lado + ' × ' + f.diamante.lado + ' mm', { s: 2.2, a: 'start', b: uso }) + T(66, y + 3, 'cada ' + f.diamante.sep / 10 + ' cm', { s: 2.2, a: 'start', f: '#555' }));
+  });
+  o.push(titD('Dovelas por espesor de losa'));
+  var L = leyenda(['Tablas de ACI 302.1R para juntas de construcción con apertura ≤ 5 mm', 'Si el espesor cae entre dos filas se toma la siguiente (lado seguro)', 'Esta nave: ' + M.cant.dov_redondas + ' dovelas redondas (' + fmt(M.cant.dov_kg, 0) + ' kg de acero) o ' + M.cant.dov_diamante + ' placas de diamante'], 84);
+  o.push(L.svg + notasD(['Fuera de 12,5 a 27,5 cm las tablas no aplican: diseño específico del ingeniero.'], L.y + 1));
+  return o.join('');
+}
+var CONV_DOVELAS = [
+  { hasta: 15,   rango: '12,5–15 cm',   redonda: { diamTxt: 'Ø 19 mm (¾")',  largo: 360, sep: 300 }, diamante: { t: 6,  lado: 115, sep: 450 } },
+  { hasta: 20,   rango: '17,5–20 cm',   redonda: { diamTxt: 'Ø 25 mm (1")',  largo: 410, sep: 300 }, diamante: { t: 10, lado: 115, sep: 450 } },
+  { hasta: 27.5, rango: '22,5–27,5 cm', redonda: { diamTxt: 'Ø 32 mm (1¼")', largo: 460, sep: 300 }, diamante: { t: 19, lado: 115, sep: 500 } }
+];
+function dOperaciones(M) {
+  var o = [], sp = M.sello, y = 16;
+  var pasos = [['Día 0', 'Colar, vibrar y dar acabado; curado inmediato'], ['4–12 h', 'Aserrar el corte: 3 mm × ' + M.profCorte.mm + ' mm (sierra de entrada temprana: 1–4 h)'], ['7 días', 'Curado húmedo mínimo; no sellar'], ['28 días', 'Medir las aperturas de los cortes y de las juntas'],
+    ['60–90 días', 'Ensanchar el reservorio a ' + sp.ancho + ' mm × ' + sp.reservorio + ' mm; limpiar y secar'], ['60–90 días', 'Colocar el fondo de junta Ø ' + sp.varilla + ' mm'], ['60–90 días', 'Rellenar con sello semirrígido de ' + sp.espesor + ' mm']];
+  o.push(Ln(15, y - 3, 15, y + 7 * 8.2 - 8, GR2, 0.3));
+  pasos.forEach(function (p, i) {
+    var yy = y + i * 8.2;
+    o.push('<circle cx="15" cy="' + r(yy) + '" r="2.4" fill="#fff" stroke="' + ROJO + '" stroke-width="0.3"/>' + T(15, yy + 0.9, String(i + 1), { s: 2.4, b: 1, f: ROJO }));
+    o.push(T(21, yy - 0.6, p[0], { s: 2.4, a: 'start', b: 1 }));
+    envolver(p[1], 52).forEach(function (ln, k) { o.push(T(45, yy - 0.6 + k * 3.1, ln, { s: 2.3, a: 'start', f: '#333' })); });
+  });
+  o.push(titD('Orden de operaciones de las juntas'));
+  var L = leyenda(['Los tiempos del corte dependen del clima: cortar antes de que el concreto fisure solo', 'El sello semirrígido casi no se estira: sellar temprano lo rompe', 'Los cortes se protegen de la basura y la humedad mientras esperan el sello'], 84);
+  o.push(L.svg);
+  return o.join('');
+}
+
+function lamina3(ctx) {
+  var M = ctx.M, o = [];
+  o.push('<defs><pattern id="rayas" width="2" height="2" patternUnits="userSpaceOnUse"><path d="M0 2 L2 0" stroke="#999" stroke-width="0.2"/></pattern>' +
+    '<pattern id="grava" width="3" height="3" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.35" fill="#8a7d5a"/><circle cx="2.3" cy="2.2" r="0.3" fill="#8a7d5a"/></pattern></defs>');
+  o.push(Rc(4, 4, W - 8, H - 8, 'none', GR, 0.6));
+  o.push(celda(0, 0, 'D7', 'Junta de construcción con dovelas', dConstr(M), 'NTS'));
+  o.push(celda(1, 0, 'D8', 'Dovelas en planta', dDovelasPlanta(M), 'NTS'));
+  o.push(celda(2, 0, 'D9', 'Sello semirrígido y fondo de junta', dSello(M), 'ampliado'));
+  o.push(celda(0, 1, 'D10', 'Cortes por vano entre ejes', dVanos(M), 'tabla'));
+  o.push(celda(1, 1, 'D11', 'Dovelas por espesor', dTablaDovelas(M), 'tabla'));
+  o.push(celda(2, 1, 'D12', 'Orden de operaciones', dOperaciones(M), 'esquema'));
+  o.push(rotulo(ctx, 3));
+  return svgHoja(o.join(''));
 }
 
 function lamina2(ctx) {
@@ -37379,7 +38051,7 @@ function lamina2(ctx) {
     '<pattern id="grava" width="3" height="3" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.35" fill="#8a7d5a"/><circle cx="2.3" cy="2.2" r="0.3" fill="#8a7d5a"/></pattern>' +
     '<pattern id="ladrillo" width="4" height="2" patternUnits="userSpaceOnUse"><path d="M0 0 H4 M0 1 H4 M2 0 V1 M0 1 V2" stroke="#999" stroke-width="0.15" fill="none"/></pattern></defs>');
   o.push(Rc(4, 4, W - 8, H - 8, 'none', GR, 0.6));
-  o.push(celda(0, 0, 'D1', 'Junta de construcción blindada', dJunta(M), 'NTS'));
+  o.push(conv(M) ? celda(0, 0, 'D1', 'Junta de contracción aserrada', dCorte(M), 'NTS') : celda(0, 0, 'D1', 'Junta de construcción blindada', dJunta(M), 'NTS'));
   o.push(celda(1, 0, 'D2', 'Aislamiento de muro', dMuro(M), 'NTS'));
   o.push(celda(2, 0, 'D3', 'Columna: planta del rombo', dRomboPlanta(M), 'NTS'));
   o.push(celda(0, 1, 'D4', 'Columna: corte del rombo', dRomboCorte(M), 'NTS'));
@@ -37404,15 +38076,34 @@ var NO_REVISA = [
   'Movimiento térmico (cámaras frías o calor de procesos) y su efecto en las aperturas.'
 ];
 var DESCARGO = 'Este documento es una herramienta de predimensionamiento elaborada por CONCRE con base en las normas y fuentes indicadas en él. No constituye una memoria de cálculo ni un plano constructivo, y no sustituye el diseño, la revisión ni la firma del ingeniero responsable (CFIA), ni el estudio de suelos del sitio. Los resultados dependen de los datos ingresados; los valores recomendados están sujetos a la verificación y a las pruebas que realice el profesional responsable. Las recomendaciones sobre Fibra Plus 54 mm se calculan con las especificaciones de esa fibra y no son válidas con otra fibra. Las distancias entre juntas de las macro-losas se apoyan en la normativa vigente (TR34 4ª ed., ACI 302.1R, ACI 360R) y en literatura técnica; no existe una norma única para macro-losas con fibra sintética, por lo que el ingeniero responsable debe validar el sistema y las aperturas. CONCRE no asume responsabilidad por el uso de este documento fuera de ese alcance, ni por la construcción, el curado, el control de calidad o el uso posterior de la losa.';
+var NO_REVISA_CONV = [
+  'Diseño de las dovelas como elemento (aplastamiento del concreto, fatiga): se toman de las tablas de ACI 302.1R; el ingeniero verifica con las cargas del uso.',
+  'La fisuración real: la retracción, el alabeo y el ancho de fisura dependen de la mezcla, el curado, la base y el momento del corte. Se mitigan pero no se calculan en detalle (la 4ª ed. de TR34 eliminó el cálculo de retracción).',
+  'Asentamientos del suelo y estudio de suelos; losas sobre suelos expansivos o rellenos sin control.',
+  'Efecto de grupo de patas de rack cercanas, cargas de maquinaria con cimentación propia y pisos de pasillo muy angosto (VNA).',
+  'Movimiento térmico (cámaras frías o calor de procesos) y su efecto en las aperturas.'
+];
+var DESCARGO_CONV = DESCARGO.replace('Las distancias entre juntas de las macro-losas se apoyan en la normativa vigente (TR34 4ª ed., ACI 302.1R, ACI 360R) y en literatura técnica; no existe una norma única para macro-losas con fibra sintética, por lo que el ingeniero responsable debe validar el sistema y las aperturas.',
+  'La separación de los cortes aserrados se apoya en la regla empírica de ACI 302.1R (de 24 a 36 veces el espesor, con tope de 5,5 m); su relación con la dosis de fibra es una interpolación derivada y no una norma. Las dovelas y el sello siguen ACI 302.1R y ACI 360R. El ingeniero responsable debe validar la retícula de cortes, las dovelas, el sello y las aperturas.');
+function noRevisa(M) { return conv(M) ? NO_REVISA_CONV : NO_REVISA; }
+function descargo(M) { return conv(M) ? DESCARGO_CONV : DESCARGO; }
 var DESCARGO_CORTO = 'Predimensionamiento de CONCRE: no constituye memoria de cálculo ni plano constructivo; no sustituye el diseño ni la firma del ingeniero responsable. Cálculos orientados a Fibra Plus 54 mm. Ver descargo al final.';
 
 function informe(ctx) {
   var M = ctx.M, S = ctx.S, R = ctx.R, u = R.u, d = R.d, ev = R.ev, o = [];
   var ref = ctx.ref || 'SIN GUARDAR';
   var logo = ctx.logo ? 'data:image/png;base64,' + ctx.logo : '';
-  o.push('<div class="enc">' + (logo ? '<img class="logo" src="' + logo + '">' : '<div class="logo">CONCRE</div>') + '<div class="encd"><div class="tit">Macro-losa · Predimensionamiento <span class="sello">Borrador</span></div><div class="sub">' + esc(u.nombre) + ' · Referencia <b>' + esc(ref) + '</b> · ' + esc(ctx.fecha || '') + '</div></div></div>');
+  o.push('<div class="enc">' + (logo ? '<img class="logo" src="' + logo + '">' : '<div class="logo">CONCRE</div>') + '<div class="encd"><div class="tit">' + (conv(M) ? 'Losa convencional' : 'Macro-losa') + ' · Predimensionamiento <span class="sello">Borrador</span></div><div class="sub">' + esc(u.nombre) + ' · Referencia <b>' + esc(ref) + '</b> · ' + esc(ctx.fecha || '') + '</div></div></div>');
   o.push('<p class="aviso">Este documento <b>no constituye una memoria de cálculo</b> ni un plano constructivo. Requiere la revisión y la firma del ingeniero responsable (CFIA).</p>');
   o.push(kv([['Proyecto', esc(S.proy.nombre || '—')], ['Cliente', esc(S.proy.cliente || '—')], ['Ubicación', esc(S.proy.ubicacion || '—')], ['Elaborado por', 'CONCRE'], ['Nave', fmt(M.in.Lx, 1) + ' × ' + fmt(M.in.Ly, 1) + ' m · ' + fmt(M.cant.area, 0) + ' m²']]));
+  if (conv(M)) {
+    var kp = function (b, t) { return '<div class="kpi"><b>' + b + '</b><span>' + t + '</span></div>'; };
+    o.push(seccion('Resultado', '<div class="kpis">' + kp(fmt(M.h, 1) + ' cm', 'Espesor de la losa') + kp(esc(M.resCorto), 'Resistencia · kg/cm²') + kp(fmt(M.dosis, 1) + ' kg/m³', 'Fibra Plus 54 mm') + kp(fmt(M.Lcorte, 2) + ' m', 'Separación máx. de cortes') +
+      kp(String(M.nJx + M.nJy), 'Juntas de construcción (' + fmt(M.cant.juntas_m, 0) + ' m)') + kp(String(M.dias.length), 'Jornadas de colado (' + M.diaTxt + ' por día)') + '</div>' +
+      '<p class="p">Control de fisuración: <b>cortes aserrados de contracción</b> sobre todos los ejes y, entre ejes, a partes iguales, con una separación máxima de <b>' + fmt(M.Lcorte, 2) + ' m</b> (' + fmt(M.kCorte, 0) + ' × el espesor: regla de ACI 302.1R, según el espesor y la dosis de fibra). La losa queda dividida en <b>' + M.nLosas + ' paños aserrados</b>, el mayor de ' + fmt(M.maxLosaL, 2) + ' m de lado, con cortes de ' + M.profCorte.mm + ' mm de profundidad. Apertura esperada de los cortes ' + fmt(M.aperturaMax, 1) + ' mm (las tablas de dovelas valen hasta ' + M.in.aperturaAdm + ' mm).</p>' +
+      '<p class="p">Juntas de construcción: ' + (M.nJx + M.nJy) + ' (' + fmt(M.cant.juntas_m, 0) + ' m), solo entre colados, sobre ejes principales y la menor cantidad posible, con dovelas redondas lisas o placas de diamante (ver «Juntas de construcción y dovelas»). Sello semirrígido con fondo de junta, a los 60–90 días.</p>' +
+      '<p class="p"><b>Capa bajo la losa:</b> polietileno clase A de ' + (M.in.pesado ? '15' : '10') + ' mil, que hace de barrera de vapor y de fricción. Detalle en «Barrera de vapor y de fricción».</p>'));
+  } else
   o.push(seccion('Resultado', '<div class="kpis">' +
     '<div class="kpi"><b>' + fmt(M.h, 1) + ' cm</b><span>Espesor de la macro-losa</span></div>' +
     '<div class="kpi"><b>' + esc(M.resCorto) + '</b><span>Resistencia · kg/cm²</span></div>' +
@@ -37425,16 +38116,48 @@ function informe(ctx) {
   var avInf = M.avisos.filter(function (a) { return !/^ATENCIÓN · Planicidad/.test(a); });   // la advertencia de planicidad es solo para quien usa la aplicación
   if (avInf.length) o.push(seccion('Avisos', '<ul class="av">' + avInf.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'));
   // comparación de sistemas
+  if (conv(M)) {
+    o.push(seccion('Cortes por vano entre ejes', tabla(['Sentido', 'Vano entre ejes', 'Distancia', 'Partes iguales', 'Cada parte'],
+      M.vanos.x.map(function (v) { return ['Vertical', v.de + ' – ' + v.a, fmt(v.L, 2) + ' m', (v.alerta ? '<b>' + v.n + ' ▲</b>' : String(v.n)), fmt(v.paso, 2) + ' m']; }).concat(M.vanos.y.map(function (v) { return ['Horizontal', v.de + ' – ' + v.a, fmt(v.L, 2) + ' m', (v.alerta ? '<b>' + v.n + ' ▲</b>' : String(v.n)), fmt(v.paso, 2) + ' m']; })), ['16%', '24%', '20%', '20%', '20%']) +
+      '<p class="n">Separación máxima de cortes: ' + fmt(M.Lcorte, 2) + ' m = ' + fmt(M.kCorte, 1) + ' × ' + fmt(M.h, 1) + ' cm (ACI 302.1R pide de 24 a 36 veces el espesor, con tope de 5,5 m; con menos fibra se usa 24 y con más fibra, 36). Los ejes llevan corte y cada vano se divide en partes iguales, a la mitad cuando basta, para que los cortes y las juntas de construcción calcen con los ejes. ▲ más de 3 partes en un vano: distancia grande entre ejes.</p>'));
+    o.push(seccion('Juntas de construcción y dovelas', tabla(['Espesor de la losa', 'Dovela redonda lisa', 'Placa de diamante', ''], CONV_DOVELAS.map(function (f) {
+      var uso = M.dovelas && M.dovelas.fila.hasta === f.hasta;
+      return [(uso ? '<b>' + f.rango + '</b>' : f.rango), f.redonda.diamTxt + ' × ' + f.redonda.largo / 10 + ' cm, cada ' + f.redonda.sep / 10 + ' cm', f.diamante.t + ' × ' + f.diamante.lado + ' × ' + f.diamante.lado + ' mm, cada ' + f.diamante.sep / 10 + ' cm', uso ? '<b>◄ esta losa</b>' : ''];
+    }), ['20%', '34%', '34%', '12%']) +
+      '<p class="p">Esta nave tiene <b>' + (M.nJx + M.nJy) + ' juntas de construcción</b> (' + M.nJx + ' verticales y ' + M.nJy + ' horizontales, ' + fmt(M.cant.juntas_m, 0) + ' m): solo entre colados, sobre ejes y la menor cantidad posible. ' + (M.dovelas ? 'Se necesitan <b>' + M.cant.dov_redondas + ' dovelas redondas</b> (≈ ' + fmt(M.cant.dov_kg, 0) + ' kg de acero) <b>o ' + M.cant.dov_diamante + ' placas de diamante</b>: se coloca una de las dos opciones. La hoja 3 dibuja ' + (M.dovelaSel === 'diamante' ? 'la placa de diamante' : 'la dovela redonda lisa') + '.' : 'El espesor está fuera de las tablas: requiere diseño específico del ingeniero.') + '</p>' +
+      '<p class="n">Tablas de ACI 302.1R, válidas para aperturas de junta de hasta 5 mm; si el espesor cae entre dos filas se toma la siguiente. Primera dovela a 30 cm o más del cruce con otra junta y del borde. Las placas de diamante solo en juntas de construcción, no en cortes aserrados.</p>'));
+    o.push(seccion('Cantidades', tabla(['Concepto', 'Cantidad'], [
+      ['Concreto', fmt(M.cant.vol_m3, 0) + ' m³ (+ rombos ' + fmt(M.cant.vol_rombos_m3, 1) + ' m³)'], ['Fibra Plus 54 mm', fmt(M.cant.fibra_kg, 0) + ' kg · ' + M.cant.sacos10 + ' sacos de 10 kg' + (M.cant.bolsas1 ? ' + ' + M.cant.bolsas1 + ' bolsas de 1 kg' : '')],
+      ['Polietileno clase A (1 capa, +10 %)', fmt(M.cant.pe_m2, 0) + ' m²'], ['Cortes aserrados de contracción', fmt(M.cant.cortes_m, 0) + ' m (' + M.cant.nCortes + ' líneas) a ' + M.profCorte.mm + ' mm de profundidad'],
+      ['Juntas de construcción', fmt(M.cant.juntas_m, 0) + ' m (' + (M.nJx + M.nJy) + ' juntas)'], ['Sello semirrígido y fondo de junta', fmt(M.cant.sello_m, 0) + ' m (reservorio de ' + M.sello.ancho + ' × ' + M.sello.reservorio + ' mm; sello de ' + M.sello.espesor + ' mm)'],
+      ['Dovelas', M.dovelas ? M.cant.dov_redondas + ' redondas lisas o ' + M.cant.dov_diamante + ' placas de diamante' : 'según diseño específico'], ['Aislamiento de muros (espuma)', fmt(M.cant.perimetro_m, 0) + ' m'],
+      ['Rombos de columnas', M.cant.rombos + ' u · ' + M.cant.barras_esquina + ' barras Ø12 × 1,20 m']], ['40%', '60%'])));
+  } else
   o.push(seccion('Qué lograría cada sistema en esta nave', tabla(['Sistema', 'Dosis', 'Distancia máx.', 'Juntas', 'Paños', 'Apertura'], M.comparacion.map(function (c) {
     return [(c.id === M.sistema.id ? '<b>' + esc(c.nombre) + ' ◄</b>' : esc(c.nombre)) + (c.especial ? ' <span class="n">(requiere estudio)</span>' : '') + (c.ok === false ? ' <span class="n">(con estos ejes no alcanza: falta algún eje)</span>' : ''), fmt(c.dosis, 1) + ' kg/m³', fmt(c.Lmax, 1) + ' m', c.juntas, c.panos, fmt(c.apertura, 1) + ' mm'];
   })) + '<p class="n">Mientras más control de retracción tenga la mezcla, mayor la distancia entre juntas y menos juntas blindadas. Respaldo: TR34 4ª ed. (tope de 35 m) y literatura técnica sobre macro-losas con fibra sintética.</p>'));
   // secuencia y jornadas de colado
+  if (conv(M)) {
+    o.push(seccion('Secuencia y jornadas de colado', '<p class="p">Colado con <b>descarga directa del camión mezclador</b> (sin bomba): se cuela en franjas, <b>del fondo de la nave hacia la entrada de camiones</b>, para que el camión llegue siempre por la base preparada que aún no se ha colado.' + posTexto(M) + ' El colado se divide en <b>' + M.dias.length + ' jornada(s)</b>, una por día, de ' + M.diaTxt + '. Cada jornada es un <b>colado rectangular cerrado por juntas de construcción</b> sobre ejes: la junta se arma como cimbra del borde justo antes de colar y el colado va de la mano con su colocación. Dentro de cada colado se cortan los paños aserrados.</p>' +
+      tabla(['Día', 'Colado', 'Área', 'Concreto', 'Fibra Plus 54 mm', 'Juntas de construcción del día (metros que se arman)'], M.dias.map(function (d) {
+        return ['<b>' + d.dia + '</b>', d.panos.map(function (n) { return 'C-' + n; }).join(', '), fmt(d.area, 0) + ' m²', fmt(d.vol_m3, 1) + ' m³', fmt(d.fibra_kg, 0) + ' kg', juntasTxt(d, 0, true)];
+      }), ['7%', '14%', '11%', '12%', '15%', '41%']) +
+      '<p class="n">Cada jornada se cuela contra la junta de construcción del día anterior, ya con sus dovelas. Dejar libre por el lado de la entrada un camino de al menos 4 m de ancho hasta el frente del colado; si cruza la membrana, protegerla con tablones o láminas. Los cortes de cada colado se aserran el mismo día o a la mañana siguiente, según el clima.</p>'));
+  } else
   o.push(seccion('Secuencia y jornadas de colado', '<p class="p">Colado con <b>descarga directa del camión mezclador</b> (sin bomba): se cuela en franjas, <b>del fondo de la nave hacia la entrada de camiones</b>, para que el camión llegue siempre por la base preparada que aún no se ha colado.' + posTexto(M) + ' El colado se divide en <b>' + M.dias.length + ' jornada(s)</b>, una por día, de ' + M.diaTxt + '. Cada jornada es un <b>rectángulo de paños cuyos bordes son juntas blindadas</b>: la junta se instala justo antes de colar, como cimbra del borde, y el colado va de la mano con su colocación.</p>' +
     tabla(['Día', 'Paños', 'Área', 'Concreto', 'Fibra Plus 54 mm', 'Juntas blindadas del día (metros que se instalan)'], M.dias.map(function (d) {
       return ['<b>' + d.dia + '</b>', d.panos.map(function (n) { return 'P-' + n; }).join(', '), fmt(d.area, 0) + ' m²', fmt(d.vol_m3, 1) + ' m³', fmt(d.fibra_kg, 0) + ' kg', juntasTxt(d, 0, true)];
     }), ['7%', '23%', '11%', '12%', '15%', '32%']) +
     '<p class="n">Cada jornada se cuela contra la junta blindada del día anterior. Dejar libre por el lado de la entrada un camino de al menos 4 m de ancho hasta el frente del colado; si cruza la membrana, protegerla con tablones o láminas. El intervalo mínimo entre colados contiguos lo confirma el ingeniero según la mezcla (con retracción compensada, ACI 223).</p>'));
   // datos de entrada
+  if (conv(M)) {
+    o.push(seccion('Datos de entrada', tabla(['Dato', 'Valor'], [
+      ['Uso', esc(u.nombre)], ['Suelo de apoyo', esc(R.k.nota) + ' <b>k = ' + fmt(R.k.k, 2) + ' kg/cm³</b>'], ['Espesor y fibra', 'Recomendados: ' + fmt(M.h, 1) + ' cm · ' + fmt(M.dosis, 1) + ' kg/m³'],
+      ['Colado', 'Descarga directa del camión, del fondo hacia la entrada (flecha en el plano); ' + M.dias.length + ' jornada(s), cada una un colado rectangular cerrado por juntas de construcción'],
+      ['Cortes aserrados', 'Sobre los ejes principales y a partes iguales entre ejes'], ['Juntas de construcción', 'Solo entre colados, sobre ejes principales'],
+      ['Ejes principales', 'Verticales: ' + (M.ejesTxtX) + ' · Horizontales: ' + (M.ejesTxtY)], ['Columnas', fmt(M.in.colX, 2) + ' × ' + fmt(M.in.colY, 2) + ' m · ' + M.cols.length + ' (interiores ' + M.nInt + ', borde ' + M.nBor + ', esquina ' + M.nEsq + ')'],
+      ['Piso sensible a la humedad', S.pisoSensible ? 'Sí' : 'No'], ['Dovela que se dibuja (hoja 3)', M.dovelaSel === 'diamante' ? 'Placa de diamante' : 'Dovela redonda lisa']], ['34%', '66%'])));
+  } else
   o.push(seccion('Datos de entrada', tabla(['Dato', 'Valor'], [
     ['Uso', esc(u.nombre)], ['Suelo de apoyo', esc(R.k.nota) + ' <b>k = ' + fmt(R.k.k, 2) + ' kg/cm³</b>'],     ['Espesor y fibra', 'Recomendados: ' + fmt(M.h, 1) + ' cm · ' + fmt(M.dosis, 1) + ' kg/m³'],
     ['Colado', 'Descarga directa del camión, del fondo hacia la entrada (flecha en el plano); ' + M.dias.length + ' jornada(s), cada una un rectángulo cerrado por juntas blindadas'],
@@ -37458,18 +38181,18 @@ function informe(ctx) {
   o.push('<div class="sec"><h2>Cálculo paso a paso</h2>' + M.pasos.concat(ev.pasos.filter(function (p) { return M.resTipo === 'mr' ? p.titulo !== 'Resistencia del concreto' : p.titulo !== 'MR de diseño'; }).map(function (p) { return M.resTipo === 'mr' && p.titulo === 'MR de diseño' ? { titulo: p.titulo, formula: p.formula.replace(/√f.c/, '√fck'), valores: 'criterio de la norma', resultado: M.resTxt, norma: p.norma } : p; })).map(function (p, i) {
     return '<div class="paso"><div class="pt">' + (i + 1) + '. ' + esc(p.titulo) + '</div><div class="pf">' + esc(p.formula) + '</div><div class="pv">' + esc(p.valores) + '</div><div class="pr">' + esc(p.resultado) + '</div><div class="pn">' + esc(p.norma) + '</div></div>';
   }).join('') + '</div>');
-  o.push(seccion('Lo que este cálculo NO revisa', '<ul class="av">' + NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'));
-  o.push(seccion('Normas y guías técnicas consultadas', '<p class="p" style="font-size:calc(8.5px*var(--fs,1))">TR34 (Concrete Society), 4ª y 3ª ed. · ACI 360R-10 · ACI 302.1R · ACI 223 · ACI 308 · ACI 305R · ACI 544 · ACI 318 · EN 14651 · ASTM C157, C494, C1609, C1702, E1155, E1745 · Eurocódigo 2 (EC2).</p>'));
+  o.push(seccion('Lo que este cálculo NO revisa', '<ul class="av">' + noRevisa(M).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'));
+  o.push(seccion('Normas y guías técnicas consultadas', '<p class="p" style="font-size:calc(8.5px*var(--fs,1))">TR34 (Concrete Society), 4ª y 3ª ed. · ACI 360R-10 · ACI 302.1R (incluye las tablas de dovelas) · ACI 223 · ACI 308 · ACI 305R · ACI 544 · ACI 318 · EN 14651 · ASTM C157, C494, C1609, C1702, E1155, E1745 · Eurocódigo 2 (EC2).</p>'));
   // cierre: descargo + servicios van juntos, para que el último folio nunca quede con solo una línea
   o.push('<div style="break-inside:avoid">');
-  o.push(seccion('Descargo de responsabilidad', '<p class="p" style="font-size:calc(8.5px*var(--fs,1));color:#555">' + esc(DESCARGO) + '</p>'));
+  o.push(seccion('Descargo de responsabilidad', '<p class="p" style="font-size:calc(8.5px*var(--fs,1));color:#555">' + esc(descargo(M)) + '</p>'));
   o.push('<div class="sec" style="break-inside:avoid"><h2>Servicios de CONCRE</h2><p class="p">Colocación de concreto, sellos, pulidos, densificados y, sobre todo, suministro de <b>Fibra Plus 54 mm</b>. Los cálculos de este documento están orientados a la calidad y las especificaciones de la fibra de CONCRE.</p></div>');
   o.push('</div>');
   return o.join('');
 }
 
 function html(ctx) {
-  var ref = ctx.ref || 'SIN GUARDAR';
+  var M = ctx.M, NM = conv(M) ? 'Losa convencional' : 'Macro-losa', ref = ctx.ref || 'SIN GUARDAR';
   var logo = ctx.logo ? 'data:image/png;base64,' + ctx.logo : '';
   var css = '*{box-sizing:border-box}html,body{margin:0}body{font-family:Arial,sans-serif;color:#3D3D3D;font-size:calc(9.5px*var(--fs,1));background:#fff}' +
     '@page plano{size:432mm 279mm;margin:0}@page informe{size:A4;margin:11mm 12mm}' +
@@ -37490,14 +38213,14 @@ function html(ctx) {
     '.barra{position:sticky;top:0;background:#3D3D3D;color:#fff;padding:8px 14px;z-index:5;font-size:calc(12px*var(--fs,1))}.barra button{background:#C8102E;color:#fff;border:0;border-radius:5px;padding:6px 14px;font-weight:700;cursor:pointer;margin-right:10px}' +
     '@media screen{.lamina{width:auto;height:auto;margin:10px auto;max-width:1300px;border:1px solid #ccc}.lamina svg.hoja{width:100%;height:auto}.informe{max-width:900px;margin:0 auto;padding:10px}}' +
     '@media print{.barra{display:none}}';
-  return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>CONCRE — Macro-losa ' + esc(ref) + '</title><style>' + css + '</style></head><body>' +
-    '<div class="barra"><button onclick="window.print()">🖨 Imprimir / Guardar PDF</button>Macro-losa ' + esc(ref) + ' · láminas Tabloide 11×17 pulg + informe A4 (en el cuadro de impresión elija «Tamaño de papel: según la página» o Tabloide / A4)</div>' +
-    '<div class="lamina">' + lamina1(ctx) + '</div><div class="lamina">' + lamina2(ctx) + '</div>' +
+  return '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>CONCRE — ' + NM + ' ' + esc(ref) + '</title><style>' + css + '</style></head><body>' +
+    '<div class="barra"><button onclick="window.print()">🖨 Imprimir / Guardar PDF</button>' + NM + ' ' + esc(ref) + ' · láminas Tabloide 11×17 pulg + informe A4 (en el cuadro de impresión elija «Tamaño de papel: según la página» o Tabloide / A4)</div>' +
+    '<div class="lamina">' + lamina1(ctx) + '</div><div class="lamina">' + lamina2(ctx) + '</div>' + (conv(M) ? '<div class="lamina">' + lamina3(ctx) + '</div>' : '') +
     (logo ? '<div class="marca"><img src="' + logo + '"></div>' : '') +
     '<div class="informe"><table class="pg"><tbody><tr><td>' + informe(ctx) + '</td></tr></tbody><tfoot><tr><td><div class="pie"><b>CONCRE</b> · ' + esc(ref) + ' · ' + esc(DESCARGO_CORTO) + '</div></td></tr></tfoot></table></div></body></html>';
 }
 
-var API = { posTexto: posTexto, rotada: rotada, html: html, lamina1: lamina1, lamina2: lamina2, DESCARGO: DESCARGO, NO_REVISA: NO_REVISA };
+var API = { posTexto: posTexto, rotada: rotada, html: html, lamina1: lamina1, lamina2: lamina2, lamina3: lamina3, DESCARGO: DESCARGO, NO_REVISA: NO_REVISA, noRevisa: noRevisa, descargo: descargo };
 if (typeof module !== 'undefined' && module.exports) module.exports = API;
 root.MACRO_INF = API;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -37614,12 +38337,12 @@ function nuevoEstado() {
     panelLx: '', panelLy: '',
     borde: 15, esq: 15, nu: 0.20,
     criterio: 'mayor', mr: 'aci318',
-    macro: false, mLx: '', mLy: '', mEjesX: [], mEjesY: [], mSinCol: [], mSistema: 'sra', mMetodo: 'laser', mCols: 'todas', mColX: 0.4, mColY: 0.4, mCapJunta: '', mPesado: false, mMont: true, mAuto: true, mH: '', mDosis: '', mVista: 'fc', mJuntasX: null, mJuntasY: null, mAcceso: 'abajo', mAccPos: 'min', /* MACRO:ESTADO */
+    macro: false, mLx: '', mLy: '', mEjesX: [], mEjesY: [], mSinCol: [], mSistema: 'sra', mMetodo: 'laser', mCols: 'todas', mColX: 0.4, mColY: 0.4, mCapJunta: '', mPesado: false, mMont: true, mAuto: true, mH: '', mDosis: '', mVista: 'fc', mJuntasX: null, mJuntasY: null, mAcceso: 'abajo', mAccPos: 'min', mModo: 'macro', mDovela: 'redonda', /* MACRO:ESTADO */
     res: null
   };
 }
 
-var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr', 'macro', 'mLx', 'mLy', 'mEjesX', 'mEjesY', 'mSinCol', 'mSistema', 'mMetodo', 'mCols', 'mColX', 'mColY', 'mCapJunta', 'mPesado', 'mMont', 'mAuto', 'mH', 'mDosis', 'mVista', 'mJuntasX', 'mJuntasY', 'mAcceso', 'mAccPos'];
+var CAMPOS_ESTADO = ['usoId', 'o', 'cargas', 'proy', 'suelo', 'cbr', 'kDirecto', 'base', 'clima', 'pisoSensible', 'fcAuto', 'fcManual', 'panelLx', 'panelLy', 'borde', 'esq', 'nu', 'criterio', 'mr', 'macro', 'mLx', 'mLy', 'mEjesX', 'mEjesY', 'mSinCol', 'mSistema', 'mMetodo', 'mCols', 'mColX', 'mColY', 'mCapJunta', 'mPesado', 'mMont', 'mAuto', 'mH', 'mDosis', 'mVista', 'mJuntasX', 'mJuntasY', 'mAcceso', 'mAccPos', 'mModo', 'mDovela'];
 function serializar(S) { var e = {}; CAMPOS_ESTADO.forEach(function (k) { e[k] = clone(S[k]); }); return e; }
 function nuevoId() { return 'lo_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function refLocal() {
@@ -37807,7 +38530,7 @@ function pintarDatos(S, box, ir) {
   gp.appendChild(campo('Nombre del proyecto', inpTxt(S.proy.nombre, function (v) { S.proy.nombre = v; })));
   gp.appendChild(campo('Cliente', inpTxt(S.proy.cliente, function (v) { S.proy.cliente = v; })));
   gp.appendChild(campo('Ubicación', inpTxt(S.proy.ubicacion, function (v) { S.proy.ubicacion = v; })));
-  if (S.macro) gp.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Área de la losa']), el('div', { class: 'ls-info' }, ['En la macro-losa el área sale del largo y el ancho de la nave (paso 3).'])])); /* MACRO:AREA */
+  if (S.macro) gp.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Área de la losa']), el('div', { class: 'ls-info' }, ['En esta losa el área sale del largo y el ancho de la nave (paso 3).'])])); /* MACRO:AREA */
   else gp.appendChild(campo('Área de la losa (m²)', inpNum(S.proy.area, function (v) { S.proy.area = v; }), 'Sirve para calcular la fibra necesaria'));
   bp.appendChild(gp); box.appendChild(bp);
 
@@ -38201,7 +38924,7 @@ function pintarProyectos(S, box, ir, nuevo) {
     var filas = arr.map(function (p) {
       var f = p.actualizado ? new Date(p.actualizado).toLocaleDateString('es-CR') : '';
       var uso = C.USOS.filter(function (u) { return u.id === p.uso; })[0];
-      return { p: p, html: '<td><b>' + esc(p.ref) + '</b></td><td>' + esc(p.nombre) + '</td><td>' + esc(p.cliente) + '</td><td>' + (p.estado && p.estado.macro ? 'Macro-losa · ' : '') + esc(uso ? uso.nombre : p.uso) + '</td><td>' + (p.resumen ? fmt(p.resumen.h_cm, 1) + ' cm · f’c ' + p.resumen.fc : '') + '</td><td>' + esc(p.usuario_nombre || '') + '</td><td>' + f + '</td>' };
+      return { p: p, html: '<td><b>' + esc(p.ref) + '</b></td><td>' + esc(p.nombre) + '</td><td>' + esc(p.cliente) + '</td><td>' + (p.estado && p.estado.macro ? (p.estado.mModo === 'conv' ? 'Losa convencional · ' : 'Macro-losa · ') : '') + esc(uso ? uso.nombre : p.uso) + '</td><td>' + (p.resumen ? fmt(p.resumen.h_cm, 1) + ' cm · f’c ' + p.resumen.fc : '') + '</td><td>' + esc(p.usuario_nombre || '') + '</td><td>' + f + '</td>' };
     });
     var tb = el('table', { class: 'ls-tb', html: '<tr><th>Ref.</th><th>Proyecto</th><th>Cliente</th><th>Uso</th><th>Resultado</th><th>Usuario</th><th>Fecha</th><th></th></tr>' });
     filas.forEach(function (x) {
@@ -38223,7 +38946,8 @@ function pintarProyectos(S, box, ir, nuevo) {
 // MACRO-LOSA · pantalla (se inyecta DENTRO del IIFE de la pantalla de Diseño de losas;
 // usa sus ayudas: el, campo, inpNum, selBox, fmt, num, esc, clone, M, C, WEB, toastLs)
 // ══════════════════════════════════════════════════════════════════════════════
-var MM = window.MACRO_MOTOR, MINF = window.MACRO_INF;
+var MM = window.MACRO_MOTOR, MINF = window.MACRO_INF, CV = window.CONV_MOTOR;
+function esConv(S) { return !!S.macro && S.mModo === 'conv'; }          // Losa Convencional (cortes aserrados) en vez de macro-losa
 var USOS_MACRO = ['taller_industrial', 'bodega_almacen', 'bodega_produccion', 'bodega_alquiler'];
 var MACRO_CSS = [
   '.ls .mc-bar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}',
@@ -38265,20 +38989,33 @@ function pintarTarjetasMacro(S, box, g, ir, elegir) {
   var g2 = el('div', { class: 'ls-cards' });
   USOS_MACRO.forEach(function (id) {
     var u = C.USOS.filter(function (x) { return x.id === id; })[0]; if (!u) return;
-    var c = el('div', { class: 'ls-card' + (S.macro && S.usoId === id ? ' on' : '') }, [
+    var c = el('div', { class: 'ls-card' + (S.macro && S.mModo !== 'conv' && S.usoId === id ? ' on' : '') }, [
       el('div', { class: 'ic' }, [u.icono]), el('div', { class: 'nm' }, ['Macro-losa · ' + u.nombre]), el('div', { class: 'ds' }, ['Mismos datos y cargas que «' + u.nombre + '», con la nave sin juntas de contracción.'])]);
-    c.addEventListener('click', function () { elegir(S, u, true); ir(1); });
+    c.addEventListener('click', function () { if (S.mModo !== 'macro') S.res = null; S.mModo = 'macro'; elegir(S, u, true); ir(1); });
     g2.appendChild(c);
   });
   box.appendChild(g2);
+  // ── Losa Convencional: mismo plano por ejes y mismo orden de colado, pero con cortes aserrados de contracción
+  box.appendChild(el('h2', { class: 'ls-h2', style: 'margin-top:22px' }, ['Losa Convencional (con cortes aserrados)']));
+  box.appendChild(el('p', { class: 'ls-p' }, ['Piso de gran área con juntas de contracción aserradas, con el mismo plano por ejes, orden de colado y detalles que la macro-losa. La separación máxima de los cortes la fijan el espesor, la cantidad de fibra y la distancia entre ejes: cada vano entre ejes se corta en partes iguales (a la mitad si basta), para que los cortes calcen con los ejes. Las juntas de construcción, con dovelas redondas o de diamante, van solo entre colados de 700 a 1 000 m², sobre ejes y la menor cantidad posible. El resultado trae la profundidad de corte, el sello semirrígido con su espesor y fondo de junta, y el plano en PDF.']));
+  var g3 = el('div', { class: 'ls-cards' });
+  USOS_MACRO.forEach(function (id) {
+    var u = C.USOS.filter(function (x) { return x.id === id; })[0]; if (!u) return;
+    var c = el('div', { class: 'ls-card' + (esConv(S) && S.usoId === id ? ' on' : '') }, [
+      el('div', { class: 'ic' }, [u.icono]), el('div', { class: 'nm' }, ['Losa convencional · ' + u.nombre]), el('div', { class: 'ds' }, ['Mismos datos y cargas que «' + u.nombre + '», con la nave cortada con sierra.'])]);
+    c.addEventListener('click', function () { if (S.mModo !== 'conv') S.res = null; S.mModo = 'conv'; elegir(S, u, true); ir(1); });
+    g3.appendChild(c);
+  });
+  box.appendChild(g3);
 }
 
 // ── caja de nave, ejes y sistema (paso 3) ───────────────────────────────────
 function pintarMacroCaja(S, box) {
   if (!document.getElementById('ls-css-macro')) { var st = document.createElement('style'); st.id = 'ls-css-macro'; st.textContent = MACRO_CSS; document.head.appendChild(st); }
   var u = usoActual(S);
-  var bx = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Macro-losa · nave y ejes principales'])]);
-  bx.appendChild(el('p', { class: 'ls-p' }, ['Escriba las medidas de la nave y dónde van los ejes principales (los de las columnas o los marcos). Las juntas de construcción van solo sobre esos ejes: el programa escoge cuáles y usted puede moverlas después, en el plano del resultado. No hace falta que dibuje todo: puede generar los ejes por separación fija y luego mover los que difieran.']));
+  var cv = esConv(S);
+  var bx = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, [(cv ? 'Losa Convencional' : 'Macro-losa') + ' · nave y ejes principales'])]);
+  bx.appendChild(el('p', { class: 'ls-p' }, [cv ? 'Escriba las medidas de la nave y dónde van los ejes principales (los de las columnas o los marcos). Los cortes aserrados pasan por todos los ejes y se reparten parejo entre ellos; las juntas de construcción van solo sobre ejes, entre colados: el programa escoge cuáles y usted puede moverlas después, en el plano del resultado. No hace falta que dibuje todo: puede generar los ejes por separación fija y luego mover los que difieran.' : 'Escriba las medidas de la nave y dónde van los ejes principales (los de las columnas o los marcos). Las juntas de construcción van solo sobre esos ejes: el programa escoge cuáles y usted puede moverlas después, en el plano del resultado. No hace falta que dibuje todo: puede generar los ejes por separación fija y luego mover los que difieran.']));
 
   var g = el('div', { class: 'ls-grid' });
   var iLx = inpNum(S.mLx, function (v) { S.mLx = v; recortar(); redibujar(); }), iLy = inpNum(S.mLy, function (v) { S.mLy = v; recortar(); redibujar(); });
@@ -38363,6 +39100,20 @@ function pintarMacroCaja(S, box) {
   gc.appendChild(campo('Columna · lado en el sentido vertical (m)', inpNum(S.mColY, function (v) { S.mColY = v; }), 'Por ejemplo 0.40'));
   bx.appendChild(gc);
 
+  if (cv) {
+    bx.appendChild(el('div', { class: 'mc-sub' }, ['Control de la fisuración: cortes aserrados']));
+    bx.appendChild(el('p', { class: 'ls-p' }, ['La separación máxima entre cortes sale del espesor y de la dosis de fibra (regla de ACI 302.1R: de 24 a 36 veces el espesor, con tope de 5,5 m; con más fibra, más separación) y de la distancia entre ejes: cada vano se divide en partes iguales. Si un vano necesita más de 3 partes, el programa avisa y sugiere un eje intermedio. No hay que escoger nada aquí; el resultado muestra los cortes de cada vano.']));
+    bx.appendChild(el('div', { class: 'mc-sub' }, ['Dovela de las juntas de construcción (la que se dibuja en el plano)']));
+    bx.appendChild(el('p', { class: 'ls-p' }, ['El informe da las dos opciones con su diámetro, largo y separación según el espesor (tablas de ACI 302.1R). Marque la que quiere ver dibujada en la hoja de detalles.']));
+    var cd = el('div', { class: 'mc-sis' });
+    var DD = { redonda: ['Dovela redonda lisa', 'Barra lisa de acero, engrasada o con vaina en la mitad del colado siguiente. Diámetro y largo según el espesor, cada 30 cm.'], diamante: ['Placa de diamante', 'Placa cuadrada girada 45°, forrada en el lado del colado siguiente: permite el movimiento en los dos sentidos. Medida y separación según el espesor.'] };
+    ['redonda', 'diamante'].forEach(function (id) {
+      var it = el('div', { class: 'it' + ((S.mDovela || 'redonda') === id ? ' on' : '') }, [el('b', {}, [DD[id][0] + (id === 'redonda' ? ' (recomendada)' : '')]), el('div', { class: 'd' }, [DD[id][1]])]);
+      it.addEventListener('click', function () { S.mDovela = id; Array.prototype.forEach.call(cd.children, function (x) { x.className = 'it'; }); it.className = 'it on'; });
+      cd.appendChild(it);
+    });
+    bx.appendChild(cd);
+  } else {
   // sistema
   bx.appendChild(el('div', { class: 'mc-sub' }, ['Sistema de control de retracción']));
   bx.appendChild(el('p', { class: 'ls-p' }, ['Entre más control de retracción tenga la mezcla, mayor la distancia entre juntas y menos juntas blindadas (que son lo más caro). En el resultado verá lo que lograría cada sistema en su nave.']));
@@ -38376,9 +39127,11 @@ function pintarMacroCaja(S, box) {
   });
   bx.appendChild(cs);
 
+  }
+
   // espesor y fibra: el programa recomienda, el usuario puede cambiarlos si cumplen
   bx.appendChild(el('div', { class: 'mc-sub' }, ['Espesor de la losa y fibra']));
-  bx.appendChild(el('p', { class: 'ls-p' }, ['El programa recomienda el espesor y la dosis de Fibra Plus 54 mm según las cargas. Si prefiere otros valores, desmarque la casilla y escríbalos: se aceptan solo si cumplen la verificación por carga, el espesor mínimo de macro-losa y el arrastre sobre la membrana. Si no cumplen, el programa se lo dice y le muestra los valores recomendados.']));
+  bx.appendChild(el('p', { class: 'ls-p' }, [cv ? 'El programa recomienda el espesor y la dosis de Fibra Plus 54 mm según las cargas. Si prefiere otros valores, desmarque la casilla y escríbalos: se aceptan solo si cumplen la verificación por carga. Si no cumplen, el programa se lo dice y le muestra los valores recomendados.' : 'El programa recomienda el espesor y la dosis de Fibra Plus 54 mm según las cargas. Si prefiere otros valores, desmarque la casilla y escríbalos: se aceptan solo si cumplen la verificación por carga, el espesor mínimo de macro-losa y el arrastre sobre la membrana. Si no cumplen, el programa se lo dice y le muestra los valores recomendados.']));
   var ckA = el('input', { type: 'checkbox' }); ckA.checked = S.mAuto !== false;
   var iH = inpNum(S.mH, function (v) { S.mH = v; }), iD = inpNum(S.mDosis, function (v) { var d = parseFloat(v); S.mDosis = d > 0 ? MM.dosisUsuario(d) : v; if (d > 0) iD.value = S.mDosis; }, { step: 0.5 });
   function estadoManual() { iH.disabled = ckA.checked; iD.disabled = ckA.checked; }
@@ -38390,7 +39143,7 @@ function pintarMacroCaja(S, box) {
   });
   var ge = el('div', { class: 'ls-grid' });
   ge.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Selección']), el('label', { class: 'ls-chk' }, [ckA, 'Que el programa recomiende el espesor y la fibra (recomendado)'])]));
-  ge.appendChild(campo('Espesor de la macro-losa (cm)', iH, 'Mínimo de macro-losa: 15 cm (17 cm si el paño pasa de 20 m)'));
+  ge.appendChild(campo(cv ? 'Espesor de la losa (cm)' : 'Espesor de la macro-losa (cm)', iH, cv ? 'Debe cumplir la verificación por carga' : 'Mínimo de macro-losa: 15 cm (17 cm si el paño pasa de 20 m)'));
   ge.appendChild(campo('Fibra Plus 54 mm (kg/m³)', iD, 'Entre 2,3 y 6 kg/m³ (rango de la tabla de la fibra)'));
   bx.appendChild(ge); estadoManual();
 
@@ -38402,8 +39155,8 @@ function pintarMacroCaja(S, box) {
   bx.appendChild(gr);
 
   var go = el('div', { class: 'ls-grid' });
-  go.appendChild(campo('Método de colocación', selBox([{ v: 'laser', l: 'Regla láser (laser screed) · hasta 2 000 m² por día' }, { v: 'vibratoria', l: 'Colocación manual (regla vibratoria) · hasta 1 000 m² por día' }], S.mMetodo, function (v) { S.mMetodo = v; }), 'Decide lo máximo que se puede colar en un día; las jornadas se arman de 700 a 900 m² sin pasar de ese máximo. El informe no indica el método: solo la planicidad.'));
-  go.appendChild(campo('Capacidad de la junta del proveedor (kN/m) — opcional', inpNum(S.mCapJunta, function (v) { S.mCapJunta = v; }), 'Si ya tiene la ficha técnica de la junta a 20 mm de apertura, escríbala y el programa la compara con la requerida'));
+  go.appendChild(campo('Método de colocación', selBox([{ v: 'laser', l: 'Regla láser (laser screed) · hasta 2 000 m² por día' }, { v: 'vibratoria', l: 'Colocación manual (regla vibratoria) · hasta 1 000 m² por día' }], S.mMetodo, function (v) { S.mMetodo = v; }), (cv ? 'Decide lo máximo que se puede colar en un día; los colados se arman de 700 a 1 000 m² sin pasar de ese máximo. El informe no indica el método: solo la planicidad.' : 'Decide lo máximo que se puede colar en un día; las jornadas se arman de 700 a 900 m² sin pasar de ese máximo. El informe no indica el método: solo la planicidad.')));
+  if (!cv) go.appendChild(campo('Capacidad de la junta del proveedor (kN/m) — opcional', inpNum(S.mCapJunta, function (v) { S.mCapJunta = v; }), 'Si ya tiene la ficha técnica de la junta a 20 mm de apertura, escríbala y el programa la compara con la requerida'));
   var ckP = el('input', { type: 'checkbox' }); ckP.checked = !!S.mPesado; ckP.addEventListener('change', function () { S.mPesado = ckP.checked; });
   go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Membrana más gruesa']), el('label', { class: 'ls-chk' }, [ckP, 'Equipo pesado sobre la membrana o base de piedra angular (15 mil)'])]));
   if (u && u.id === 'bodega_produccion') {
@@ -38411,7 +39164,7 @@ function pintarMacroCaja(S, box) {
     go.appendChild(el('div', { class: 'ls-f' }, [el('label', {}, ['Montacargas']), el('label', { class: 'ls-chk' }, [ckM, 'Circulan montacargas (planicidad más exigente)'])]));
   }
   bx.appendChild(go);
-  bx.appendChild(el('div', { class: 'ls-tipico-pie' }, ['Los valores de distancia entre juntas salen de la normativa (TR34 4ª ed., ACI 302.1R y ACI 360R) y de la literatura técnica; no existe una norma única para macro-losas con fibra sintética. El resultado explica de dónde sale cada número.']));
+  bx.appendChild(el('div', { class: 'ls-tipico-pie' }, [cv ? 'La separación de cortes, la profundidad, las dovelas y el sello salen de ACI 302.1R y ACI 360R; la relación entre la dosis de fibra y la separación de cortes es una interpolación dentro de la regla de ACI 302.1R. El resultado explica de dónde sale cada número.' : 'Los valores de distancia entre juntas salen de la normativa (TR34 4ª ed., ACI 302.1R y ACI 360R) y de la literatura técnica; no existe una norma única para macro-losas con fibra sintética. El resultado explica de dónde sale cada número.']));
   box.appendChild(bx);
   marcar(); redibujar();
 }
@@ -38511,9 +39264,10 @@ function dibujarLienzo(S, holder, getModo, alCambiar, alEntrada) {
 function calcularMacroUI(S, R) {
   var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0);
   if (!(Lx > 0 && Ly > 0)) return { error: 'Escriba el largo y el ancho de la nave en el paso «Terreno y concreto».' };
+  var cv = esConv(S);
   var d = R.d, sis = S.mSistema || 'sra';
-  var dmRec = MM.dosisMacro(sis, d.dosis_rec);
-  var hMinRec = MM.techoSistema(sis, dmRec.dosis) > 20 ? 17 : 15;
+  var dmRec = cv ? CV.dosisConv(d.dosis_rec) : MM.dosisMacro(sis, d.dosis_rec);
+  var hMinRec = cv ? 0 : (MM.techoSistema(sis, dmRec.dosis) > 20 ? 17 : 15);
   var rec = { h: Math.max(d.h_rec, hMinRec), dosis: dmRec.dosis };
   var manual = S.mAuto === false, h = rec.h, dosis = rec.dosis;
   if (manual) {
@@ -38536,8 +39290,8 @@ function calcularMacroUI(S, R) {
     dosisCargas: d.dosis_rec, ell_mm: ev2.props.ell, Pd_kN: Pd,
     uso: S.usoId, o: S.o, clima: S.clima, pisoSensible: !!S.pisoSensible, pesado: !!S.mPesado, montacargas: !!S.mMont, capJunta_kNm: num(S.mCapJunta, 0), fR: M.interpolarFrc(dosis),
     juntasX: Array.isArray(S.mJuntasX) ? S.mJuntasX.slice() : null, juntasY: Array.isArray(S.mJuntasY) ? S.mJuntasY.slice() : null,
-    acceso: accesoNave(S), accPos: accPosNave(S) };
-  var res = MM.calcularMacro(inp);
+    acceso: accesoNave(S), accPos: accPosNave(S), dovela: S.mDovela || 'redonda' };
+  var res = cv ? CV.calcularConv(inp) : MM.calcularMacro(inp);
   if (res.error) return { error: res.error };
   res.rec = rec;
   var okCh = ev2.chequeos.every(function (c) { return c.ok; });
@@ -38545,12 +39299,12 @@ function calcularMacroUI(S, R) {
     var fallas = [];
     var malas = ev2.chequeos.filter(function (c) { return !c.ok; }).map(function (c) { return c.carga; });
     if (malas.length) fallas.push('no cumple la verificación por carga (' + malas.join(', ') + ')');
-    if (!res.hOk) fallas.push('el espesor es menor que el mínimo de macro-losa para este sistema (' + fmt(res.hMin, 1) + ' cm)');
-    if (!res.okArrastre) fallas.push('la fibra no resiste el arrastre sobre la membrana en paños de ' + fmt(res.Lmax, 1) + ' m');
+    if (!cv && !res.hOk) fallas.push('el espesor es menor que el mínimo de macro-losa para este sistema (' + fmt(res.hMin, 1) + ' cm)');
+    if (!cv && !res.okArrastre) fallas.push('la fibra no resiste el arrastre sobre la membrana en paños de ' + fmt(res.Lmax, 1) + ' m');
     if (fallas.length) return { error: 'Con ' + fmt(h, 1) + ' cm y ' + fmt(dosis, 1) + ' kg/m³ no se puede aceptar: ' + fallas.join('; ') + '. Valores recomendados por el programa: ' + fmt(rec.h, 1) + ' cm y ' + fmt(rec.dosis, 1) + ' kg/m³.', manualError: true, rec: rec };
   }
-  if (S.clima && S.clima !== 'interior') res.avisos.push('La macro-losa se piensa para interior cubierto. Con sol, lluvia, zona costera o frío el movimiento térmico y de humedad cambia la apertura de las juntas: requiere un estudio específico del ingeniero.');
-  if (!okCh) res.avisos.push('Alguna carga no cumple con el espesor y la dosis finales de la macro-losa (ver «Verificación por carga»).');
+  if (S.clima && S.clima !== 'interior') res.avisos.push(cv ? 'Con sol, lluvia, zona costera o frío el movimiento térmico y de humedad cambia la apertura de los cortes y la fisuración: lo revisa el ingeniero responsable.' : 'La macro-losa se piensa para interior cubierto. Con sol, lluvia, zona costera o frío el movimiento térmico y de humedad cambia la apertura de las juntas: requiere un estudio específico del ingeniero.');
+  if (!okCh) res.avisos.push('Alguna carga no cumple con el espesor y la dosis finales de ' + (cv ? 'la losa' : 'la macro-losa') + ' (ver «Verificación por carga»).');
   return { M: res, ev: ev2, inp: inp, cumple: okCh && res.okArrastre && res.okLong && res.hOk };
 }
 
@@ -38622,7 +39376,8 @@ function alertaPlanicidad(box, avisos) {
 
 function pintarMacroResultados(S, box, ir, nuevo) {
   var R = S.res, MR = R.macro, u = R.u;
-  box.appendChild(el('p', { class: 'ls-p' }, ['Macro-losa · ' + u.nombre + ' · sin cortes aserrados de contracción']));
+  var cv = esConv(S);
+  box.appendChild(el('p', { class: 'ls-p' }, [cv ? 'Losa convencional · ' + u.nombre + ' · con cortes aserrados de contracción' : 'Macro-losa · ' + u.nombre + ' · sin cortes aserrados de contracción']));
   if (MR.error) {
     box.appendChild(el('div', { class: 'ls-warn ls-bad' }, [MR.error]));
     if (MR.manualError) {
@@ -38640,16 +39395,24 @@ function pintarMacroResultados(S, box, ir, nuevo) {
 
   var k = el('div', { class: 'ls-kpis' });
   function kpi(v, l, s) { k.appendChild(el('div', { class: 'ls-kpi' }, [el('div', { class: 'v' }, [v]), el('div', { class: 'l' }, [l]), s ? el('div', { class: 's' }, [s]) : null])); }
-  kpi(fmt(X.h, 1) + ' cm', 'Espesor de la macro-losa', X.hFijo ? 'Recomendado: ' + fmt(X.rec.h, 1) + ' cm' : 'Por cargas: ' + fmt(R.d.h_rec, 1) + ' cm');
+  kpi(fmt(X.h, 1) + ' cm', cv ? 'Espesor de la losa' : 'Espesor de la macro-losa', X.hFijo ? 'Recomendado: ' + fmt(X.rec.h, 1) + ' cm' : 'Por cargas: ' + fmt(R.d.h_rec, 1) + ' cm');
   kpi(X.resCorto, 'Resistencia del concreto · kg/cm²', 'a/c ≤ 0.50');
   kpi(fmt(X.dosis, 1) + ' kg/m³', 'Fibra Plus 54 mm', fmt(X.cant.fibra_kg, 0) + ' kg · ' + X.cant.sacos10 + ' sacos de 10 kg + ' + X.cant.bolsas1 + ' bolsas de 1 kg · en pasos de 0,5 kg/m³ (camión de 8 m³ = ' + fmt(X.cant.kg_camion8, 1) + ' kg)');
-  kpi(fmt(X.Lmax, 1) + ' m', 'Distancia máxima entre juntas', X.panos.length + ' paños · el mayor de ' + fmt(X.maxL, 1) + ' m');
-  kpi(String(X.nJx + X.nJy), 'Juntas de construcción blindadas', fmt(X.cant.juntas_m, 0) + ' m de junta · sobre ejes');
-  kpi(String(X.dias.length), 'Jornadas de colado (una por día)', X.diaTxt + ' por día');
+  if (cv) {
+    kpi(fmt(X.Lcorte, 2) + ' m', 'Separación máxima entre cortes', X.nLosas + ' paños aserrados · el mayor de ' + fmt(X.maxLosaL, 2) + ' m de lado');
+    kpi(fmt(X.profCorte.mm, 0) + ' mm', 'Profundidad del corte', '¼ del espesor, mínimo 25 mm · ' + fmt(X.cant.nCortes, 0) + ' líneas de corte');
+    kpi(String(X.nJx + X.nJy), 'Juntas de construcción con dovelas', fmt(X.cant.juntas_m, 0) + ' m de junta · sobre ejes');
+  } else {
+    kpi(fmt(X.Lmax, 1) + ' m', 'Distancia máxima entre juntas', X.panos.length + ' paños · el mayor de ' + fmt(X.maxL, 1) + ' m');
+    kpi(String(X.nJx + X.nJy), 'Juntas de construcción blindadas', fmt(X.cant.juntas_m, 0) + ' m de junta · sobre ejes');
+  }
+  kpi(String(X.dias.length), cv ? 'Jornadas de colado (un colado por día)' : 'Jornadas de colado (una por día)', X.diaTxt + ' por día');
   box.appendChild(k);
-  if (X.hFijo || X.dosisManual) box.appendChild(el('div', { class: 'ls-info' }, ['Espesor y fibra definidos por usted: cumplen la verificación por carga, el mínimo de macro-losa y el arrastre. Recomendado por el programa: ' + fmt(X.rec.h, 1) + ' cm · ' + fmt(X.rec.dosis, 1) + ' kg/m³.']));
-  box.appendChild(el('div', { class: 'ls-info', html: '<b>Sistema:</b> ' + esc(X.sistema.nombre) + '. Retracción neta de diseño ' + X.sistema.eps + ' µε (' + fmt(X.sistema.eps / 1000, 2) + ' mm/m); apertura esperada de las juntas <b>' + fmt(X.aperturaMax, 1) + ' mm</b> (límite ' + X.in.aperturaAdm + ' mm). <b>No se asierran cortes de contracción.</b>' }));
-  box.appendChild(el('div', { class: 'ls-info', html: '<b>Reductor de fricción:</b> 2 capas de polietileno de 12 mil entre la base y la losa. <b>Barrera de vapor:</b> clase A de ' + (X.in.pesado ? '15' : '10') + ' mil' + (S.pisoSensible ? ' (obligatoria: piso sensible a la humedad)' : ' (recomendada)') + '; es la capa inferior. Detalle más abajo, en «Reductor de fricción y barrera de vapor».' }));
+  if (X.hFijo || X.dosisManual) box.appendChild(el('div', { class: 'ls-info' }, ['Espesor y fibra definidos por usted: cumplen la verificación por carga' + (cv ? '.' : ', el mínimo de macro-losa y el arrastre.') + ' Recomendado por el programa: ' + fmt(X.rec.h, 1) + ' cm · ' + fmt(X.rec.dosis, 1) + ' kg/m³.']));
+  if (cv) box.appendChild(el('div', { class: 'ls-info', html: '<b>Control de la fisuración:</b> cortes aserrados de ' + fmt(X.profCorte.mm, 0) + ' mm de profundidad, cada ' + fmt(X.Lcorte, 2) + ' m como máximo (' + fmt(X.kCorte, 0) + ' × el espesor; ACI 302.1R), en partes iguales entre ejes. Apertura esperada de los cortes y juntas <b>' + fmt(X.aperturaMax, 1) + ' mm</b> (dovelas hasta ' + X.in.aperturaAdm + ' mm).' }));
+  else box.appendChild(el('div', { class: 'ls-info', html: '<b>Sistema:</b> ' + esc(X.sistema.nombre) + '. Retracción neta de diseño ' + X.sistema.eps + ' µε (' + fmt(X.sistema.eps / 1000, 2) + ' mm/m); apertura esperada de las juntas <b>' + fmt(X.aperturaMax, 1) + ' mm</b> (límite ' + X.in.aperturaAdm + ' mm). <b>No se asierran cortes de contracción.</b>' }));
+  if (cv) box.appendChild(el('div', { class: 'ls-info', html: '<b>Barrera de vapor y fricción:</b> 1 capa de polietileno clase A de ' + (X.in.pesado ? '15' : '10') + ' mil' + (S.pisoSensible ? ' (obligatoria: piso sensible a la humedad)' : ' (recomendada)') + '. Detalle más abajo, en «Barrera de vapor y de fricción».' }));
+  else box.appendChild(el('div', { class: 'ls-info', html: '<b>Reductor de fricción:</b> 2 capas de polietileno de 12 mil entre la base y la losa. <b>Barrera de vapor:</b> clase A de ' + (X.in.pesado ? '15' : '10') + ' mil' + (S.pisoSensible ? ' (obligatoria: piso sensible a la humedad)' : ' (recomendada)') + '; es la capa inferior. Detalle más abajo, en «Reductor de fricción y barrera de vapor».' }));
   X.avisos.forEach(function (a) { if (!/^ATENCIÓN · Planicidad/.test(a)) box.appendChild(el('div', { class: 'ls-warn' }, [a])); });
   if (X.sugFibra && !X.hFijo && !X.dosisManual) {
     box.appendChild(el('button', { class: 'ls-btn sec sm', onclick: function () {
@@ -38687,8 +39450,17 @@ function pintarMacroResultados(S, box, ir, nuevo) {
   box.appendChild(bp);
   var bd = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Detalles constructivos'])]);
   bd.appendChild(el('div', { class: 'mc-plano', html: MINF.lamina2(ctx) }));
+  if (cv && MINF.lamina3) bd.appendChild(el('div', { class: 'mc-plano', style: 'margin-top:12px', html: MINF.lamina3(ctx) }));
   box.appendChild(bd);
 
+  if (cv) {
+    // cortes por vano entre ejes
+    var bc = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Cortes por vano entre ejes'])]);
+    var vr = [['Vertical', X.vanos.x], ['Horizontal', X.vanos.y]].map(function (q) { return q[1].map(function (v) { return '<tr><td>' + q[0] + '</td><td>' + esc(v.de) + ' – ' + esc(v.a) + '</td><td>' + fmt(v.L, 2) + ' m</td><td>' + v.n + '</td><td>' + fmt(v.paso, 2) + ' m</td></tr>'; }).join(''); }).join('');
+    bc.appendChild(el('div', { style: 'overflow-x:auto', html: '<table class="ls-tb"><tr><th>Sentido</th><th>Vano entre ejes</th><th>Distancia</th><th>Partes iguales</th><th>Cada parte</th></tr>' + vr + '</table>' }));
+    bc.appendChild(el('div', { class: 'ls-nota' }, ['Cada vano se divide en partes iguales para que los cortes y las juntas de construcción calcen con los ejes; si un vano pide más de 3 partes se avisa y se sugiere un eje intermedio.']));
+    box.appendChild(bc);
+  } else {
   // comparación de sistemas
   var bc = el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Qué lograría cada sistema en esta nave'])]);
   var tb = el('table', { class: 'ls-tb', html: '<tr><th>Sistema</th><th>Dosis</th><th>Distancia máx.</th><th>Juntas</th><th>Paños</th><th>Apertura</th><th></th></tr>' });
@@ -38700,6 +39472,8 @@ function pintarMacroResultados(S, box, ir, nuevo) {
   });
   bc.appendChild(el('div', { style: 'overflow-x:auto' }, [tb]));
   box.appendChild(bc);
+
+  }
 
   // verificación por carga
   var rows = MR.ev.chequeos.map(function (c) {
@@ -38721,8 +39495,8 @@ function pintarMacroResultados(S, box, ir, nuevo) {
   });
   box.appendChild(el('div', { class: 'ls-leyenda' }, ['V verificado en norma · S fuente técnica secundaria (no es norma) · D derivado por fórmula']));
 
-  box.appendChild(el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Lo que este cálculo NO revisa']), el('ul', { class: 'ls-p', html: MINF.NO_REVISA.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') })]));
-  box.appendChild(el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Descargo de responsabilidad · sujeto a revisión del profesional']), el('div', { class: 'ls-desc' }, [MINF.DESCARGO])]));
+  box.appendChild(el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Lo que este cálculo NO revisa']), el('ul', { class: 'ls-p', html: (cv ? MINF.noRevisa(X) : MINF.NO_REVISA).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') })]));
+  box.appendChild(el('div', { class: 'ls-box' }, [el('div', { class: 't' }, ['Descargo de responsabilidad · sujeto a revisión del profesional']), el('div', { class: 'ls-desc' }, [cv ? MINF.descargo(X) : MINF.DESCARGO])]));
   box.appendChild(navRes(ir, nuevo));
 }
 /* MACRO:UI:FIN */
