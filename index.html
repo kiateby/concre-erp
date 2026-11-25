@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261124203000';
+var APP_BUILD='20261124214500';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -36531,27 +36531,55 @@ function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos) {
   let lineas = [];
   for (let l = 0; l < nl; l++) lineas.push(panos.filter(function (p) { return (porFilas ? p.j : p.i) === l; }).sort(function (a, b) { return pf(a) - pf(b); }));
   if (acceso === 'y0' || acceso === 'x0') lineas.reverse();      // el fondo es el lado opuesto a la entrada
-  // Grupos de colado según la puerta: en un extremo todo es un solo grupo que arranca por el extremo de la puerta; con la puerta al
-  // centro se cuela primero el lado que NO contiene el carril de entrada (columna/fila de la puerta) y al final el lado del carril,
-  // para que el camión nunca quede encerrado por concreto fresco.
-  let grupos = [{ sel: function () { return true; }, desdeMax: modo === 'max' }];
+  // Paño de la puerta: el de la última franja (la pegada al lado de entrada) donde cae la puerta; es el mismo vano donde se dibuja la flecha de entrada.
+  // El paño de la puerta se cuela SIEMPRE en la última jornada: si no, el concreto fresco encierra al camión y deja paños sin alcanzar.
+  const ult = lineas[nl - 1], nU = ult.length;
+  const c0 = function (p) { return porFilas ? p.x0 : p.y0; }, c1 = function (p) { return porFilas ? p.x1 : p.y1; };
+  let ga = 0;
+  if (pos >= 1) ga = nU - 1;
+  else if (pos > 0) { ga = nU - 1; for (let k = 0; k < nU; k++) if (c1(ult[k]) > gPuerta + 1e-6) { ga = k; break; } }
+  const gb = ga;
+  const clave = function (p) { return p.i + ',' + p.j; };
+  const celdasPuerta = ult.slice(ga, gb + 1).map(clave);
+
+  // ── Candidatos de orden de colado ──
+  // A) Franjas del fondo hacia la entrada (zigzag). La última franja se pela desde sus dos extremos hacia el paño de la puerta, que queda de último;
+  //    las franjas anteriores se alternan hacia atrás para que cada una termine donde empieza la siguiente (así se forman parejas de paños vecinos).
+  const candidatos = [], vistos = {};
+  const agregar = function (seq, fr) { const k = seq.map(function (p) { return p.n; }).join(','); if (vistos[k]) return; vistos[k] = 1; candidatos.push({ seq: seq, fr: fr }); };
+  const izq = ult.slice(0, ga), der = ult.slice(gb + 1).reverse(), cen = ult.slice(ga, gb + 1);
+  // variantes: un lado entero y luego el otro; o dejando de último (justo antes del paño de la puerta) el paño que quedaría suelto de un lado
+  const cola = function (a) { return a.slice(a.length - 1); }, cabeza = function (a) { return a.slice(0, a.length - 1); };
+  const vars = [[izq.concat(der), cen], [der.concat(izq), cen.slice().reverse()]];
+  if (izq.length) vars.push([cabeza(izq).concat(der, cola(izq)), cen]);
+  if (der.length) vars.push([cabeza(der).concat(izq, cola(der)), cen.slice().reverse()]);
+  vars.forEach(function (v) {
+    const ordenUlt = v[0].concat(v[1]);
+    const terminaEnMin = ult.indexOf(ordenUlt[0]) * 2 <= nU - 1;      // la penúltima franja debe terminar en el extremo donde empieza la última
+    const seq = [], fr = [];
+    for (let k = 0; k < nl - 1; k++) {
+      const finMin = ((nl - 2 - k) % 2 === 0) ? terminaEnMin : !terminaEnMin;
+      (finMin ? lineas[k].slice().reverse() : lineas[k]).forEach(function (p) { seq.push(p); fr.push(k + 1); });
+    }
+    ordenUlt.forEach(function (p) { seq.push(p); fr.push(nl); });
+    agregar(seq, fr);
+  });
+  // B) Puerta al centro: primero todo el lado que NO contiene el carril de entrada (franja por franja) y al final el lado del carril.
   if (modo === 'centro') {
     let c = -1;
-    lineas[0].forEach(function (p) { if (c < 0 && (porFilas ? p.x1 : p.y1) > gPuerta + 1e-6) c = pf(p); });
-    if (c > 0) grupos = [{ sel: function (p) { return pf(p) < c; }, desdeMax: true }, { sel: function (p) { return pf(p) >= c; }, desdeMax: false }];
-    else modo = 'min';
+    lineas[0].forEach(function (p) { if (c < 0 && c1(p) > gPuerta + 1e-6) c = pf(p); });
+    if (c > 0) {
+      const seq = [], fr = []; let n = 0;
+      [{ sel: function (p) { return pf(p) < c; }, desdeMax: true }, { sel: function (p) { return pf(p) >= c; }, desdeMax: false }].forEach(function (gr) {
+        lineas.forEach(function (ln, k) {
+          const sub = ln.filter(gr.sel); if (!sub.length) return;
+          n++;
+          ((k % 2 === 1) !== gr.desdeMax ? sub.slice().reverse() : sub).forEach(function (p) { seq.push(p); fr.push(n); });
+        });
+      });
+      agregar(seq, fr);
+    }
   }
-  const seq = [];
-  let fr = 0;
-  grupos.forEach(function (gr) {
-    lineas.forEach(function (ln, k) {                            // zigzag: cada franja empieza donde terminó la anterior
-      const sub = ln.filter(gr.sel); if (!sub.length) return;
-      fr++;
-      ((k % 2 === 1) !== gr.desdeMax ? sub.slice().reverse() : sub).forEach(function (p) { p.franja = fr; seq.push(p); });
-    });
-  });
-  const m = seq.length, pre = [0];
-  seq.forEach(function (p) { pre.push(pre[pre.length - 1] + p.area); });
   // partición en jornadas (programación dinámica): cada jornada = paños consecutivos del recorrido que forman un RECTÁNGULO,
   // para que todos sus bordes coincidan con juntas blindadas (nunca una forma en L ni irregular)
   function costo(A, ultima) {
@@ -36561,22 +36589,51 @@ function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos) {
     else c += 0.02 * (A - (DIA_MIN + DIA_MAX) / 2) * (A - (DIA_MIN + DIA_MAX) / 2);
     return c;
   }
-  const best = new Array(m + 1), prev = new Array(m + 1);
-  best[0] = 0;
-  for (let j = 1; j <= m; j++) {
-    best[j] = Infinity;
-    let i0 = 1e9, i1 = -1, j0 = 1e9, j1 = -1;
-    for (let i = j - 1; i >= 0; i--) {
-      const q = seq[i];
-      i0 = Math.min(i0, q.i); i1 = Math.max(i1, q.i); j0 = Math.min(j0, q.j); j1 = Math.max(j1, q.j);
-      if ((i1 - i0 + 1) * (j1 - j0 + 1) !== j - i) continue;     // no es un rectángulo de paños
-      const A = pre[j] - pre[i];
-      if (A > aDia * 1.0001 && j - i > 1) continue;              // no cabe en un día (salvo un paño solo, que se avisa aparte)
-      const c = best[i] + costo(A, j === m) + (A > aDia * 1.0001 ? 1e7 : 0);
-      if (c < best[j]) { best[j] = c; prev[j] = i; }
+  function programar(seq) {
+    const m = seq.length, pre = [0];
+    seq.forEach(function (p) { pre.push(pre[pre.length - 1] + p.area); });
+    const best = new Array(m + 1), prev = new Array(m + 1);
+    best[0] = 0;
+    for (let j = 1; j <= m; j++) {
+      best[j] = Infinity;
+      let i0 = 1e9, i1 = -1, j0 = 1e9, j1 = -1;
+      for (let i = j - 1; i >= 0; i--) {
+        const q = seq[i];
+        i0 = Math.min(i0, q.i); i1 = Math.max(i1, q.i); j0 = Math.min(j0, q.j); j1 = Math.max(j1, q.j);
+        if ((i1 - i0 + 1) * (j1 - j0 + 1) !== j - i) continue;     // no es un rectángulo de paños
+        const A = pre[j] - pre[i];
+        if (A > aDia * 1.0001 && j - i > 1) continue;              // no cabe en un día (salvo un paño solo, que se avisa aparte)
+        // un día con un solo paño pequeño cuesta más cuanto más temprano cae en la secuencia (lo ideal es que sea el último)
+        const suelto = (j - i === 1 && A < DIA_MIN && j < m) ? 25000 * (1 - j / m) : 0;
+        const cc = best[i] + costo(A, j === m) + suelto + (A > aDia * 1.0001 ? 1e7 : 0);
+        if (cc < best[j]) { best[j] = cc; prev[j] = i; }
+      }
     }
+    const cortes = []; for (let j = m; j > 0; j = prev[j]) cortes.unshift([prev[j], j]);
+    return { cortes: cortes, costo: best[m] };
   }
-  const cortes = []; for (let j = m; j > 0; j = prev[j]) cortes.unshift([prev[j], j]);
+  // el camión llega por la base sin colar: en cada jornada lo que falta por colar (ella y las siguientes) debe formar un solo bloque
+  // conectado que incluya el paño de la puerta
+  function alcanza(seq, cortes) {
+    const dia = {}; cortes.forEach(function (c, d) { for (let k = c[0]; k < c[1]; k++) dia[clave(seq[k])] = d; });
+    for (let d = 0; d < cortes.length; d++) {
+      const U = seq.filter(function (p) { return dia[clave(p)] >= d; }), S = {};
+      U.forEach(function (p) { S[clave(p)] = p; });
+      if (!celdasPuerta.some(function (k) { return S[k]; })) return false;
+      const vis = {}, cola = [U[0]]; vis[clave(U[0])] = 1; let n = 1;
+      while (cola.length) { const a = cola.pop(); [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (v) { const k = (a.i + v[0]) + ',' + (a.j + v[1]); if (S[k] && !vis[k]) { vis[k] = 1; n++; cola.push(S[k]); } }); }
+      if (n !== U.length) return false;
+    }
+    return true;
+  }
+  let elegido = null;
+  candidatos.forEach(function (c) {
+    const r = programar(c.seq), puntaje = r.costo + (alcanza(c.seq, r.cortes) ? 0 : 1e9);
+    if (!elegido || puntaje < elegido.puntaje - 1e-9) elegido = { c: c, r: r, puntaje: puntaje };
+  });
+  const seq = elegido.c.seq, cortes = elegido.r.cortes;
+  seq.forEach(function (p, k) { p.franja = elegido.c.fr[k]; });
+  const fr = elegido.c.fr.filter(function (v, k, a) { return a.indexOf(v) === k; }).length;
   const dias = cortes.map(function (c, d) {
     const ps = seq.slice(c[0], c[1]);
     const A = ps.reduce(function (a, p) { return a + p.area; }, 0), vol = A * h_cm / 100;
@@ -36605,7 +36662,8 @@ function secuencia(panos, nx, ny, acceso, aDia, h_cm, dosis, pos) {
   });
   dias.forEach(function (d) { d.juntas.sort(function (a, b) { return a - b; }); d.ml = r2(d.ml); });
   seq.forEach(function (p, k) { p.orden = k + 1; });
-  return { dias: dias, acceso: acceso, accPos: pos, accModo: modo, franjas: fr, costo: best[m], seq: seq.map(function (p) { return p.n; }) };
+  return { dias: dias, acceso: acceso, accPos: pos, accModo: modo, franjas: fr, costo: elegido.puntaje, seq: seq.map(function (p) { return p.n; }), puerta: ult.slice(ga, gb + 1).map(function (p) { return p.n; }),
+    sueltos: dias.filter(function (d) { return d.nPanos === 1 && d.area < DIA_MIN - 1e-6; }).map(function (d) { return d.dia; }) };
 }
 
 // ── columnas y rombos ────────────────────────────────────────────────────────
@@ -36741,6 +36799,13 @@ function calcularMacro(inp) {
   const diasA = sec.dias.map(function (d) { return d.area; });
   const minDia = Math.min.apply(null, diasA), maxDia = Math.max.apply(null, diasA);
   const diaTxt = Math.round(minDia) === Math.round(maxDia) ? fm(minDia, 0) + ' m²' : fm(minDia, 0) + ' a ' + fm(maxDia, 0) + ' m²';
+  if (sec.sueltos.length) {
+    const pn = sec.dias.filter(function (d) { return sec.sueltos.indexOf(d.dia) >= 0; }).map(function (d) { return 'día ' + d.dia + ' (P-' + d.panos[0] + ', ' + fm(d.area, 0) + ' m²)'; });
+    const ultimoDia = sec.sueltos.indexOf(sec.dias.length) >= 0;
+    avisos.push('Jornadas de colado: ' + (sec.sueltos.length === 1 ? 'un solo día cuela un único paño' : 'hay días que cuelan un único paño') + ' — ' + pn.join(', ') + '. ' +
+      (panos.length % 2 ? 'Son ' + panos.length + ' paños (cantidad impar), así que no se pueden formar parejas en todos los días. ' : 'Con esta disposición de paños no se pueden formar parejas en todos los días. ') +
+      (ultimoDia ? 'Es el paño de la puerta: se cuela de último para que el camión entre siempre por base sin colar.' : 'El paño de la puerta debe colarse en la última jornada para que el camión nunca quede encerrado por concreto fresco; por eso el paño suelto queda justo antes.'));
+  }
   paso('Secuencia y jornadas de colado', 'Descarga directa del camión mezclador: franjas del fondo hacia la entrada; cada colado diario es un rectángulo de paños cerrado por juntas blindadas (máx. ' + fm(MT.a_dia, 0) + ' m² por día)',
     sec.franjas + ' franjas · ' + panos.length + ' paños · ' + fm(area0, 0) + ' m² en total',
     sec.dias.length + ' jornada(s) · ' + diaTxt + ' por día · ' + sec.dias.map(function (d) { return 'día ' + d.dia + ': ' + fm(d.area, 0) + ' m²'; }).join(' · '), 'Criterio de CONCRE; ACI 302.1R (colada de gran área); TR34');
@@ -36782,7 +36847,7 @@ function calcularMacro(inp) {
     f_req: f_req, f_disp: f_disp, okArrastre: okArrastre, mu: mu,
     px: dist.px, py: dist.py, xs: g.xs, ys: g.ys, panos: panos, nJx: nJx, nJy: nJy, cols: cols, nInt: nInt, nBor: nBor, nEsq: nEsq,
     okEjes: okEjes, okLong: okEjes && maxL <= Lmax + 1e-6 && maxA <= MT.a_dia * 1.0001, sugerencia: sugerencia, juntasManual: manualJ,
-    maxAsp: maxAsp, maxA: maxA, dias: sec.dias, diaObj: [DIA_MIN, DIA_MAX], acceso: sec.acceso, accPos: sec.accPos, accModo: sec.accModo, franjas: sec.franjas, diaMin: minDia, diaMax: maxDia, diaTxt: diaTxt, cant: cant, grupos: grupos, avisos: avisos, pasos: pasos, sugFibra: sugFibra,
+    maxAsp: maxAsp, maxA: maxA, dias: sec.dias, diaObj: [DIA_MIN, DIA_MAX], acceso: sec.acceso, accPos: sec.accPos, accModo: sec.accModo, franjas: sec.franjas, puerta: sec.puerta, sueltos: sec.sueltos, diaMin: minDia, diaMax: maxDia, diaTxt: diaTxt, cant: cant, grupos: grupos, avisos: avisos, pasos: pasos, sugFibra: sugFibra,
     comparacion: ['fibra', 'sra', 'comp'].map(function (id) { return compararSistema(inp, id); })
   };
 }
@@ -36942,8 +37007,8 @@ function posTexto(M) {
   var rot = rotada(M.in.Lx, M.in.Ly), ns = M.acceso || 'y1', modo = M.accModo || 'min';
   var horizVis = rot ? (ns === 'x0' || ns === 'x1') : (ns === 'y0' || ns === 'y1');
   var nom = horizVis ? { min: 'izquierdo', centro: 'central', max: 'derecho' } : (rot ? { min: 'inferior', centro: 'central', max: 'superior' } : { min: 'superior', centro: 'central', max: 'inferior' });
-  if (modo === 'centro') return ' La puerta de entrada está en el <b>centro</b> del lado de entrada: se cuela primero la parte que queda a un lado del carril de entrada y al final la del carril, para que el camión no quede encerrado por concreto fresco.';
-  return ' La puerta de entrada está en el <b>extremo ' + nom[modo] + '</b> del lado de entrada: el colado arranca por ese costado del fondo y avanza en zigzag hacia la puerta.';
+  if (modo === 'centro') return ' La puerta de entrada está en el <b>centro</b> del lado de entrada: el colado avanza del fondo hacia la puerta y el paño de la puerta se cuela en la última jornada, para que el camión llegue siempre por base sin colar.';
+  return ' La puerta de entrada está en el <b>extremo ' + nom[modo] + '</b> del lado de entrada: el colado avanza del fondo hacia la puerta, en zigzag, y el paño de la puerta se cuela en la última jornada.';
 }
 function rotada(Lx, Ly) { return (Ly / Lx) > 1.25 * (196 / 306); }   // la planta se gira 90° si la nave es muy alta
 var W = 432, H = 279;   // lámina en mm (Tabloide 17 × 11 pulg)
