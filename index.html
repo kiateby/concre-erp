@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261125040500';
+var APP_BUILD='20261125060000';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -37800,7 +37800,7 @@ function recomendaciones(inp, S, MT, c) {
   // Juntas de contracción aserradas
   const g4 = { id: 'cortes', titulo: 'Juntas de contracción aserradas', filas: [] };
   g4.filas.push(fila('Separación máxima entre cortes', fm(c.sp.Lc, 2) + ' m = ' + fm(r1(c.sp.k), 1) + ' × ' + fm(h, 1) + ' cm' + (c.sp.tope ? ' (limitado al tope de 5,5 m)' : ''), 'ACI 302.1R (24·h a 36·h, tope 5,5 m); referencia PCA 4,5 m en losas de 15 cm', 'D',
-    'Depende del espesor y de la dosis de fibra: con ≤ 3 kg/m³ se usa 24·h y con ≥ 5 kg/m³, 36·h (interpolación derivada). No hay una norma que ligue la dosis a la separación.'));
+    'Depende del espesor y de la dosis de fibra: con ≤ 3 kg/m³ se usa 24·h y con ≥ 5 kg/m³, 36·h (interpolación derivada). No hay una norma que ligue la dosis a la separación. Si sube la resistencia del concreto, el programa recomienda menos espesor y menos fibra, y por eso la separación baja; para conservarla, fije el espesor y la fibra a mano.'));
   g4.filas.push(fila('Dónde van los cortes', 'Sobre todos los ejes principales (líneas de columnas) y, dentro de cada vano entre ejes, a partes iguales: a la mitad si el vano mide hasta el doble de la separación máxima, en tercios o cuartos si es mayor', 'ACI 302.1R (juntas sobre líneas de columnas)', 'V', 'Así los cortes y las juntas de construcción calzan con los ejes y la losa queda ordenada.'));
   g4.filas.push(fila('Cortes de esta nave', c.nLosas + ' paños aserrados · ' + c.cortes_m.toFixed(0).replace('.', ',') + ' m de corte · el paño mayor mide ' + fm(r2(c.maxLosaL), 2) + ' m de lado', 'ACI 302.1R', 'D'));
   g4.filas.push(fila('Forma del paño', 'Relación largo/ancho ≤ 1,5 (mejor 1:1), sin esquinas entrantes ni paños en L o T. En esta nave la relación máxima es ' + fm(r2(c.aspLosa), 2), 'ACI 302.1R', 'V'));
@@ -39388,7 +39388,25 @@ var MACRO_CSS = [
   '.ls .mc-sis .it .d{font-size:calc(12px*var(--fs,1));color:#666;line-height:1.35}',
   '.ls .mc-plano{overflow:auto;border:1px solid #ddd;border-radius:8px;background:#fff;margin:8px 0}',
   '.ls .mc-plano svg{display:block;min-width:900px;width:100%;height:auto}',
-  '.ls .mc-sub{font-weight:700;margin:12px 0 4px}'
+  '.ls .mc-sub{font-weight:700;margin:12px 0 4px}',
+  '.ls .rj{border:1px solid #ddd;border-radius:10px;background:#fff;padding:10px 12px;margin:10px 0}',
+  '.ls .rj .rj-t{font-weight:800;margin-bottom:6px}',
+  '.ls .rj .rj-f{display:grid;grid-template-columns:18px 1fr 150px;gap:4px 10px;align-items:center;padding:6px 0;border-top:1px solid #eee}',
+  '.ls .rj .rj-f:first-of-type{border-top:0}',
+  '.ls .rj .rj-d{width:14px;height:14px;border-radius:50%;background:#2e7d32}',
+  '.ls .rj .rj-f.mal .rj-d{background:#c62828}',
+  '.ls .rj .rj-f.adv .rj-d{background:#f9a825}',
+  '.ls .rj .rj-f.inf .rj-d{background:#0b2d5b}',
+  '.ls .rj .rj-n{font-weight:700}',
+  '.ls .rj .rj-s{grid-column:2/4;font-size:calc(12px*var(--fs,1));color:#666;line-height:1.4}',
+  '.ls .rj .rj-b{height:9px;border-radius:5px;background:#eee;overflow:hidden}',
+  '.ls .rj .rj-b i{display:block;height:100%;background:#2e7d32}',
+  '.ls .rj .rj-f.mal .rj-b i{background:#c62828}',
+  '.ls .rj .rj-f.adv .rj-b i{background:#f9a825}',
+  '.ls .rj .rj-v{font-size:calc(12px*var(--fs,1));font-weight:700;text-align:right;margin-top:2px}',
+  '.ls .rj .rj-q{margin-top:8px;padding:8px 10px;border-radius:8px;background:#fff8e1;border:1px solid #ffe082;font-size:calc(12.5px*var(--fs,1));line-height:1.5}',
+  '.ls .rj .rj-q.ok{background:#e8f5e9;border-color:#a5d6a7}',
+  '.ls .rj .rj-q.mal{background:#ffebee;border-color:#ef9a9a}'
 ].join('');
 
 function r2m(x) { return Math.round(x * 100) / 100; }
@@ -39568,6 +39586,22 @@ function pintarMacroCaja(S, box) {
   ge.appendChild(campo(cv ? 'Espesor de la losa (cm)' : 'Espesor de la macro-losa (cm)', iH, cv ? 'Debe cumplir la verificación por carga' : 'Mínimo de macro-losa: 15 cm (17 cm si el paño pasa de 20 m)'));
   ge.appendChild(campo('Fibra Plus 54 mm (kg/m³)', iD, 'Entre 2,3 y 6 kg/m³ (rango de la tabla de la fibra)'));
   bx.appendChild(ge); estadoManual();
+  // relojes en vivo: verde si cumple, rojo si no, y qué cambiar; se actualizan al escribir cualquier valor
+  var rjBox = el('div', { class: 'rj-cont' }, []);
+  bx.appendChild(rjBox);
+  var rjT = null;
+  function refrescarRelojes() {
+    if (rjT) clearTimeout(rjT);
+    rjT = setTimeout(function () {
+      if (ckA.checked) { rjBox.innerHTML = ''; rjBox.appendChild(el('div', { class: 'mc-hint' }, ['El programa elige el espesor y la fibra. Desmarque la casilla para escribir otros valores y ver al instante si cumplen.'])); return; }
+      pintarRelojes(S, rjBox);
+    }, 120);
+  }
+  iH.addEventListener('input', function () { S.mH = iH.value; refrescarRelojes(); });
+  iD.addEventListener('input', function () { var d = parseFloat(iD.value); S.mDosis = d > 0 ? d : iD.value; refrescarRelojes(); });
+  iH.addEventListener('change', refrescarRelojes); iD.addEventListener('change', refrescarRelojes);
+  ckA.addEventListener('change', refrescarRelojes);
+  refrescarRelojes();
 
   // cómo mostrar la resistencia del concreto
   bx.appendChild(el('div', { class: 'mc-sub' }, ['Resistencia del concreto en el informe']));
@@ -39637,9 +39671,18 @@ function dibujarLienzo(S, holder, getModo, alCambiar, alEntrada) {
     o.push('<polygon points="' + pts + '" fill="' + NAV + '" stroke="#fff" stroke-width="1" pointer-events="none"/>');
     var HALO = ' font-size="12" font-weight="700" fill="' + NAV + '" font-family="Arial" stroke="#f6f6f6" stroke-width="4" paint-order="stroke" pointer-events="none"';
     var izqE = X(gp) < m + Wn / 2, tE = ns === 'y1' ? [X(gp) + (izqE ? -14 : 14), m + Hn - 16, izqE ? 'start' : 'end'] : ns === 'y0' ? [X(gp) + (izqE ? -14 : 14), m + 24, izqE ? 'start' : 'end'] : ns === 'x0' ? [m + 10, Y(gp) + 4, 'start'] : [m + Wn - 10, Y(gp) + 4, 'end'];
-    var tF = ns === 'y1' ? [m + Wn / 2, m + 24, 'middle'] : ns === 'y0' ? [m + Wn / 2, m + Hn - 16, 'middle'] : ns === 'x0' ? [m + Wn - 10, m + Hn / 2, 'end'] : [m + 10, m + Hn / 2, 'start'];
+    // «FONDO»: siempre dentro de un vano (entre dos ejes, el más ancho de la pared del fondo), nunca encima de un eje ni de una columna
+    function vanoMax(lst, P) { var b = null; for (var q = 1; q < lst.length; q++) { var a0 = P(lst[q - 1]), a1 = P(lst[q]), w = Math.abs(a1 - a0); if (!b || w > b.w) b = { c: (a0 + a1) / 2, w: w }; } return b || { c: P((lst[0] + lst[lst.length - 1]) / 2), w: 0 }; }
+    var tF, fondoTxt = 'FONDO (aquí empieza el colado)', rotF = false;
+    if (ns === 'y1' || ns === 'y0') {
+      var vx = vanoMax(ex, X); if (vx.w < 215) fondoTxt = vx.w < 58 ? '' : 'FONDO';
+      tF = [vx.c, ns === 'y1' ? m + 24 : m + Hn - 16, 'middle'];
+    } else {
+      var vy = vanoMax(ey, Y); rotF = true; if (vy.w < 215) fondoTxt = vy.w < 58 ? '' : 'FONDO';
+      tF = [ns === 'x0' ? m + Wn - 8 : m + 20, vy.c, 'middle'];
+    }
     o.push('<text x="' + tE[0] + '" y="' + tE[1] + '" text-anchor="' + tE[2] + '"' + HALO + '>ENTRADA DE CAMIONES</text>');
-    o.push('<text x="' + tF[0] + '" y="' + tF[1] + '" text-anchor="' + tF[2] + '"' + HALO + '>FONDO (aquí empieza el colado)</text>');
+    if (fondoTxt) o.push('<text x="' + tF[0] + '" y="' + tF[1] + '" text-anchor="' + tF[2] + '"' + (rotF ? ' transform="rotate(-90 ' + tF[0] + ' ' + tF[1] + ')"' : '') + HALO + '>' + fondoTxt + '</text>');
     o.push('<text x="' + (m + Wn / 2) + '" y="' + (H - 8) + '" font-size="11" fill="#888" text-anchor="middle" font-family="Arial">Nave ' + fmt(Lx, 1) + ' × ' + fmt(Ly, 1) + ' m</text>');
     svg.innerHTML = o.join('');
   }
@@ -39680,13 +39723,112 @@ function dibujarLienzo(S, holder, getModo, alCambiar, alEntrada) {
   pintar();
 }
 
+// ── diagnóstico de cumplimiento: alimenta los relojes en vivo y los mensajes de rechazo ──────────
+var UBIC_TXT = { interior: 'interior', borde: 'borde', esquina: 'esquina', dual: 'ruedas gemelas' };
+function nombreCh(c) { return c.carga + (UBIC_TXT[c.ubic] ? ' · ' + UBIC_TXT[c.ubic] : ''); }
+function grupoCh(chs) {
+  var peor = null; chs.forEach(function (c) { if (!peor || c.uso > peor.uso) peor = c; });
+  return { n: chs.length, uso: peor ? peor.uso : 0, peor: peor, ok: chs.every(function (c) { return c.ok; }), malos: chs.filter(function (c) { return !c.ok; }) };
+}
+function pct(x) { return fmt(x * 100, Math.abs(x - 1) < 0.015 ? 1 : 0) + ' %'; }
+// bloqB: ¿Westergaard (método B) obliga? Solo cuando el criterio es «el más conservador» y el programa logró cumplirlo.
+function bloqueaB(S, R) { return S.criterio !== 'tr34' && !(R && R.d && R.d.revision); }
+function diagnosticar(R, e2, ev2, res, h, dosis, bloqB, cv, manual) {
+  var chs = ev2.chequeos, filas = [];
+  var gA = grupoCh(chs.filter(function (c) { return c.motor === 'A' && c.ubic !== 'esquina' && c.tipo !== 'punzonamiento'; }));
+  var gP = grupoCh(chs.filter(function (c) { return c.tipo === 'punzonamiento'; }));
+  var gE = grupoCh(chs.filter(function (c) { return c.motor === 'A' && c.ubic === 'esquina'; }));
+  var gB = grupoCh(chs.filter(function (c) { return c.motor === 'B'; }));
+  function carga(k, t, g, bloquea, dep) { filas.push({ k: k, t: t, uso: g.uso, ok: g.ok, bloquea: bloquea, val: pct(g.uso), peor: g.peor ? nombreCh(g.peor) : '', dep: dep, malos: g.malos.map(nombreCh) }); }
+  if (gA.n) carga('A', 'Cargas de apoyo y uniformes · TR34 (con fibra)', gA, true, 'Mejora con más espesor, más resistencia del concreto o más fibra.');
+  if (gE.n) carga('E', 'Carga en la esquina del paño · TR34', gE, true, 'La fibra no aporta en la esquina: mejora solo con más espesor o más resistencia del concreto.');
+  if (gP.n) carga('P', 'Punzonamiento bajo la placa del apoyo', gP, true, 'La fibra no cuenta aquí: mejora con más espesor o más resistencia del concreto.');
+  if (gB.n) carga('B', 'Westergaard · sin crédito de fibra', gB, bloqB, 'La fibra no cuenta en este método: mejora solo con más espesor o más resistencia del concreto.' + (bloqB ? '' : ' Con el criterio elegido (TR34 manda) solo advierte; no impide aceptar el espesor.'));
+  if (!cv && res) {
+    filas.push({ k: 'H', t: 'Espesor mínimo de macro-losa', uso: res.hMin > 0 ? res.hMin / h : 0, ok: res.hOk, bloquea: true, val: fmt(h, 1) + ' de ' + fmt(res.hMin, 1) + ' cm', peor: '', dep: 'Mejora con más espesor (mínimo de macro-losa para este sistema y este paño).', malos: res.hOk ? [] : ['espesor'] });
+    filas.push({ k: 'R', t: 'Arrastre sobre la membrana', uso: res.f_disp > 0 ? res.f_req / res.f_disp : 0, ok: res.okArrastre, bloquea: true, val: res.f_disp > 0 ? pct(res.f_req / res.f_disp) : '—', peor: '', dep: 'Mejora con más fibra o con paños más cortos.', malos: res.okArrastre ? [] : ['arrastre'] });
+  }
+  if (cv) { var spc = CV.separacionMax(h, dosis); filas.push({ k: 'S', t: 'Separación máxima entre cortes (informativo)', uso: 0, ok: true, bloquea: false, info: true, val: fmt(spc.Lc, 2) + ' m', peor: '', dep: 'Sale de ' + fmt(spc.k, 1) + ' × el espesor (' + fmt(h, 1) + ' cm), tope 5,5 m. Sube con más espesor y con más fibra; no depende directamente de la resistencia del concreto.', malos: [] }); }
+  var malas = filas.filter(function (f) { return !f.ok && f.bloquea; }), avis = filas.filter(function (f) { return !f.ok && !f.bloquea; });
+  var nec = { h: null, dosis: null, hTodo: null, buscado: false };
+  if (malas.some(function (f) { return f.k === 'A' || f.k === 'E' || f.k === 'B' || f.k === 'P'; }) || avis.length) {
+    nec.buscado = true;
+    var base = Object.assign({}, e2, { _sinPasos: true });
+    var okCon = function (hh, dd, incluyeB) { var ev = M.evaluar(Object.assign({}, base, { h_cm: hh, dosis: dd })); return ev.chequeos.every(function (c) { return c.ok || (c.motor === 'B' && !incluyeB); }); };
+    var h0 = Math.ceil(h * 2) / 2;
+    for (var hh = h0; hh <= M.H_MAX + 1e-9; hh += 0.5) { if (okCon(hh, dosis, bloqB)) { nec.h = hh; break; } }
+    for (var hh2 = h0; hh2 <= M.H_MAX + 1e-9; hh2 += 0.5) { if (okCon(hh2, dosis, true)) { nec.hTodo = hh2; break; } }
+    for (var dd = Math.ceil(MM.DOSIS_MIN * 2) / 2; dd <= MM.DOSIS_MAX + 1e-9; dd += 0.5) { if (okCon(h, dd, bloqB)) { nec.dosis = dd; break; } }
+  }
+  return { h: h, dosis: dosis, manual: !!manual, bloqB: bloqB, filas: filas, malas: malas, avisos: avis, nec: nec, cumple: malas.length === 0 };
+}
+// «Qué cambiar», en frases concretas
+function quePasar(dg) {
+  var o = [], n = dg.nec, hayCarga = dg.malas.some(function (f) { return f.k === 'A' || f.k === 'E' || f.k === 'B' || f.k === 'P'; });
+  if (hayCarga) {
+    var p = [];
+    if (n.h != null) p.push('subir el espesor a ' + fmt(n.h, 1) + ' cm o más (dejando la fibra en ' + fmt(dg.dosis, 1) + ' kg/m³)');
+    if (n.dosis != null) p.push('subir la fibra a ' + fmt(n.dosis, 1) + ' kg/m³ (dejando el espesor en ' + fmt(dg.h, 1) + ' cm)');
+    if (p.length) o.push('Para cumplir las cargas: ' + p.join(', o ') + '.');
+    else o.push('Las cargas no se logran ni con ' + fmt(M.H_MAX, 0) + ' cm: revise la carga por apoyo, el tamaño de la placa o el suelo.');
+    if (n.dosis == null && n.h != null && dg.malas.some(function (f) { return f.k === 'E' || f.k === 'B' || f.k === 'P'; }))
+      o.push('Subir la fibra no corrige este incumplimiento: la esquina, el punzonamiento y Westergaard no cuentan la fibra. Solo ayudan el espesor o un concreto más resistente.');
+  }
+  dg.malas.forEach(function (f) {
+    if (f.k === 'H') o.push('Espesor: súbalo al mínimo de macro-losa (' + f.val.replace(/^.* de /, '') + ').');
+    if (f.k === 'R') o.push('Arrastre: suba la fibra o acorte la distancia entre juntas.');
+  });
+  return o;
+}
+// el rechazo de valores manuales, con el motivo, lo que depende de qué y lo que hay que cambiar
+function mensajeRechazo(dg, rec) {
+  var cortos = { A: 'cargas de apoyo (TR34)', E: 'carga en esquina', P: 'punzonamiento', B: 'Westergaard', H: 'espesor mínimo de macro-losa', R: 'arrastre sobre la membrana' };
+  var cab = 'Con ' + fmt(dg.h, 1) + ' cm y ' + fmt(dg.dosis, 1) + ' kg/m³ no se puede aceptar: ' + dg.malas.map(function (f) { return cortos[f.k]; }).join('; ') + '. Valores recomendados por el programa: ' + fmt(rec.h, 1) + ' cm y ' + fmt(rec.dosis, 1) + ' kg/m³.';
+  var det = dg.malas.map(function (f) {
+    return f.t + ': ' + (f.k === 'H' ? f.val : 'uso ' + f.val + (f.peor ? ' (el más exigente: ' + f.peor + ')' : '')) + '. ' + f.dep;
+  });
+  return { error: cab, detalle: det.concat(quePasar(dg)) };
+}
+// los relojes: un renglón por requisito, en verde si cumple y en rojo si no
+function relojesDOM(dg) {
+  var c = el('div', { class: 'rj' }, [el('div', { class: 'rj-t' }, ['Cumplimiento con ' + fmt(dg.h, 1) + ' cm y ' + fmt(dg.dosis, 1) + ' kg/m³ de fibra'])]);
+  dg.filas.forEach(function (f) {
+    if (f.info) { c.appendChild(el('div', { class: 'rj-f inf' }, [el('div', { class: 'rj-d' }, []), el('div', { class: 'rj-n' }, [f.t + ': ' + f.val]), el('div', {}, []), el('div', { class: 'rj-s' }, [f.dep])])); return; }
+    var clase = f.ok ? '' : (f.bloquea ? ' mal' : ' adv'), ancho = Math.max(2, Math.min(100, f.uso * 100));
+    c.appendChild(el('div', { class: 'rj-f' + clase }, [
+      el('div', { class: 'rj-d' }, []),
+      el('div', { class: 'rj-n' }, [f.t + (f.ok ? ' · cumple' : (f.bloquea ? ' · NO cumple' : ' · advertencia'))]),
+      el('div', {}, [el('div', { class: 'rj-b' }, [el('i', { style: 'width:' + ancho + '%' }, [])]), el('div', { class: 'rj-v' }, [f.val + (f.peor && !f.ok ? ' · ' + f.peor : '')])]),
+      el('div', { class: 'rj-s' }, [f.ok ? f.dep : f.dep])
+    ]));
+  });
+  var q = quePasar(dg);
+  if (!dg.cumple) c.appendChild(el('div', { class: 'rj-q mal', html: '<b>Qué cambiar:</b><br>' + q.map(esc).join('<br>') }));
+  else if (dg.avisos.length) {
+    var n = dg.nec, t = 'Se acepta, pero Westergaard (sin crédito de fibra) advierte en: ' + dg.avisos[0].malos.join(', ') + '.' + (n.hTodo != null ? ' Para cumplirlo también: espesor de ' + fmt(n.hTodo, 1) + ' cm o más.' : '');
+    c.appendChild(el('div', { class: 'rj-q', html: esc(t) }));
+  } else c.appendChild(el('div', { class: 'rj-q ok' }, ['Todo cumple con estos valores.']));
+  return c;
+}
+function pintarRelojes(S, cont) {
+  cont.innerHTML = '';
+  var r; try { r = calcular(S); } catch (x) { r = null; }
+  var dg = r && r.macro && r.macro.diag;
+  if (!dg) {
+    var m = r && r.macro && r.macro.error;
+    cont.appendChild(el('div', { class: 'mc-hint' }, [m ? m : (r && r.d && r.d.no_cumple ? 'Con estas cargas no hay un espesor de hasta ' + fmt(M.H_MAX, 0) + ' cm que cumpla.' : 'Escriba el espesor y la fibra para ver el cumplimiento.')]));
+    return;
+  }
+  cont.appendChild(relojesDOM(dg));
+}
+
 // ── cálculo (se llama desde calcular(S) cuando S.macro) ──────────────────────
 // El programa recomienda el espesor y la dosis; si el usuario los cambia (S.mAuto === false) se aceptan
 // solo si cumplen: verificación por carga, espesor mínimo de macro-losa y arrastre sobre la membrana.
 function calcularMacroUI(S, R) {
   var Lx = num(S.mLx, 0), Ly = num(S.mLy, 0);
-  if (!(Lx > 0 && Ly > 0)) return { error: 'Escriba el largo y el ancho de la nave en el paso «Terreno y concreto».' };
   var cv = esConv(S);
+  var sinNave = !(Lx > 0 && Ly > 0);
   var d = R.d, sis = S.mSistema || 'sra';
   var dmRec = cv ? CV.dosisConv(d.dosis_rec) : MM.dosisMacro(sis, d.dosis_rec);
   var hMinRec = cv ? 0 : (MM.techoSistema(sis, dmRec.dosis) > 20 ? 17 : 15);
@@ -39700,6 +39842,8 @@ function calcularMacroUI(S, R) {
   }
   var e2 = Object.assign({}, R.e, { h_cm: h, dosis: dosis });
   var ev2 = M.evaluar(e2);
+  var bloqB = bloqueaB(S, R);
+  if (sinNave) { var dg0 = diagnosticar(R, e2, ev2, null, h, dosis, bloqB, true, manual); return { error: 'Escriba el largo y el ancho de la nave en el paso «Terreno y concreto».', diag: dg0 }; }
   var Pd = 0;
   R.cargas.forEach(function (c) {
     var kg = c.tipo === 'rack' ? c.P_kg * c.gF : c.tipo === 'rueda' ? c.W_kg * c.gF * (c.impacto || 1) : 0;
@@ -39716,18 +39860,13 @@ function calcularMacroUI(S, R) {
   var res = cv ? CV.calcularConv(inp) : MM.calcularMacro(inp);
   if (res.error) return { error: res.error };
   res.rec = rec;
-  var okCh = ev2.chequeos.every(function (c) { return c.ok; });
-  if (manual) {
-    var fallas = [];
-    var malas = ev2.chequeos.filter(function (c) { return !c.ok; }).map(function (c) { return c.carga; });
-    if (malas.length) fallas.push('no cumple la verificación por carga (' + malas.join(', ') + ')');
-    if (!cv && !res.hOk) fallas.push('el espesor es menor que el mínimo de macro-losa para este sistema (' + fmt(res.hMin, 1) + ' cm)');
-    if (!cv && !res.okArrastre) fallas.push('la fibra no resiste el arrastre sobre la membrana en paños de ' + fmt(res.Lmax, 1) + ' m');
-    if (fallas.length) return { error: 'Con ' + fmt(h, 1) + ' cm y ' + fmt(dosis, 1) + ' kg/m³ no se puede aceptar: ' + fallas.join('; ') + '. Valores recomendados por el programa: ' + fmt(rec.h, 1) + ' cm y ' + fmt(rec.dosis, 1) + ' kg/m³.', manualError: true, rec: rec };
-  }
+  var okCh = ev2.chequeos.every(function (c) { return c.ok || (c.motor === 'B' && !bloqB); });
+  var dg = diagnosticar(R, e2, ev2, res, h, dosis, bloqB, cv, manual);
+  res.diag = dg;
+  if (manual && !dg.cumple) { var msg = mensajeRechazo(dg, rec); return { error: msg.error, detalle: msg.detalle, diag: dg, manualError: true, rec: rec }; }
   if (S.clima && S.clima !== 'interior') res.avisos.push(cv ? 'Con sol, lluvia, zona costera o frío el movimiento térmico y de humedad cambia la apertura de los cortes y la fisuración: lo revisa el ingeniero responsable.' : 'La macro-losa se piensa para interior cubierto. Con sol, lluvia, zona costera o frío el movimiento térmico y de humedad cambia la apertura de las juntas: requiere un estudio específico del ingeniero.');
   if (!okCh) res.avisos.push('Alguna carga no cumple con el espesor y la dosis finales de ' + (cv ? 'la losa' : 'la macro-losa') + ' (ver «Verificación por carga»).');
-  return { M: res, ev: ev2, inp: inp, cumple: okCh && res.okArrastre && res.okLong && res.hOk };
+  return { M: res, ev: ev2, inp: inp, diag: dg, cumple: okCh && res.okArrastre && res.okLong && res.hOk };
 }
 
 var ENTRADAS = [{ v: 'abajo', l: 'Por abajo del dibujo' }, { v: 'arriba', l: 'Por arriba del dibujo' }, { v: 'izq', l: 'Por la izquierda del dibujo' }, { v: 'der', l: 'Por la derecha del dibujo' }];
@@ -39802,6 +39941,8 @@ function pintarMacroResultados(S, box, ir, nuevo) {
   box.appendChild(el('p', { class: 'ls-p' }, [cv ? 'Losa convencional · ' + u.nombre + ' · con cortes aserrados de contracción' : 'Macro-losa · ' + u.nombre + ' · sin cortes aserrados de contracción']));
   if (MR.error) {
     box.appendChild(el('div', { class: 'ls-warn ls-bad' }, [MR.error]));
+    if (MR.detalle && MR.detalle.length) box.appendChild(el('div', { class: 'ls-warn', html: '<b>Qué pasa y qué cambiar</b><br>' + MR.detalle.map(esc).join('<br>') }));
+    if (MR.diag) box.appendChild(relojesDOM(MR.diag));
     if (MR.manualError) {
       var bt = el('div', { class: 'ls-nav' }, []);
       if (MR.rec) bt.appendChild(el('button', { class: 'ls-btn', onclick: function () { S.mAuto = true; S.res = calcular(S); ir(3); } }, ['Usar los valores recomendados (' + fmt(MR.rec.h, 1) + ' cm · ' + fmt(MR.rec.dosis, 1) + ' kg/m³)']));
