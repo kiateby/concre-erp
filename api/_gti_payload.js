@@ -433,6 +433,15 @@ function instExo(v) {
   return /^\d$/.test(t) ? '0' + t : t;
 }
 
+// La fecha de una exoneración es un día del calendario, sin hora (formato de GTI).
+function fechaExo(v) {
+  const s = txt(v);
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
+  if (m) return m[1];
+  const f = fechaGTI(v);
+  return f ? f.slice(0, 10) : f;
+}
+
 function linea(l, i, doc) {
   const cabys = txt(l.cabys).replace(/\D/g, '');
   if (cabys.length !== 13) {
@@ -493,7 +502,9 @@ function linea(l, i, doc) {
   // «exento» justamente como la línea que no tiene código de impuesto.
   const pct = Number(l.iva_pct != null ? l.iva_pct : (doc.iva_pct != null ? doc.iva_pct : 13));
   // El porcentaje exonerado nunca puede pasar de la tarifa de la línea.
-  const pctExo = Math.min(Number(l.exo_pct || 0), pct > 0 ? pct : 0);
+  // Hacienda declara el porcentaje exonerado como entero: se redondea ANTES de
+  // calcular el monto, para que MontoExonerado y PorcentajeExonerado cuadren.
+  const pctExo = Math.round(Math.min(Number(l.exo_pct || 0), pct > 0 ? pct : 0));
   let montoImp = 0, montoExo = 0;
 
   if (pct > 0) {
@@ -513,10 +524,14 @@ function linea(l, i, doc) {
         TipoDocExo: Number(ent(l.exo_tipo_doc) || 1),          // Tabla 9
         NumeroExo: txt(l.exo_numero, 40),
         NombreInstitucion: txt(instExo(l.exo_institucion), 160), // Tabla 19 (dos dígitos: «01»)
-        FechaExoneracion: fechaGTI(l.exo_fecha),
+        // GTI la recibe como fecha sola («2021-03-05»), igual que en sus ejemplos.
+        FechaExoneracion: fechaExo(l.exo_fecha),
         MontoExonerado: montoExo,
-        PorcentajeExonerado: Math.round(pctExo),
+        PorcentajeExonerado: pctExo,
       };
+      // Autorizado por ley especial (tipo 3): GTI pide artículo e inciso de la ley.
+      if (txt(l.exo_articulo)) imp.Exoneracion.Articulo = txt(l.exo_articulo, 10);
+      if (txt(l.exo_inciso))   imp.Exoneracion.Inciso   = txt(l.exo_inciso, 10);
     }
     o.Impuestos = [imp];
   }
@@ -633,6 +648,9 @@ function armar(doc, lineas, cliente, empresa, cred, extras) {
     TotalImpuesto:       totalImpuesto,
     TotalComprobante:    totalComprobante,
   };
+  // Con exoneración, GTI manda además estos dos (así vienen en sus ejemplos).
+  // Sin exoneración el documento queda idéntico al que GTI ya aceptó.
+  if (T.exonerado > 0) { Totales.TotalImpVenta = totalImpuesto; Totales.TotalImpOtros = 0; }
 
   // Los baldes y los descuentos solo se declaran cuando tienen monto. Antes se
   // mandaban veinte campos, la mayoría en cero y algunos con nombres que GTI no
