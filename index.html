@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261125240000';
+var APP_BUILD='20261125250000';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -20311,8 +20311,8 @@ function _pubHtml(cual){
     h+='<div style="font-family:var(--cond);font-weight:900;font-size:calc(18px*var(--fs,1));margin-bottom:10px">'+escHtml(d.titulo||'Lista de precios')+'</div>';
     d.secciones.forEach(function(s){
       h+='<div style="margin-bottom:14px"><div style="background:#E31837;color:#fff;padding:7px 12px;font-family:var(--cond);font-weight:900;border-radius:8px 8px 0 0">'+escHtml(s.titulo)+'</div>'
-        +'<table style="width:100%;border-collapse:collapse;font-size:calc(11px*var(--fs,1));border:1px solid #ddd"><thead><tr><th style="text-align:left;padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">Concepto</th>';
-      (s.columnas||[]).forEach(function(col){ if(col) h+='<th style="padding:5px 8px;border:1px solid #ddd;background:#f5f5f5;font-size:calc(9px*var(--fs,1))">'+escHtml(col)+'</th>'; });
+        +'<table style="width:100%;border-collapse:collapse;font-size:calc(11px*var(--fs,1));border:1px solid #ddd"><thead><tr><th style="text-align:left;padding:5px 8px;border:1px solid #ddd;background:#e8e8e8;color:#111;font-weight:800">Concepto</th>';
+      (s.columnas||[]).forEach(function(col){ if(col) h+='<th style="padding:5px 8px;border:1px solid #ddd;background:#e8e8e8;color:#111;font-weight:800;font-size:calc(9px*var(--fs,1))">'+escHtml(col)+'</th>'; });
       h+='</tr></thead><tbody>';
       s.filas.forEach(function(f){
         h+='<tr><td style="padding:5px 8px;border:1px solid #ddd;font-weight:700">'+escHtml(f.nombre)+'</td>';
@@ -20330,7 +20330,7 @@ function _pubHtml(cual){
     h+='<div style="font-family:var(--cond);font-weight:900;font-size:calc(18px*var(--fs,1));margin-bottom:10px">Lista de precios — Equipos e insumos</div>';
     de.categorias.forEach(function(cat){
       h+='<div style="margin-bottom:14px"><div style="background:#E31837;color:#fff;padding:7px 12px;font-family:var(--cond);font-weight:900;border-radius:8px 8px 0 0">'+escHtml(cat.nombre)+(cat.moneda==='USD'?' (US$)':'')+'</div>'
-        +'<table style="width:100%;border-collapse:collapse;font-size:calc(11px*var(--fs,1));border:1px solid #ddd"><thead><tr><th style="text-align:left;padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">Ítem</th><th style="padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">Efectivo/Transf. SIN IVA</th><th style="padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">CON IVA</th><th style="padding:5px 8px;border:1px solid #ddd;background:#f5f5f5">Tasa 0 (6 meses)</th></tr></thead><tbody>';
+        +'<table style="width:100%;border-collapse:collapse;font-size:calc(11px*var(--fs,1));border:1px solid #ddd"><thead><tr><th style="text-align:left;padding:5px 8px;border:1px solid #ddd;background:#e8e8e8;color:#111;font-weight:800">Ítem</th><th style="padding:5px 8px;border:1px solid #ddd;background:#e8e8e8;color:#111;font-weight:800">Efectivo/Transf. SIN IVA</th><th style="padding:5px 8px;border:1px solid #ddd;background:#e8e8e8;color:#111;font-weight:800">CON IVA</th><th style="padding:5px 8px;border:1px solid #ddd;background:#e8e8e8;color:#111;font-weight:800">Tasa 0 (6 meses)</th></tr></thead><tbody>';
       cat.items.forEach(function(it){
         var sin=parseFloat(it.sinIva)||0;
         h+='<tr><td style="padding:5px 8px;border:1px solid #ddd">'+escHtml(it.nombre)+'</td>'
