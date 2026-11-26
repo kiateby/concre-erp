@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261125223000';
+var APP_BUILD='20261125240000';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -20042,8 +20042,9 @@ function initPreciosTab(rootId){
   window._preciosRoot=rootId;
   var isSA=SESSION&&SESSION.rol==='superadmin';
   var tabs=isSA
-    ? [['coloc','🧮 Colocación'],['pulidos','🪞 Pulidos'],['ajustada','📋 Lista ajustada'],['equipos','🔧 Equipos'],['pub','📤 Publicadas'],['docs','📄 Documentos']]
-    : [['pub','📋 Listas de precios'],['docs','📄 Documentos']];
+    ? [['coloc','🧮 Colocación'],['pulidos','🪞 Pulidos'],['ajustada','📋 Lista ajustada'],['equipos','🔧 Equipos'],['pubcoloc','📍 Lista de colocación'],['pubequipos','🛠 Lista de equipos'],['docs','📄 Documentos']]
+    : [['pubcoloc','📍 Lista de colocación'],['pubequipos','🛠 Lista de equipos'],['docs','📄 Documentos']];
+  if(_preciosView==='pub') _preciosView='pubcoloc';
   if(!_preciosView||!tabs.some(function(t){return t[0]===_preciosView;})) _preciosView=tabs[0][0];
   root.innerHTML=
     '<h1 class="page-title" style="margin-bottom:4px">📚 Precios e Información</h1>'
@@ -20059,7 +20060,8 @@ function initPreciosTab(rootId){
   else if(_preciosView==='pulidos'&&isSA) renderPreciosPulidos(body);
   else if(_preciosView==='ajustada'&&isSA) renderPreciosAjustada(body);
   else if(_preciosView==='equipos'&&isSA) renderPreciosEquipos(body);
-  else if(_preciosView==='pub') renderPreciosPublicadas(body);
+  else if(_preciosView==='pubcoloc') renderPreciosPub(body,'coloc');
+  else if(_preciosView==='pubequipos') renderPreciosPub(body,'equipos');
   else if(_preciosView==='docs') renderPreciosDocs(body);
 }
 
@@ -20341,15 +20343,6 @@ function _pubHtml(cual){
   }
   return h;
 }
-function renderPreciosPublicadas(body){
-  body.innerHTML=
-    '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">'
-    +'<button onclick="imprimirListaPDF(\'coloc\')" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:calc(12px*var(--fs,1))">🖨 PDF Colocación</button>'
-    +'<button onclick="imprimirListaPDF(\'equipos\')" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:calc(12px*var(--fs,1))">🖨 PDF Equipos</button>'
-    +'</div>'
-    +'<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px">'+_pubHtml('coloc')+'</div>'
-    +'<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px">'+_pubHtml('equipos')+'</div>';
-}
 function imprimirListaPDF(cual){
   var w=window.open('','_blank');
   if(!w){ toast('Permita ventanas emergentes para generar el PDF'); return; }
@@ -20366,36 +20359,6 @@ function imprimirListaPDF(cual){
 }
 
 // ── 📄 DOCUMENTOS (Supabase Storage bucket "documentos") ────────────────────
-function renderPreciosDocs(body){
-  var docs=_pGet('docs',[]);
-  var isSA=SESSION&&SESSION.rol==='superadmin';
-  var html='';
-  if(isSA){
-    html+='<div style="background:var(--surface);border:1.5px dashed var(--border2);border-radius:12px;padding:16px;margin-bottom:14px;text-align:center">'
-      +'<div style="font-weight:800;margin-bottom:8px">📎 Subir documento (PDF, imagen, etc.)</div>'
-      +'<input type="file" id="precios-doc-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.docx" style="font-size:calc(12px*var(--fs,1))">'
-      +'<button onclick="subirPreciosDoc()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-weight:800;cursor:pointer;font-size:calc(12px*var(--fs,1));margin-left:8px">⬆ Subir</button>'
-      +'<div id="precios-doc-status" style="font-size:calc(11px*var(--fs,1));color:var(--text3);margin-top:6px"></div>'
-      +'</div>';
-  }
-  if(!docs.length){
-    html+='<div style="padding:20px;text-align:center;color:var(--text3);font-size:calc(12px*var(--fs,1))">Sin documentos aún.'+(isSA?' Suba manuales, fichas técnicas, listas en PDF, documentos de visitas a campo, etc.':'')+'</div>';
-  } else {
-    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">';
-    docs.forEach(function(doc,i){
-      var ico=doc.nombre.toLowerCase().endsWith('.pdf')?'📕':(doc.nombre.match(/\.(png|jpe?g|webp)$/i)?'🖼':'📄');
-      html+='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:12px;display:flex;gap:10px;align-items:center">'
-        +'<span style="font-size:calc(26px*var(--fs,1))">'+ico+'</span>'
-        +'<div style="flex:1;min-width:0"><div style="font-weight:800;font-size:calc(12px*var(--fs,1));overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escHtml(doc.nombre)+'">'+escHtml(doc.nombre)+'</div>'
-        +'<div style="font-size:calc(9px*var(--fs,1));color:var(--text3)">'+(doc.size?(Math.round(doc.size/1024)+' KB · '):'')+formatDate(parseDate((doc.uploadedAt||'').split('T')[0]))+'</div></div>'
-        +'<button data-ruta="'+escHtml(doc.path||'')+'" data-url="'+escHtml(doc.url||'')+'" onclick="abrirDocumento(this.dataset.ruta,this.dataset.url)" style="background:var(--blue);color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:calc(11px*var(--fs,1));font-weight:700;cursor:pointer">Ver</button>'
-        +(isSA?'<button onclick="borrarPreciosDoc('+i+')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:calc(14px*var(--fs,1))">🗑</button>':'')
-        +'</div>';
-    });
-    html+='</div>';
-  }
-  body.innerHTML=html;
-}
 // Abre un archivo del almacén «documentos» con un enlace que vence en 5 minutos
 // (el almacén es privado). Si no se conoce la ruta, usa la dirección guardada.
 async function abrirDocumento(ruta, url){
@@ -20410,47 +20373,355 @@ async function abrirDocumento(ruta, url){
     if(url) window.open(url,'_blank');
   }catch(e){ toast('⚠ No se pudo abrir el archivo: '+(e.message||e)); }
 }
-async function subirPreciosDoc(){
-  var inp=document.getElementById('precios-doc-file');
-  var st=document.getElementById('precios-doc-status');
-  if(!inp||!inp.files||!inp.files[0]){ toast('Seleccione un archivo primero'); return; }
-  var file=inp.files[0];
-  if(file.size>50*1024*1024){ toast('Máximo 50 MB por archivo'); return; }
-  if(st) st.textContent='⏳ Subiendo '+file.name+'...';
+/* PRECIOS:NUEVO */
+// ══════════════════════════════════════════════════════════════
+//  PRECIOS E INFO · listas publicadas con buscador por mejor coincidencia
+//  y documentos en carpetas (crear, renombrar, mover, descargar)
+// ══════════════════════════════════════════════════════════════
+function _pzNorm(s){ return String(s==null?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+function _pzTok(s){ var n=_pzNorm(s); return n?n.split(' '):[]; }
+// distancia de edición (con tope: si se pasa devuelve max+1)
+function _pzLev(a,b,max){
+  if(Math.abs(a.length-b.length)>max) return max+1;
+  var prev=[],cur=[],i,j;
+  for(j=0;j<=b.length;j++) prev[j]=j;
+  for(i=1;i<=a.length;i++){
+    cur[0]=i; var mn=i;
+    for(j=1;j<=b.length;j++){
+      cur[j]=Math.min(prev[j]+1,cur[j-1]+1,prev[j-1]+(a.charAt(i-1)===b.charAt(j-1)?0:1));
+      if(cur[j]<mn) mn=cur[j];
+    }
+    if(mn>max) return max+1;
+    var t=prev; prev=cur; cur=t;
+  }
+  return prev[b.length];
+}
+// qué tanto se parece una palabra escrita (q) a una palabra del nombre (t): de 0 a 1
+function _pzTokScore(q,t){
+  if(q===t) return 1;
+  if(q.length>=2&&t.indexOf(q)===0) return 0.85+0.1*(q.length/t.length);          // «alis» → «alisadora»
+  if(t.length>=3&&q.indexOf(t)===0) return 0.7+0.1*(t.length/q.length);           // «bombas» → «bomba»
+  if(q.length>=3&&t.indexOf(q)>=0) return 0.65;                                   // dentro de la palabra
+  if(q.length>=4&&t.length>=3){
+    var mx=q.length<=5?1:(q.length<=8?2:3), d=_pzLev(q,t,mx);                     // errores de escritura
+    if(d<=mx) return 0.75-0.12*d;
+    if(t.length>q.length){ var d2=_pzLev(q,t.slice(0,q.length),1); if(d2<=1) return 0.6; }   // escrito a medias y con un error
+  }
+  return 0;
+}
+// puntaje de una fila: nombre (peso completo) y grupo —zona o categoría— (mitad de peso)
+function _pzScore(qt,qn,nombre,grupo){
+  var nt=_pzTok(nombre), gt=_pzTok(grupo), nn=_pzNorm(nombre), tot=0, i, j;
+  for(i=0;i<qt.length;i++){
+    var best=0;
+    for(j=0;j<nt.length;j++){ var s1=_pzTokScore(qt[i],nt[j]); if(s1>best) best=s1; }
+    for(j=0;j<gt.length;j++){ var s2=0.5*_pzTokScore(qt[i],gt[j]); if(s2>best) best=s2; }
+    tot+=best;
+  }
+  var sc=qt.length?tot/qt.length:0;
+  if(qn.length>=3&&nn.indexOf(qn)>=0) sc=Math.min(1,sc+0.15);                      // la frase completa aparece tal cual
+  return sc-0.0005*nt.length;                                                       // a igual puntaje, gana el nombre más corto
+}
+function _pzBuscar(items,q,fNombre,fGrupo){
+  var qt=_pzTok(q), qn=_pzNorm(q), out=[];
+  if(!qt.length) return out;
+  items.forEach(function(it,idx){
+    var sc=_pzScore(qt,qn,fNombre(it),fGrupo(it));
+    if(sc>=0.4) out.push({it:it,score:sc,idx:idx});
+  });
+  out.sort(function(a,b){ return (b.score-a.score)||(a.idx-b.idx); });
+  return out;
+}
+// resalta en el nombre las partes que coinciden (sin tildes ni mayúsculas, largo idéntico al original)
+function _pzResaltar(nombre,q){
+  nombre=String(nombre==null?'':nombre);
+  var plain='', i;
+  for(i=0;i<nombre.length;i++){ var ch=nombre.charAt(i).normalize('NFD').charAt(0).toLowerCase(); plain+=/[a-z0-9]/.test(ch)?ch:' '; }
+  var rg=[];
+  _pzTok(q).forEach(function(t){ if(t.length<2) return; var p=0,k; while((k=plain.indexOf(t,p))>=0){ rg.push([k,k+t.length]); p=k+t.length; } });
+  if(!rg.length) return escHtml(nombre);
+  rg.sort(function(a,b){return a[0]-b[0];});
+  var m=[rg[0]];
+  for(i=1;i<rg.length;i++){ var u=m[m.length-1]; if(rg[i][0]<=u[1]) u[1]=Math.max(u[1],rg[i][1]); else m.push(rg[i]); }
+  var h='', pos=0;
+  m.forEach(function(r){ h+=escHtml(nombre.slice(pos,r[0]))+'<mark style="background:#ffe08a;color:#111;border-radius:3px;padding:0 1px">'+escHtml(nombre.slice(r[0],r[1]))+'</mark>'; pos=r[1]; });
+  return h+escHtml(nombre.slice(pos));
+}
+
+// ── 📋 Listas publicadas (una subpestaña por lista) ─────────────────────────
+function _pubFilas(cual){
+  var pub=_pGet('pub_'+cual,null), out=[];
+  if(!pub||!pub.data) return out;
+  if(cual==='coloc'){
+    (pub.data.secciones||[]).forEach(function(s){ (s.filas||[]).forEach(function(f){
+      out.push({tipo:'coloc',nombre:f.nombre||'',grupo:s.titulo||'',cols:s.columnas||[],vals:f.valores||[]}); }); });
+  } else {
+    (pub.data.categorias||[]).forEach(function(c){ (c.items||[]).forEach(function(it){
+      out.push({tipo:'equipos',nombre:it.nombre||'',grupo:c.nombre||'',moneda:c.moneda,sin:parseFloat(it.sinIva)||0}); }); });
+  }
+  return out;
+}
+function _pubCaja(rot,val){
+  return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:4px 9px;text-align:right;min-width:84px">'
+    +'<div style="font-size:calc(9.5px*var(--fs,1));color:#444;font-weight:700">'+escHtml(rot)+'</div>'
+    +'<div style="font-family:var(--cond);font-weight:900;font-size:calc(13px*var(--fs,1));color:var(--text)">'+val+'</div></div>';
+}
+function _pubTarjeta(h,q,pos){
+  var f=h.it, cajas='';
+  if(f.tipo==='coloc'){
+    f.cols.forEach(function(col,i){
+      if(!col) return; var v=f.vals[i];
+      if(v===undefined||v===null||v==='') return;
+      cajas+=_pubCaja(col, typeof v==='number'?_pFmt(v):escHtml(String(v)));
+    });
+  } else {
+    cajas=_pubCaja('SIN IVA',_pFmt(f.sin,f.moneda))+_pubCaja('CON IVA (+13%)',_pFmt(f.sin*1.13,f.moneda))+_pubCaja('Tasa 0 (+10%)',_pFmt(f.sin*1.13*1.10,f.moneda));
+  }
+  var g=String(f.grupo||''), gc=g.length>70?g.slice(0,68)+'…':g;
+  return '<div style="background:var(--surface);border:1.5px solid '+(pos===0?'var(--red)':'var(--border)')+';border-radius:10px;padding:10px 12px;margin-bottom:8px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">'
+    +'<div style="flex:1 1 260px;min-width:0">'
+    +'<div style="font-weight:800;font-size:calc(13px*var(--fs,1));color:var(--text);line-height:1.35">'+_pzResaltar(f.nombre,q)+'</div>'
+    +'<div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
+    +'<span title="'+escHtml(g)+'" style="background:#fff3f3;border:1px solid #e0b4b4;color:#7a1f1f;border-radius:20px;padding:2px 10px;font-size:calc(10.5px*var(--fs,1));font-weight:800">'+(f.tipo==='coloc'?'📍 ':'📂 ')+escHtml(gc||'Sin zona')+'</span>'
+    +(pos===0?'<span style="background:var(--red);color:#fff;border-radius:20px;padding:2px 9px;font-size:calc(10px*var(--fs,1));font-weight:800">Mejor coincidencia</span>':'')
+    +'<span style="font-size:calc(10px*var(--fs,1));color:#444">'+Math.round(Math.max(0,Math.min(1,h.score))*100)+' %</span>'
+    +'</div></div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap">'+cajas+'</div></div>';
+}
+function renderPreciosPub(body,cual){
+  var pub=_pGet('pub_'+cual,null), nom=cual==='coloc'?'la lista de colocación':'la lista de equipos e insumos';
+  var ej=cual==='coloc'?'«chorrea gam» o «aserado»':'«planca vibratoria» o «alisadora 36»';
+  body.innerHTML=
+    '<div style="display:flex;gap:8px;margin-bottom:6px;flex-wrap:wrap;align-items:center">'
+    +'<input id="pub-q" type="search" autocomplete="off" placeholder="🔎 Buscar en '+nom+'…" oninput="_pubBuscarDeb(\''+cual+'\')" style="flex:1;min-width:240px;padding:10px 14px;border:2px solid var(--border2,var(--border));border-radius:10px;font-size:calc(14px*var(--fs,1));background:var(--surface);color:var(--text)">'
+    +'<button onclick="imprimirListaPDF(\''+cual+'\')" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:9px 14px;font-weight:700;cursor:pointer;font-size:calc(12px*var(--fs,1));color:var(--text)">🖨 PDF</button>'
+    +'</div>'
+    +'<div style="font-size:calc(11px*var(--fs,1));color:#444;margin-bottom:12px">Busca por mejor coincidencia: no hace falta escribir el nombre exacto ni con tildes (por ejemplo '+ej+'). Se muestra a qué '+(cual==='coloc'?'zona':'categoría')+' pertenece cada resultado.</div>'
+    +'<div id="pub-res"></div>'
+    +'<div id="pub-lista" style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px">'+_pubHtml(cual)+'</div>';
+}
+function _pubBuscarDeb(cual){ clearTimeout(window._pubT); window._pubT=setTimeout(function(){ _pubBuscar(cual); },120); }
+function _pubBuscar(cual){
+  var inp=document.getElementById('pub-q'), res=document.getElementById('pub-res'), lista=document.getElementById('pub-lista');
+  if(!inp||!res||!lista) return;
+  var q=inp.value;
+  if(!_pzNorm(q)){ res.innerHTML=''; lista.style.display=''; return; }
+  var filas=_pubFilas(cual), hits=_pzBuscar(filas,q,function(f){return f.nombre;},function(f){return f.grupo;}), top=hits.slice(0,40);
+  lista.style.display='none';
+  var h='<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">'
+    +'<div style="font-size:calc(12px*var(--fs,1));font-weight:800;color:var(--text)">'+(hits.length?hits.length+' coincidencia'+(hits.length===1?'':'s')+(hits.length>top.length?' (se muestran las '+top.length+' mejores)':'')+', de la mejor a la menos parecida':'Sin coincidencias')+'</div>'
+    +'<button onclick="document.getElementById(\'pub-q\').value=\'\';_pubBuscar(\''+cual+'\')" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:5px 12px;font-weight:700;cursor:pointer;font-size:calc(11px*var(--fs,1));color:var(--text)">✕ Limpiar búsqueda</button></div>';
+  if(!hits.length) h+='<div style="padding:18px;text-align:center;color:#444;font-size:calc(12px*var(--fs,1));background:var(--surface);border:1.5px solid var(--border);border-radius:10px">No hay nada parecido a «'+escHtml(q)+'». Pruebe con menos palabras o con otra forma de nombrarlo.</div>';
+  top.forEach(function(x,i){ h+=_pubTarjeta(x,q,i); });
+  res.innerHTML=h;
+}
+function renderPreciosPublicadas(body){ renderPreciosPub(body,'coloc'); }
+
+// ── 📄 Documentos en carpetas ───────────────────────────────────────────────
+var _docsCarpeta='', _docsOrden='nombre', _docsQ='';
+function _docsData(){ return _pGet('docs',[]); }
+function _carpetasData(){ return _pGet('carpetas',[]); }
+function _docId(d,i){ return d.id||('i'+i); }
+function _carpetaRuta(id){
+  var cs=_carpetasData(), r=[], g=0;
+  while(id&&g++<40){ var c=cs.filter(function(x){return x.id===id;})[0]; if(!c) break; r.unshift(c); id=c.padre||''; }
+  return r;
+}
+function _carpetaTexto(id){ var r=_carpetaRuta(id).map(function(c){return c.nombre;}); return r.length?r.join(' / '):'Documentos'; }
+function _docsNat(a,b){ return String(a).localeCompare(String(b),'es',{numeric:true,sensitivity:'base'}); }
+function _docsIcono(n){ n=String(n||'').toLowerCase(); return /\.pdf$/.test(n)?'📕':/\.(png|jpe?g|webp|gif)$/.test(n)?'🖼':/\.(xlsx?|csv)$/.test(n)?'📊':/\.(docx?|txt)$/.test(n)?'📝':/\.(zip|rar)$/.test(n)?'🗜':'📄'; }
+function _docsTam(b){ b=+b||0; return b<1024?b+' B':b<1048576?Math.round(b/1024)+' KB':(Math.round(b/104857.6)/10)+' MB'; }
+function _docsFecha(s){ try{ var p=String(s||'').split('T')[0]; return p?formatDate(parseDate(p)):''; }catch(e){ return ''; } }
+function _docsBtn(txt,fn,tit,extra){ return '<button title="'+escHtml(tit||'')+'" onclick="'+fn+'" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:7px;padding:4px 9px;cursor:pointer;font-size:calc(11.5px*var(--fs,1));font-weight:700;color:var(--text);'+(extra||'')+'">'+txt+'</button>'; }
+function renderPreciosDocs(body){
+  var isSA=SESSION&&SESSION.rol==='superadmin';
+  if(_docsCarpeta&&!_carpetaRuta(_docsCarpeta).length) _docsCarpeta='';
+  var h='<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">'
+    +'<input id="docs-q" type="search" autocomplete="off" value="'+escHtml(_docsQ)+'" placeholder="🔎 Buscar un documento por nombre…" oninput="_docsBuscarDeb()" style="flex:1;min-width:220px;padding:9px 14px;border:2px solid var(--border2,var(--border));border-radius:10px;font-size:calc(13px*var(--fs,1));background:var(--surface);color:var(--text)">'
+    +'<label style="font-size:calc(12px*var(--fs,1));font-weight:700;color:var(--text)">Orden: <select id="docs-orden" onchange="_docsOrden=this.value;_docsPintar()" style="padding:6px;border-radius:6px;border:1.5px solid var(--border);font-size:calc(12px*var(--fs,1))">'
+    +[['nombre','Nombre'],['fecha','Más recientes'],['tamano','Más grandes']].map(function(o){return '<option value="'+o[0]+'"'+(_docsOrden===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></label>'
+    +(isSA?'<button onclick="_docsNuevaCarpeta()" style="background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;font-weight:800;cursor:pointer;font-size:calc(12px*var(--fs,1));color:var(--text)">📁 Nueva carpeta</button>':'')
+    +'</div>';
+  if(isSA){
+    h+='<div style="background:var(--surface);border:1.5px dashed var(--border2,var(--border));border-radius:12px;padding:12px;margin-bottom:12px;text-align:center">'
+      +'<div style="font-weight:800;margin-bottom:6px;font-size:calc(12.5px*var(--fs,1));color:var(--text)">📎 Subir documentos a: <span id="docs-destino"></span></div>'
+      +'<input type="file" id="precios-doc-file" multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls,.csv,.docx,.doc,.pptx,.txt,.zip,.dwg,.dxf" style="font-size:calc(12px*var(--fs,1))">'
+      +'<button onclick="subirPreciosDoc()" style="background:var(--red);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-weight:800;cursor:pointer;font-size:calc(12px*var(--fs,1));margin-left:8px">⬆ Subir</button>'
+      +'<div id="precios-doc-status" style="font-size:calc(11px*var(--fs,1));color:#444;margin-top:6px"></div></div>';
+  }
+  h+='<div id="docs-lista"></div>';
+  body.innerHTML=h;
+  _docsPintar();
+}
+function _docsBuscarDeb(){ clearTimeout(window._docsT); window._docsT=setTimeout(function(){ var i=document.getElementById('docs-q'); _docsQ=i?i.value:''; _docsPintar(); },120); }
+function _docsIr(id){ _docsCarpeta=id||''; _docsQ=''; var i=document.getElementById('docs-q'); if(i) i.value=''; _docsPintar(); }
+function _docsOrdenar(arr){
+  var o=_docsOrden;
+  return arr.slice().sort(function(a,b){
+    if(o==='fecha') return String(b.uploadedAt||'').localeCompare(String(a.uploadedAt||''))||_docsNat(a.nombre,b.nombre);
+    if(o==='tamano') return (b.size||0)-(a.size||0)||_docsNat(a.nombre,b.nombre);
+    return _docsNat(a.nombre,b.nombre);
+  });
+}
+function _docsFila(d,i,isSA,conRuta){
+  var id=_docId(d,i), cs=_carpetasData();
+  var opts='<option value="">Mover a…</option><option value="__raiz">📁 Documentos (raíz)</option>'+cs.map(function(c){ return '<option value="'+c.id+'">'+escHtml(_carpetaTexto(c.id))+'</option>'; }).join('');
+  return '<tr style="border-top:1px solid var(--border)">'
+    +'<td style="padding:7px 8px"><div style="display:flex;gap:8px;align-items:center"><span style="font-size:calc(22px*var(--fs,1))">'+_docsIcono(d.nombre)+'</span>'
+    +'<div style="min-width:0"><div style="font-weight:800;font-size:calc(12.5px*var(--fs,1));color:var(--text);word-break:break-word">'+(conRuta?_pzResaltar(d.nombre,_docsQ):escHtml(d.nombre))+'</div>'
+    +(conRuta?'<a href="#" onclick="_docsIr(\''+(d.carpeta||'')+'\');return false" style="font-size:calc(10.5px*var(--fs,1));color:var(--blue);font-weight:700">📁 '+escHtml(_carpetaTexto(d.carpeta||''))+'</a>':'')
+    +'</div></div></td>'
+    +'<td style="padding:7px 8px;font-size:calc(11px*var(--fs,1));color:#333;white-space:nowrap">'+_docsTam(d.size)+'</td>'
+    +'<td style="padding:7px 8px;font-size:calc(11px*var(--fs,1));color:#333;white-space:nowrap">'+_docsFecha(d.uploadedAt)+'</td>'
+    +'<td style="padding:7px 8px"><div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end">'
+    +_docsBtn('👁 Ver','_docsAbrir(\''+id+'\')','Abrir en otra pestaña')
+    +_docsBtn('⬇ Descargar','_docsDescargar(\''+id+'\')','Descargar el archivo')
+    +(isSA?_docsBtn('✏ Renombrar','_docsRenDoc(\''+id+'\')','Cambiar el nombre')
+      +'<select title="Mover a otra carpeta" onchange="_docsMover(\''+id+'\',this.value)" style="padding:4px;border-radius:7px;border:1.5px solid var(--border);font-size:calc(11px*var(--fs,1));max-width:150px">'+opts+'</select>'
+      +_docsBtn('🗑','borrarPreciosDoc(\''+id+'\')','Eliminar','color:var(--red)'):'')
+    +'</div></td></tr>';
+}
+function _docsTabla(filas){
+  return '<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr style="background:var(--surface2)">'
+    +'<th style="text-align:left;padding:7px 8px;font-size:calc(11px*var(--fs,1));color:#333">Nombre</th><th style="text-align:left;padding:7px 8px;font-size:calc(11px*var(--fs,1));color:#333">Tamaño</th><th style="text-align:left;padding:7px 8px;font-size:calc(11px*var(--fs,1));color:#333">Subido</th><th></th></tr></thead><tbody>'+filas+'</tbody></table></div>';
+}
+function _docsPintar(){
+  var cont=document.getElementById('docs-lista'); if(!cont) return;
+  var isSA=SESSION&&SESSION.rol==='superadmin', docs=_docsData(), cs=_carpetasData(), q=_docsQ, h='';
+  var dest=document.getElementById('docs-destino'); if(dest) dest.textContent=_carpetaTexto(_docsCarpeta);
+  if(_pzNorm(q)){                                    // búsqueda en todas las carpetas
+    var items=docs.map(function(d,i){ return {d:d,i:i}; });
+    var hits=_pzBuscar(items,q,function(x){return x.d.nombre;},function(x){return _carpetaTexto(x.d.carpeta||'');});
+    h+='<div style="font-size:calc(12px*var(--fs,1));font-weight:800;margin-bottom:8px;color:var(--text)">'+(hits.length?hits.length+' documento'+(hits.length===1?'':'s')+' parecido'+(hits.length===1?'':'s')+', de la mejor coincidencia a la menos parecida':'Ningún documento se parece a «'+escHtml(q)+'»')+'</div>';
+    if(hits.length) h+=_docsTabla(hits.map(function(x){ return _docsFila(x.it.d,x.it.i,isSA,true); }).join(''));
+    cont.innerHTML=h; return;
+  }
+  var ruta=_carpetaRuta(_docsCarpeta);
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:calc(13px*var(--fs,1));font-weight:800">'
+    +'<a href="#" onclick="_docsIr(\'\');return false" style="color:var(--blue)">📁 Documentos</a>'
+    +ruta.map(function(c,k){ return '<span style="color:#444">›</span>'+(k===ruta.length-1?'<span style="color:var(--text)">'+escHtml(c.nombre)+'</span>':'<a href="#" onclick="_docsIr(\''+c.id+'\');return false" style="color:var(--blue)">'+escHtml(c.nombre)+'</a>'); }).join('')
+    +'</div>';
+  var subs=cs.filter(function(c){ return (c.padre||'')===(_docsCarpeta||''); }).sort(function(a,b){ return _docsNat(a.nombre,b.nombre); });
+  var aqui=[]; docs.forEach(function(d,i){ if((d.carpeta||'')===(_docsCarpeta||'')) aqui.push({d:d,i:i}); });
+  var ord=_docsOrdenar(aqui.map(function(x){return x.d;})), byObj=aqui.reduce(function(m,x){ m.push(x); return m; },[]);
+  if(subs.length){
+    h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-bottom:14px">';
+    subs.forEach(function(c){
+      var nDoc=docs.filter(function(d){return (d.carpeta||'')===c.id;}).length, nSub=cs.filter(function(x){return (x.padre||'')===c.id;}).length;
+      h+='<div style="background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px 12px">'
+        +'<a href="#" onclick="_docsIr(\''+c.id+'\');return false" style="display:flex;gap:9px;align-items:center;text-decoration:none;color:var(--text)"><span style="font-size:calc(28px*var(--fs,1))">📁</span>'
+        +'<div style="min-width:0"><div style="font-weight:900;font-size:calc(13px*var(--fs,1));word-break:break-word">'+escHtml(c.nombre)+'</div>'
+        +'<div style="font-size:calc(10.5px*var(--fs,1));color:#444">'+nDoc+' archivo'+(nDoc===1?'':'s')+(nSub?' · '+nSub+' carpeta'+(nSub===1?'':'s'):'')+'</div></div></a>'
+        +(isSA?'<div style="display:flex;gap:6px;margin-top:8px">'+_docsBtn('✏ Renombrar','_docsRenCarpeta(\''+c.id+'\')','Cambiar el nombre de la carpeta')+_docsBtn('🗑','_docsDelCarpeta(\''+c.id+'\')','Eliminar la carpeta (debe estar vacía)','color:var(--red)')+'</div>':'')
+        +'</div>';
+    });
+    h+='</div>';
+  }
+  if(!ord.length&&!subs.length){
+    h+='<div style="padding:22px;text-align:center;color:#444;font-size:calc(12.5px*var(--fs,1))">Esta carpeta está vacía.'+(isSA?' Suba documentos arriba o cree una carpeta nueva.':'')+'</div>';
+  } else if(ord.length){
+    var filas='', usados={};
+    ord.forEach(function(d){ var k=0; for(var t=0;t<aqui.length;t++){ if(aqui[t].d===d&&!usados[t]){ k=t; usados[t]=1; break; } } filas+=_docsFila(d,aqui[k].i,isSA,false); });
+    h+=_docsTabla(filas);
+  }
+  cont.innerHTML=h;
+}
+function _docsBuscarDoc(id){ var docs=_docsData(), r=null; docs.forEach(function(d,i){ if(_docId(d,i)===id) r={d:d,i:i}; }); return r; }
+function _docsNombreLibre(nombre,padre,excepto){
+  var n=_pzNorm(nombre);
+  return !_carpetasData().some(function(c){ return c.id!==excepto&&(c.padre||'')===(padre||'')&&_pzNorm(c.nombre)===n; });
+}
+function _docsNuevaCarpeta(){
+  var nom=prompt('Nombre de la carpeta nueva (dentro de «'+_carpetaTexto(_docsCarpeta)+'»):','');
+  if(nom===null) return; nom=nom.replace(/\s+/g,' ').trim();
+  if(!nom){ toast('Escriba un nombre para la carpeta'); return; }
+  if(nom.length>80){ toast('El nombre es muy largo (máximo 80 letras)'); return; }
+  if(!_docsNombreLibre(nom,_docsCarpeta,null)){ toast('Ya existe una carpeta con ese nombre aquí'); return; }
+  var cs=_carpetasData().slice(); cs.push({id:'car_'+Date.now(),nombre:nom,padre:_docsCarpeta||''});
+  _pSet('carpetas',cs); _docsPintar(); toast('📁 Carpeta creada');
+}
+function _docsRenCarpeta(id){
+  var cs=_carpetasData().slice(), c=cs.filter(function(x){return x.id===id;})[0]; if(!c) return;
+  var nom=prompt('Nuevo nombre de la carpeta:',c.nombre); if(nom===null) return; nom=nom.replace(/\s+/g,' ').trim();
+  if(!nom){ toast('El nombre no puede quedar vacío'); return; }
+  if(nom.length>80){ toast('El nombre es muy largo (máximo 80 letras)'); return; }
+  if(!_docsNombreLibre(nom,c.padre,id)){ toast('Ya existe una carpeta con ese nombre aquí'); return; }
+  c.nombre=nom; _pSet('carpetas',cs); _docsPintar(); toast('✏ Carpeta renombrada');
+}
+function _docsDelCarpeta(id){
+  var cs=_carpetasData(), c=cs.filter(function(x){return x.id===id;})[0]; if(!c) return;
+  var nDoc=_docsData().filter(function(d){return (d.carpeta||'')===id;}).length, nSub=cs.filter(function(x){return (x.padre||'')===id;}).length;
+  if(nDoc||nSub){ toast('La carpeta «'+c.nombre+'» no está vacía: mueva o elimine primero lo que tiene dentro'); return; }
+  if(!confirm('¿Eliminar la carpeta «'+c.nombre+'»?')) return;
+  _pSet('carpetas',cs.filter(function(x){return x.id!==id;})); _docsPintar(); toast('Carpeta eliminada');
+}
+function _docsRenDoc(id){
+  var r=_docsBuscarDoc(id); if(!r) return;
+  var nom=prompt('Nuevo nombre del documento:',r.d.nombre); if(nom===null) return; nom=nom.replace(/\s+/g,' ').trim();
+  if(!nom){ toast('El nombre no puede quedar vacío'); return; }
+  if(nom.length>120){ toast('El nombre es muy largo (máximo 120 letras)'); return; }
+  var ext=(/\.[A-Za-z0-9]{1,6}$/.exec(r.d.nombre)||[''])[0];
+  if(ext&&!/\.[A-Za-z0-9]{1,6}$/.test(nom)) nom+=ext;                       // conserva la extensión si no la escribe
+  var docs=_docsData().slice(); docs[r.i]=Object.assign({},docs[r.i],{nombre:nom});
+  _pSet('docs',docs); _docsPintar(); toast('✏ Documento renombrado');
+}
+function _docsMover(id,dest){
+  if(!dest) return; var r=_docsBuscarDoc(id); if(!r) return;
+  var docs=_docsData().slice(), nuevo=dest==='__raiz'?'':dest;
+  if(nuevo&&!_carpetaRuta(nuevo).length){ toast('Esa carpeta ya no existe'); return; }
+  docs[r.i]=Object.assign({},docs[r.i],{carpeta:nuevo});
+  _pSet('docs',docs); _docsPintar(); toast('📂 Movido a «'+_carpetaTexto(nuevo)+'»');
+}
+function _docsAbrir(id){ var r=_docsBuscarDoc(id); if(r) abrirDocumento(r.d.path||'',r.d.url||''); }
+function _docsDescargar(id){ var r=_docsBuscarDoc(id); if(r) descargarDocumento(r.d.path||'',r.d.url||'',r.d.nombre); }
+// Descarga el archivo con su nombre (enlace firmado de 5 minutos con «download»)
+async function descargarDocumento(ruta,url,nombre){
   try{
-    var path=Date.now()+'_'+file.name.replace(/[^a-zA-Z0-9._\-]/g,'_');
-    var r=await DB.storage.from('documentos').upload(path, file, {upsert:false});
-    if(r.error) throw r.error;
-    var pub=DB.storage.from('documentos').getPublicUrl(path);
-    var url=(pub&&pub.data&&pub.data.publicUrl)||'';
-    var docs=_pGet('docs',[]);
-    docs.unshift({id:'doc_'+Date.now(),nombre:file.name,path:path,url:url,size:file.size,
-      uploadedAt:new Date().toISOString(),by:SESSION.nombre||SESSION.id});
-    _pSet('docs',docs);
-    if(st) st.textContent='';
-    toast('✅ Documento subido');
-    initPreciosTab(window._preciosRoot);
-  }catch(e){
-    console.error('subirPreciosDoc:',e);
-    if(st) st.textContent='';
-    var msg=String((e&&e.message)||e);
-    if(msg.toLowerCase().indexOf('bucket')>=0||msg.toLowerCase().indexOf('not found')>=0){
-      toast('⚠ Falta crear el bucket "documentos" en Supabase Storage — vea las instrucciones entregadas');
-    } else {
-      toast('Error al subir: '+msg);
+    if(!ruta&&url){ var m=/\/documentos\/([^?#]+)/.exec(String(url)); if(m) ruta=decodeURIComponent(m[1]); }
+    var enlace='';
+    if(ruta){
+      var r=await DB.storage.from('documentos').createSignedUrl(ruta,300,{download:nombre||true});
+      if(r.error||!r.data||!r.data.signedUrl){ toast('⚠ No se pudo descargar el archivo'+((r.error&&r.error.message)?': '+r.error.message:'')); return; }
+      enlace=r.data.signedUrl;
+    } else if(url) enlace=url;
+    if(!enlace){ toast('⚠ Este documento no tiene archivo'); return; }
+    var a=document.createElement('a'); a.href=enlace; a.download=nombre||''; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove();
+  }catch(e){ toast('⚠ No se pudo descargar el archivo: '+(e.message||e)); }
+}
+async function subirPreciosDoc(){
+  var inp=document.getElementById('precios-doc-file'), st=document.getElementById('precios-doc-status');
+  if(!inp||!inp.files||!inp.files.length){ toast('Seleccione uno o más archivos primero'); return; }
+  var files=Array.prototype.slice.call(inp.files), nuevos=[], fallos=[], carpeta=_docsCarpeta||'';
+  for(var k=0;k<files.length;k++){
+    var file=files[k];
+    if(file.size>50*1024*1024){ fallos.push(file.name+' (más de 50 MB)'); continue; }
+    if(st) st.textContent='⏳ Subiendo '+(k+1)+' de '+files.length+': '+file.name+'...';
+    try{
+      var path=Date.now()+'_'+k+'_'+file.name.replace(/[^a-zA-Z0-9._\-]/g,'_');
+      var r=await DB.storage.from('documentos').upload(path,file,{upsert:false});
+      if(r.error) throw r.error;
+      var pub=DB.storage.from('documentos').getPublicUrl(path);
+      nuevos.push({id:'doc_'+Date.now()+'_'+k,nombre:file.name,path:path,url:(pub&&pub.data&&pub.data.publicUrl)||'',size:file.size,
+        uploadedAt:new Date().toISOString(),by:SESSION.nombre||SESSION.id,carpeta:carpeta});
+    }catch(e){
+      console.error('subirPreciosDoc:',e);
+      var msg=String((e&&e.message)||e);
+      fallos.push(file.name+(msg.toLowerCase().indexOf('bucket')>=0||msg.toLowerCase().indexOf('not found')>=0?' (falta crear el bucket «documentos» en Supabase Storage)':' ('+msg+')'));
     }
   }
+  if(nuevos.length){ var docs=_docsData().slice(); _pSet('docs',nuevos.reverse().concat(docs)); }
+  if(st) st.textContent='';
+  inp.value='';
+  if(nuevos.length) toast('✅ '+nuevos.length+(nuevos.length===1?' documento subido':' documentos subidos'));
+  if(fallos.length) toast('⚠ No se subió: '+fallos.join('; '));
+  _docsPintar();
 }
-async function borrarPreciosDoc(i){
-  var docs=_pGet('docs',[]);
-  var doc=docs[i];
-  if(!doc) return;
-  if(!confirm('¿Eliminar el documento "'+doc.nombre+'"?')) return;
-  try{ await DB.storage.from('documentos').remove([doc.path]); }catch(e){ console.warn(e); }
-  docs.splice(i,1);
-  _pSet('docs',docs);
-  initPreciosTab(window._preciosRoot);
-  toast('Documento eliminado');
+async function borrarPreciosDoc(id){
+  var r=_docsBuscarDoc(id); if(!r) return;
+  if(!confirm('¿Eliminar el documento "'+r.d.nombre+'"?')) return;
+  try{ if(r.d.path) await DB.storage.from('documentos').remove([r.d.path]); }catch(e){ console.warn(e); }
+  var docs=_docsData().slice(); docs.splice(r.i,1);
+  _pSet('docs',docs); _docsPintar(); toast('Documento eliminado');
 }
 
 // ══════════════════════════════════════════════
@@ -38588,18 +38859,20 @@ function lamina1(ctx) {
     var choca = function (bx) { return ocup.some(function (q) { return bx[0] < q[2] && bx[2] > q[0] && bx[1] < q[3] && bx[3] > q[1]; }); };
     function rect(fx, fy) { var a = U(fx.a, fy.a), b = U(fx.b, fy.b); return { x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(b[0] - a[0]), h: Math.abs(b[1] - a[1]) }; }
     function opciones(R, horiz, txt) {
-      var tw = txt.length * 1.2 + 0.6, out = [];
+      var fsz = Math.min(R.w, R.h) < 9.5 ? 1.8 : 2.1, tw = txt.length * 0.56 * fsz + 0.4, out = [];   // en losas chicas se baja la letra
       if (horiz) {
-        if (R.w < tw + 3 || R.h < 8) return out;
+        if (R.w < tw + 2.5 || R.h < 5.8) return out;
         [R.y + 2.8, R.y + R.h - 5.2, R.y + R.h * 0.36, R.y + R.h * 0.64].forEach(function (yy) {
+          if (yy - 1.5 < R.y - 0.2 || yy + 3.7 > R.y + R.h + 0.4) return;                  // el texto debe quedar dentro de la losa
           var x1 = R.x + 0.8, x2 = R.x + R.w - 0.8;
-          out.push({ box: [x1, yy - 1.5, x2, yy + 3.7], svg: '<g class="cl">' + Ln(x1, yy, x2, yy, GR2, 0.15) + Ln(x1, yy - 1, x1, yy + 1, GR2, 0.15) + Ln(x2, yy - 1, x2, yy + 1, GR2, 0.15) + T((x1 + x2) / 2, yy + 3, txt, { s: 2.1, f: '#222222', halo: 1 }) + '</g>' });
+          out.push({ box: [x1, yy - 1.5, x2, yy + 3.7], svg: '<g class="cl">' + Ln(x1, yy, x2, yy, GR2, 0.15) + Ln(x1, yy - 1, x1, yy + 1, GR2, 0.15) + Ln(x2, yy - 1, x2, yy + 1, GR2, 0.15) + T((x1 + x2) / 2, yy + 3, txt, { s: fsz, f: '#222222', halo: 1 }) + '</g>' });
         });
       } else {
-        if (R.h < 9 || R.w < tw + 5) return out;
-        [R.x + 2.6, R.x + R.w - tw - 4.2, R.x + R.w * 0.36, R.x + R.w * 0.62].forEach(function (xx) {
+        if (R.h < 5.5 || R.w < tw + 3.1) return out;
+        [R.x + 2.0, R.x + R.w - tw - 2.6, R.x + R.w * 0.36, R.x + R.w * 0.62].forEach(function (xx) {
+          if (xx - 1.5 < R.x - 0.2 || xx + 1.2 + tw > R.x + R.w + 0.4) return;               // el texto debe quedar dentro de la losa
           var y1 = R.y + 0.8, y2 = R.y + R.h - 0.8;
-          out.push({ box: [xx - 1.5, y1, xx + 1.8 + tw, y2], svg: '<g class="cl">' + Ln(xx, y1, xx, y2, GR2, 0.15) + Ln(xx - 1, y1, xx + 1, y1, GR2, 0.15) + Ln(xx - 1, y2, xx + 1, y2, GR2, 0.15) + T(xx + 1.2, (y1 + y2) / 2 + 0.8, txt, { s: 2.1, a: 'start', f: '#222222', halo: 1 }) + '</g>' });
+          out.push({ box: [xx - 1.5, y1, xx + 1.6 + tw, y2], svg: '<g class="cl">' + Ln(xx, y1, xx, y2, GR2, 0.15) + Ln(xx - 1, y1, xx + 1, y1, GR2, 0.15) + Ln(xx - 1, y2, xx + 1, y2, GR2, 0.15) + T(xx + 1.2, (y1 + y2) / 2 + 0.8, txt, { s: fsz, a: 'start', f: '#222222', halo: 1 }) + '</g>' });
         });
       }
       return out;
