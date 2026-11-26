@@ -2038,7 +2038,7 @@ async function loadAllDataFromDB(){
 // ── VERSIÓN DE LA APP — detección de deploys nuevos ─────────────────────────
 // APP_BUILD cambia con cada archivo entregado. El chequeo periódico compara
 // contra el archivo servido por Vercel y avisa si hay una versión más nueva.
-var APP_BUILD='20261125220000';
+var APP_BUILD='20261125223000';
 function checkForNewVersion(){
   // Chequeo LIGERO: petición HEAD (solo headers, sin descargar el archivo).
   // Compara el ETag/Last-Modified del servidor; si cambió, confirma con un GET
@@ -38539,6 +38539,7 @@ function lamina1(ctx) {
     var man = '';                                                // solo en la pantalla (no en el informe): asas para acortar o alargar la junta y botón para borrarla
     if (ctx.editar) {
       var mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+      ocup.push([mx - 3.6, my - 3.6, mx + 3.6, my + 3.6], [a[0] - 4.8, a[1] - 4.8, a[0] + 4.8, a[1] + 4.8], [b[0] - 4.8, b[1] - 4.8, b[0] + 4.8, b[1] + 4.8]);     // asas y botón de borrar (solo en pantalla)
       [['a', a, j.libreA], ['b', b, j.libreB]].forEach(function (e) {
         var cur = 'cursor:' + (eje === 'x' ? 'ns-resize' : 'ew-resize');
         man += '<circle class="jh" data-end="' + e[0] + '" cx="' + r(e[1][0]) + '" cy="' + r(e[1][1]) + '" r="4.6" fill="rgba(255,255,255,0.01)" style="' + cur + '"/>' +
@@ -38605,9 +38606,8 @@ function lamina1(ctx) {
     }
     var hechoX = false, hechoY = false, cot = [];
     M.panos.forEach(function (p) {
-      var cs = celdasDe(p), cxm = 0, cym = 0, n0 = 0;
-      cs.forEach(function (c) { cxm += (c.x0 + c.x1) / 2; cym += (c.y0 + c.y1) / 2; n0++; }); cxm /= n0; cym /= n0;
-      var cen = U(cxm, cym);
+      var cs = celdasDe(p), esq = [1e9, 1e9];               // esquina superior izquierda del colado en pantalla: las cotas se agrupan ahí para verlas juntas
+      cs.forEach(function (c) { var ra = rect({ a: c.x0, b: c.x1 }, { a: c.y0, b: c.y1 }); esq[0] = Math.min(esq[0], ra.x); esq[1] = Math.min(esq[1], ra.y); });
       [['x', FX, FY, unX], ['y', FY, FX, unY]].forEach(function (par) {
         var dir = par[0], F = par[1], G = par[2], uni = par[3];
         if (uni && (dir === 'x' ? hechoX : hechoY)) return;
@@ -38620,9 +38620,9 @@ function lamina1(ctx) {
             G.forEach(function (g) {
               if (g.a < e0 - 1e-6 || g.b > e1 + 1e-6) return;
               var R = rect(dir === 'x' ? f : g, dir === 'x' ? g : f), horiz = dir === 'x' ? !rotar : rotar;
-              opciones(R, horiz, fmt(f.v, 2)).forEach(function (op) { op.dist = Math.abs(R.x + R.w / 2 - cen[0]) + Math.abs(R.y + R.h / 2 - cen[1]); cand.push(op); });
+              opciones(R, horiz, fmt(f.v, 2)).forEach(function (op) { op.dist = (R.x - esq[0]) + (R.y - esq[1]); cand.push(op); });
             });
-            cand.sort(function (u, v) { return v.dist - u.dist; });
+            cand.sort(function (u, v) { return u.dist - v.dist; });
             for (var q = 0; q < cand.length; q++) if (!choca(cand[q].box)) { cot.push(cand[q].svg); ocup.push(cand[q].box); vistos[f.k] = 1; if (dir === 'x') hechoX = true; else hechoY = true; break; }
           });
         });
